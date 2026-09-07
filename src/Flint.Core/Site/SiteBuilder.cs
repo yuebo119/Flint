@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.Content.Shortcodes;
 using Flint.Core.Models;
@@ -69,12 +70,12 @@ public sealed class SiteBuilder : ISiteBuilder
 
         // 构建边界：清 mtime 短窗缓存，保证本次构建看到全部模板的最新状态
         // （TTL 缓存只在单次构建内部生效，见渲染器 InvalidateMtimeCache）
-        (_templateRenderer as ScribanTemplateRenderer)?.InvalidateMtimeCache();
+        _templateRenderer.InvalidateMtimeCache();
 
         // P2 优化：预编译模板（只在首次构建时执行）
-        if (!_templatesPrecompiled && _templateRenderer is ScribanTemplateRenderer scribanRenderer)
+        if (!_templatesPrecompiled)
         {
-            await scribanRenderer.PrecompileTemplatesAsync(cancellationToken);
+            await _templateRenderer.PrecompileTemplatesAsync(cancellationToken);
             _templatesPrecompiled = true;
         }
 
@@ -210,7 +211,7 @@ public sealed class SiteBuilder : ISiteBuilder
 
         // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态
         //（"改模板后立即增量"是测试锁定的高频真实场景）
-        (_templateRenderer as ScribanTemplateRenderer)?.InvalidateMtimeCache();
+        _templateRenderer.InvalidateMtimeCache();
 
         try
         {

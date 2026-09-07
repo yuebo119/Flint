@@ -2,7 +2,7 @@
 // ContentHasher 内容哈希计算器单元测试
 
 using System.Text;
-using Flint.Core.Abstractions;
+using Flint.Core.Content;
 using FluentAssertions;
 using Xunit;
 

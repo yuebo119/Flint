@@ -3,6 +3,7 @@
 // 为属性测试提供 Flint 特定类型的随机数据生成
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Models;
 using FsCheck;
 using FsCheck.Fluent;

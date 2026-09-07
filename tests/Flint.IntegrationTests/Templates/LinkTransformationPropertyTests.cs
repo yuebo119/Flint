@@ -113,7 +113,7 @@ public class LinkTransformationPropertyTests : IDisposable
             {
                 Menus = new Dictionary<string, IReadOnlyList<MenuItem>>()
             },
-            Config = new { }
+            Config = new Flint.Core.Configuration.SiteConfig { BaseURL = "https://example.com", Title = "T" }
         };
     }
 

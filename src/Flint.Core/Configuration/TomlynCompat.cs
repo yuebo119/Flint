@@ -5,7 +5,7 @@ using Tomlyn;
 using Tomlyn.Model;
 using Tomlyn.Serialization;
 
-namespace Flint.Core;
+namespace Flint.Core.Configuration;
 
 /// <summary>
 /// Tomlyn 2.x source-gen 上下文：反射模式 Deserialize 带

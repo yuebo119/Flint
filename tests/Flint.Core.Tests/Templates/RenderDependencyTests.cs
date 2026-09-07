@@ -2,6 +2,7 @@
 // 渲染期依赖收集测试（T4.1）——条件 include 精确化与站点数据访问记录
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Templates;
 using Xunit;
 
@@ -100,7 +101,7 @@ public class RenderDependencyTests : IDisposable
         RegularPages = [],
         Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
         Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
-        Config = new object()
+        Config = new SiteConfig { BaseURL = "", Title = "" }
     };
 
     private string LayoutPath(string name) => Path.Combine(_layoutsDir, name);

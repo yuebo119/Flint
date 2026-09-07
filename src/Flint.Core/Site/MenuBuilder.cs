@@ -2,6 +2,7 @@
 // 菜单构建器
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 
 namespace Flint.Core.Site;
 

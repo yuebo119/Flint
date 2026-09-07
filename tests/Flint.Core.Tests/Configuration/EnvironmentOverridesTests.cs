@@ -460,12 +460,12 @@ public class EnvironmentOverridesTests : IDisposable
             DisablePathToLower = false,
             DisableKinds = [],
             Permalinks = new PermalinkConfig(),
-            Taxonomies = new Flint.Core.Abstractions.TaxonomyConfig(),
+            Taxonomies = new Flint.Core.Configuration.TaxonomyConfig(),
             Menus = new MenuConfig(),
             Params = new Dictionary<string, object>(),
             Markup = new MarkupConfig(),
             Outputs = new OutputConfig(),
-            Languages = new Dictionary<string, Flint.Core.Abstractions.LanguageConfig>(),
+            Languages = new Dictionary<string, Flint.Core.Configuration.LanguageConfig>(),
             Module = new ModuleConfig(),
             Security = new SecurityConfig
             {

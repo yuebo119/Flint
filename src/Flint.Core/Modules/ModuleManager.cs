@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Tomlyn;
 using Tomlyn.Model;
 

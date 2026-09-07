@@ -196,7 +196,7 @@ internal static class RendererTestsContext
                 {
                     Menus = new Dictionary<string, IReadOnlyList<Flint.Core.Abstractions.MenuItem>>()
                 },
-                Config = new { }
+                Config = new Flint.Core.Configuration.SiteConfig { BaseURL = "", Title = "" }
             }
         };
 }

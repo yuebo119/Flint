@@ -1,6 +1,8 @@
 // Flint 静态站点生成器
 // 模板渲染器接口
 
+using Flint.Core.Configuration;
+
 namespace Flint.Core.Abstractions;
 
 /// <summary>
@@ -33,6 +35,18 @@ public interface ITemplateRenderer
     /// <param name="templateName">模板名称</param>
     /// <returns>依赖的模板名称列表</returns>
     IReadOnlyList<string> GetDependencies(string templateName);
+
+    /// <summary>
+    /// 预编译所有模板（可选优化：首次构建时把模板加载进内存）
+    /// </summary>
+    /// <param name="cancellationToken">取消令牌</param>
+    /// <returns>预编译的模板数量</returns>
+    Task<int> PrecompileTemplatesAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 清空模板 mtime 短窗缓存（构建边界调用，保证每次构建看到模板最新状态）
+    /// </summary>
+    void InvalidateMtimeCache();
 }
 
 /// <summary>
@@ -297,7 +311,7 @@ public sealed class SiteContext
     /// <summary>
     /// 站点配置
     /// </summary>
-    public required object Config { get; init; }
+    public required SiteConfig Config { get; init; }
 
     /// <summary>
     /// 数据文件

@@ -64,6 +64,9 @@ internal static class ServeHandler
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser, new ShortcodeProcessor());
             ContentParserDateSetup.Apply(contentParser, config,
                 Path.Combine(sourcePath, config.ContentDir));
+            // CA2000 抑制：管线所有权转移至长驻 SiteBuilder，生命周期与 serve
+            // 进程一致——此处不能 using（方法结束即释放会撞上后续热重载）
+#pragma warning disable CA2000
             var assetPipeline = new AssetPipeline(new AssetPipelineOptions
             {
                 SourceDirectory = sourcePath,
@@ -72,6 +75,7 @@ internal static class ServeHandler
             imageProcessor: new ImageProcessor(),
             sassCompiler: new SassCompiler(),
             jsBundler: new JavaScriptBundler());
+#pragma warning restore CA2000
 
             // 创建站点构建器
             var siteBuilder = new SiteBuilder(

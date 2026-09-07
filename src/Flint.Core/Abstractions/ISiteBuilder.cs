@@ -2,6 +2,7 @@
 // 站点构建器接口
 
 using Flint.Core.Models;
+using Flint.Core.Server;
 
 namespace Flint.Core.Abstractions;
 
@@ -71,68 +72,6 @@ public interface IDevServer
     /// 服务器 URL
     /// </summary>
     string? ServerUrl { get; }
-}
-
-/// <summary>
-/// 开发服务器选项
-/// </summary>
-public sealed class DevServerOptions
-{
-    /// <summary>
-    /// 源目录路径
-    /// </summary>
-    public required string SourcePath { get; init; }
-
-    /// <summary>
-    /// 输出目录路径
-    /// </summary>
-    public required string OutputPath { get; init; }
-
-    /// <summary>
-    /// 服务器端口
-    /// </summary>
-    public int Port { get; init; } = 1313;
-
-    /// <summary>
-    /// 是否启用热重载
-    /// </summary>
-    public bool LiveReload { get; init; } = true;
-
-    /// <summary>
-    /// 是否自动打开浏览器
-    /// </summary>
-    public bool OpenBrowser { get; init; } = true;
-
-    /// <summary>
-    /// 是否使用 HTTPS
-    /// </summary>
-    public bool UseHttps { get; init; }
-
-    /// <summary>
-    /// 绑定地址
-    /// </summary>
-    public string BindAddress { get; init; } = "localhost";
-
-    /// <summary>
-    /// 是否包含草稿
-    /// </summary>
-    public bool IncludeDrafts { get; init; } = true;
-
-    /// <summary>
-    /// 是否包含未来内容
-    /// </summary>
-    public bool IncludeFuture { get; init; } = true;
-
-    /// <summary>
-    /// 是否启用详细日志
-    /// </summary>
-    public bool Verbose { get; init; }
-
-    /// <summary>
-    /// fast render mode（T4.4，默认开启，对齐 Hugo）：记录浏览器最近访问的 URL（容量 20），
-    /// 模板变化的增量构建只重渲染这些页面，改模板秒刷当前页而其余页不动
-    /// </summary>
-    public bool FastRenderMode { get; init; } = true;
 }
 
 /// <summary>
@@ -238,97 +177,4 @@ public interface ILiveReloadNotifier
     /// 连接的客户端数量
     /// </summary>
     int ConnectedClients { get; }
-}
-
-/// <summary>
-/// 分页器
-/// </summary>
-/// <typeparam name="T">分页项类型</typeparam>
-public sealed class Paginator<T>
-{
-    /// <summary>
-    /// 当前页的项目
-    /// </summary>
-    public required IReadOnlyList<T> Items { get; init; }
-
-    /// <summary>
-    /// 当前页码（从 1 开始）
-    /// </summary>
-    public required int PageNumber { get; init; }
-
-    /// <summary>
-    /// 每页大小
-    /// </summary>
-    public required int PageSize { get; init; }
-
-    /// <summary>
-    /// 总页数
-    /// </summary>
-    public required int TotalPages { get; init; }
-
-    /// <summary>
-    /// 总项目数
-    /// </summary>
-    public required int TotalItems { get; init; }
-
-    /// <summary>
-    /// 是否有上一页
-    /// </summary>
-    public bool HasPrev => PageNumber > 1;
-
-    /// <summary>
-    /// 是否有下一页
-    /// </summary>
-    public bool HasNext => PageNumber < TotalPages;
-
-    /// <summary>
-    /// 上一页页码
-    /// </summary>
-    public int? PrevPageNumber => HasPrev ? PageNumber - 1 : null;
-
-    /// <summary>
-    /// 下一页页码
-    /// </summary>
-    public int? NextPageNumber => HasNext ? PageNumber + 1 : null;
-
-    /// <summary>
-    /// 是否为第一页
-    /// </summary>
-    public bool IsFirst => PageNumber == 1;
-
-    /// <summary>
-    /// 是否为最后一页
-    /// </summary>
-    public bool IsLast => PageNumber == TotalPages;
-
-    /// <summary>
-    /// 创建分页器
-    /// </summary>
-    /// <param name="allItems">所有项目</param>
-    /// <param name="pageNumber">页码</param>
-    /// <param name="pageSize">每页大小</param>
-    /// <returns>分页器实例</returns>
-    public static Paginator<T> Create(
-        IReadOnlyList<T> allItems,
-        int pageNumber,
-        int pageSize)
-    {
-        ArgumentNullException.ThrowIfNull(allItems);
-
-        var totalItems = allItems.Count;
-        var totalPages = totalItems > 0 ? (int)Math.Ceiling((double)totalItems / pageSize) : 1;
-        pageNumber = Math.Max(1, Math.Min(pageNumber, totalPages));
-
-        var skip = (pageNumber - 1) * pageSize;
-        var items = allItems.Skip(skip).Take(pageSize).ToList();
-
-        return new Paginator<T>
-        {
-            Items = items,
-            PageNumber = pageNumber,
-            PageSize = pageSize,
-            TotalPages = totalPages,
-            TotalItems = totalItems
-        };
-    }
 }

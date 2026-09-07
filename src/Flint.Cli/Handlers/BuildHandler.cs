@@ -92,6 +92,9 @@ internal static class BuildHandler
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser, new ShortcodeProcessor());
             ContentParserDateSetup.Apply(contentParser, siteConfig,
                 Path.Combine(sourcePath, siteConfig.ContentDir));
+            // CA2000 抑制：管线与三处理器生命周期与 CLI 进程一致（构建结束进程
+            // 退出即释放），显式 Dispose 无实际收益
+#pragma warning disable CA2000
             var assetPipeline = new AssetPipeline(new AssetPipelineOptions
             {
                 MinifyCss = minify,
@@ -101,6 +104,7 @@ internal static class BuildHandler
             imageProcessor: new ImageProcessor(),
             sassCompiler: new SassCompiler(),
             jsBundler: new JavaScriptBundler());
+#pragma warning restore CA2000
 
             // 创建站点构建器
             var siteBuilder = new SiteBuilder(

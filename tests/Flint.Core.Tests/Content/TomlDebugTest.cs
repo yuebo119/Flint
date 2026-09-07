@@ -1,5 +1,6 @@
 // 临时调试测试
 
+using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.Models;
 using Xunit;
@@ -309,7 +310,7 @@ public class TomlDebugTest
         var tomlContent = toml.Replace("+++\n", "", StringComparison.Ordinal)
                               .Replace("\n+++\n", "", StringComparison.Ordinal)
                               .Replace("+++", "", StringComparison.Ordinal);
-        var model = Flint.Core.TomlynCompat.ParseTable(tomlContent);
+        var model = Flint.Core.Configuration.TomlynCompat.ParseTable(tomlContent);
         _output.WriteLine($"TOML Model keys: {string.Join(", ", model.Keys)}");
         if (model.TryGetValue("date", out var dateValue))
         {

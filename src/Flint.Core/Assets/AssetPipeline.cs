@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
 using Flint.Core.Abstractions;
+using Flint.Core.Content;
 using Flint.Core.Models;
 using NUglify;
 

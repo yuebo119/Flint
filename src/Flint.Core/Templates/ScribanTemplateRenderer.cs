@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
 using Scriban;
 using Scriban.Parsing;
@@ -21,7 +22,7 @@ namespace Flint.Core.Templates;
 /// 基于 Scriban 的模板渲染器实现
 /// 支持模板继承、partial 引用和自定义函数
 /// </summary>
-public sealed class ScribanTemplateRenderer : ITemplateRenderer
+public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 {
     /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）</summary>
     private sealed record CachedTemplate(Template Template, string? SourcePath, DateTime ModifiedTimeUtc);
@@ -1045,11 +1046,7 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
 
             // 简单的正则匹配查找 include 语句
             // {{ include "partial_name" }} 或 {{ partial "partial_name" }}
-            var includePattern = new System.Text.RegularExpressions.Regex(
-                @"\{\{\s*(?:include|partial)\s+[""']([^""']+)[""']",
-                System.Text.RegularExpressions.RegexOptions.Compiled);
-
-            var matches = includePattern.Matches(content);
+            var matches = IncludePatternRegex().Matches(content);
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
                 var depName = match.Groups[1].Value;
@@ -1065,6 +1062,10 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             // 模板不存在，忽略
         }
     }
+
+    /// <summary>include/partial 引用匹配（source-gen 正则，替代运行时 RegexOptions.Compiled）</summary>
+    [GeneratedRegex(@"\{\{\s*(?:include|partial)\s+[""']([^""']+)[""']")]
+    private static partial Regex IncludePatternRegex();
 }
 
 /// <summary>

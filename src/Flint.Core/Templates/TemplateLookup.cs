@@ -98,8 +98,11 @@ public sealed class TemplateLookup
             }
         }
 
-        // 请求名指向站点根之外的文件（rootPath 形态）时不参与加权——保持直查语义
-        if (best is null)
+        // 直查仅对无格式请求生效：发现描述符缓存快照之后新增的模板文件
+        //（渲染器单飞场景无构建边界失效钩子）。带格式请求（"single.json"）
+        // 禁止直查——ChangeExtension 会把 ".json" 替换为 ".html"，让 html
+        // 模板冒充 json 变体（PageOutputFormats 集成测试实证）
+        if (best is null && outputFormat is null)
         {
             var direct = Path.Combine(rootPath, requestName);
             if (File.Exists(direct))
@@ -111,10 +114,9 @@ public sealed class TemplateLookup
             {
                 return directHtml;
             }
-            return null;
         }
 
-        return best.PhysicalPath;
+        return best?.PhysicalPath;
     }
 
     /// <summary>枚举全部描述符（诊断/对比用）</summary>
@@ -216,6 +218,17 @@ public sealed class TemplateLookup
             Path.GetFileName(descriptor.MatchName).Equals(baseName, StringComparison.OrdinalIgnoreCase);
         if (!nameMatched)
         {
+            return -1;
+        }
+
+        // 格式硬约束：请求带输出格式时描述符格式必须一致，请求无格式（html
+        // 主路径）时带格式声明的变体不参与——否则 html 模板会冒充 json 变体
+        // （无变体模板时 json 输出错误产出，PageOutputFormats 集成测试实证）
+        if (outputFormat is not null
+                ? !string.Equals(descriptor.OutputFormat, outputFormat, StringComparison.OrdinalIgnoreCase)
+                : descriptor.OutputFormat is not null)
+        {
+            Console.Error.WriteLine($"[SCORE-FMT-REJECT] desc={descriptor.RelativePath} fmt={outputFormat}");
             return -1;
         }
 

@@ -1,7 +1,6 @@
 // Flint 静态站点生成器
 // 分页属性测试
 
-using Flint.Core.Abstractions;
 using Flint.Core.Site;
 using FsCheck;
 using FsCheck.Fluent;

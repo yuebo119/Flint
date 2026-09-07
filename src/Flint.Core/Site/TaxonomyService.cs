@@ -3,6 +3,7 @@
 
 using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 
 namespace Flint.Core.Site;
 
