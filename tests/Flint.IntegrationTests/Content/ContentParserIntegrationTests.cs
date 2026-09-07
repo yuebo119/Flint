@@ -808,7 +808,6 @@ public class ContentParserIntegrationTests : IDisposable
         result.HtmlContent.Should().Contain("<a href=\"https://example.com\"");
         result.HtmlContent.Should().Contain("链接文本");
         result.HtmlContent.Should().Contain("<a href=\"https://example.org\"");
-        result.Links.Should().HaveCountGreaterThanOrEqualTo(2);
     }
 
     /// <summary>
@@ -833,7 +832,6 @@ public class ContentParserIntegrationTests : IDisposable
         result.HtmlContent.Should().Contain("<img");
         result.HtmlContent.Should().Contain("src=\"/images/test.png\"");
         result.HtmlContent.Should().Contain("alt=\"图片描述\"");
-        result.Images.Should().HaveCountGreaterThanOrEqualTo(2);
     }
 
     /// <summary>
@@ -1570,101 +1568,6 @@ public class ContentParserIntegrationTests : IDisposable
     #region 内容元数据提取测试
 
     /// <summary>
-    /// 测试标题提取
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ExtractHeadings_ShouldReturnAllHeadings()
-    {
-        // Arrange
-        var markdown = """
-            # 一级标题
-            
-            内容段落。
-            
-            ## 二级标题A
-            
-            更多内容。
-            
-            ### 三级标题
-            
-            ## 二级标题B
-            
-            最后的内容。
-            """;
-        var content = CreateYamlContent(title: "标题提取测试", markdownBody: markdown);
-        var file = CreateContentFile(content);
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Headings.Should().HaveCount(4);
-        result.Headings[0].Level.Should().Be(1);
-        result.Headings[0].Text.Should().Be("一级标题");
-        result.Headings[1].Level.Should().Be(2);
-        result.Headings[1].Text.Should().Be("二级标题A");
-        result.Headings[2].Level.Should().Be(3);
-        result.Headings[2].Text.Should().Be("三级标题");
-        result.Headings[3].Level.Should().Be(2);
-        result.Headings[3].Text.Should().Be("二级标题B");
-    }
-
-    /// <summary>
-    /// 测试链接提取
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ExtractLinks_ShouldReturnAllLinks()
-    {
-        // Arrange
-        var markdown = """
-            这是一个[内部链接](/about)。
-            
-            这是一个[外部链接](https://example.com "示例网站")。
-            
-            还有一个[GitHub](https://github.com)链接。
-            """;
-        var content = CreateYamlContent(title: "链接提取测试", markdownBody: markdown);
-        var file = CreateContentFile(content);
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Links.Should().HaveCount(3);
-        result.Links.Should().Contain(l => l.Url == "/about");
-        result.Links.Should().Contain(l => l.Url == "https://example.com");
-        result.Links.Should().Contain(l => l.Url == "https://github.com");
-    }
-
-    /// <summary>
-    /// 测试图片提取
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ExtractImages_ShouldReturnAllImages()
-    {
-        // Arrange
-        var markdown = """
-            ![本地图片](/images/local.png "本地图片标题")
-            
-            ![外部图片](https://example.com/image.jpg)
-            
-            ![另一张图片](/assets/photo.webp)
-            """;
-        var content = CreateYamlContent(title: "图片提取测试", markdownBody: markdown);
-        var file = CreateContentFile(content);
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Images.Should().HaveCount(3);
-        result.Images.Should().Contain(i => i.Src == "/images/local.png");
-        result.Images.Should().Contain(i => i.Src == "https://example.com/image.jpg");
-        result.Images.Should().Contain(i => i.Src == "/assets/photo.webp");
-    }
-
-
-    /// <summary>
     /// 测试字数统计
     /// </summary>
     [Fact]
@@ -1777,48 +1680,6 @@ public class ContentParserIntegrationTests : IDisposable
         result.Summary.Should().Be("这是文章描述");
     }
 
-    /// <summary>
-    /// 测试内容哈希计算
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ContentHash_ShouldBeConsistent()
-    {
-        // Arrange
-        var content = CreateYamlContent(title: "哈希测试", markdownBody: "测试内容");
-        var file1 = CreateContentFile(content, "test1.md");
-        var file2 = CreateContentFile(content, "test2.md");
-
-        // Act
-        var result1 = await _parser.ParseAsync(file1);
-        var result2 = await _parser.ParseAsync(file2);
-
-        // Assert
-        result1.ContentHash.Should().NotBeNullOrEmpty();
-        result2.ContentHash.Should().NotBeNullOrEmpty();
-        result1.ContentHash.Should().Be(result2.ContentHash);
-    }
-
-
-    /// <summary>
-    /// 测试不同内容产生不同哈希
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ContentHash_DifferentContent_ShouldProduceDifferentHash()
-    {
-        // Arrange
-        var content1 = CreateYamlContent(title: "哈希测试1", markdownBody: "内容A");
-        var content2 = CreateYamlContent(title: "哈希测试2", markdownBody: "内容B");
-        var file1 = CreateContentFile(content1, "test1.md");
-        var file2 = CreateContentFile(content2, "test2.md");
-
-        // Act
-        var result1 = await _parser.ParseAsync(file1);
-        var result2 = await _parser.ParseAsync(file2);
-
-        // Assert
-        result1.ContentHash.Should().NotBe(result2.ContentHash);
-    }
-
     #endregion
 
     #region Front Matter 格式无关性测试
@@ -1926,7 +1787,6 @@ public class ContentParserIntegrationTests : IDisposable
         result.HtmlContent.Should().Contain("中文标题测试");
         result.HtmlContent.Should().Contain("中文内容");
         result.HtmlContent.Should().Contain("列表项一");
-        result.Headings.Should().Contain(h => h.Text == "中文标题测试");
     }
 
     /// <summary>
@@ -2356,9 +2216,6 @@ public class ContentParserIntegrationTests : IDisposable
         result.HtmlContent.Should().Contain("type=\"checkbox\"");
 
         // Assert - 提取的元数据
-        result.Headings.Should().HaveCountGreaterThanOrEqualTo(4);
-        result.Links.Should().HaveCountGreaterThanOrEqualTo(1);
-        result.Images.Should().HaveCountGreaterThanOrEqualTo(1);
         result.WordCount.Should().BeGreaterThan(0);
         result.ReadingTime.Should().BeGreaterThan(TimeSpan.Zero);
     }

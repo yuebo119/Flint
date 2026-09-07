@@ -15,7 +15,7 @@ namespace Flint.Core.Modules;
 /// 模块管理器 - 管理主题和模块的安装、更新和依赖解析
 /// 供应链安全：版本锁定于 Flint.lock（含 SHA256），下载有超时与大小上限，失败显式报错不静默降级
 /// </summary>
-public sealed partial class ModuleManager : IModuleManager, IDisposable
+public sealed partial class ModuleManager : IDisposable
 {
     private const int DownloadTimeoutSeconds = 30;
 
@@ -74,7 +74,7 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
         }
 
         var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, cancellationToken);
-        var newDesc = new ModuleDescriptor { Name = descriptor.Name, Version = version, Repository = descriptor.Repository, Dependencies = descriptor.Dependencies };
+        var newDesc = new ModuleDescriptor { Name = descriptor.Name, Version = version, Repository = descriptor.Repository };
         await UpdateLockFileAsync(moduleName, newDesc, version, sha256, cancellationToken);
     }
 
@@ -256,19 +256,19 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
         if (!File.Exists(configPath))
             configPath = Path.Combine(modulePath, "module.toml");
         if (!File.Exists(configPath))
-            return new ModuleDescriptor { Name = Path.GetFileName(modulePath), Version = "unknown", Repository = "", Dependencies = [], LocalPath = modulePath };
+            return new ModuleDescriptor { Name = Path.GetFileName(modulePath), Version = "unknown", Repository = "", LocalPath = modulePath };
 
         var content = await File.ReadAllTextAsync(configPath, ct);
         // 使用 Tomlyn 低级 API（AOT 兼容）
         var config = TomlynCompat.TryParseTable(content);
         if (config is null)
-            return new ModuleDescriptor { Name = Path.GetFileName(modulePath), Version = "unknown", Repository = "", Dependencies = [], LocalPath = modulePath };
+            return new ModuleDescriptor { Name = Path.GetFileName(modulePath), Version = "unknown", Repository = "", LocalPath = modulePath };
         return new ModuleDescriptor
         {
             Name = GetTomlString(config, "name") ?? Path.GetFileName(modulePath),
             Version = GetTomlString(config, "version") ?? "1.0.0",
             Repository = GetTomlString(config, "repository") ?? "",
-            Dependencies = [],
+            
             LocalPath = modulePath
         };
     }

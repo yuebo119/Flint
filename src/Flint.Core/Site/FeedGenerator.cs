@@ -92,41 +92,6 @@ public sealed class FeedGenerator
         return sb.ToString();
     }
 
-    /// <summary>
-    /// 生成 JSON Feed
-    /// </summary>
-    /// <param name="pages">页面列表</param>
-    /// <returns>JSON 内容</returns>
-    public string GenerateJsonFeed(IReadOnlyList<PageContext> pages)
-    {
-        var feedPages = GetFeedPages(pages);
-        var items = feedPages.Select(page => new JsonFeedItem
-        {
-            Id = GetAbsoluteUrl(page.Permalink),
-            Url = GetAbsoluteUrl(page.Permalink),
-            Title = page.Title,
-            ContentHtml = _options.IncludeFullContent ? page.Content : null,
-            Summary = page.Summary ?? page.Description,
-            DatePublished = page.Date.ToString("O"),
-            DateModified = (page.LastMod ?? page.Date).ToString("O"),
-            Tags = page.Tags
-        }).ToList();
-
-        var feed = new JsonFeed
-        {
-            Version = "https://jsonfeed.org/version/1.1",
-            Title = _options.Title,
-            HomePageUrl = _options.BaseUrl,
-            FeedUrl = GetAbsoluteUrl(_options.FeedPath ?? "/feed.json"),
-            Description = _options.Description,
-            Language = _options.Language,
-            Items = items
-        };
-
-        // source-gen 序列化（AOT/trim 安全）
-        return System.Text.Json.JsonSerializer.Serialize(feed, FeedJsonContext.Default.JsonFeed);
-    }
-
     private void WriteRssChannelInfo(XmlWriter writer)
     {
         writer.WriteElementString("title", _options.Title);
@@ -395,72 +360,4 @@ public sealed record FeedOptions
     /// 排除的页面类型
     /// </summary>
     public IReadOnlySet<string> ExcludedTypes { get; init; } = new HashSet<string>();
-}
-
-/// <summary>
-/// JSON Feed 1.1 顶层文档
-/// </summary>
-internal sealed record JsonFeed
-{
-    [System.Text.Json.Serialization.JsonPropertyName("version")]
-    public required string Version { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("title")]
-    public required string Title { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("home_page_url")]
-    public string? HomePageUrl { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("feed_url")]
-    public string? FeedUrl { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("description")]
-    public string? Description { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("language")]
-    public string? Language { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("items")]
-    public required IReadOnlyList<JsonFeedItem> Items { get; init; }
-}
-
-/// <summary>
-/// JSON Feed 条目
-/// </summary>
-internal sealed record JsonFeedItem
-{
-    [System.Text.Json.Serialization.JsonPropertyName("id")]
-    public required string Id { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("url")]
-    public string? Url { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("title")]
-    public string? Title { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("content_html")]
-    public string? ContentHtml { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("summary")]
-    public string? Summary { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("date_published")]
-    public string? DatePublished { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("date_modified")]
-    public string? DateModified { get; init; }
-
-    [System.Text.Json.Serialization.JsonPropertyName("tags")]
-    public IReadOnlyList<string>? Tags { get; init; }
-}
-
-/// <summary>
-/// JSON Feed 序列化上下文（source-gen，AOT/trim 友好）
-/// </summary>
-[System.Text.Json.Serialization.JsonSerializable(typeof(JsonFeed))]
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(
-    WriteIndented = true,
-    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-internal sealed partial class FeedJsonContext : System.Text.Json.Serialization.JsonSerializerContext
-{
 }

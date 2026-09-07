@@ -383,9 +383,7 @@ public class ModuleConfigConsistencyPropertyTests
                 // Assert
                 var hasName = module != null && !string.IsNullOrEmpty(module.Name);
                 var hasVersion = module != null && !string.IsNullOrEmpty(module.Version);
-                var hasDependencies = module != null && module.Dependencies != null;
-
-                return hasName && hasVersion && hasDependencies;
+                return hasName && hasVersion;
             }
             finally
             {

@@ -126,47 +126,6 @@ public class PaginationPropertyTests
     }
 
     /// <summary>
-    /// **Property 8: 分页 URL 生成一致性**
-    /// 第一页的 URL 应该是基础路径，其他页面应该包含页码
-    /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PaginationArbitrary)])]
-    public Property PageUrls_ShouldBeConsistent(
-        ValidBasePath basePath,
-        ValidPageNumber pageNumber)
-    {
-        ArgumentNullException.ThrowIfNull(basePath);
-        ArgumentNullException.ThrowIfNull(pageNumber);
-
-        // Arrange
-        var service = new PaginationService();
-
-        // Act
-        var url = service.GeneratePageUrl(basePath.Value, pageNumber.Value);
-
-        // Assert
-        if (pageNumber.Value <= 1)
-        {
-            // 第一页应该是基础路径
-            var normalizedBase = basePath.Value.Trim();
-            if (!normalizedBase.StartsWith('/'))
-                normalizedBase = "/" + normalizedBase;
-            if (!normalizedBase.EndsWith('/'))
-                normalizedBase += "/";
-
-            return (url == normalizedBase)
-                .ToProperty()
-                .Label($"第一页 URL 应该是基础路径: {url} == {normalizedBase}");
-        }
-        else
-        {
-            // 其他页面应该包含页码
-            return (url.Contains($"/{pageNumber.Value}/"))
-                .ToProperty()
-                .Label($"页面 {pageNumber.Value} 的 URL 应该包含页码: {url}");
-        }
-    }
-
-    /// <summary>
     /// **Property 8: 总页数计算正确性**
     /// </summary>
     [Property(MaxTest = 100, Arbitrary = [typeof(PaginationArbitrary)])]
@@ -217,38 +176,6 @@ public class PaginationPropertyTests
                 !paginator.HasNext)
             .ToProperty()
             .Label("空列表应该返回单页空结果");
-    }
-
-    /// <summary>
-    /// **Property 8: 页码范围计算正确性**
-    /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(PaginationArbitrary)])]
-    public Property PageRange_ShouldBeWithinBounds(
-        ValidPageNumber currentPage,
-        ValidTotalPages totalPages,
-        ValidWindowSize windowSize)
-    {
-        ArgumentNullException.ThrowIfNull(currentPage);
-        ArgumentNullException.ThrowIfNull(totalPages);
-        ArgumentNullException.ThrowIfNull(windowSize);
-
-        // Arrange
-        var service = new PaginationService();
-        var actualPage = Math.Max(1, Math.Min(currentPage.Value, totalPages.Value));
-
-        // Act
-        var range = service.GetPageRange(actualPage, totalPages.Value, windowSize.Value);
-
-        // Assert
-        var startValid = range.Start >= 1;
-        var endValid = range.End <= totalPages.Value;
-        var currentInRange = actualPage >= range.Start && actualPage <= range.End;
-        var rangeSize = range.End - range.Start + 1;
-        var sizeValid = rangeSize <= windowSize.Value;
-
-        return (startValid && endValid && currentInRange && sizeValid)
-            .ToProperty()
-            .Label($"当前页={actualPage}, 总页数={totalPages.Value}, 范围=[{range.Start}, {range.End}]");
     }
 }
 

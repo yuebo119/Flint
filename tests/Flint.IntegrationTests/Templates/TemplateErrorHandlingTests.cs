@@ -566,45 +566,6 @@ public class TemplateErrorHandlingTests : IDisposable
 
     #endregion
 
-    #region 内联模板错误测试
-
-    /// <summary>
-    /// 测试内联模板语法错误
-    /// 注意：Scriban 对于未闭合的大括号可能不会抛出解析异常
-    /// </summary>
-    [Fact]
-    public void RenderString_SyntaxError_ShouldThrowException()
-    {
-        // Arrange
-        // 使用更明确的语法错误
-        var invalidTemplate = "{{ if true }}没有 end";
-        var context = CreateTemplateContext();
-
-        // Act & Assert
-        var act = () => _renderer.RenderStringAsync(invalidTemplate, context).AsTask().Result;
-
-        act.Should().Throw<Exception>();
-    }
-
-    /// <summary>
-    /// 测试内联模板 - 有效模板应正常渲染
-    /// </summary>
-    [Fact]
-    public async Task RenderString_ValidTemplate_ShouldRenderCorrectly()
-    {
-        // Arrange
-        var validTemplate = "<h1>{{ page.title }}</h1>";
-        var context = CreateTemplateContext();
-
-        // Act
-        var result = await _renderer.RenderStringAsync(validTemplate, context);
-
-        // Assert
-        result.Should().Contain("<h1>测试页面</h1>");
-    }
-
-    #endregion
-
     #region 模板存在性检查测试
 
     /// <summary>

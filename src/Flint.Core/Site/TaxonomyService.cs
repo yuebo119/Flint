@@ -216,30 +216,6 @@ public sealed partial class TaxonomyService
         };
     }
 
-    /// <summary>
-    /// 添加自定义分类
-    /// </summary>
-    public void AddTaxonomy(string name, TaxonomyConfig config)
-    {
-        _taxonomyConfigs[name] = config;
-    }
-
-    /// <summary>
-    /// 获取所有配置的分类名称
-    /// </summary>
-    public IReadOnlyList<string> GetTaxonomyNames()
-    {
-        return [.. _taxonomyConfigs.Keys];
-    }
-
-    /// <summary>
-    /// 获取指定分类的配置
-    /// </summary>
-    public TaxonomyConfig? GetTaxonomyConfig(string name)
-    {
-        return _taxonomyConfigs.TryGetValue(name, out var config) ? config : null;
-    }
-
     [GeneratedRegex(@"[^a-z0-9\u4e00-\u9fff\-]")]
     private static partial Regex SlugInvalidCharsRegex();
 

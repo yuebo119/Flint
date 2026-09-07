@@ -77,30 +77,6 @@ public sealed class ContentHashCache
     }
 
     /// <summary>
-    /// 检查文件是否已变化
-    /// </summary>
-    /// <param name="file">内容文件</param>
-    /// <returns>是否已变化</returns>
-    public bool HasChanged(ContentFile file)
-    {
-        if (!_cache.TryGetValue(file.Path, out var entry))
-        {
-            return true; // 新文件
-        }
-
-        // 快速检查
-        if (entry.FileSize != file.RawContent.Length ||
-            entry.LastModified != file.ModifiedTime)
-        {
-            return true;
-        }
-
-        // 完整检查
-        var currentHash = ComputeHash(file.RawContent);
-        return entry.Hash != currentHash;
-    }
-
-    /// <summary>
     /// 清除缓存
     /// </summary>
     public void Clear()

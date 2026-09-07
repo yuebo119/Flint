@@ -1,10 +1,7 @@
 // Flint 静态站点生成器
 // 内容解析器实现 - 整合 Front Matter、Markdown、短代码解析
 
-using System.Buffers;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Content.Shortcodes;
 using Flint.Core.Models;
@@ -26,11 +23,6 @@ public sealed class ContentParser : IContentParser
     /// 摘要分隔符
     /// </summary>
     private const string SummaryDivider = "<!--more-->";
-
-    /// <summary>
-    /// SHA256 哈希缓冲区大小
-    /// </summary>
-    private const int HashBufferSize = 32;
 
     private readonly IFrontMatterParser _frontMatterParser;
     private readonly IMarkdownParser _markdownParser;
@@ -113,9 +105,6 @@ public sealed class ContentParser : IContentParser
         // 3+4. 单次解析产出 HTML 与全部元数据（此前各步骤独立解析，同一文档被完整解析 7 次）
         var analysis = _markdownParser.Analyze(markdownWithTokens);
         var htmlContent = ShortcodeProcessor.ExpandShortcodeTokens(analysis.Html, deferredShortcodes);
-        var headings = ExtractHeadings(analysis.Headings);
-        var links = ExtractLinks(analysis.Links);
-        var images = ExtractImages(analysis.Images);
         var wordCount = analysis.WordCount;
         var readingTime = analysis.ReadingTime;
         var plainText = analysis.PlainText;
@@ -123,24 +112,17 @@ public sealed class ContentParser : IContentParser
         // 5. 生成摘要
         var summary = GenerateSummary(metadata, markdownContent, plainText);
 
-        // 6. 计算内容哈希
-        var contentHash = ComputeContentHash(content);
-
-        // 7. 构建 ParsedContent
+        // 6. 构建 ParsedContent
         return new ParsedContent
         {
             SourcePath = file.Path,
             Metadata = metadata,
             HtmlContent = htmlContent,
             RawMarkdown = markdownContent,
-            Headings = headings,
-            Links = links,
-            Images = images,
             ReadingTime = readingTime,
             WordCount = wordCount,
             PlainText = plainText,
-            Summary = summary,
-            ContentHash = contentHash
+            Summary = summary
         };
     }
 
@@ -201,47 +183,6 @@ public sealed class ContentParser : IContentParser
         }
 
         return title;
-    }
-
-    /// <summary>
-    /// 将 MarkdownHeading 转换为 Heading
-    /// </summary>
-    private static List<Heading> ExtractHeadings(IReadOnlyList<MarkdownHeading> markdownHeadings)
-    {
-        return markdownHeadings.Select(h => new Heading
-        {
-            Level = h.Level,
-            Text = h.Text,
-            Id = h.Id
-        }).ToList();
-    }
-
-    /// <summary>
-    /// 将 MarkdownLink 转换为 ContentLink
-    /// </summary>
-    private static List<ContentLink> ExtractLinks(IReadOnlyList<MarkdownLink> markdownLinks)
-    {
-        return markdownLinks.Select(l => new ContentLink
-        {
-            Url = l.Url,
-            Text = l.Text,
-            Title = l.Title,
-            IsExternal = l.IsExternal
-        }).ToList();
-    }
-
-    /// <summary>
-    /// 将 MarkdownImage 转换为 ContentImage
-    /// </summary>
-    private static List<ContentImage> ExtractImages(IReadOnlyList<MarkdownImage> markdownImages)
-    {
-        return markdownImages.Select(i => new ContentImage
-        {
-            Src = i.Src,
-            Alt = i.Alt,
-            Title = i.Title,
-            IsExternal = i.IsExternal
-        }).ToList();
     }
 
     /// <summary>
@@ -327,28 +268,5 @@ public sealed class ContentParser : IContentParser
         result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ");
 
         return result.Trim();
-    }
-
-    /// <summary>
-    /// 计算内容哈希（SHA256）- 使用 ArrayPool 优化
-    /// </summary>
-    private static string ComputeContentHash(string content)
-    {
-        // 优化：使用 ArrayPool 减少内存分配
-        var maxByteCount = Encoding.UTF8.GetMaxByteCount(content.Length);
-        var rentedBuffer = ArrayPool<byte>.Shared.Rent(maxByteCount);
-        var hashBuffer = ArrayPool<byte>.Shared.Rent(HashBufferSize);
-
-        try
-        {
-            var byteCount = Encoding.UTF8.GetBytes(content, rentedBuffer);
-            SHA256.HashData(rentedBuffer.AsSpan(0, byteCount), hashBuffer);
-            return Convert.ToHexString(hashBuffer.AsSpan(0, HashBufferSize)).ToLowerInvariant();
-        }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(rentedBuffer);
-            ArrayPool<byte>.Shared.Return(hashBuffer);
-        }
     }
 }

@@ -13,100 +13,6 @@ namespace Flint.Core.Tests.Models;
 public class BuildResultTests
 {
     [Fact]
-    public void BuildResult_Successful_应该创建成功的构建结果()
-    {
-        // Arrange
-        var pagesBuilt = 100;
-        var assetsProcessed = 50;
-        var duration = TimeSpan.FromMilliseconds(350);
-        var memoryUsed = 30_000_000L;
-        var outputPath = "public";
-
-        // Act
-        var result = BuildResult.Successful(
-            pagesBuilt,
-            assetsProcessed,
-            duration,
-            memoryUsed,
-            outputPath);
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.PagesBuilt.Should().Be(pagesBuilt);
-        result.AssetsProcessed.Should().Be(assetsProcessed);
-        result.Duration.Should().Be(duration);
-        result.MemoryUsed.Should().Be(memoryUsed);
-        result.OutputPath.Should().Be(outputPath);
-        result.Errors.Should().BeEmpty();
-        result.Warnings.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void BuildResult_Successful_应该包含警告()
-    {
-        // Arrange
-        var warnings = new[]
-        {
-            new BuildWarning
-            {
-                WarningCode = "W001",
-                Message = "未使用的模板"
-            }
-        };
-
-        // Act
-        var result = BuildResult.Successful(
-            100, 50,
-            TimeSpan.FromMilliseconds(350),
-            30_000_000L,
-            "public",
-            warnings);
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.Warnings.Should().HaveCount(1);
-        result.Warnings[0].WarningCode.Should().Be("W001");
-    }
-
-    [Fact]
-    public void BuildResult_Failed_应该创建失败的构建结果()
-    {
-        // Arrange
-        var errors = new[]
-        {
-            new BuildError
-            {
-                ErrorCode = "MD001",
-                Message = "Markdown 解析失败",
-                FilePath = "content/posts/test.md",
-                Line = 15,
-                Column = 8,
-                Severity = ErrorSeverity.Error
-            }
-        };
-        var duration = TimeSpan.FromMilliseconds(100);
-        var memoryUsed = 10_000_000L;
-        var outputPath = "public";
-
-        // Act
-        var result = BuildResult.Failed(
-            errors,
-            duration,
-            memoryUsed,
-            outputPath);
-
-        // Assert
-        result.Success.Should().BeFalse();
-        result.PagesBuilt.Should().Be(0);
-        result.AssetsProcessed.Should().Be(0);
-        result.Duration.Should().Be(duration);
-        result.MemoryUsed.Should().Be(memoryUsed);
-        result.OutputPath.Should().Be(outputPath);
-        result.Errors.Should().HaveCount(1);
-        result.Errors[0].ErrorCode.Should().Be("MD001");
-    }
-
-    [Fact]
     public void BuildError_应该正确存储所有属性()
     {
         // Arrange & Act
@@ -174,38 +80,6 @@ public class BuildResultTests
 
         // Assert
         error.Severity.Should().Be(severity);
-    }
-
-    [Fact]
-    public void BuildStatistics_应该正确计算缓存命中率()
-    {
-        // Arrange
-        var stats = new BuildStatistics
-        {
-            ParsingTime = TimeSpan.FromMilliseconds(100),
-            RenderingTime = TimeSpan.FromMilliseconds(150),
-            AssetProcessingTime = TimeSpan.FromMilliseconds(50),
-            WritingTime = TimeSpan.FromMilliseconds(30),
-            CacheHits = 80,
-            CacheMisses = 20
-        };
-
-        // Act & Assert
-        stats.CacheHitRate.Should().BeApproximately(0.8, 0.001);
-    }
-
-    [Fact]
-    public void BuildStatistics_零缓存访问时命中率应该为零()
-    {
-        // Arrange
-        var stats = new BuildStatistics
-        {
-            CacheHits = 0,
-            CacheMisses = 0
-        };
-
-        // Act & Assert
-        stats.CacheHitRate.Should().Be(0);
     }
 
     [Fact]

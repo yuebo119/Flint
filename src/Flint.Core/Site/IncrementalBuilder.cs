@@ -2,7 +2,6 @@
 // 增量构建器实现
 
 using System.Collections.Concurrent;
-using Flint.Core.Abstractions;
 
 namespace Flint.Core.Site;
 
@@ -12,7 +11,6 @@ namespace Flint.Core.Site;
 /// </summary>
 public sealed class IncrementalBuilder
 {
-    private readonly ConcurrentDictionary<string, FileInfo> _fileCache = new();
     private readonly ConcurrentDictionary<string, HashSet<string>> _dependencies = new();
     // 值用并发字典当 set：注册方在 Parallel.ForEachAsync 内并发到达，
     // HashSet.Add 在扩容期并发会丢条目甚至损坏桶结构
@@ -73,139 +71,5 @@ public sealed class IncrementalBuilder
         }
 
         return affected;
-    }
-
-
-    /// <summary>
-    /// 检查文件是否需要重新构建
-    /// </summary>
-    /// <param name="file">文件路径</param>
-    /// <returns>是否需要重新构建</returns>
-    public bool NeedsRebuild(string file)
-    {
-        if (!File.Exists(file))
-            return true;
-
-        var currentInfo = new System.IO.FileInfo(file);
-
-        if (_fileCache.TryGetValue(file, out var cached))
-        {
-            return currentInfo.LastWriteTimeUtc > cached.LastWriteTimeUtc
-                || currentInfo.Length != cached.Length;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// 更新文件缓存
-    /// </summary>
-    /// <param name="file">文件路径</param>
-    public void UpdateCache(string file)
-    {
-        if (File.Exists(file))
-        {
-            var info = new System.IO.FileInfo(file);
-            _fileCache[file] = new FileInfo
-            {
-                Path = file,
-                LastWriteTimeUtc = info.LastWriteTimeUtc,
-                Length = info.Length
-            };
-        }
-        else
-        {
-            _fileCache.TryRemove(file, out _);
-        }
-    }
-
-    /// <summary>
-    /// 清除所有缓存
-    /// </summary>
-    public void ClearCache()
-    {
-        _fileCache.Clear();
-        _dependencies.Clear();
-        _reverseDependencies.Clear();
-    }
-
-    /// <summary>
-    /// 获取文件的所有依赖
-    /// </summary>
-    public IReadOnlySet<string> GetDependencies(string file)
-    {
-        return _dependencies.TryGetValue(file, out var deps)
-            ? deps
-            : new HashSet<string>();
-    }
-
-    /// <summary>
-    /// 获取依赖指定文件的所有文件（返回快照，调用方可安全枚举）
-    /// </summary>
-    public IReadOnlySet<string> GetDependents(string file)
-    {
-        return _reverseDependencies.TryGetValue(file, out var deps)
-            ? new HashSet<string>(deps.Keys, StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private sealed class FileInfo
-    {
-        public required string Path { get; init; }
-        public required DateTimeOffset LastWriteTimeUtc { get; init; }
-        public required long Length { get; init; }
-    }
-}
-
-/// <summary>
-/// 模板依赖分析器
-/// </summary>
-public sealed class TemplateDependencyAnalyzer
-{
-    private readonly ITemplateRenderer _templateRenderer;
-
-    public TemplateDependencyAnalyzer(ITemplateRenderer templateRenderer)
-    {
-        _templateRenderer = templateRenderer;
-    }
-
-    /// <summary>
-    /// 分析模板依赖
-    /// </summary>
-    /// <param name="templateName">模板名称</param>
-    /// <returns>依赖的模板列表</returns>
-    public IReadOnlyList<string> AnalyzeDependencies(string templateName)
-    {
-        return _templateRenderer.GetDependencies(templateName);
-    }
-
-    /// <summary>
-    /// 获取使用指定模板的所有内容文件
-    /// </summary>
-    /// <param name="templateName">模板名称</param>
-    /// <param name="contentFiles">内容文件列表</param>
-    /// <param name="getLayout">获取内容文件布局的函数</param>
-    /// <returns>使用该模板的内容文件列表</returns>
-    public IReadOnlyList<string> GetContentUsingTemplate(
-        string templateName,
-        IEnumerable<string> contentFiles,
-        Func<string, string?> getLayout)
-    {
-        var result = new List<string>();
-        var templateDeps = new HashSet<string>(_templateRenderer.GetDependencies(templateName))
-        {
-            templateName
-        };
-
-        foreach (var contentFile in contentFiles)
-        {
-            var layout = getLayout(contentFile) ?? "single";
-            if (templateDeps.Contains(layout))
-            {
-                result.Add(contentFile);
-            }
-        }
-
-        return result;
     }
 }

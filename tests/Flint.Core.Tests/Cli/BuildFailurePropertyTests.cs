@@ -16,54 +16,6 @@ namespace Flint.Core.Tests.Cli;
 public class BuildFailurePropertyTests
 {
     /// <summary>
-    /// **Property 12: 成功的构建结果不应该包含错误**
-    /// （原"包含错误的构建应标记失败"用例为同义反复——Arrange 硬编码 Success=false
-    /// 再断言 !Success，被测系统零参与，已删除；失败路径由 CliErrorHandlingTests/ExitCodeTests 覆盖）
-    /// </summary>
-    [Property(MaxTest = 100)]
-    public Property SuccessfulBuild_ShouldHaveNoErrors(PositiveInt pagesBuilt, PositiveInt assetsProcessed)
-    {
-        // Arrange & Act
-        var result = BuildResult.Successful(
-            pagesBuilt.Get,
-            assetsProcessed.Get,
-            TimeSpan.FromMilliseconds(100),
-            1024 * 1024,
-            "/output");
-
-        // Assert
-        return (result.Success && result.Errors.Count == 0)
-            .ToProperty()
-            .Label($"成功的构建不应该有错误: Pages={pagesBuilt.Get}, Assets={assetsProcessed.Get}");
-    }
-
-    /// <summary>
-    /// **Property 12: 失败的构建结果应该包含至少一个错误**
-    /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(BuildResultArbitrary)])]
-    public Property FailedBuild_ShouldHaveAtLeastOneError(ValidBuildErrors errors)
-    {
-        ArgumentNullException.ThrowIfNull(errors);
-
-        if (errors.Value.Count == 0)
-        {
-            return true.ToProperty().Label("没有错误跳过");
-        }
-
-        // Arrange & Act
-        var result = BuildResult.Failed(
-            errors.Value,
-            TimeSpan.FromMilliseconds(100),
-            1024 * 1024,
-            "/output");
-
-        // Assert
-        return (!result.Success && result.Errors.Count >= 1)
-            .ToProperty()
-            .Label($"失败的构建应该至少有一个错误");
-    }
-
-    /// <summary>
     /// **Property 12: 构建结果的错误信息应该完整保留**
     /// </summary>
     [Property(MaxTest = 100, Arbitrary = [typeof(BuildResultArbitrary)])]

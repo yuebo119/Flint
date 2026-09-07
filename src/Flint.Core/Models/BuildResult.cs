@@ -47,57 +47,6 @@ public sealed class BuildResult
     /// 输出目录
     /// </summary>
     public required string OutputPath { get; init; }
-
-    /// <summary>
-    /// 输出文件总大小（字节）
-    /// </summary>
-    public long TotalOutputSize { get; init; }
-
-    /// <summary>
-    /// 构建统计信息
-    /// </summary>
-    public BuildStatistics? Statistics { get; init; }
-
-    /// <summary>
-    /// 创建成功的构建结果
-    /// </summary>
-    public static BuildResult Successful(
-        int pagesBuilt,
-        int assetsProcessed,
-        TimeSpan duration,
-        long memoryUsed,
-        string outputPath,
-        IReadOnlyList<BuildWarning>? warnings = null) => new()
-        {
-            Success = true,
-            PagesBuilt = pagesBuilt,
-            AssetsProcessed = assetsProcessed,
-            Duration = duration,
-            MemoryUsed = memoryUsed,
-            OutputPath = outputPath,
-            Errors = [],
-            Warnings = warnings ?? []
-        };
-
-    /// <summary>
-    /// 创建失败的构建结果
-    /// </summary>
-    public static BuildResult Failed(
-        IReadOnlyList<BuildError> errors,
-        TimeSpan duration,
-        long memoryUsed,
-        string outputPath,
-        IReadOnlyList<BuildWarning>? warnings = null) => new()
-        {
-            Success = false,
-            PagesBuilt = 0,
-            AssetsProcessed = 0,
-            Duration = duration,
-            MemoryUsed = memoryUsed,
-            OutputPath = outputPath,
-            Errors = errors,
-            Warnings = warnings ?? []
-        };
 }
 
 /// <summary>
@@ -201,57 +150,4 @@ public enum ErrorSeverity
     /// 致命错误
     /// </summary>
     Fatal
-}
-
-/// <summary>
-/// 构建统计信息
-/// </summary>
-public sealed class BuildStatistics
-{
-    /// <summary>
-    /// 内容解析耗时
-    /// </summary>
-    public TimeSpan ParsingTime { get; init; }
-
-    /// <summary>
-    /// 模板渲染耗时
-    /// </summary>
-    public TimeSpan RenderingTime { get; init; }
-
-    /// <summary>
-    /// 资源处理耗时
-    /// </summary>
-    public TimeSpan AssetProcessingTime { get; init; }
-
-    /// <summary>
-    /// 文件写入耗时
-    /// </summary>
-    public TimeSpan WritingTime { get; init; }
-
-    /// <summary>
-    /// 各类型页面数量
-    /// </summary>
-    public IReadOnlyDictionary<string, int> PagesByType { get; init; } = new Dictionary<string, int>();
-
-    /// <summary>
-    /// 各类型资源数量
-    /// </summary>
-    public IReadOnlyDictionary<string, int> AssetsByType { get; init; } = new Dictionary<string, int>();
-
-    /// <summary>
-    /// 缓存命中次数
-    /// </summary>
-    public int CacheHits { get; init; }
-
-    /// <summary>
-    /// 缓存未命中次数
-    /// </summary>
-    public int CacheMisses { get; init; }
-
-    /// <summary>
-    /// 缓存命中率
-    /// </summary>
-    public double CacheHitRate => CacheHits + CacheMisses > 0
-        ? (double)CacheHits / (CacheHits + CacheMisses)
-        : 0;
 }

@@ -85,11 +85,6 @@ internal static class ModHandler
             Console.WriteLine($"  版本: {descriptor.Version}");
             Console.WriteLine($"  位置: themes/{descriptor.Name}");
 
-            if (descriptor.Dependencies.Count > 0)
-            {
-                Console.WriteLine($"  依赖: {string.Join(", ", descriptor.Dependencies.Select(d => d.Name))}");
-            }
-
             Console.WriteLine();
             Console.WriteLine("要使用此主题，请在 Flint.toml 中添加:");
             Console.WriteLine($"  theme = \"{descriptor.Name}\"");
@@ -239,10 +234,6 @@ internal static class ModHandler
                     if (!string.IsNullOrEmpty(module.Repository))
                     {
                         Console.WriteLine($"    仓库: {module.Repository}");
-                    }
-                    if (module.Dependencies.Count > 0)
-                    {
-                        Console.WriteLine($"    依赖: {string.Join(", ", module.Dependencies.Select(d => d.Name))}");
                     }
                 }
             }

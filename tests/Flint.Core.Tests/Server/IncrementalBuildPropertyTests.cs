@@ -135,57 +135,6 @@ public class IncrementalBuildPropertyTests
         return true.ToProperty()
             .Label($"链中所有 {chain.Files.Count} 个文件都受影响");
     }
-
-    /// <summary>
-    /// **Property 10: 无关文件不应该被重新构建**
-    /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(IncrementalBuildArbitrary)])]
-    public Property UnrelatedFiles_ShouldNotBeRebuilt(ValidDependencyGraph graph)
-    {
-        ArgumentNullException.ThrowIfNull(graph);
-
-        if (graph.Dependencies.Count < 2)
-        {
-            return true.ToProperty().Label("依赖图太小");
-        }
-
-        // Arrange
-        var builder = new IncrementalBuilder();
-
-        foreach (var (file, deps) in graph.Dependencies)
-        {
-            builder.RegisterDependency(file, deps);
-        }
-
-        // 找到一个独立的文件（不依赖其他文件，也没有被依赖）
-        var allFiles = graph.Dependencies.Keys.ToHashSet();
-        var allDeps = graph.Dependencies.Values.SelectMany(d => d).ToHashSet();
-        var independentFiles = allFiles.Except(allDeps).ToList();
-
-        if (independentFiles.Count < 2)
-        {
-            return true.ToProperty().Label("没有足够的独立文件");
-        }
-
-        // Act - 修改第一个独立文件
-        var changedFile = independentFiles[0];
-        var affected = builder.GetAffectedFiles([changedFile]);
-
-        // Assert - 其他独立文件不应该受影响
-        foreach (var file in independentFiles.Skip(1))
-        {
-            // 检查是否有依赖关系
-            var deps = builder.GetDependencies(file);
-            if (!deps.Contains(changedFile) && affected.Contains(file))
-            {
-                return false.ToProperty()
-                    .Label($"无关文件 '{file}' 不应该在受影响列表中");
-            }
-        }
-
-        return true.ToProperty()
-            .Label("无关文件未被包含在受影响列表中");
-    }
 }
 
 #region 测试数据类型
