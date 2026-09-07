@@ -222,6 +222,12 @@ public sealed class PageContext
     public IReadOnlyList<TaxonomyTerm>? Terms { get; init; }
 
     /// <summary>
+    /// 页面 front matter 声明的菜单条目（menu 标识 → 条目配置）：
+    /// 供 MenuBuilder 汇入全站菜单；URL 缺省时由页面自身 RelPermalink 补齐
+    /// </summary>
+    public IReadOnlyDictionary<string, MenuItemConfig>? MenuEntries { get; init; }
+
+    /// <summary>
     /// 自定义参数
     /// </summary>
     public IReadOnlyDictionary<string, object> Params { get; init; } =

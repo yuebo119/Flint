@@ -15,16 +15,22 @@ namespace Flint.Core.Assets;
 /// </summary>
 public sealed class JavaScriptBundler : IJavaScriptBundler
 {
-    private readonly string? _esbuildPath;
-    private readonly bool _esbuildAvailable;
+    // esbuild 探测结果（懒加载）：构造期逐路径起进程探测（各 1s 超时）会让
+    // serve 场景每次装配都付一遍——未触发打包功能时纯浪费，故延迟到首次使用
+    private string? _esbuildPath;
+    private bool _esbuildAvailable;
+    private bool _esbuildProbed;
 
-    /// <summary>
-    /// 创建 JavaScript 打包器
-    /// </summary>
-    public JavaScriptBundler()
+    private void EnsureEsbuild()
     {
+        if (_esbuildProbed)
+        {
+            return;
+        }
+
         _esbuildPath = FindEsbuild();
         _esbuildAvailable = _esbuildPath != null;
+        _esbuildProbed = true;
     }
 
     /// <summary>
@@ -44,6 +50,7 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
         var stopwatch = Stopwatch.StartNew();
 
         // 如果 esbuild 可用，使用 esbuild 打包
+        EnsureEsbuild();
         if (_esbuildAvailable)
         {
             return await BundleWithEsbuildAsync(scripts, options, stopwatch, cancellationToken);
@@ -64,6 +71,7 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
         cancellationToken.ThrowIfCancellationRequested();
         var stopwatch = Stopwatch.StartNew();
 
+        EnsureEsbuild();
         if (_esbuildAvailable)
         {
             return await TranspileWithEsbuildAsync(script, options, stopwatch, cancellationToken);

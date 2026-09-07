@@ -40,7 +40,10 @@ public sealed class EnvironmentOverridesPropertyTests : IDisposable
         var result = EnvironmentOverrides.ApplyOverrides(config);
 
         // Assert - 环境变量应该覆盖原始值
-        return result.BaseURL == envOverride.NewBaseUrl;
+        var ok = result.BaseURL == envOverride.NewBaseUrl;
+        // 迭代级清理：环境变量是进程级全局状态，迭代间不清理会污染并行测试
+        ClearAllFlintEnvVars();
+        return ok;
     }
 
     /// <summary>
@@ -65,7 +68,10 @@ public sealed class EnvironmentOverridesPropertyTests : IDisposable
         var result = EnvironmentOverrides.ApplyOverrides(config);
 
         // Assert
-        return result.Title == envOverride.NewTitle;
+        var ok = result.Title == envOverride.NewTitle;
+        // 迭代级清理：环境变量是进程级全局状态，迭代间不清理会污染并行测试
+        ClearAllFlintEnvVars();
+        return ok;
     }
 
     /// <summary>
@@ -91,7 +97,10 @@ public sealed class EnvironmentOverridesPropertyTests : IDisposable
         var result = EnvironmentOverrides.ApplyOverrides(config);
 
         // Assert
-        return result.Paginate == envOverride.NewPaginate;
+        var ok = result.Paginate == envOverride.NewPaginate;
+        // 迭代级清理：环境变量是进程级全局状态，迭代间不清理会污染并行测试
+        ClearAllFlintEnvVars();
+        return ok;
     }
 
     /// <summary>
@@ -115,7 +124,10 @@ public sealed class EnvironmentOverridesPropertyTests : IDisposable
         var result = EnvironmentOverrides.ApplyOverrides(config);
 
         // Assert
-        return result.BuildDrafts == newValue;
+        var ok = result.BuildDrafts == newValue;
+        // 迭代级清理：环境变量是进程级全局状态，迭代间不清理会污染并行测试
+        ClearAllFlintEnvVars();
+        return ok;
     }
 
     /// <summary>
@@ -144,7 +156,10 @@ public sealed class EnvironmentOverridesPropertyTests : IDisposable
         var result = EnvironmentOverrides.ApplyOverrides(config);
 
         // Assert
-        return result.Security.HttpTimeout == envOverride.NewHttpTimeout;
+        var ok = result.Security.HttpTimeout == envOverride.NewHttpTimeout;
+        // 迭代级清理：环境变量是进程级全局状态，迭代间不清理会污染并行测试
+        ClearAllFlintEnvVars();
+        return ok;
     }
 
     /// <summary>

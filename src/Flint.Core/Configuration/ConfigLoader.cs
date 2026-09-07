@@ -42,8 +42,20 @@ public sealed class ConfigLoader : IConfigLoader
 
         var content = await File.ReadAllTextAsync(configPath, cancellationToken).ConfigureAwait(false);
         var format = ConfigParser.DetectFormat(configPath);
+        var config = ConfigParser.Parse(content, format);
 
-        return ConfigParser.Parse(content, format);
+        // 配置校验接线：非法配置 fail loud（对齐 Hugo 对无效配置的行为），
+        // 校验器此前从未接入加载链——写完即死的 305 行休眠价值在此激活
+        var validation = new ConfigValidator().Validate(config);
+        if (!validation.IsValid)
+        {
+            var details = string.Join("\n",
+                validation.Errors.Select(e => $"  - {e.PropertyPath}: {e.Message}"));
+            throw new InvalidOperationException($"站点配置校验失败:\n{details}");
+        }
+
+        // 环境变量覆盖接线（USAGE.md 文档化的 FLINT_* 覆盖语义）
+        return EnvironmentOverrides.ApplyOverrides(config);
     }
 
     /// <inheritdoc />
