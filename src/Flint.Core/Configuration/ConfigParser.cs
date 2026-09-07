@@ -177,7 +177,7 @@ public static partial class ConfigParser
     }
 
     /// <summary>
-    /// 序列化为 JSON 格式（source-gen，无反射——对齐项目内 FeedJsonContext 等既有模式）
+    /// 序列化为 JSON 格式（source-gen，无反射——对齐项目内既有 source-gen 序列化模式）
     /// </summary>
     /// <param name="config">站点配置</param>
     /// <returns>JSON 字符串</returns>

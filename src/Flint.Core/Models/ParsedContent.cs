@@ -30,21 +30,6 @@ public sealed class ParsedContent
     public required string RawMarkdown { get; init; }
 
     /// <summary>
-    /// 标题列表（用于生成目录）
-    /// </summary>
-    public required IReadOnlyList<Heading> Headings { get; init; }
-
-    /// <summary>
-    /// 内容中的链接列表
-    /// </summary>
-    public required IReadOnlyList<ContentLink> Links { get; init; }
-
-    /// <summary>
-    /// 内容中的图片列表
-    /// </summary>
-    public required IReadOnlyList<ContentImage> Images { get; init; }
-
-    /// <summary>
     /// 预计阅读时间
     /// </summary>
     public required TimeSpan ReadingTime { get; init; }
@@ -63,87 +48,5 @@ public sealed class ParsedContent
     /// 内容摘要（自动生成或从 Front Matter 获取）
     /// </summary>
     public required string Summary { get; init; }
-
-    /// <summary>
-    /// 内容哈希（用于缓存）
-    /// </summary>
-    public required string ContentHash { get; init; }
 }
 
-/// <summary>
-/// 标题信息
-/// </summary>
-public sealed class Heading
-{
-    /// <summary>
-    /// 标题级别（1-6）
-    /// </summary>
-    public required int Level { get; init; }
-
-    /// <summary>
-    /// 标题文本
-    /// </summary>
-    public required string Text { get; init; }
-
-    /// <summary>
-    /// 标题 ID（用于锚点链接）
-    /// </summary>
-    public required string Id { get; init; }
-
-    /// <summary>
-    /// 子标题列表
-    /// </summary>
-    public IReadOnlyList<Heading> Children { get; init; } = [];
-}
-
-/// <summary>
-/// 内容链接信息
-/// </summary>
-public sealed class ContentLink
-{
-    /// <summary>
-    /// 链接 URL
-    /// </summary>
-    public required string Url { get; init; }
-
-    /// <summary>
-    /// 链接文本
-    /// </summary>
-    public required string Text { get; init; }
-
-    /// <summary>
-    /// 链接标题
-    /// </summary>
-    public string? Title { get; init; }
-
-    /// <summary>
-    /// 是否为外部链接
-    /// </summary>
-    public required bool IsExternal { get; init; }
-}
-
-/// <summary>
-/// 内容图片信息
-/// </summary>
-public sealed class ContentImage
-{
-    /// <summary>
-    /// 图片 URL
-    /// </summary>
-    public required string Src { get; init; }
-
-    /// <summary>
-    /// 图片替代文本
-    /// </summary>
-    public required string Alt { get; init; }
-
-    /// <summary>
-    /// 图片标题
-    /// </summary>
-    public string? Title { get; init; }
-
-    /// <summary>
-    /// 是否为外部图片
-    /// </summary>
-    public required bool IsExternal { get; init; }
-}

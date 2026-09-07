@@ -1,8 +1,6 @@
 // Flint 静态站点生成器
 // 模板渲染器接口
 
-using System.Buffers;
-
 namespace Flint.Core.Abstractions;
 
 /// <summary>
@@ -19,29 +17,6 @@ public interface ITemplateRenderer
     /// <returns>渲染后的 HTML</returns>
     ValueTask<string> RenderAsync(
         string templateName,
-        TemplateContext context,
-        CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// 渲染模板到 BufferWriter（零分配）
-    /// </summary>
-    /// <param name="templateName">模板名称</param>
-    /// <param name="context">模板上下文</param>
-    /// <param name="output">输出缓冲区</param>
-    void Render(
-        string templateName,
-        TemplateContext context,
-        IBufferWriter<char> output);
-
-    /// <summary>
-    /// 渲染内联模板字符串
-    /// </summary>
-    /// <param name="templateContent">模板内容</param>
-    /// <param name="context">模板上下文</param>
-    /// <param name="cancellationToken">取消令牌</param>
-    /// <returns>渲染后的 HTML</returns>
-    ValueTask<string> RenderStringAsync(
-        string templateContent,
         TemplateContext context,
         CancellationToken cancellationToken = default);
 

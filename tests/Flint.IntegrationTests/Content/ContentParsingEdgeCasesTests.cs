@@ -334,102 +334,6 @@ public class ContentParsingEdgeCasesTests : IDisposable
     }
 
     /// <summary>
-    /// 测试包含大量标题的内容文件
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ManyHeadings_ShouldParseCorrectly()
-    {
-        // Arrange
-        var sb = new StringBuilder();
-        sb.AppendLine("---");
-        sb.AppendLine("title: \"多标题测试\"");
-        sb.AppendLine("---");
-        sb.AppendLine();
-
-        // 生成 500 个标题
-        for (int i = 1; i <= 500; i++)
-        {
-            var level = (i % 6) + 1;
-            sb.AppendLine($"{new string('#', level)} 标题 {i}");
-            sb.AppendLine();
-            sb.AppendLine($"这是标题 {i} 的内容。");
-            sb.AppendLine();
-        }
-
-        var content = sb.ToString();
-        var file = CreateContentFile(content, "many-headings.md");
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Metadata.Title.Should().Be("多标题测试");
-        result.Headings.Should().HaveCount(500);
-    }
-
-    /// <summary>
-    /// 测试包含大量链接的内容文件
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ManyLinks_ShouldParseCorrectly()
-    {
-        // Arrange
-        var sb = new StringBuilder();
-        sb.AppendLine("---");
-        sb.AppendLine("title: \"多链接测试\"");
-        sb.AppendLine("---");
-        sb.AppendLine();
-
-        // 生成 200 个链接
-        for (int i = 1; i <= 200; i++)
-        {
-            sb.AppendLine($"- [链接 {i}](https://example.com/page{i})");
-        }
-
-        var content = sb.ToString();
-        var file = CreateContentFile(content, "many-links.md");
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Links.Should().HaveCount(200);
-    }
-
-    /// <summary>
-    /// 测试包含大量图片的内容文件
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_ManyImages_ShouldParseCorrectly()
-    {
-        // Arrange
-        var sb = new StringBuilder();
-        sb.AppendLine("---");
-        sb.AppendLine("title: \"多图片测试\"");
-        sb.AppendLine("---");
-        sb.AppendLine();
-
-        // 生成 100 个图片
-        for (int i = 1; i <= 100; i++)
-        {
-            sb.AppendLine($"![图片 {i}](/images/image{i}.png)");
-            sb.AppendLine();
-        }
-
-        var content = sb.ToString();
-        var file = CreateContentFile(content, "many-images.md");
-
-        // Act
-        var result = await _parser.ParseAsync(file);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Images.Should().HaveCount(100);
-    }
-
-    /// <summary>
     /// 测试包含超长单行的内容文件
     /// </summary>
     [Fact]
@@ -1050,7 +954,6 @@ public class ContentParsingEdgeCasesTests : IDisposable
         result.HtmlContent.Should().Contain("<h5");
         result.HtmlContent.Should().Contain("<h6");
         // H7 不存在，应该作为普通文本处理
-        result.Headings.Should().HaveCount(6);
     }
 
     /// <summary>
@@ -1715,71 +1618,6 @@ public class ContentParsingEdgeCasesTests : IDisposable
         // Assert
         result.Should().NotBeNull();
         result.Metadata.Title.Should().Be("长文件名测试");
-    }
-
-    #endregion
-
-    #region 内容哈希一致性测试
-
-    /// <summary>
-    /// 测试相同内容产生相同哈希
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_SameContent_ShouldProduceSameHash()
-    {
-        // Arrange
-        var content = CreateYamlContent("哈希测试", "这是测试内容。");
-        var file1 = CreateContentFile(content, "hash-test-1.md");
-        var file2 = CreateContentFile(content, "hash-test-2.md");
-
-        // Act
-        var result1 = await _parser.ParseAsync(file1);
-        var result2 = await _parser.ParseAsync(file2);
-
-        // Assert
-        result1.ContentHash.Should().Be(result2.ContentHash);
-    }
-
-    /// <summary>
-    /// 测试不同内容产生不同哈希
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_DifferentContent_ShouldProduceDifferentHash()
-    {
-        // Arrange
-        var content1 = CreateYamlContent("哈希测试1", "这是测试内容1。");
-        var content2 = CreateYamlContent("哈希测试2", "这是测试内容2。");
-        var file1 = CreateContentFile(content1, "hash-diff-1.md");
-        var file2 = CreateContentFile(content2, "hash-diff-2.md");
-
-        // Act
-        var result1 = await _parser.ParseAsync(file1);
-        var result2 = await _parser.ParseAsync(file2);
-
-        // Assert
-        result1.ContentHash.Should().NotBe(result2.ContentHash);
-    }
-
-    /// <summary>
-    /// 测试哈希计算的确定性
-    /// </summary>
-    [Fact]
-    public async Task ParseAsync_MultipleParses_ShouldProduceConsistentHash()
-    {
-        // Arrange
-        var content = CreateYamlContent("确定性哈希测试", "这是测试内容。");
-        var file = CreateContentFile(content, "deterministic-hash.md");
-
-        // Act
-        var hashes = new List<string>();
-        for (int i = 0; i < 10; i++)
-        {
-            var result = await _parser.ParseAsync(file);
-            hashes.Add(result.ContentHash);
-        }
-
-        // Assert
-        hashes.Should().AllBe(hashes[0]);
     }
 
     #endregion

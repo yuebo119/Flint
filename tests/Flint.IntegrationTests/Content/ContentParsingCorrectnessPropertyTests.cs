@@ -320,11 +320,9 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         var containsHref = result.HtmlContent.Contains($"href=\"{testData.Url}\"");
         // 验证链接文本存在
         var containsText = result.HtmlContent.Contains(testData.Text);
-        // 验证 Links 集合包含此链接
-        var linksContainUrl = result.Links.Any(l => l.Url == testData.Url);
 
-        return (containsATag && containsHref && containsText && linksContainUrl)
-            .Label($"Url={testData.Url}, Text='{testData.Text}', ContainsATag={containsATag}, LinksContainUrl={linksContainUrl}")
+        return (containsATag && containsHref && containsText)
+            .Label($"Url={testData.Url}, Text='{testData.Text}', ContainsATag={containsATag}")
             .Classify(testData.IsExternal, "外部链接")
             .Classify(!testData.IsExternal, "内部链接");
     }
@@ -352,11 +350,9 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         var containsSrc = result.HtmlContent.Contains($"src=\"{testData.Src}\"");
         // 验证 alt 属性包含替代文本
         var containsAlt = result.HtmlContent.Contains($"alt=\"{testData.Alt}\"");
-        // 验证 Images 集合包含此图片
-        var imagesContainSrc = result.Images.Any(i => i.Src == testData.Src);
 
-        return (containsImgTag && containsSrc && containsAlt && imagesContainSrc)
-            .Label($"Src={testData.Src}, Alt='{testData.Alt}', ContainsImgTag={containsImgTag}, ImagesContainSrc={imagesContainSrc}")
+        return (containsImgTag && containsSrc && containsAlt)
+            .Label($"Src={testData.Src}, Alt='{testData.Alt}', ContainsImgTag={containsImgTag}")
             .Classify(testData.IsExternal, "外部图片")
             .Classify(!testData.IsExternal, "内部图片");
     }
@@ -460,7 +456,6 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         // Assert
         result.HtmlContent.Should().Contain($"<h{level}");
         result.HtmlContent.Should().Contain(text);
-        result.Headings.Should().Contain(h => h.Level == level && h.Text == text);
     }
 
     /// <summary>
@@ -651,7 +646,6 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         result.HtmlContent.Should().Contain("<a");
         result.HtmlContent.Should().Contain($"href=\"{expectedUrl}\"");
         result.HtmlContent.Should().Contain(expectedText);
-        result.Links.Should().Contain(l => l.Url == expectedUrl && l.Text == expectedText);
     }
 
 
@@ -677,7 +671,6 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         result.HtmlContent.Should().Contain("<img");
         result.HtmlContent.Should().Contain($"src=\"{expectedSrc}\"");
         result.HtmlContent.Should().Contain($"alt=\"{expectedAlt}\"");
-        result.Images.Should().Contain(i => i.Src == expectedSrc && i.Alt == expectedAlt);
     }
 
     /// <summary>
@@ -805,7 +798,6 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
         result.HtmlContent.Should().Contain("<h1");
         result.HtmlContent.Should().Contain("<h2");
         result.HtmlContent.Should().Contain("<h3");
-        result.Headings.Should().HaveCountGreaterThanOrEqualTo(4);
 
         // 验证段落
         result.HtmlContent.Should().Contain("<p>");
@@ -831,11 +823,9 @@ public partial class ContentParsingCorrectnessPropertyTests : IDisposable
 
         // 验证链接
         result.HtmlContent.Should().Contain("<a");
-        result.Links.Should().NotBeEmpty();
 
         // 验证图片
         result.HtmlContent.Should().Contain("<img");
-        result.Images.Should().NotBeEmpty();
 
         // 验证元数据
         result.Metadata.Should().NotBeNull();

@@ -1,7 +1,6 @@
 // Flint 静态站点生成器
 // Scriban 模板渲染器实现
 
-using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using Flint.Core.Abstractions;
@@ -35,14 +34,6 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
     private readonly BuiltinTemplateFunctions _builtinFunctions;
     private readonly ITemplateLoader _templateLoader;
     private volatile bool _precompiled;
-    private readonly System.Collections.Concurrent.ConcurrentBag<string> _precompileFailures = new();
-
-    /// <summary>
-    /// 预编译失败清单（file: message）。失败模板静默缺席缓存（渲染期按需
-    /// 加载仍会暴露真实错误）——此清单供上层（BuildResult.Warnings 等）
-    /// 输出预编译期线索
-    /// </summary>
-    public IReadOnlyCollection<string> PrecompileFailures => [.. _precompileFailures];
 
     /// <summary>
     /// 创建 Scriban 模板渲染器
@@ -139,23 +130,16 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
                     {
                         _templateCache[templateName] = new CachedTemplate(template, file, File.GetLastWriteTimeUtc(file));
                     }
-                    else
-                    {
-                        // 语法错误的模板不抛异常（HasErrors 而已），只记 catch 会漏掉
-                        // 最常见的失败形态，清单失去对它们的可见性
-                        _precompileFailures.Add($"{file}: {string.Join("; ", template.Messages.Select(m => m.ToString()))}");
-                    }
                 }
                 catch (OperationCanceledException)
                 {
                     // 取消必须逃逸，不能被当成"无法解析的模板"吞掉
                     throw;
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    // 解析失败的模板静默缺席缓存，收集清单供上层查询；
-                    // 渲染期按需加载仍会暴露真实错误（诊断时机后移但信息不丢）
-                    _precompileFailures.Add($"{file}: {ex.Message}");
+                    // 解析失败的模板静默缺席缓存；渲染期按需加载仍会暴露真实错误
+                    // （诊断时机后移但信息不丢）
                 }
             });
 
@@ -244,59 +228,6 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
         {
             throw new TemplateRenderException(
                 hookTemplateName, ex.Message,
-                ex.Span.Start.Line + 1, ex.Span.Start.Column + 1, ex);
-        }
-    }
-
-    /// <inheritdoc />
-    public void Render(
-        string templateName,
-        FlintTemplateContext context,
-        IBufferWriter<char> output)
-    {
-        var template = GetOrLoadTemplate(templateName);
-        var scribanContext = CreateScribanContext(context);
-        TrackTemplateDependency(scribanContext, templateName);
-
-        string result;
-        try
-        {
-            result = template.Render(scribanContext);
-        }
-        catch (Scriban.Syntax.ScriptRuntimeException ex)
-        {
-            throw new TemplateRenderException(
-                templateName, ex.Message,
-                ex.Span.Start.Line + 1, ex.Span.Start.Column + 1, ex);
-        }
-        context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
-        output.Write(result.AsSpan());
-    }
-
-
-    /// <inheritdoc />
-    public async ValueTask<string> RenderStringAsync(
-        string templateContent,
-        FlintTemplateContext context,
-        CancellationToken cancellationToken = default)
-    {
-        var template = Template.Parse(templateContent);
-        if (template.HasErrors)
-        {
-            throw new TemplateParseException(
-                "inline",
-                template.Messages.Select(m => m.ToString()).ToList());
-        }
-
-        var scribanContext = CreateScribanContext(context);
-        try
-        {
-            return await template.RenderAsync(scribanContext);
-        }
-        catch (Scriban.Syntax.ScriptRuntimeException ex)
-        {
-            throw new TemplateRenderException(
-                "inline", ex.Message,
                 ex.Span.Start.Line + 1, ex.Span.Start.Column + 1, ex);
         }
     }
@@ -447,27 +378,6 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             index == 0
                 ? new Scriban.Runtime.ScriptParameterInfo(typeof(string), "name")
                 : new Scriban.Runtime.ScriptParameterInfo(typeof(object), "variant");
-    }
-
-    /// <summary>
-    /// 从缓存移除指定模板
-    /// </summary>
-    public void InvalidateTemplate(string templateName)
-    {
-        _templateCache.TryRemove(templateName, out _);
-        _dependencyCache.TryRemove(templateName, out _);
-
-        // 同时清除依赖此模板的其他模板的缓存
-        var keysToRemove = _dependencyCache
-            .Where(kvp => kvp.Value.Contains(templateName))
-            .Select(kvp => kvp.Key)
-            .ToList();
-
-        foreach (var key in keysToRemove)
-        {
-            _templateCache.TryRemove(key, out _);
-            _dependencyCache.TryRemove(key, out _);
-        }
     }
 
     private async ValueTask<Template> GetOrLoadTemplateAsync(

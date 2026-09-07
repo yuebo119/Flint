@@ -290,7 +290,7 @@ public sealed class TestSiteFixture : IAsyncLifetime, IDisposable
         ThrowIfDisposed();
         EnsureSiteCreated();
 
-        var buildOptions = options ?? BuildOptions.Default(_siteRoot!, _outputPath!);
+        var buildOptions = options ?? new BuildOptions { SourcePath = _siteRoot!, OutputPath = _outputPath! };
 
         // 确保使用正确的路径
         if (buildOptions.SourcePath != _siteRoot || buildOptions.OutputPath != _outputPath)
@@ -331,7 +331,7 @@ public sealed class TestSiteFixture : IAsyncLifetime, IDisposable
         ThrowIfDisposed();
         EnsureSiteCreated();
 
-        var buildOptions = options ?? BuildOptions.Default(_siteRoot!, _outputPath!);
+        var buildOptions = options ?? new BuildOptions { SourcePath = _siteRoot!, OutputPath = _outputPath! };
 
         return await _siteBuilder!.IncrementalBuildAsync(buildOptions, changedFiles);
     }

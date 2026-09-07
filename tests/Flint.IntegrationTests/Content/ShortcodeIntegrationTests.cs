@@ -1387,60 +1387,6 @@ public class ShortcodeIntegrationTests : IDisposable
             () => _processor.ProcessAsync(content, cancellationToken: cts.Token).AsTask());
     }
 
-    /// <summary>
-    /// 测试验证短代码
-    /// </summary>
-    [Fact]
-    public void ValidateShortcodes_AllRegistered_ShouldReturnEmpty()
-    {
-        // Arrange
-        var content = "{{< figure src=\"test.jpg\" >}} {{< youtube \"abc\" >}} {{< highlight go >}}code{{< /highlight >}}";
-
-        // Act
-        var unregistered = _processor.ValidateShortcodes(content);
-
-        // Assert
-        unregistered.Should().BeEmpty();
-    }
-
-    /// <summary>
-    /// 测试验证短代码 - 包含未注册的
-    /// </summary>
-    [Fact]
-    public void ValidateShortcodes_WithUnregistered_ShouldReturnNames()
-    {
-        // Arrange
-        var content = "{{< figure src=\"test.jpg\" >}} {{< custom1 >}} {{< custom2 >}}";
-
-        // Act
-        var unregistered = _processor.ValidateShortcodes(content);
-
-        // Assert
-        unregistered.Should().HaveCount(2);
-        unregistered.Should().Contain("custom1");
-        unregistered.Should().Contain("custom2");
-    }
-
-    /// <summary>
-    /// 测试移除短代码
-    /// </summary>
-    [Fact]
-    public void StripShortcodes_ShouldRemoveAllShortcodes()
-    {
-        // Arrange
-        var content = "文本 {{< figure src=\"test.jpg\" >}} 更多文本 {{< youtube \"abc\" >}} 结束";
-
-        // Act
-        var result = ShortcodeProcessor.StripShortcodes(content);
-
-        // Assert
-        result.Should().NotContain("{{<");
-        result.Should().NotContain(">}}");
-        result.Should().Contain("文本");
-        result.Should().Contain("更多文本");
-        result.Should().Contain("结束");
-    }
-
     #endregion
 
     #region 辅助类 - 自定义短代码处理器

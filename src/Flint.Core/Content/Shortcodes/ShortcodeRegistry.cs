@@ -71,29 +71,6 @@ public sealed class ShortcodeRegistry : IShortcodeRegistry
     }
 
     /// <summary>
-    /// 注销短代码处理器
-    /// </summary>
-    /// <param name="name">短代码名称</param>
-    /// <returns>是否成功注销</returns>
-    public bool Unregister(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return false;
-        }
-
-        return _processors.TryRemove(name, out _);
-    }
-
-    /// <summary>
-    /// 清空所有注册的短代码处理器
-    /// </summary>
-    public void Clear()
-    {
-        _processors.Clear();
-    }
-
-    /// <summary>
     /// 获取已注册的短代码数量
     /// </summary>
     public int Count => _processors.Count;

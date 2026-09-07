@@ -144,20 +144,6 @@ public class ScribanTemplateRendererTests : IDisposable
     }
 
     [Fact]
-    public async Task RenderStringAsync_InlineTemplate_ReturnsRenderedContent()
-    {
-        // Arrange
-        var templateContent = "Hello, {{ page.title }}!";
-        var context = CreateTestContext("World");
-
-        // Act
-        var result = await _renderer.RenderStringAsync(templateContent, context);
-
-        // Assert
-        Assert.Equal("Hello, World!", result);
-    }
-
-    [Fact]
     public async Task RenderAsync_WithBuiltinFunction_Upper()
     {
         // Arrange
@@ -534,24 +520,6 @@ public class ScribanTemplateRendererTests : IDisposable
         // Act
         _renderer.ClearCache();
         var result = _renderer.RenderAsync("cached.html", CreateTestContext()).AsTask().Result;
-
-        // Assert
-        Assert.Equal("modified", result);
-    }
-
-    [Fact]
-    public void InvalidateTemplate_RemovesSpecificTemplateFromCache()
-    {
-        // Arrange
-        File.WriteAllText(Path.Combine(_tempDir, "specific.html"), "original");
-        _ = _renderer.RenderAsync("specific.html", CreateTestContext()).AsTask().Result;
-
-        // 修改模板内容
-        File.WriteAllText(Path.Combine(_tempDir, "specific.html"), "modified");
-
-        // Act
-        _renderer.InvalidateTemplate("specific.html");
-        var result = _renderer.RenderAsync("specific.html", CreateTestContext()).AsTask().Result;
 
         // Assert
         Assert.Equal("modified", result);

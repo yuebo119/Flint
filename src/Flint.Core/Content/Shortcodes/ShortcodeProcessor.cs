@@ -163,71 +163,6 @@ public sealed partial class ShortcodeProcessor
     }
 
     /// <summary>
-    /// 同步处理内容中的所有短代码
-    /// </summary>
-    /// <param name="content">输入内容</param>
-    /// <param name="pageContext">页面上下文（可选）</param>
-    /// <param name="siteContext">站点上下文（可选）</param>
-    /// <returns>处理后的内容</returns>
-    public string Process(
-        string content,
-        object? pageContext = null,
-        object? siteContext = null)
-    {
-        return ProcessAsync(content, pageContext, siteContext).AsTask().GetAwaiter().GetResult();
-    }
-
-    /// <summary>
-    /// 提取内容中的所有短代码
-    /// </summary>
-    /// <param name="content">输入内容</param>
-    /// <returns>短代码列表</returns>
-    public static IReadOnlyList<ParsedShortcode> ExtractShortcodes(string content)
-    {
-        return ShortcodeParser.ExtractShortcodes(content);
-    }
-
-    /// <summary>
-    /// 检查内容是否包含短代码
-    /// </summary>
-    /// <param name="content">输入内容</param>
-    /// <returns>是否包含短代码</returns>
-    public static bool ContainsShortcodes(string content)
-    {
-        return ShortcodeParser.ContainsShortcodes(content);
-    }
-
-    /// <summary>
-    /// 验证内容中的短代码是否都已注册
-    /// </summary>
-    /// <param name="content">输入内容</param>
-    /// <returns>未注册的短代码名称列表</returns>
-    public IReadOnlyList<string> ValidateShortcodes(string content)
-    {
-        var shortcodes = ShortcodeParser.ExtractShortcodes(content);
-        var unregistered = new List<string>();
-
-        foreach (var shortcode in shortcodes)
-        {
-            if (!_registry.Contains(shortcode.Name))
-            {
-                unregistered.Add(shortcode.Name);
-            }
-
-            // 检查嵌套短代码
-            foreach (var nested in shortcode.NestedShortcodes)
-            {
-                if (!_registry.Contains(nested.Name))
-                {
-                    unregistered.Add(nested.Name);
-                }
-            }
-        }
-
-        return unregistered.Distinct().ToList();
-    }
-
-    /// <summary>
     /// 处理单个短代码
     /// </summary>
     private async ValueTask<string> ProcessShortcodeAsync(
@@ -315,31 +250,6 @@ public sealed partial class ShortcodeProcessor
 
         return result;
     }
-
-    /// <summary>
-    /// 移除内容中的所有短代码（保留纯文本）
-    /// </summary>
-    /// <param name="content">输入内容</param>
-    /// <returns>移除短代码后的内容</returns>
-    public static string StripShortcodes(string content)
-    {
-        if (string.IsNullOrEmpty(content))
-        {
-            return content ?? string.Empty;
-        }
-
-        // 使用正则表达式移除短代码
-        // 匹配 {{< ... >}} 和 {{% ... %}} 格式
-        var result = ShortcodePattern().Replace(content, string.Empty);
-
-        return result;
-    }
-
-    /// <summary>
-    /// 短代码匹配正则表达式
-    /// </summary>
-    [GeneratedRegex(@"\{\{[<%]\s*/?\s*\w+[^}]*[>%]\}\}", RegexOptions.Compiled)]
-    private static partial Regex ShortcodePattern();
 
     /// <summary>
     /// 独占一个段落的 Angle 占位符（&lt;p&gt;HAHAFLINTSHORTCODE-n-HBHB&lt;/p&gt;）

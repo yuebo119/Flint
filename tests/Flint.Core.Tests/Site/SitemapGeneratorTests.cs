@@ -264,50 +264,6 @@ public class SitemapGeneratorTests
 
     #endregion
 
-    #region Sitemap 索引测试
-
-    [Fact]
-    public void GenerateIndex_应该生成有效的索引文件()
-    {
-        // Arrange
-        var generator = new SitemapGenerator(BaseUrl);
-        var entries = new List<SitemapIndexEntry>
-        {
-            new() { Url = "https://example.com/sitemap-1.xml" },
-            new() { Url = "https://example.com/sitemap-2.xml" }
-        };
-
-        // Act
-        var index = generator.GenerateIndex(entries);
-
-        // Assert
-        var doc = XDocument.Parse(index);
-        Assert.Equal("sitemapindex", doc.Root?.Name.LocalName);
-    }
-
-    [Fact]
-    public void GenerateIndex_应该包含所有子sitemap()
-    {
-        // Arrange
-        var generator = new SitemapGenerator(BaseUrl);
-        var entries = new List<SitemapIndexEntry>
-        {
-            new() { Url = "https://example.com/sitemap-1.xml" },
-            new() { Url = "https://example.com/sitemap-2.xml" },
-            new() { Url = "https://example.com/sitemap-3.xml" }
-        };
-
-        // Act
-        var index = generator.GenerateIndex(entries);
-
-        // Assert
-        var doc = XDocument.Parse(index);
-        var sitemaps = doc.Descendants(SitemapNs + "sitemap").ToList();
-        Assert.Equal(3, sitemaps.Count);
-    }
-
-    #endregion
-
     #region 辅助方法
 
     private static List<PageContext> CreateTestPages()

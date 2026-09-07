@@ -206,58 +206,6 @@ public class FeedGeneratorTests
 
     #endregion
 
-    #region JSON Feed 生成测试
-
-    [Fact]
-    public void GenerateJsonFeed_应该生成有效的JSON()
-    {
-        // Arrange
-        var generator = new FeedGenerator(_defaultOptions);
-        var pages = CreateTestPages();
-
-        // Act
-        var json = generator.GenerateJsonFeed(pages);
-
-        // Assert
-        Assert.NotEmpty(json);
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal("https://jsonfeed.org/version/1.1", doc.RootElement.GetProperty("version").GetString());
-    }
-
-    [Fact]
-    public void GenerateJsonFeed_应该包含站点信息()
-    {
-        // Arrange
-        var generator = new FeedGenerator(_defaultOptions);
-        var pages = CreateTestPages();
-
-        // Act
-        var json = generator.GenerateJsonFeed(pages);
-
-        // Assert
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        Assert.Equal("测试站点", doc.RootElement.GetProperty("title").GetString());
-        Assert.Equal("https://example.com", doc.RootElement.GetProperty("home_page_url").GetString());
-    }
-
-    [Fact]
-    public void GenerateJsonFeed_应该包含文章列表()
-    {
-        // Arrange
-        var generator = new FeedGenerator(_defaultOptions);
-        var pages = CreateTestPages();
-
-        // Act
-        var json = generator.GenerateJsonFeed(pages);
-
-        // Assert
-        var doc = System.Text.Json.JsonDocument.Parse(json);
-        var items = doc.RootElement.GetProperty("items");
-        Assert.Equal(2, items.GetArrayLength());
-    }
-
-    #endregion
-
     #region 辅助方法
 
     private static List<PageContext> CreateTestPages()

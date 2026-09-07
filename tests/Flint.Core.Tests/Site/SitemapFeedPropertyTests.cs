@@ -259,41 +259,6 @@ public class SitemapFeedPropertyTests
         return true.ToProperty()
             .Label($"所有 {pubDates.Count} 个条目按日期降序排列");
     }
-
-    /// <summary>
-    /// **Property 15: JSON Feed 应该是有效的 JSON**
-    /// </summary>
-    [Property(MaxTest = 100, Arbitrary = [typeof(SitemapFeedArbitrary)])]
-    public Property JsonFeed_ShouldBeValidJson(ValidSitemapPageList pages)
-    {
-        ArgumentNullException.ThrowIfNull(pages);
-
-        // Arrange
-        var options = new FeedOptions
-        {
-            Title = "Test Blog",
-            BaseUrl = "https://example.com"
-        };
-        var generator = new FeedGenerator(options);
-
-        // Act
-        var json = generator.GenerateJsonFeed(pages.Value);
-
-        // Assert
-        try
-        {
-            var doc = System.Text.Json.JsonDocument.Parse(json);
-            var hasVersion = doc.RootElement.TryGetProperty("version", out _);
-            var hasTitle = doc.RootElement.TryGetProperty("title", out _);
-            var hasItems = doc.RootElement.TryGetProperty("items", out _);
-            return (hasVersion && hasTitle && hasItems).ToProperty()
-                .Label("JSON Feed 是有效的 JSON 且包含必需字段");
-        }
-        catch (Exception ex)
-        {
-            return false.ToProperty().Label($"JSON 解析失败: {ex.Message}");
-        }
-    }
 }
 
 #region 测试数据类型

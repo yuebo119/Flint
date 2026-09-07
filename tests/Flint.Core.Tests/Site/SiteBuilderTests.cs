@@ -530,11 +530,7 @@ public class SiteBuilderTests : IDisposable
                 PlainText = "Test content",
                 Summary = "Test",
                 WordCount = 2,
-                ReadingTime = TimeSpan.FromMinutes(1),
-                Headings = [],
-                Links = [],
-                Images = [],
-                ContentHash = "test-hash"
+                ReadingTime = TimeSpan.FromMinutes(1)
             };
         }
     }
@@ -542,19 +538,6 @@ public class SiteBuilderTests : IDisposable
     private sealed class StubTemplateRenderer : ITemplateRenderer
     {
         public ValueTask<string> RenderAsync(string templateName, TemplateContext context, CancellationToken cancellationToken = default)
-        {
-            return ValueTask.FromResult("<html><body>Test</body></html>");
-        }
-
-        public void Render(string templateName, TemplateContext context, System.Buffers.IBufferWriter<char> output)
-        {
-            var html = "<html><body>Test</body></html>";
-            var span = output.GetSpan(html.Length);
-            html.AsSpan().CopyTo(span);
-            output.Advance(html.Length);
-        }
-
-        public ValueTask<string> RenderStringAsync(string templateContent, TemplateContext context, CancellationToken cancellationToken = default)
         {
             return ValueTask.FromResult("<html><body>Test</body></html>");
         }

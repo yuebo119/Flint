@@ -1222,16 +1222,6 @@ public class BuildPipelineIntegrationTests : IAsyncLifetime
         _output.WriteLine($"  - 耗时: {result.Duration.TotalMilliseconds:F2}ms");
         _output.WriteLine($"  - 内存: {result.MemoryUsed / 1024.0 / 1024.0:F2}MB");
         _output.WriteLine($"  - 警告数: {result.Warnings.Count}");
-
-        // 验证统计信息（如果存在）
-        if (result.Statistics != null)
-        {
-            _output.WriteLine($"  - 解析耗时: {result.Statistics.ParsingTime.TotalMilliseconds:F2}ms");
-            _output.WriteLine($"  - 渲染耗时: {result.Statistics.RenderingTime.TotalMilliseconds:F2}ms");
-            _output.WriteLine($"  - 资源处理耗时: {result.Statistics.AssetProcessingTime.TotalMilliseconds:F2}ms");
-            _output.WriteLine($"  - 写入耗时: {result.Statistics.WritingTime.TotalMilliseconds:F2}ms");
-            _output.WriteLine($"  - 缓存命中率: {result.Statistics.CacheHitRate:P2}");
-        }
     }
 
     /// <summary>
@@ -1613,19 +1603,12 @@ public class BuildPipelineIntegrationTests : IAsyncLifetime
         // Assert - 验证结果一致
         secondResult.PagesBuilt.Should().Be(firstResult.PagesBuilt,
             "两次构建应该生成相同数量的页面");
-
-        // 输出缓存统计
-        if (secondResult.Statistics != null)
-        {
-            _output.WriteLine($"缓存命中率: {secondResult.Statistics.CacheHitRate:P2}");
-            _output.WriteLine($"缓存命中: {secondResult.Statistics.CacheHits}");
-            _output.WriteLine($"缓存未命中: {secondResult.Statistics.CacheMisses}");
-        }
     }
 
     /// <summary>
     /// 测试禁用缓存的构建
-    /// 验证禁用缓存时不使用缓存
+    /// 验证禁用缓存时构建仍然成功
+    /// （原"缓存命中应为 0"断言依赖 BuildResult.Statistics，该成员已随死代码清理删除）
     /// </summary>
     [Fact]
     [Trait("TestType", "Cache")]
@@ -1646,12 +1629,6 @@ public class BuildPipelineIntegrationTests : IAsyncLifetime
 
         // Assert - 验证构建成功
         result.Success.Should().BeTrue("禁用缓存的构建应该成功");
-
-        // 验证缓存统计（如果存在）
-        if (result.Statistics != null)
-        {
-            result.Statistics.CacheHits.Should().Be(0, "禁用缓存时不应有缓存命中");
-        }
 
         _output.WriteLine("禁用缓存构建测试通过");
     }

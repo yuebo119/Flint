@@ -67,46 +67,6 @@ public sealed class SitemapGenerator
         return sb.ToString();
     }
 
-    /// <summary>
-    /// 生成 sitemap 索引文件（用于大型站点）
-    /// </summary>
-    /// <param name="sitemapUrls">子 sitemap URL 列表</param>
-    /// <returns>XML 内容</returns>
-    public string GenerateIndex(IReadOnlyList<SitemapIndexEntry> sitemapUrls)
-    {
-        var sb = new StringBuilder();
-        var settings = new XmlWriterSettings
-        {
-            Indent = _options.Indent,
-            Encoding = Encoding.UTF8,
-            OmitXmlDeclaration = false
-        };
-
-        using var writer = XmlWriter.Create(sb, settings);
-
-        writer.WriteStartDocument();
-        writer.WriteStartElement("sitemapindex", SitemapNamespace);
-
-        foreach (var entry in sitemapUrls)
-        {
-            writer.WriteStartElement("sitemap");
-            writer.WriteElementString("loc", entry.Url);
-
-            if (entry.LastModified.HasValue)
-            {
-                writer.WriteElementString("lastmod", FormatDate(entry.LastModified.Value));
-            }
-
-            writer.WriteEndElement(); // sitemap
-        }
-
-        writer.WriteEndElement(); // sitemapindex
-        writer.WriteEndDocument();
-        writer.Flush();
-
-        return sb.ToString();
-    }
-
     private void WriteUrlEntry(XmlWriter writer, PageContext page)
     {
         writer.WriteStartElement("url");
@@ -237,20 +197,4 @@ public sealed class SitemapOptions
     /// 排除的页面类型
     /// </summary>
     public IReadOnlySet<string> ExcludedTypes { get; init; } = new HashSet<string>();
-}
-
-/// <summary>
-/// Sitemap 索引条目
-/// </summary>
-public sealed class SitemapIndexEntry
-{
-    /// <summary>
-    /// Sitemap URL
-    /// </summary>
-    public required string Url { get; init; }
-
-    /// <summary>
-    /// 最后修改时间
-    /// </summary>
-    public DateTimeOffset? LastModified { get; init; }
 }
