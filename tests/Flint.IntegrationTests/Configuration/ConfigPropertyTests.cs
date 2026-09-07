@@ -585,7 +585,7 @@ public static class ConfigPropertyArbitraries
          from copyright in Gen.OneOf(
             Gen.Constant<string?>(null),
             Gen.Elements<string?>("© 2024", "All rights reserved", "CC BY 4.0"))
-         select new Flint.Core.Abstractions.SiteConfig
+         select new Flint.Core.Configuration.SiteConfig
          {
              BaseURL = baseUrl,
              Title = title,

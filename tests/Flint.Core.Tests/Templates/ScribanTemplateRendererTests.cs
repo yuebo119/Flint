@@ -2,6 +2,7 @@
 // Scriban 模板渲染器单元测试
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Templates;
 using Xunit;
 
@@ -62,7 +63,7 @@ public class ScribanTemplateRendererTests : IDisposable
                 {
                     Menus = new Dictionary<string, IReadOnlyList<MenuItem>>()
                 },
-                Config = new { }
+                Config = new SiteConfig { BaseURL = "https://example.com", Title = "Test Site" }
             }
         };
     }

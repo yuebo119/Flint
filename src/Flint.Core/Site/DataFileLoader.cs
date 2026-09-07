@@ -2,6 +2,7 @@
 // 数据文件加载器（AOT 兼容）
 
 using System.Text.Json;
+using Flint.Core.Configuration;
 using Tomlyn;
 using Tomlyn.Model;
 using YamlDotNet.Serialization;

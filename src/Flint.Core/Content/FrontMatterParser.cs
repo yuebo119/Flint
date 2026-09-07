@@ -8,8 +8,6 @@ using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Models;
 using Tomlyn;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Flint.Core.Content;
 
@@ -29,20 +27,6 @@ public sealed class FrontMatterParser : IFrontMatterParser
     /// TOML 分隔符
     /// </summary>
     private const string TomlDelimiter = "+++";
-
-    // YAML 反序列化器（延迟初始化）
-    private static IDeserializer? _yamlDeserializer;
-    private static IDeserializer YamlDeserializer => _yamlDeserializer ??= new DeserializerBuilder()
-        .WithNamingConvention(CamelCaseNamingConvention.Instance)
-        .IgnoreUnmatchedProperties()
-        .Build();
-
-    // YAML 序列化器（延迟初始化）
-    private static ISerializer? _yamlSerializer;
-    private static ISerializer YamlSerializer => _yamlSerializer ??= new SerializerBuilder()
-        .WithNamingConvention(CamelCaseNamingConvention.Instance)
-        .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults)
-        .Build();
 
     /// <inheritdoc />
     public bool TryParse(
@@ -195,7 +179,7 @@ public sealed class FrontMatterParser : IFrontMatterParser
         // 解析 YAML
         try
         {
-            var dict = YamlDeserializer.Deserialize<Dictionary<string, object>>(yamlContent)
+            var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(yamlContent)
                 ?? new Dictionary<string, object>();
             frontMatter = ConvertDictToFrontMatter(dict, FrontMatterFormat.Yaml, siteTimeZone);
             return true;
@@ -251,7 +235,7 @@ public sealed class FrontMatterParser : IFrontMatterParser
     private static string SerializeYaml(FrontMatter frontMatter)
     {
         var dict = ConvertFrontMatterToDict(frontMatter);
-        var yaml = YamlSerializer.Serialize(dict);
+        var yaml = SharedYaml.Serializer.Serialize(dict);
         return $"{YamlDelimiter}\n{yaml}{YamlDelimiter}\n";
     }
 
@@ -403,7 +387,7 @@ public sealed class FrontMatterParser : IFrontMatterParser
         {
             foreach (var (menuKey, entry) in menus)
             {
-                sb.Append(culture, $"[menu.{EscapeTomlBareKey(menuKey)}]\n");
+                sb.Append(culture, $"[menu.{TomlSyntax.EscapeBareKey(menuKey)}]\n");
                 if (!string.IsNullOrEmpty(entry.Name))
                     sb.Append(culture, $"name = \"{EscapeString(entry.Name)}\"\n");
                 if (entry.Weight != 0)
@@ -452,7 +436,7 @@ public sealed class FrontMatterParser : IFrontMatterParser
     private static void AppendTomlParamValue(
         System.Text.StringBuilder sb, string key, object? value, System.Globalization.CultureInfo culture)
     {
-        var escapedKey = EscapeTomlBareKey(key);
+        var escapedKey = TomlSyntax.EscapeBareKey(key);
         switch (value)
         {
             case null:
@@ -496,14 +480,6 @@ public sealed class FrontMatterParser : IFrontMatterParser
                 sb.Append(culture, $"{escapedKey} = \"{EscapeString(value.ToString() ?? "")}\"\n");
                 break;
         }
-    }
-
-    /// <summary>TOML 裸键白名单外的键加引号（复用 ConfigParser 的 TOML 键规则）</summary>
-    private static string EscapeTomlBareKey(string key)
-    {
-        return System.Text.RegularExpressions.Regex.IsMatch(key, @"^[A-Za-z0-9_-]+$")
-            ? key
-            : $"\"{EscapeString(key)}\"";
     }
 
     #endregion

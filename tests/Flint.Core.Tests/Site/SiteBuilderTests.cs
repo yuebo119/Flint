@@ -5,6 +5,7 @@
 #pragma warning disable CA2007 // 测试代码中不需要 ConfigureAwait
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Models;
 using Flint.Core.Site;
 using Xunit;
@@ -545,6 +546,15 @@ public class SiteBuilderTests : IDisposable
         public bool TemplateExists(string templateName) => false;
 
         public IReadOnlyList<string> GetDependencies(string templateName) => [];
+
+        public Task<int> PrecompileTemplatesAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(0);
+        }
+
+        public void InvalidateMtimeCache()
+        {
+        }
     }
 
     private sealed class StubAssetPipeline : IAssetPipeline

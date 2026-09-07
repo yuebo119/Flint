@@ -3,6 +3,7 @@
 // 确保失败用例能被最小化，便于调试
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Models;
 using FsCheck;
 using FsCheck.Fluent;

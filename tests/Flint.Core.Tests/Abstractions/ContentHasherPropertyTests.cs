@@ -3,7 +3,7 @@
 // **Feature: Flint, Property 7: 资源哈希确定性**
 
 using System.Text;
-using Flint.Core.Abstractions;
+using Flint.Core.Content;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

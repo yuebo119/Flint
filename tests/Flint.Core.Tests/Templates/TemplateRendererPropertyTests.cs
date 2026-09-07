@@ -3,6 +3,7 @@
 // **Property 5: 模板渲染确定性**
 
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Templates;
 using FsCheck;
 using FsCheck.Fluent;
@@ -95,7 +96,7 @@ public class TemplateRendererPropertyTests : IDisposable
                 {
                     Menus = new Dictionary<string, IReadOnlyList<MenuItem>>()
                 },
-                Config = new { }
+                Config = new SiteConfig { BaseURL = "", Title = "" }
             }
         };
     }

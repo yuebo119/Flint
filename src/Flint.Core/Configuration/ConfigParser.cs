@@ -4,11 +4,8 @@
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
 using Tomlyn;
-using YamlDotNet.Serialization;
-using YamlDotNet.Serialization.NamingConventions;
 
 namespace Flint.Core.Configuration;
 
@@ -19,20 +16,6 @@ namespace Flint.Core.Configuration;
 #pragma warning disable IL2026, IL3050 // AOT 警告在此类中被抑制，因为配置解析需要动态类型处理
 public static partial class ConfigParser
 {
-    // YAML 反序列化器（延迟初始化）
-    private static IDeserializer? _yamlDeserializer;
-    private static IDeserializer YamlDeserializer => _yamlDeserializer ??= new DeserializerBuilder()
-        .WithNamingConvention(CamelCaseNamingConvention.Instance)
-        .IgnoreUnmatchedProperties()
-        .Build();
-
-    // YAML 序列化器（延迟初始化）
-    private static ISerializer? _yamlSerializer;
-    private static ISerializer YamlSerializer => _yamlSerializer ??= new SerializerBuilder()
-        .WithNamingConvention(CamelCaseNamingConvention.Instance)
-        .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults)
-        .Build();
-
     /// <summary>
     /// 检测配置文件格式
     /// </summary>
@@ -126,7 +109,7 @@ public static partial class ConfigParser
         ArgumentNullException.ThrowIfNull(content);
         try
         {
-            var dict = YamlDeserializer.Deserialize<Dictionary<string, object>>(content)
+            var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(content)
                 ?? new Dictionary<string, object>();
             return ConvertDictToConfig(dict);
         }
@@ -153,7 +136,7 @@ public static partial class ConfigParser
     {
         ArgumentNullException.ThrowIfNull(config);
         var dict = ConvertConfigToDict(config);
-        return YamlSerializer.Serialize(dict);
+        return SharedYaml.Serializer.Serialize(dict);
     }
 
     #endregion
@@ -903,7 +886,7 @@ public static partial class ConfigParser
 
         foreach (var (key, value) in dict)
         {
-            var childPrefix = prefix is null ? EscapeTomlKey(key) : $"{prefix}.{EscapeTomlKey(key)}";
+            var childPrefix = prefix is null ? TomlSyntax.EscapeBareKey(key) : $"{prefix}.{TomlSyntax.EscapeBareKey(key)}";
 
             if (IsDictionaryArray(value) && value is IEnumerable<object> tableList)
             {
@@ -940,7 +923,7 @@ public static partial class ConfigParser
 
     private static void AppendTomlKeyValue(StringBuilder sb, string key, object? value)
     {
-        sb.Append(EscapeTomlKey(key)).Append(" = ").AppendLine(FormatTomlValue(value));
+        sb.Append(TomlSyntax.EscapeBareKey(key)).Append(" = ").AppendLine(FormatTomlValue(value));
     }
 
     private static string FormatTomlValue(object? value) => value switch
@@ -950,56 +933,11 @@ public static partial class ConfigParser
         int or long or double or float => Convert.ToString(value, CultureInfo.InvariantCulture) ?? "0",
         DateTimeOffset dto => dto.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
         DateTime dt => dt.ToString("yyyy-MM-dd'T'HH:mm:sszzz", CultureInfo.InvariantCulture),
-        string s => $"\"{EscapeTomlString(s)}\"",
+        string s => $"\"{TomlSyntax.EscapeString(s)}\"",
         // 非泛型枚举分支兜住 List<int> 等值类型元素集合（IEnumerable<object> 匹配不到值类型元素）
         System.Collections.IEnumerable list => "[" + string.Join(", ", list.Cast<object>().Select(FormatTomlValue)) + "]",
-        _ => $"\"{EscapeTomlString(value.ToString() ?? "")}\""
+        _ => $"\"{TomlSyntax.EscapeString(value.ToString() ?? "")}\""
     };
-
-    private static string EscapeTomlKey(string key)
-    {
-        // 含非裸键字符（字母数字_- 之外）时用引号键
-        return TomlBareKeyRegex().IsMatch(key) ? key : $"\"{EscapeTomlString(key)}\"";
-    }
-
-    /// <summary>
-    /// TOML 基本字符串转义（反斜杠/引号/换行/控制字符）
-    /// </summary>
-    private static string EscapeTomlString(string value)
-    {
-        var sb = new StringBuilder(value.Length);
-        foreach (var c in value)
-        {
-            switch (c)
-            {
-                case '\\':
-                    sb.Append("\\\\");
-                    break;
-                case '"':
-                    sb.Append("\\\"");
-                    break;
-                case '\n':
-                    sb.Append("\\n");
-                    break;
-                case '\r':
-                    sb.Append("\\r");
-                    break;
-                case '\t':
-                    sb.Append("\\t");
-                    break;
-                case < ' ' or '\u007f':
-                    sb.Append("\\u").Append(((int)c).ToString("x4", CultureInfo.InvariantCulture));
-                    break;
-                default:
-                    sb.Append(c);
-                    break;
-            }
-        }
-        return sb.ToString();
-    }
-
-    [GeneratedRegex("^[A-Za-z0-9_-]+$")]
-    private static partial Regex TomlBareKeyRegex();
 
     #endregion
 }

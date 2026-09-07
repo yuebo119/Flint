@@ -4,6 +4,7 @@
 using System.Collections.Frozen;
 using System.Diagnostics;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 
 namespace Flint.Core.Content;
 
@@ -178,7 +179,7 @@ public static class ContentParserDateSetup
     /// <param name="parser">内容解析器（装配点新建的实例）</param>
     /// <param name="config">站点配置</param>
     /// <param name="contentDirectory">站点内容目录绝对路径（<c>:git</c> 源的 git 工作目录）</param>
-    public static void Apply(ContentParser parser, Abstractions.SiteConfig config, string contentDirectory)
+    public static void Apply(ContentParser parser, Configuration.SiteConfig config, string contentDirectory)
     {
         if (!string.IsNullOrWhiteSpace(config.TimeZone))
         {

@@ -1,7 +1,7 @@
 // Flint 核心库测试
 // Paginator 分页器单元测试
 
-using Flint.Core.Abstractions;
+using Flint.Core.Site;
 using FluentAssertions;
 using Xunit;
 
