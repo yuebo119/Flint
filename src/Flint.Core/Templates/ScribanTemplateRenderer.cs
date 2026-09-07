@@ -877,7 +877,7 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             return GetConvertedPages().GetEnumerator();
         }
 
-        public override bool TryGetValue(Scriban.TemplateContext context, SourceSpan span, string member, out object? value)
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
             // 处理索引访问
             if (int.TryParse(member, out var index) && index >= 0 && index < _pages.Count)
@@ -914,7 +914,7 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             _taxonomies = taxonomies;
         }
 
-        public override bool TryGetValue(Scriban.TemplateContext context, SourceSpan span, string member, out object? value)
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
             if (_convertedTaxonomies.TryGetValue(member, out var cached))
             {
@@ -959,7 +959,7 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             SetValue("Permalink", term.Permalink, false);
         }
 
-        public override bool TryGetValue(Scriban.TemplateContext context, SourceSpan span, string member, out object? value)
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
             // 只有访问 pages/Pages 时才懒加载
             if (member.Equals("pages", StringComparison.OrdinalIgnoreCase))

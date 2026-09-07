@@ -1469,6 +1469,10 @@ public static class MarkdownContentArbitraries
          from headers in Gen.ListOf<string>(Gen.Elements(ValidTableHeaders)).Select(h => h.Take(colCount).ToList())
          from rows in Gen.ListOf<IReadOnlyList<string>>(Gen.ListOf<string>(Gen.Elements(ValidTableCells)).Select(r => (IReadOnlyList<string>)r.Take(colCount).ToList())).Select(r => r.Take(rowCount).ToList())
          let distinctHeaders = headers.Distinct().Take(colCount).ToList()
+         // 0 列退化形态（Gen.ListOf 产空列表时）不是有效 Markdown 表格——
+         // 属性前提是"任意有效的 Markdown 表格"；Markdig 1.x 收紧了对
+         // 空表头行的解析（0.44 宽松渲染为 table，1.x 视为普通文本）
+         where distinctHeaders.Count > 0
          let actualColCount = distinctHeaders.Count
          select new MarkdownTableTestData
          {
