@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+{{ include "partials/head.html" }}
+</head>
+<body>
+{{ include "partials/header.html" }}
+<main>
+<section class="home">
+    <div class="hero">
+        <h1>{{ site.title }}</h1>
+        <p>{{ site.params.description }}</p>
+    </div>
+    
+    <section class="recent-posts">
+        <h2>最新文章</h2>
+        <ul class="post-list">
+            {{ for post in site.regular_pages | array.limit 5 }}
+            <li class="post-item">
+                <article>
+                    <h3><a href="{{ post.permalink }}">{{ post.title }}</a></h3>
+                    <div class="post-meta">
+                        {{ if post.date }}
+                        <time>{{ post.date | date.to_string "%Y年%m月%d日" }}</time>
+                        {{ end }}
+                    </div>
+                    {{ if post.summary }}
+                    <p class="post-summary">{{ post.summary }}</p>
+                    {{ end }}
+                </article>
+            </li>
+            {{ end }}
+        </ul>
+        <a href="/posts/" class="view-all">查看全部文章 →</a>
+    </section>
+</section>
+</main>
+{{ include "partials/footer.html" }}
+</body>
+</html>

@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 项目基本信息 -->
+    <RootNamespace>Flint.IntegrationTests</RootNamespace>
+    <AssemblyName>Flint.IntegrationTests</AssemblyName>
+    <Description>Flint 静态站点生成器集成测试和端到端测试</Description>
+    
+    <!-- 测试项目配置 -->
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    
+    <!-- 允许不安全代码（用于测试 SIMD 相关功能） -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    
+    <!-- 禁用 AOT 相关配置（测试项目不需要 AOT） -->
+    <PublishAot>false</PublishAot>
+    <IsAotCompatible>false</IsAotCompatible>
+    
+    <!-- 禁用 NuGet 安全漏洞审计（测试项目中可接受） -->
+    <NuGetAudit>false</NuGetAudit>
+    
+    <!-- 禁用测试项目中不适用的代码分析规则 -->
+    <!-- CA1707: 测试方法命名允许下划线 -->
+    <!-- CA1861: 测试中使用内联数组是可接受的 -->
+    <!-- CA5394: 测试中使用 Random 是安全的 -->
+    <!-- CA1515: 测试项目中的类型不需要是内部的 -->
+    <!-- CA1307: 测试中不需要指定 StringComparison -->
+    <!-- CA1063: 测试类的 Dispose 实现不需要完整模式 -->
+    <!-- CA1849: 测试中使用同步方法是可接受的 -->
+    <!-- CA1822: 测试辅助方法不需要是静态的 -->
+    <!-- CA1308: 测试中使用 ToLowerInvariant 是可接受的 -->
+    <!-- CA1310: 测试中不需要指定 StringComparison -->
+    <!-- CA1305: 测试中不需要指定 IFormatProvider -->
+    <!-- xUnit1031: 测试中使用 .Result 是可接受的 -->
+    <!-- IL2026, IL3050: AOT 相关警告 -->
+    <!-- CA2007: 测试中不需要 ConfigureAwait -->
+    <!-- CA1001: 测试类实现 IAsyncLifetime 进行清理 -->
+    <!-- CA1859: 测试中使用接口类型是可接受的 -->
+    <!-- CA2012: 测试中使用 GetAwaiter().GetResult() 是可接受的 -->
+    <!-- CA1866, CA1847: 测试中字符串搜索方式不重要 -->
+    <!-- CA1862: 测试中不区分大小写的比较方式不重要 -->
+    <!-- CA1869: 测试中创建 JsonSerializerOptions 是可接受的 -->
+    <!-- CA1024: 测试中使用方法而非属性是可接受的 -->
+    <!-- CS1739: 参数名称错误 -->
+    <NoWarn>$(NoWarn);CA1707;CA1861;CA5394;CA1515;CA1307;CA1063;CA1849;CA1822;CA1031;CA1062;CA1826;CA1308;CA1310;CA1305;xUnit1031;IL2026;IL3050;CA2007;CA1001;CA1859;CA2012;CA1866;CA1847;CA1862;CA1869;CA1024</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 项目引用 -->
+    <ProjectReference Include="..\..\src\Flint.Core\Flint.Core.csproj" />
+    <ProjectReference Include="..\..\src\Flint.Cli\Flint.Cli.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Sass 编译器 Native 依赖（测试需要） -->
+    <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="DartSass.Native.osx-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    
+    <!-- JavaScript 引擎（DartSassHost 需要） -->
+    <PackageReference Include="JavaScriptEngineSwitcher.V8" />
+    <PackageReference Include="JavaScriptEngineSwitcher.V8.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="JavaScriptEngineSwitcher.V8.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="JavaScriptEngineSwitcher.V8.Native.osx-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 测试框架 -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    
+    <!-- 属性测试框架 -->
+    <PackageReference Include="FsCheck" />
+    <PackageReference Include="FsCheck.Xunit" />
+    
+    <!-- 测试覆盖率 -->
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    
+    <!-- 断言库 -->
+    <PackageReference Include="FluentAssertions" />
+    
+    <!-- 性能测试框架 -->
+    <PackageReference Include="BenchmarkDotNet" />
+  </ItemGroup>
+
+  <!-- 测试数据文件 -->
+  <ItemGroup>
+    <!-- 将 TestData 目录下的所有文件复制到输出目录 -->
+    <None Include="TestData\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="TestData" />
+  </ItemGroup>
+
+</Project>

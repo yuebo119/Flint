@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flint 集成测试覆盖率配置 -->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <!-- 输出格式：cobertura 用于 CI，opencover 用于详细分析 -->
+          <Format>cobertura,opencover</Format>
+          
+          <!-- 排除规则 -->
+          <Exclude>
+            <!-- 排除测试项目本身 -->
+            [Flint.IntegrationTests]*,
+            [Flint.UnitTests]*,
+            
+            <!-- 排除生成的代码 -->
+            [*]*.Generated.*,
+            [*]*.g.cs,
+            [*]*.Designer.cs,
+            
+            <!-- 排除迁移和配置 -->
+            [*]*.Migrations.*,
+            
+            <!-- 排除程序入口点 -->
+            [*]Program,
+            
+            <!-- 排除模型和 DTO（通常是简单的数据类） -->
+            [*]*.Models.*,
+            [*]*.Dto.*,
+            [*]*.ViewModels.*
+          </Exclude>
+          
+          <!-- 包含规则 -->
+          <Include>
+            [Flint.Core]*,
+            [Flint.Cli]*
+          </Include>
+          
+          <!-- 排除特定属性标记的代码 -->
+          <ExcludeByAttribute>
+            Obsolete,
+            GeneratedCodeAttribute,
+            CompilerGeneratedAttribute,
+            ExcludeFromCodeCoverageAttribute
+          </ExcludeByAttribute>
+          
+          <!-- 排除特定文件 -->
+          <ExcludeByFile>
+            **/AssemblyInfo.cs,
+            **/*.Designer.cs,
+            **/*.g.cs,
+            **/Migrations/*.cs
+          </ExcludeByFile>
+          
+          <!-- 包含测试程序集（用于测试代码覆盖率分析） -->
+          <IncludeTestAssembly>false</IncludeTestAssembly>
+          
+          <!-- 单次命中计数（提高性能） -->
+          <SingleHit>false</SingleHit>
+          
+          <!-- 使用源链接 -->
+          <UseSourceLink>true</UseSourceLink>
+          
+          <!-- 跳过自动生成的属性 -->
+          <SkipAutoProps>true</SkipAutoProps>
+          
+          <!-- 确定性报告（用于比较） -->
+          <DeterministicReport>true</DeterministicReport>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+  
+  <!-- 测试运行配置 -->
+  <TestRunParameters>
+    <!-- 最小覆盖率阈值 -->
+    <Parameter name="CoverageThreshold" value="70" />
+    <!-- 分支覆盖率阈值 -->
+    <Parameter name="BranchCoverageThreshold" value="60" />
+  </TestRunParameters>
+  
+  <!-- 日志配置 -->
+  <LoggerRunSettings>
+    <Loggers>
+      <Logger friendlyName="console" enabled="True">
+        <Configuration>
+          <Verbosity>normal</Verbosity>
+        </Configuration>
+      </Logger>
+      <Logger friendlyName="trx" enabled="True">
+        <Configuration>
+          <LogFileName>TestResults.trx</LogFileName>
+        </Configuration>
+      </Logger>
+    </Loggers>
+  </LoggerRunSettings>
+</RunSettings>

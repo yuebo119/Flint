@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 项目基本信息 -->
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Flint.Cli</RootNamespace>
+    <AssemblyName>Flint</AssemblyName>
+    <Description>Flint 静态站点生成器命令行工具</Description>
+    
+    <!-- 禁用 CLI 应用程序不需要的代码分析规则 -->
+    <NoWarn>$(NoWarn);CA1303;CA1515;CA1822;CA1031;CA2007;CA1305;CA1307;IL2026;IL3050;IL2075;IL2104</NoWarn>
+    
+    <!-- Native AOT 编译配置 -->
+    <!-- 注意: 由于 YamlDotNet、Scriban 等库使用反射，暂时禁用完全 AOT -->
+    <PublishAot>false</PublishAot>
+    <SelfContained>true</SelfContained>
+    
+    <!-- 发布为单文件 -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    
+    <!-- 启用 ReadyToRun 预编译以提升启动性能 -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    
+    <!-- 启用部分裁剪（AOT 优化） -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimMode>partial</TrimMode>
+    <SuppressTrimAnalysisWarnings>true</SuppressTrimAnalysisWarnings>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    
+    <!-- 允许不安全代码（用于 SIMD 优化） -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    
+    <!-- 启动性能优化 -->
+    <TieredCompilation>false</TieredCompilation>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <!-- 发布配置 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- 裁剪时保留的程序集（需要反射的库） -->
+  <ItemGroup>
+    <TrimmerRootAssembly Include="Scriban" />
+    <TrimmerRootAssembly Include="YamlDotNet" />
+    <TrimmerRootAssembly Include="Tomlyn" />
+    <TrimmerRootAssembly Include="JavaScriptEngineSwitcher.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 项目引用 -->
+    <ProjectReference Include="..\Flint.Core\Flint.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- CLI 框架 -->
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+</Project>

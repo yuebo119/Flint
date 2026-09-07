@@ -1,0 +1,22 @@
+<header class="site-header">
+    <div class="container">
+        <div class="site-branding">
+            <h1 class="site-title">
+                <a href="/">{{ site.title }}</a>
+            </h1>
+            {{ if site.params.description }}
+            <p class="site-description">{{ site.params.description }}</p>
+            {{ end }}
+        </div>
+        
+        <nav class="main-navigation">
+            <ul class="nav-menu">
+                {{ for item in site.menus.main }}
+                <li class="nav-item">
+                    <a href="{{ item.url }}" class="nav-link">{{ item.name }}</a>
+                </li>
+                {{ end }}
+            </ul>
+        </nav>
+    </div>
+</header>

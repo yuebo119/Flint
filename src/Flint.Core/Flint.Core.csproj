@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 项目基本信息 -->
+    <RootNamespace>Flint.Core</RootNamespace>
+    <AssemblyName>Flint.Core</AssemblyName>
+    <Description>Flint 静态站点生成器核心库</Description>
+    
+    <!-- 启用 AOT 兼容性分析 -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    
+    <!-- 允许不安全代码（用于 SIMD 优化） -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    
+    <!-- 禁用不适用的代码分析规则 -->
+    <!-- 注意：IL2026/IL3050（AOT 兼容性警告）已从全局 NoWarn 移除——
+         已知的 AOT 风险点（YamlDotNet 反射路径）在 ConfigParser/FrontMatterParser/DataFileLoader
+         内以文件级 #pragma 局部压制并注释说明；新增代码引入 AOT 不兼容时将产生全局警告 -->
+    <NoWarn>$(NoWarn);CA1056;CA1055;CA1711;CA1716;CA1308;CA1000;CA1054;CA1032;CA1062;CA2007;CA1031;CA5350;CA5351;CA5394;CA1307;CA1867;CA1869;CA1822;CA1024;CA1305;CA1310;CA1859</NoWarn>
+  </PropertyGroup>
+
+  <!-- Kestrel/ASP.NET Core 框架引用 -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <!-- 单元测试项目访问 internal 成员（纯函数级测试，如 permalink token 展开） -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Flint.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 模板引擎 -->
+    <PackageReference Include="Scriban" />
+    
+    <!-- Markdown 解析 -->
+    <PackageReference Include="Markdig" />
+    
+    <!-- 图像处理 -->
+    <PackageReference Include="SixLabors.ImageSharp" />
+    
+    <!-- 配置解析 -->
+    <PackageReference Include="Tomlyn" />
+    <PackageReference Include="YamlDotNet" />
+    
+    <!-- Sass/SCSS 编译 -->
+    <PackageReference Include="DartSassHost" />
+    <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <PackageReference Include="DartSass.Native.osx-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+
+    <!-- HTML/CSS/JS 压缩 -->
+    <PackageReference Include="NUglify" />
+  </ItemGroup>
+
+</Project>

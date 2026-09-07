@@ -1,0 +1,16 @@
+# flint 最小有效站点配置
+# 用于测试基本功能
+
+# 站点基本信息
+baseURL = "http://localhost:1313/"
+title = "最小测试站点"
+languageCode = "zh-cn"
+
+# 构建选项
+[build]
+  publishDir = "public"
+
+# 分类法
+[taxonomies]
+  category = "categories"
+  tag = "tags"

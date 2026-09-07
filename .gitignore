@@ -1,0 +1,53 @@
+# .NET 构建输出
+bin/
+obj/
+out/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+
+# 测试结果
+TestResults/
+*.trx
+coverage/
+*.coverage
+*.coveragexml
+
+# NuGet 包
+*.nupkg
+*.snupkg
+packages/
+
+# 发布输出
+publish/
+
+# Native AOT 输出
+*.pdb
+*.ilk
+*.exp
+*.lib
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+~$*
+performance-report.html

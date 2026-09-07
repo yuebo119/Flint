@@ -1,0 +1,12 @@
+{{ if page.translations && page.translations.size > 0 }}
+<div class="translations">
+    <h3>其他语言版本 / Other Languages / 他の言語</h3>
+    <ul>
+        {{ for translation in page.translations }}
+        <li>
+            <a href="{{ translation.permalink }}">{{ translation.language_name }}: {{ translation.title }}</a>
+        </li>
+        {{ end }}
+    </ul>
+</div>
+{{ end }}

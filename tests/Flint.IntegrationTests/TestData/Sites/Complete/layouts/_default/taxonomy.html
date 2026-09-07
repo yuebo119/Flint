@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+{{ include "partials/head.html" }}
+</head>
+<body>
+{{ include "partials/header.html" }}
+<main>
+<section class="taxonomy-list">
+    <h1>{{ page.title ?? "分类" }}</h1>
+    
+    <ul class="taxonomy-terms">
+        {{ for term in page.terms }}
+        <li class="term-item">
+            <a href="{{ term.permalink }}">
+                <span class="term-name">{{ term.name }}</span>
+                <span class="term-count">({{ term.count }})</span>
+            </a>
+        </li>
+        {{ end }}
+    </ul>
+</section>
+</main>
+{{ include "partials/footer.html" }}
+</body>
+</html>
