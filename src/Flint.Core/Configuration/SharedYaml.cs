@@ -30,3 +30,4 @@ internal static class SharedYaml
         .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitDefaults)
         .Build();
 }
+#pragma warning restore IL2026, IL3050
