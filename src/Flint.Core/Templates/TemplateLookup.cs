@@ -228,7 +228,6 @@ public sealed class TemplateLookup
                 ? !string.Equals(descriptor.OutputFormat, outputFormat, StringComparison.OrdinalIgnoreCase)
                 : descriptor.OutputFormat is not null)
         {
-            Console.Error.WriteLine($"[SCORE-FMT-REJECT] desc={descriptor.RelativePath} fmt={outputFormat}");
             return -1;
         }
 
