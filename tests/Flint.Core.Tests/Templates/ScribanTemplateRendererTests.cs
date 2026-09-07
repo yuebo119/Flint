@@ -685,6 +685,9 @@ public class ScribanTemplateRendererTests : IDisposable
         // Act - 仅改 partial（主模板 page.html 不动），mtime 前移保证变化可见
         File.WriteAllText(partialPath, "NEW");
         File.SetLastWriteTimeUtc(partialPath, DateTime.UtcNow.AddSeconds(2));
+        // mtime 查询有 50ms 短窗缓存（热路径 stat 减频），变化最多延迟一个
+        // 窗口被发现——等待跨过窗口对齐该语义
+        Thread.Sleep(60);
 
         var second = await renderer.RenderAsync("page", CreateTestContext());
 

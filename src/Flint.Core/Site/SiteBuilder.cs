@@ -34,6 +34,10 @@ public sealed class SiteBuilder : ISiteBuilder
     // 当前构建周期的页面树（T2.3 增量构建做 section 级精确替换的查询基础）
     private PageTree? _currentPageTree;
     private bool _templatesPrecompiled;
+    // taxonomy 签名的节点级条目缓存（key = 树节点 key）：增量只重算变化页的
+    // 条目，未变化页直接复用——每次增量的全站遍历从"格式化全部条目"降为
+    // "拼缓存条目 + 一次排序哈希"（500 页站点省 499 次条目格式化）
+    private readonly Dictionary<string, string> _taxonomyEntryCache = new(StringComparer.Ordinal);
 
     /// <summary>
     /// 创建站点构建器
@@ -62,6 +66,10 @@ public sealed class SiteBuilder : ISiteBuilder
         var stopwatch = Stopwatch.StartNew();
         var errors = new ConcurrentBag<BuildError>();
         var warnings = new ConcurrentBag<BuildWarning>();
+
+        // 构建边界：清 mtime 短窗缓存，保证本次构建看到全部模板的最新状态
+        // （TTL 缓存只在单次构建内部生效，见渲染器 InvalidateMtimeCache）
+        (_templateRenderer as ScribanTemplateRenderer)?.InvalidateMtimeCache();
 
         // P2 优化：预编译模板（只在首次构建时执行）
         if (!_templatesPrecompiled && _templateRenderer is ScribanTemplateRenderer scribanRenderer)
@@ -200,6 +208,10 @@ public sealed class SiteBuilder : ISiteBuilder
         var errors = new ConcurrentBag<BuildError>();
         var warnings = new ConcurrentBag<BuildWarning>();
 
+        // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态
+        //（"改模板后立即增量"是测试锁定的高频真实场景）
+        (_templateRenderer as ScribanTemplateRenderer)?.InvalidateMtimeCache();
+
         try
         {
             var config = await _configLoader.AutoLoadAsync(
@@ -253,6 +265,8 @@ public sealed class SiteBuilder : ISiteBuilder
                     var allParsed = await ParseContentsAsync(allFiles, options, errors, cancellationToken);
                     tree = AssemblePageTree(FilterContents(allParsed, options), options.SourcePath, config);
                     _currentPageTree = tree;
+                    // 树整体重装：旧缓存条目对应的节点内容已不可信
+                    _taxonomyEntryCache.Clear();
                     taxonomySignatureBefore = string.Empty;
                 }
                 else
@@ -310,6 +324,8 @@ public sealed class SiteBuilder : ISiteBuilder
                         });
                         EnsureAncestors(tree, key);
                     }
+                    // 节点内容已变：签名条目缓存失效，下次全站签名时按新内容重算
+                    _taxonomyEntryCache.Remove(key);
                 }
 
                 foreach (var deleted in deletedChanges)
@@ -328,6 +344,8 @@ public sealed class SiteBuilder : ISiteBuilder
                         }
                     }
                     tree.Delete(key);
+                    // 节点已摘除：签名条目缓存同步失效
+                    _taxonomyEntryCache.Remove(key);
                 }
 
                 // 2. 全量上下文从树产出（零重解析）
@@ -753,6 +771,8 @@ public sealed class SiteBuilder : ISiteBuilder
         // 树保留到构建周期：增量构建据此做 section 级精确替换，无需重新解析全部文件
         var tree = AssemblePageTree(contents, sourcePath, config);
         _currentPageTree = tree;
+        // 全量重装：签名条目缓存对应的旧节点内容已全部作废
+        _taxonomyEntryCache.Clear();
 
         return BuildPageContextsFromTree(tree, config);
     }
@@ -906,10 +926,11 @@ public sealed class SiteBuilder : ISiteBuilder
     }
 
     /// <summary>
-    /// taxonomy 输入签名：全部内容页的（树 key + 标题 + 日期 + tags + categories + draft）
-    /// 规范化哈希。签名一致 = term/taxonomy 页的数据输入未变（纯正文编辑），可跳过重产
+    /// taxonomy 输入签名：全部内容页的（树 key + 标题 + Slug + 日期 + tags + categories + draft）
+    /// 规范化哈希。签名一致 = term/taxonomy 页的数据输入未变（纯正文编辑），可跳过重产。
+    /// 节点级条目缓存：未变化页复用上次格式化结果，增量只重算变化页
     /// </summary>
-    private static string ComputeTaxonomySignature(PageTree tree)
+    private string ComputeTaxonomySignature(PageTree tree)
     {
         var entries = new List<string>();
         tree.Walk(new PageTreeWalker
@@ -920,8 +941,13 @@ public sealed class SiteBuilder : ISiteBuilder
                 var md = node.Content?.Metadata;
                 if (md is not null)
                 {
-                    entries.Add(string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                        $"{node.Key}|{md.Title}|{md.Slug}|{md.Date:O}|{md.Draft}|{{{string.Join(",", md.Tags.OrderBy(t => t, StringComparer.Ordinal))}}}|{{{string.Join(",", md.Categories.OrderBy(c => c, StringComparer.Ordinal))}}}"));
+                    if (!_taxonomyEntryCache.TryGetValue(node.Key, out var entry))
+                    {
+                        entry = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                            $"{node.Key}|{md.Title}|{md.Slug}|{md.Date:O}|{md.Draft}|{{{string.Join(",", md.Tags.OrderBy(t => t, StringComparer.Ordinal))}}}|{{{string.Join(",", md.Categories.OrderBy(c => c, StringComparer.Ordinal))}}}");
+                        _taxonomyEntryCache[node.Key] = entry;
+                    }
+                    entries.Add(entry);
                 }
                 return false;
             }

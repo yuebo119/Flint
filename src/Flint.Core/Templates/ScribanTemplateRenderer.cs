@@ -351,7 +351,7 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
         // 不依赖主模板重载触发（partial 变化时主模板缓存命中、不走重载清缓存路径）。
         // 已知取舍：partial 内嵌套 include 的子 partial 变化不改变外层 mtime，
         // 外层缓存条目不失效（精确传递失效需 partial 级依赖图，见记录项）
-        var mtimeTicks = File.GetLastWriteTimeUtc(path).Ticks;
+        var mtimeTicks = GetMtimeUtc(path).Ticks;
         var cacheKey = name + "\u0001" + string.Join("\u0002", variants.Select(v => v?.ToString() ?? ""))
             + "\u0003" + mtimeTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return _partialResultCache.GetOrAdd(cacheKey, _ =>
@@ -561,13 +561,44 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
+    /// 模板 mtime 查询的短窗缓存：同一路径 TTL 内不重复 stat（NTFS 元数据查询
+    /// 每次 20-50μs，每页渲染都查 IsStale 会在大站点放大为几十 ms 的纯文件系统
+    /// 等待）。TTL 内的模板修改最多延迟一个窗口被发现——远小于任何真实写入的
+    /// 感知间隔，dev server 热重载不受影响
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime CachedAtUtc, DateTime MtimeUtc)> _mtimeCache = new();
+    private static readonly TimeSpan MtimeCacheTtl = TimeSpan.FromMilliseconds(50);
+
+    private DateTime GetMtimeUtc(string path)
+    {
+        var now = DateTime.UtcNow;
+        if (_mtimeCache.TryGetValue(path, out var entry) && now - entry.CachedAtUtc < MtimeCacheTtl)
+        {
+            return entry.MtimeUtc;
+        }
+        var mtime = File.GetLastWriteTimeUtc(path);
+        _mtimeCache[path] = (now, mtime);
+        return mtime;
+    }
+
+    /// <summary>
+    /// 清空 mtime 短窗缓存：由构建入口（BuildAsync/IncrementalBuildAsync）调用，
+    /// 保证"每次构建都能看到最新模板"契约不被 TTL 延迟破坏——缓存只在
+    /// 单次构建内部生效（构建内多页渲染共享首轮 stat）
+    /// </summary>
+    public void InvalidateMtimeCache()
+    {
+        _mtimeCache.Clear();
+    }
+
+    /// <summary>
     /// 缓存条目是否过期：源文件 mtime 与编译时不一致说明模板已被修改
     /// （Serve 长驻渲染 / 增量构建时模板变化必须刷新，否则渲染的仍是旧模板）
     /// </summary>
-    private static bool IsStale(CachedTemplate cached)
+    private bool IsStale(CachedTemplate cached)
     {
         return cached.SourcePath is not null &&
-               File.GetLastWriteTimeUtc(cached.SourcePath) != cached.ModifiedTimeUtc;
+               GetMtimeUtc(cached.SourcePath) != cached.ModifiedTimeUtc;
     }
 
     /// <summary>
