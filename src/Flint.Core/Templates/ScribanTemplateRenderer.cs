@@ -507,11 +507,13 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>
     /// 清空 mtime 短窗缓存：由构建入口（BuildAsync/IncrementalBuildAsync）调用，
     /// 保证"每次构建都能看到最新模板"契约不被 TTL 延迟破坏——缓存只在
-    /// 单次构建内部生效（构建内多页渲染共享首轮 stat）
+    /// 单次构建内部生效（构建内多页渲染共享首轮 stat）。
+    /// 同步失效模板查找器的描述符缓存（构建内模板文件可能增删）
     /// </summary>
     public void InvalidateMtimeCache()
     {
         _mtimeCache.Clear();
+        _lookup?.Invalidate();
     }
 
     /// <summary>
@@ -536,37 +538,21 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
             ["term"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>",
             ["list"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>"
         };
+    // 加权匹配查找器（方案五接线）：替换原 12 形态文件名直查——
+    // 描述符集经快照+一致性测试守护，扫描结果按构建缓存（Invalidate 失效）
+    private TemplateLookup? _lookup;
+
     private string ResolveTemplatePath(string templateName)
     {
-        // 支持多种模板查找路径：站点 layouts 优先，主题 layouts 按序回退
-        //（对齐 Hugo 主题叠加：先挂载者赢；_default 是 legacy 约定保留）
-        var searchPaths = new List<string>
+        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        var resolved = lookup.Resolve(templateName, _templatesPath);
+        if (resolved is not null)
         {
-            Path.Combine(_templatesPath, templateName),
-            Path.Combine(_templatesPath, templateName + ".html"),
-            Path.Combine(_templatesPath, "layouts", templateName),
-            Path.Combine(_templatesPath, "layouts", templateName + ".html"),
-            Path.Combine(_templatesPath, "_default", templateName),
-            Path.Combine(_templatesPath, "_default", templateName + ".html"),
-        };
-
-        foreach (var themePath in _themeTemplatePaths)
-        {
-            searchPaths.Add(Path.Combine(themePath, templateName));
-            searchPaths.Add(Path.Combine(themePath, templateName + ".html"));
-            searchPaths.Add(Path.Combine(themePath, "_default", templateName));
-            searchPaths.Add(Path.Combine(themePath, "_default", templateName + ".html"));
+            return resolved;
         }
 
-        foreach (var path in searchPaths)
-        {
-            if (File.Exists(path))
-            {
-                return path;
-            }
-        }
-
-        throw new TemplateNotFoundException(templateName, searchPaths);
+        throw new TemplateNotFoundException(templateName,
+            [Path.Combine(_templatesPath, templateName), Path.Combine(_templatesPath, templateName + ".html")]);
     }
 
 

@@ -379,7 +379,7 @@ public sealed class MenuConfig
 /// <summary>
 /// 菜单项配置
 /// </summary>
-public sealed class MenuItemConfig
+public sealed record MenuItemConfig
 {
     /// <summary>
     /// 菜单项名称

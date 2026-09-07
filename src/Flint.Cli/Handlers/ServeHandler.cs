@@ -68,7 +68,10 @@ internal static class ServeHandler
             {
                 SourceDirectory = sourcePath,
                 OutputDirectory = outputPath
-            });
+            },
+            imageProcessor: new ImageProcessor(),
+            sassCompiler: new SassCompiler(),
+            jsBundler: new JavaScriptBundler());
 
             // 创建站点构建器
             var siteBuilder = new SiteBuilder(

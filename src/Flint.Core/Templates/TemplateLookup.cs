@@ -45,6 +45,34 @@ public sealed class TemplateLookup
             .ToArray();
     }
 
+    // 描述符集缓存：渲染热路径每页 Resolve 都进来，全树枚举必须复用。
+    // 作用域为单次构建（构建入口经渲染器 Invalidate 同步失效），构建内
+    // 模板文件集不变是安全假设
+    private IReadOnlyList<TemplateDescriptor>? _descriptorCache;
+
+    /// <summary>清空描述符缓存（构建边界由渲染器调用）</summary>
+    public void Invalidate() => _descriptorCache = null;
+
+    private IReadOnlyList<TemplateDescriptor> ScanAll()
+    {
+        var list = new List<TemplateDescriptor>();
+        for (var i = 0; i < _roots.Length; i++)
+        {
+            if (!Directory.Exists(_roots[i]))
+            {
+                continue;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(_roots[i], "*.html", SearchOption.AllDirectories))
+            {
+                list.Add(Describe(
+                    Path.GetRelativePath(_roots[i], file).Replace('\\', '/'),
+                    file, i));
+            }
+        }
+        return list;
+    }
+
     /// <summary>
     /// 加权查找：返回最优匹配的物理路径；无匹配返回 null。
     /// requestName 支持 "{kind/layout 名}" 与 "{名}.{输出格式}"（如 single.json）两种形态
@@ -52,30 +80,21 @@ public sealed class TemplateLookup
     public string? Resolve(string requestName, string rootPath)
     {
         var (baseName, outputFormat) = SplitRequest(requestName);
+        var descriptors = _descriptorCache ??= ScanAll();
         TemplateDescriptor? best = null;
         var bestScore = -1;
 
-        foreach (var root in _roots)
+        foreach (var descriptor in descriptors)
         {
-            if (!Directory.Exists(root))
+            var score = Score(descriptor, baseName, outputFormat);
+            // 同分并列兑现文档契约：路径字典序（同分只发生在同根内——
+            // 根序分按根递减 10，跨根必不同分）
+            if (score > bestScore ||
+                (score == bestScore && best is not null &&
+                 string.CompareOrdinal(descriptor.RelativePath, best.RelativePath) < 0))
             {
-                continue;
-            }
-
-            foreach (var file in Directory.EnumerateFiles(root, "*.html", SearchOption.AllDirectories))
-            {
-                var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
-                var descriptor = Describe(relative, file, Array.IndexOf(_roots, root));
-                var score = Score(descriptor, baseName, outputFormat);
-                // 同分并列兑现文档契约：路径字典序（同分只发生在同根内——
-                // 根序分按根递减 10，跨根必不同分）
-                if (score > bestScore ||
-                    (score == bestScore && best is not null &&
-                     string.CompareOrdinal(descriptor.RelativePath, best.RelativePath) < 0))
-                {
-                    bestScore = score;
-                    best = descriptor;
-                }
+                bestScore = score;
+                best = descriptor;
             }
         }
 
@@ -190,6 +209,16 @@ public sealed class TemplateLookup
 
     private static int Score(TemplateDescriptor descriptor, string baseName, string? outputFormat)
     {
+        // 名字是匹配的必要证据：全无关联的描述符（根序保底分曾使其竞选成功、
+        // 返回第一个被枚举的文件）不得参与——名字不沾边直接判负
+        var nameMatched =
+            descriptor.MatchName.Equals(baseName, StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(descriptor.MatchName).Equals(baseName, StringComparison.OrdinalIgnoreCase);
+        if (!nameMatched)
+        {
+            return -1;
+        }
+
         var score = 0;
         // 逻辑名精确（含目录路径）：+10；请求侧只给短名（"single"）时退而按
         // 文件名段匹配：+6（低于全串精确，保证请求带 "_default/" 前缀时
@@ -198,8 +227,7 @@ public sealed class TemplateLookup
         {
             score += 10;
         }
-        else if (Path.GetFileName(descriptor.MatchName)
-            .Equals(baseName, StringComparison.OrdinalIgnoreCase))
+        else
         {
             score += 6;
         }

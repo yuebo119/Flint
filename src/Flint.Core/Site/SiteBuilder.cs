@@ -1195,6 +1195,19 @@ public sealed class SiteBuilder : ISiteBuilder
             SourcePath = content.SourcePath,
             Draft = draft,
             Weight = weight,
+            MenuEntries = content.Metadata.Menus is { Count: > 0 } menus
+                ? menus.ToDictionary(
+                    kvp => kvp.Key,
+                    kvp => new MenuItemConfig
+                    {
+                        Name = kvp.Value.Name ?? title,
+                        Weight = kvp.Value.Weight,
+                        Parent = kvp.Value.Parent,
+                        Identifier = kvp.Value.Identifier,
+                        Pre = kvp.Value.Pre,
+                        Post = kvp.Value.Post
+                    })
+                : null,
             Params = effectiveParams,
             Plain = content.PlainText,
             RawContent = content.RawMarkdown
@@ -1506,6 +1519,18 @@ public sealed class SiteBuilder : ISiteBuilder
             ? pages.Max(p => p.LastMod ?? p.Date)
             : DateTimeOffset.Now;
 
+        // 菜单链接线：config.Menus 静态定义 + 各页 front matter 声明共同汇入
+        //（此前两条解析管线的产出在硬编码空 MenuCollection 处被丢弃）
+        var menuBuilder = new MenuBuilder();
+        foreach (var (menuName, items) in config.Menus.Menus)
+        {
+            foreach (var item in items)
+            {
+                menuBuilder.AddMenuItem(menuName, item);
+            }
+        }
+        menuBuilder.AddFromPages(pages, p => p.MenuEntries);
+
         return new SiteContext
         {
             Title = config.Title,
@@ -1514,7 +1539,7 @@ public sealed class SiteBuilder : ISiteBuilder
             Pages = pages,
             RegularPages = pages.Where(p => p.Type != "section").ToList(),
             Taxonomies = taxonomies,
-            Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+            Menus = menuBuilder.Build(),
             Config = config,
             Data = siteData ?? new Dictionary<string, object>(),
             BuildDate = DateTimeOffset.Now,
