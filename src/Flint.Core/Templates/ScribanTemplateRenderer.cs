@@ -50,12 +50,24 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
     /// <param name="templatesPath">模板目录路径</param>
     /// <param name="baseUrl">站点基础 URL</param>
     /// <param name="themeTemplatePaths">主题布局回退目录（按序回退：站点 layouts 优先，主题次之，对齐 Hugo 主题叠加语义）</param>
+    /// <param name="timeProvider">时间源（mtime 短窗缓存的时间戳用，可注入便于测试）</param>
     public ScribanTemplateRenderer(string templatesPath, string baseUrl = "", params string[] themeTemplatePaths)
     {
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _timeProvider = TimeProvider.System;
+    }
+
+    /// <summary>测试专用构造：时间源可注入</summary>
+    public ScribanTemplateRenderer(string templatesPath, string baseUrl, TimeProvider timeProvider, params string[] themeTemplatePaths)
+    {
+        _templatesPath = templatesPath;
+        _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
+        _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
+        _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _timeProvider = timeProvider;
     }
 
     /// <summary>
@@ -568,10 +580,11 @@ public sealed class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTime CachedAtUtc, DateTime MtimeUtc)> _mtimeCache = new();
     private static readonly TimeSpan MtimeCacheTtl = TimeSpan.FromMilliseconds(50);
+    private readonly TimeProvider _timeProvider;
 
     private DateTime GetMtimeUtc(string path)
     {
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         if (_mtimeCache.TryGetValue(path, out var entry) && now - entry.CachedAtUtc < MtimeCacheTtl)
         {
             return entry.MtimeUtc;
