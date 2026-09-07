@@ -1,0 +1,39 @@
+<footer class="site-footer">
+    <div class="container">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h3>{{ site.title }}</h3>
+                <p>{{ site.params.description }}</p>
+            </div>
+            
+            {{ if site.menus.footer }}
+            <div class="footer-section">
+                <h3>链接</h3>
+                <ul class="footer-links">
+                    {{ for item in site.menus.footer }}
+                    <li><a href="{{ item.url }}">{{ item.name }}</a></li>
+                    {{ end }}
+                </ul>
+            </div>
+            {{ end }}
+            
+            <div class="footer-section">
+                <h3>联系方式</h3>
+                {{ if site.author }}
+                <p>{{ site.author.name }}</p>
+                {{ if site.author.email }}
+                <p><a href="mailto:{{ site.author.email }}">{{ site.author.email }}</a></p>
+                {{ end }}
+                {{ end }}
+            </div>
+        </div>
+        
+        <div class="footer-bottom">
+            <p>{{ site.copyright ?? ("© " + (date.now | date.to_string "%Y") + " " + site.title) }}</p>
+            <p>Powered by <a href="https://https://github.com/yuebo119/Flint">Flint</a></p>
+        </div>
+    </div>
+</footer>
+
+<!-- JavaScript -->
+<script src="/js/main.js"></script>

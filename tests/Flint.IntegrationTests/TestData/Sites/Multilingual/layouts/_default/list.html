@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+{{ include "partials/head.html" }}
+</head>
+<body>
+{{ include "partials/header.html" }}
+<main>
+<h1>{{ page.title ?? "文章列表" }}</h1>
+<ul class="post-list">
+    {{ for post in site.regular_pages }}
+    <li>
+        <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+        <div class="meta">
+            {{ if post.date }}
+            <time>{{ post.date }}</time>
+            {{ end }}
+        </div>
+    </li>
+    {{ end }}
+</ul>
+</main>
+{{ include "partials/footer.html" }}
+</body>
+</html>

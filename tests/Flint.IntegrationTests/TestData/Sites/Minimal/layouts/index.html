@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site.title }}</title>
+</head>
+<body>
+    <header>
+        <h1>{{ site.title }}</h1>
+    </header>
+    <main>
+        <h2>最新文章</h2>
+        <ul>
+        {{ for page in site.regular_pages }}
+            <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
+        {{ end }}
+        </ul>
+    </main>
+</body>
+</html>

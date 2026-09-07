@@ -1,0 +1,131 @@
+# flint 完整站点配置
+# 包含所有功能的测试站点
+
+# 站点基本信息
+baseURL = "https://complete-test.example.com/"
+title = "完整测试站点"
+languageCode = "zh-cn"
+theme = ""
+copyright = "© 2024 完整测试站点"
+
+# 构建选项
+buildDrafts = false
+buildFuture = false
+buildExpired = false
+enableGitInfo = false
+summaryLength = 70
+disablePathToLower = false
+
+# 分页设置
+paginate = 10
+paginatePath = "page"
+
+# 目录配置
+contentDir = "content"
+layoutDir = "layouts"
+staticDir = "static"
+assetDir = "assets"
+dataDir = "data"
+publishDir = "public"
+archetypeDir = "archetypes"
+
+# 分类法
+[taxonomies]
+  category = "categories"
+  tag = "tags"
+  series = "series"
+
+# 永久链接
+[permalinks]
+  posts = "/:year/:month/:title/"
+  pages = "/:title/"
+  categories = "/categories/:slug/"
+  tags = "/tags/:slug/"
+
+# 菜单配置
+[menus]
+  [[menus.main]]
+    name = "首页"
+    url = "/"
+    weight = 1
+  [[menus.main]]
+    name = "文章"
+    url = "/posts/"
+    weight = 2
+  [[menus.main]]
+    name = "分类"
+    url = "/categories/"
+    weight = 3
+  [[menus.main]]
+    name = "标签"
+    url = "/tags/"
+    weight = 4
+  [[menus.main]]
+    name = "关于"
+    url = "/about/"
+    weight = 5
+
+  [[menus.footer]]
+    name = "隐私政策"
+    url = "/privacy/"
+    weight = 1
+  [[menus.footer]]
+    name = "联系我们"
+    url = "/contact/"
+    weight = 2
+
+# 站点参数
+[params]
+  description = "这是一个用于集成测试的完整站点"
+  author = "测试作者"
+  keywords = ["flint", "静态站点", "测试"]
+  dateFormat = "2006-01-02"
+  showReadingTime = true
+  showWordCount = true
+  enableComments = false
+  socialShare = true
+
+# 作者信息
+[author]
+  name = "测试作者"
+  email = "test@example.com"
+  url = "https://example.com"
+
+# Markdown 渲染配置
+[markup]
+  [markup.tableOfContents]
+    startLevel = 2
+    endLevel = 4
+    ordered = false
+  [markup.highlight]
+    style = "monokai"
+    lineNos = true
+    lineNumbersInTable = true
+    tabWidth = 4
+  [markup.goldmark]
+    unsafe = false
+    [markup.goldmark.extensions]
+      table = true
+      strikethrough = true
+      taskList = true
+      footnote = true
+      definitionList = true
+      typographer = true
+
+# 输出格式配置
+[outputs]
+  home = ["HTML", "RSS", "JSON"]
+  section = ["HTML", "RSS"]
+  taxonomy = ["HTML", "RSS"]
+  term = ["HTML", "RSS"]
+  page = ["HTML"]
+
+# 安全配置
+[security]
+  allowedDomains = ["example.com", "cdn.example.com"]
+  httpTimeout = 30
+
+# 缓存配置
+[caches]
+  enabled = true
+  maxSize = 100

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="{{ site.language }}">
+<head>
+{{ include "partials/head.html" }}
+</head>
+<body>
+{{ include "partials/header.html" }}
+<main>
+<section class="term-page">
+    <h1>{{ page.title }}</h1>
+    
+    <ul class="term-posts">
+        {{ for post in page.pages }}
+        <li class="post-item">
+            <article>
+                <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+                <div class="post-meta">
+                    {{ if post.date }}
+                    <time>{{ post.date | date.to_string "%Y年%m月%d日" }}</time>
+                    {{ end }}
+                </div>
+            </article>
+        </li>
+        {{ end }}
+    </ul>
+</section>
+</main>
+{{ include "partials/footer.html" }}
+</body>
+</html>

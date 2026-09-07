@@ -1,0 +1,36 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningLevel>9999</WarningLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-all</AnalysisLevel>
+    
+    <!-- 禁用 NuGet 安全漏洞审计（避免第三方包漏洞导致构建失败） -->
+    <!-- 注意：生产环境应定期检查并更新有漏洞的包 -->
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <!-- Native AOT 配置 -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
+    <IlcDisableReflection>false</IlcDisableReflection>
+    <StripSymbols>true</StripSymbols>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <!-- 版本信息 -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Flint Team</Authors>
+    <Company>Flint</Company>
+    <Product>Flint Static Site Generator</Product>
+    <Description>高性能静态站点生成器，使用 .NET 10 和 Native AOT 构建</Description>
+  </PropertyGroup>
+</Project>

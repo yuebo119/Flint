@@ -1,0 +1,98 @@
+# flint 多语言站点配置
+# 用于测试多语言功能
+
+# 站点基本信息
+baseURL = "https://multilingual-test.example.com/"
+title = "多语言测试站点"
+languageCode = "zh-cn"
+
+# 默认语言
+defaultContentLanguage = "zh"
+defaultContentLanguageInSubdir = false
+
+# 构建选项
+[build]
+  publishDir = "public"
+
+# 分类法
+[taxonomies]
+  category = "categories"
+  tag = "tags"
+
+# 永久链接
+[permalinks]
+  posts = "/:year/:month/:title/"
+  pages = "/:title/"
+
+# 多语言配置
+[languages]
+  [languages.zh]
+    languageName = "简体中文"
+    weight = 1
+    title = "多语言测试站点"
+    contentDir = "content/zh"
+    [languages.zh.params]
+      description = "这是一个多语言测试站点"
+      dateFormat = "2006年01月02日"
+    [languages.zh.menus]
+      [[languages.zh.menus.main]]
+        name = "首页"
+        url = "/"
+        weight = 1
+      [[languages.zh.menus.main]]
+        name = "文章"
+        url = "/posts/"
+        weight = 2
+      [[languages.zh.menus.main]]
+        name = "关于"
+        url = "/about/"
+        weight = 3
+
+  [languages.en]
+    languageName = "English"
+    weight = 2
+    title = "Multilingual Test Site"
+    contentDir = "content/en"
+    [languages.en.params]
+      description = "This is a multilingual test site"
+      dateFormat = "January 2, 2006"
+    [languages.en.menus]
+      [[languages.en.menus.main]]
+        name = "Home"
+        url = "/en/"
+        weight = 1
+      [[languages.en.menus.main]]
+        name = "Posts"
+        url = "/en/posts/"
+        weight = 2
+      [[languages.en.menus.main]]
+        name = "About"
+        url = "/en/about/"
+        weight = 3
+
+  [languages.ja]
+    languageName = "日本語"
+    weight = 3
+    title = "多言語テストサイト"
+    contentDir = "content/ja"
+    [languages.ja.params]
+      description = "これは多言語テストサイトです"
+      dateFormat = "2006年01月02日"
+    [languages.ja.menus]
+      [[languages.ja.menus.main]]
+        name = "ホーム"
+        url = "/ja/"
+        weight = 1
+      [[languages.ja.menus.main]]
+        name = "記事"
+        url = "/ja/posts/"
+        weight = 2
+      [[languages.ja.menus.main]]
+        name = "について"
+        url = "/ja/about/"
+        weight = 3
+
+# 站点参数
+[params]
+  description = "多语言测试站点"
+  author = "测试作者"

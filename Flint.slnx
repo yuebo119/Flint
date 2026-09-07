@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Flint.Core/Flint.Core.csproj" />
+    <Project Path="src/Flint.Cli/Flint.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Flint.Core.Tests/Flint.Core.Tests.csproj" />
+    <Project Path="tests/Flint.IntegrationTests/Flint.IntegrationTests.csproj" />
+    <Project Path="tests/Flint.PerformanceTests/Flint.PerformanceTests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,13 @@
+<Project>
+  <!-- 测试项目隔离层：覆盖根 Directory.Build.props 的 Release AOT 全局配置。
+       测试项目不做 AOT 发布，继承 PublishAot 会让 runtimeconfig 带
+       JsonSerializerIsReflectionEnabledByDefault=false（DartSassHost/反射式
+       JSON 测试全部无法初始化）与 InvariantGlobalization=true（无 ICU 时区
+       数据，IANA 时区测试失败）。AOT 兼容性由 Flint.Core 的
+       IsAotCompatible=true 编译期分析器与 FLINT-G7 门禁守护，不在测试环境模拟。 -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <PublishAot>false</PublishAot>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

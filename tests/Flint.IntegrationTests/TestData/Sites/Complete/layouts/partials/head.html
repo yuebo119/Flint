@@ -1,0 +1,20 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ if page.title }}{{ page.title }} | {{ end }}{{ site.title }}</title>
+<meta name="description" content="{{ page.description ?? site.params.description }}">
+{{ if site.params.keywords }}
+<meta name="keywords" content="{{ site.params.keywords | array.join ", " }}">
+{{ end }}
+<meta name="author" content="{{ page.author ?? site.params.author }}">
+
+<!-- Open Graph -->
+<meta property="og:title" content="{{ page.title ?? site.title }}">
+<meta property="og:description" content="{{ page.description ?? site.params.description }}">
+<meta property="og:type" content="{{ if page.is_page }}article{{ else }}website{{ end }}">
+<meta property="og:url" content="{{ page.permalink ?? site.base_url }}">
+
+<!-- 样式表 -->
+<link rel="stylesheet" href="/css/main.css">
+
+<!-- RSS -->
+<link rel="alternate" type="application/rss+xml" title="{{ site.title }}" href="/index.xml">
