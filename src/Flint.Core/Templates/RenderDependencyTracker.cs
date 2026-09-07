@@ -58,9 +58,9 @@ public static class RenderDependencyTracker
 /// </summary>
 internal sealed class DependencyTrackingScriptObject : ScriptObject
 {
-    public override bool TryGetValue(TemplateContext context, SourceSpan span, string member, out object? value)
+    public override bool TryGetValue(TemplateContext? context, SourceSpan span, string member, out object? value)
     {
-        RenderDependencyTracker.Track(context, RenderDependencyTracker.DataPrefix + "site." + member);
+        RenderDependencyTracker.Track(context!, RenderDependencyTracker.DataPrefix + "site." + member);
         return base.TryGetValue(context, span, member, out value);
     }
 }

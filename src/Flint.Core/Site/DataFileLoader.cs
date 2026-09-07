@@ -97,10 +97,8 @@ public sealed class DataFileLoader
     {
         var content = await File.ReadAllTextAsync(path, cancellationToken);
         // 使用 Tomlyn 低级 API（AOT 兼容）
-        var doc = Tomlyn.Toml.Parse(content);
-        if (doc.HasErrors)
-            return null;
-        return ConvertTomlTableToDict(doc.ToModel());
+        var table = TomlynCompat.TryParseTable(content);
+        return table is null ? null : ConvertTomlTableToDict(table);
     }
 
     private static async Task<object?> LoadJsonAsync(string path, CancellationToken cancellationToken)

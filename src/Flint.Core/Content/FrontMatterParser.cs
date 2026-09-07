@@ -299,7 +299,7 @@ public sealed class FrontMatterParser : IFrontMatterParser
         // 解析 TOML
         try
         {
-            var model = Toml.ToModel(tomlContent);
+            var model = TomlynCompat.ParseTable(tomlContent);
             frontMatter = ConvertDictToFrontMatter(ConfigNormalizer.NormalizeToml(model), FrontMatterFormat.Toml, siteTimeZone);
             return true;
         }

@@ -141,8 +141,7 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
         if (!File.Exists(_lockFilePath))
             return null;
         var content = await File.ReadAllTextAsync(_lockFilePath, ct);
-        var doc = Tomlyn.Toml.Parse(content);
-        if (doc.HasErrors || doc.ToModel() is not TomlTable lockData)
+        if (TomlynCompat.TryParseTable(content) is not TomlTable lockData)
             return null;
         if (lockData.TryGetValue(moduleName, out var entry) && entry is TomlTable table &&
             table.TryGetValue("version", out var version))
@@ -261,11 +260,9 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
 
         var content = await File.ReadAllTextAsync(configPath, ct);
         // 使用 Tomlyn 低级 API（AOT 兼容）
-        var doc = Tomlyn.Toml.Parse(content);
-        if (doc.HasErrors)
+        var config = TomlynCompat.TryParseTable(content);
+        if (config is null)
             return new ModuleDescriptor { Name = Path.GetFileName(modulePath), Version = "unknown", Repository = "", Dependencies = [], LocalPath = modulePath };
-
-        var config = doc.ToModel();
         return new ModuleDescriptor
         {
             Name = GetTomlString(config, "name") ?? Path.GetFileName(modulePath),
@@ -282,8 +279,7 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
         if (File.Exists(_lockFilePath))
         {
             var content = await File.ReadAllTextAsync(_lockFilePath, ct);
-            var doc = Tomlyn.Toml.Parse(content);
-            if (!doc.HasErrors && doc.ToModel() is TomlTable existing)
+            if (TomlynCompat.TryParseTable(content) is TomlTable existing)
             {
                 foreach (var kvp in existing)
                     lockData[kvp.Key] = kvp.Value;
@@ -312,8 +308,7 @@ public sealed partial class ModuleManager : IModuleManager, IDisposable
         if (!File.Exists(_lockFilePath))
             return;
         var content = await File.ReadAllTextAsync(_lockFilePath, ct);
-        var doc = Tomlyn.Toml.Parse(content);
-        if (doc.HasErrors || doc.ToModel() is not TomlTable lockData)
+        if (TomlynCompat.TryParseTable(content) is not TomlTable lockData)
             return;
 
         if (lockData.Remove(moduleName))

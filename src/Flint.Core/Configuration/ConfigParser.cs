@@ -98,7 +98,7 @@ public static partial class ConfigParser
     public static SiteConfig ParseToml(string content)
     {
         ArgumentNullException.ThrowIfNull(content);
-        var model = Toml.ToModel(content);
+        var model = TomlynCompat.ParseTable(content);
         return ConvertDictToConfig(ConfigNormalizer.NormalizeToml(model));
     }
 
