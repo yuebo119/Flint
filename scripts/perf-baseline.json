@@ -1,0 +1,44 @@
+{
+  "updated": "2026-09-08",
+  "note": "基线固化自四批重构完成后的实测（perf-after-refactor.html）。门禁只拦显著劣化（超阈值 20%），不拦噪声。",
+  "threshold_percent": 20,
+  "metrics": {
+    "site_build_100": {
+      "label": "小型站点构建 100 页",
+      "ms": 71,
+      "source": "构建时间"
+    },
+    "site_build_500": {
+      "label": "中型站点构建 500 页",
+      "ms": 333
+    },
+    "site_build_1000": {
+      "label": "大型站点构建 1000 页",
+      "ms": 610
+    },
+    "site_build_10000": {
+      "label": "超大型站点构建 10000 页",
+      "ms": 5603
+    },
+    "complex_theme_1000": {
+      "label": "复杂主题 1000 页",
+      "ms": 318
+    },
+    "incremental_build": {
+      "label": "增量构建时间",
+      "ms": 49
+    },
+    "markdown_parse_1000": {
+      "label": "Markdown 解析 1000 文件",
+      "ms": 4.2
+    },
+    "template_render_1000": {
+      "label": "模板渲染 1000 次",
+      "ms": 18
+    },
+    "concurrent_build": {
+      "label": "并发构建",
+      "ms": 594
+    }
+  }
+}
