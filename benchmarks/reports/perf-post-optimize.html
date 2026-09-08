@@ -1,0 +1,1600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flint 性能测试报告</title>
+
+    <style>
+        :root {
+            --primary: #6366f1;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --bg: #0f172a;
+            --bg-card: #1e293b;
+            --bg-card-hover: #334155;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+            --border: #334155;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 0 1.5rem; }
+        
+        .header {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 2rem 0;
+        }
+        .header-content { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
+        .header-left { display: flex; align-items: center; gap: 1rem; }
+        .logo { font-size: 2.5rem; }
+        .header h1 { font-size: 1.75rem; font-weight: 700; }
+        .version { font-size: 0.75rem; padding: 0.25rem 0.5rem; background: var(--primary); border-radius: 4px; font-weight: 600; margin-left: 0.5rem; }
+        .header-right { text-align: right; }
+        .timestamp { font-size: 0.875rem; color: var(--text-muted); }
+        
+        .status-pill {
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            padding: 0.5rem 1rem; border-radius: 9999px;
+            font-weight: 600; font-size: 0.875rem;
+        }
+        .status-pill.success { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .status-pill.danger { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        
+        .summary-section { padding: 2rem 0; }
+        .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--card-accent, var(--primary));
+        }
+        .stat-card:hover { transform: translateY(-2px); border-color: var(--card-accent, var(--primary)); }
+        .stat-card.success { --card-accent: var(--success); }
+        .stat-card.danger { --card-accent: var(--danger); }
+        .stat-card.warning { --card-accent: var(--warning); }
+        .stat-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem; }
+        .stat-value { font-size: 2rem; font-weight: 700; }
+        .stat-card.success .stat-value { color: var(--success); }
+        .stat-card.danger .stat-value { color: var(--danger); }
+        
+        .pass-rate-ring { display: flex; align-items: center; gap: 1rem; }
+        .ring-chart {
+            width: 60px; height: 60px;
+            border-radius: 50%;
+            background: conic-gradient(var(--ring-color) var(--ring-percent), var(--border) 0);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .ring-chart::before { content: ''; width: 44px; height: 44px; background: var(--bg-card); border-radius: 50%; }
+        .ring-value { font-size: 1.5rem; font-weight: 700; }
+
+        .quick-stats {
+            display: flex; gap: 2rem; padding: 1rem 1.5rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 2rem;
+        }
+        .quick-stat { display: flex; align-items: center; gap: 0.5rem; }
+        .quick-stat-icon { font-size: 1.25rem; }
+        .quick-stat-label { font-size: 0.875rem; color: var(--text-muted); }
+        .quick-stat-value { font-weight: 600; }
+        
+        .filter-bar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+        .filter-btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .filter-btn:hover { border-color: var(--primary); color: var(--text); }
+        .filter-btn.active { background: var(--primary); border-color: var(--primary); color: white; }
+        .filter-btn .count { margin-left: 0.5rem; padding: 0.125rem 0.5rem; background: rgba(255,255,255,0.2); border-radius: 9999px; font-size: 0.75rem; }
+        
+        .results-section { padding-bottom: 2rem; }
+        .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
+        .section-title { font-size: 1.25rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+        
+        .test-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 0.75rem;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .test-card:hover { border-color: var(--text-dim); }
+        .test-card.passed { border-left: 3px solid var(--success); }
+        .test-card.failed { border-left: 3px solid var(--danger); }
+        .test-card.expanded { box-shadow: 0 4px 16px rgba(0,0,0,0.2); }
+        
+        .test-header {
+            display: grid;
+            grid-template-columns: auto 1fr auto auto;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .test-header:hover { background: var(--bg-card-hover); }
+        
+        .test-status-icon {
+            width: 32px; height: 32px;
+            border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1rem;
+        }
+        .test-status-icon.pass { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .test-status-icon.fail { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        
+        .test-info h3 { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.125rem; }
+        .test-info p { font-size: 0.8125rem; color: var(--text-dim); }
+        
+        .test-metrics-preview { display: flex; gap: 1.5rem; }
+        .metric-preview { text-align: right; }
+        .metric-preview-value { font-size: 0.9375rem; font-weight: 600; font-family: monospace; }
+        .metric-preview-label { font-size: 0.6875rem; color: var(--text-dim); text-transform: uppercase; }
+        
+        .expand-icon {
+            width: 24px; height: 24px;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--text-dim);
+            transition: transform 0.2s;
+        }
+        .test-card.expanded .expand-icon { transform: rotate(180deg); }
+
+        .test-body {
+            display: none;
+            padding: 0 1.25rem 1.25rem;
+            border-top: 1px solid var(--border);
+            background: rgba(0,0,0,0.2);
+        }
+        .test-card.expanded .test-body { display: block; }
+        
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 0.75rem;
+            padding-top: 1rem;
+        }
+        .metric-item {
+            background: var(--bg);
+            border-radius: 8px;
+            padding: 1rem;
+            position: relative;
+        }
+        .metric-item.pass { border-left: 2px solid var(--success); }
+        .metric-item.fail { border-left: 2px solid var(--danger); }
+        
+        .metric-name { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 0.5rem; }
+        .metric-value-row { display: flex; align-items: baseline; gap: 0.5rem; }
+        .metric-actual { font-size: 1.25rem; font-weight: 700; font-family: monospace; }
+        .metric-unit { font-size: 0.75rem; color: var(--text-muted); }
+        .metric-baseline { font-size: 0.75rem; color: var(--text-dim); margin-top: 0.25rem; }
+        .metric-diff {
+            position: absolute;
+            top: 0.75rem; right: 0.75rem;
+            font-size: 0.75rem; font-weight: 600;
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+        }
+        .metric-diff.positive { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .metric-diff.negative { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+        
+        .charts-section { padding-bottom: 2rem; }
+        .charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; }
+        .chart-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+        .chart-title { font-size: 0.875rem; font-weight: 600; margin-bottom: 1rem; color: var(--text-muted); }
+        .chart-wrapper { position: relative; height: 280px; width: 100%; }
+        .chart-wrapper canvas { position: absolute; top: 0; left: 0; }
+        
+        .env-section { padding-bottom: 2rem; }
+        .env-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; }
+        .env-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+        .env-label { font-size: 0.6875rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.25rem; }
+        .env-value { font-size: 0.875rem; font-weight: 500; }
+        
+        .footer {
+            text-align: center;
+            padding: 2rem;
+            border-top: 1px solid var(--border);
+            color: var(--text-dim);
+            font-size: 0.8125rem;
+        }
+        
+        @media (max-width: 768px) {
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+            .charts-grid { grid-template-columns: 1fr; }
+            .test-header { grid-template-columns: auto 1fr auto; }
+            .test-metrics-preview { display: none; }
+            .quick-stats { flex-wrap: wrap; gap: 1rem; }
+        }
+        @media (max-width: 480px) {
+            .summary-grid { grid-template-columns: 1fr; }
+            .header-content { flex-direction: column; text-align: center; }
+            .header-right { text-align: center; }
+        }
+    </style>
+
+</head>
+<body>
+
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="header-left">
+                    <span class="logo">🚀</span>
+                    <div>
+                        <h1>Flint 性能测试<span class="version">v0.1.0</span></h1>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <div class="status-pill danger">
+                        <span>✗</span>
+                        <span>存在失败</span>
+                    </div>
+                    <p class="timestamp">📅 2026-09-07 21:34:00</p>
+                </div>
+            </div>
+        </div>
+    </header>
+
+
+    <section class="summary-section">
+        <div class="container">
+            <div class="summary-grid">
+                <div class="stat-card">
+                    <div class="stat-label">总测试数</div>
+                    <div class="stat-value">11</div>
+                </div>
+                <div class="stat-card success">
+                    <div class="stat-label">通过</div>
+                    <div class="stat-value">10</div>
+                </div>
+                <div class="stat-card danger">
+                    <div class="stat-label">失败</div>
+                    <div class="stat-value">1</div>
+                </div>
+                <div class="stat-card warning">
+                    <div class="stat-label">通过率</div>
+                    <div class="pass-rate-ring">
+                        <div class="ring-chart" style="--ring-percent: 90.9090909090909%; --ring-color: var(--success);"></div>
+                        <div class="ring-value">91%</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <div class="container">
+        <div class="quick-stats">
+            <div class="quick-stat">
+                <span class="quick-stat-icon">⏱️</span>
+                <span class="quick-stat-label">总耗时</span>
+                <span class="quick-stat-value">11.3s</span>
+            </div>
+            <div class="quick-stat">
+                <span class="quick-stat-icon">⚡</span>
+                <span class="quick-stat-label">平均速度</span>
+                <span class="quick-stat-value">32310 项/秒</span>
+            </div>
+            <div class="quick-stat">
+                <span class="quick-stat-icon">🔧</span>
+                <span class="quick-stat-label">测试项目</span>
+                <span class="quick-stat-value">11 个</span>
+            </div>
+        </div>
+    </div>
+
+
+    <section class="results-section">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">📋 测试详情</h2>
+                <div class="filter-bar">
+                    <button class="filter-btn active" onclick="filterTests('all')">
+                        全部<span class="count">11</span>
+                    </button>
+                    <button class="filter-btn" onclick="filterTests('passed')">
+                        通过<span class="count">10</span>
+                    </button>
+                    <button class="filter-btn" onclick="filterTests('failed')">
+                        失败<span class="count">1</span>
+                    </button>
+                </div>
+            </div>
+            <div id="test-list">
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>小型站点构建 (100页)</h3>
+                            <p>测试 100 页站点的构建性能（3次测量取平均）</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">104.0</div>
+                                <div class="metric-preview-label">构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">98.93</div>
+                                <div class="metric-preview-label">最小时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">103.95</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最小时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">98.93</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最大时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">110.76</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">标准差</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">6.12</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">961.99</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 500.00 页/秒</div>
+                                <span class="metric-diff positive">+92.4%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1.04</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">内存增量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1.13</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">总分配量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">12.80</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline">基准: 33.00 MB</div>
+                                <span class="metric-diff positive">+61.2%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>中型站点构建 (500页)</h3>
+                            <p>测试 500 页站点的构建性能（3次测量取平均）</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">503.1</div>
+                                <div class="metric-preview-label">构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">481.7</div>
+                                <div class="metric-preview-label">最小时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">503.13</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最小时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">481.68</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最大时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">522.89</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">标准差</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">20.65</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">993.79</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 500.00 页/秒</div>
+                                <span class="metric-diff positive">+98.8%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1.01</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">内存增量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">3.95</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">总分配量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">56.13</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline">基准: 85.00 MB</div>
+                                <span class="metric-diff positive">+34.0%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>大型站点构建 (1000页)</h3>
+                            <p>测试 1000 页站点的构建性能（3次测量取平均）</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">925.7</div>
+                                <div class="metric-preview-label">构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">902.1</div>
+                                <div class="metric-preview-label">最小时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">925.67</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最小时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">902.09</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最大时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">955.18</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">标准差</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">27.04</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1080.30</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 500.00 页/秒</div>
+                                <span class="metric-diff positive">+116.1%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.93</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">内存增量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">7.42</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">总分配量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">103.87</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline">基准: 150.00 MB</div>
+                                <span class="metric-diff positive">+30.8%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>超大型站点构建 (10000页)</h3>
+                            <p>测试 10000 页站点的构建性能（3次测量取平均）</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">7971</div>
+                                <div class="metric-preview-label">构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">7917</div>
+                                <div class="metric-preview-label">最小时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">7970.88</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最小时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">7916.96</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最大时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">8060.36</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">标准差</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">78.03</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1254.57</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 500.00 页/秒</div>
+                                <span class="metric-diff positive">+150.9%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.80</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">内存增量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">21.72</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">总分配量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1004.43</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline">基准: 1320.00 MB</div>
+                                <span class="metric-diff positive">+23.9%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>复杂主题站点构建 (1000页)</h3>
+                            <p>测试复杂主题（多层嵌套、partial、分类/标签、相关文章、TOC）的构建性能</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">515.8</div>
+                                <div class="metric-preview-label">构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">504.1</div>
+                                <div class="metric-preview-label">最小时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">515.83</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最小时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">504.07</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">最大时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">533.88</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">标准差</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">15.87</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">构建速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1938.61</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 500.00 页/秒</div>
+                                <span class="metric-diff positive">+287.7%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.52</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">内存增量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">5.26</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">总分配量</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">290.35</span>
+                                    <span class="metric-unit">MB</span>
+                                </div>
+                                <div class="metric-baseline">基准: 700.00 MB</div>
+                                <span class="metric-diff positive">+58.5%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">复杂度开销</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">-78.18</span>
+                                    <span class="metric-unit">%</span>
+                                </div>
+                                <div class="metric-baseline">基准: 50.00 %</div>
+                                <span class="metric-diff positive">+256.4%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>可扩展性分析</h3>
+                            <p>时间复杂度估计: O(n) - 线性</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">1.06</div>
+                                <div class="metric-preview-label">50页每页耗时</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">0.83</div>
+                                <div class="metric-preview-label">400页每页耗时</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">50页每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1.06</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">400页每页耗时</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.83</span>
+                                    <span class="metric-unit">ms/页</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">复杂度比率</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.78</span>
+                                    <span class="metric-unit">x</span>
+                                </div>
+                                <div class="metric-baseline">基准: 2.00 x</div>
+                                <span class="metric-diff positive">+60.8%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card failed expanded" data-status="failed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon fail">✗</div>
+                        <div class="test-info">
+                            <h3>增量构建性能</h3>
+                            <p>测试单文件修改后的增量构建性能</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">312.1</div>
+                                <div class="metric-preview-label">完整构建时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">102.6</div>
+                                <div class="metric-preview-label">增量构建时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">完整构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">312.06</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item fail">
+                                <div class="metric-name">增量构建时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">102.63</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline">基准: 100.00 ms</div>
+                                <span class="metric-diff negative">-2.6%</span>
+                            </div>
+
+                            <div class="metric-item fail">
+                                <div class="metric-name">加速比</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">3.04</span>
+                                    <span class="metric-unit">x</span>
+                                </div>
+                                <div class="metric-baseline">基准: 3.12 x</div>
+                                <span class="metric-diff negative">-2.6%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>Markdown 解析性能</h3>
+                            <p>测试 1000 个 Markdown 文件的解析性能</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">4.90</div>
+                                <div class="metric-preview-label">解析时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">204.1K</div>
+                                <div class="metric-preview-label">解析速度</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">解析时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">4.90</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">解析速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">204077.47</span>
+                                    <span class="metric-unit">文件/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 50000.00 文件/秒</div>
+                                <span class="metric-diff positive">+308.2%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>模板渲染性能</h3>
+                            <p>测试 1000 次模板渲染的性能</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">63.05</div>
+                                <div class="metric-preview-label">渲染时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">15.9K</div>
+                                <div class="metric-preview-label">渲染速度</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">渲染时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">63.05</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">渲染速度</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">15860.08</span>
+                                    <span class="metric-unit">页/秒</span>
+                                </div>
+                                <div class="metric-baseline">基准: 10000.00 页/秒</div>
+                                <span class="metric-diff positive">+58.6%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>配置加载性能</h3>
+                            <p>测试配置文件加载性能</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">0.13</div>
+                                <div class="metric-preview-label">平均加载时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">平均加载时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">0.13</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline">基准: 5.00 ms</div>
+                                <span class="metric-diff positive">+97.4%</span>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <div class="test-card passed" data-status="passed">
+                    <div class="test-header" onclick="toggleTest(this)">
+                        <div class="test-status-icon pass">✓</div>
+                        <div class="test-info">
+                            <h3>并发构建性能</h3>
+                            <p>测试 32 核并发构建的扩展性</p>
+                        </div>
+                        <div class="test-metrics-preview">
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">878.2</div>
+                                <div class="metric-preview-label">单线程时间</div>
+                            </div>
+
+                            <div class="metric-preview">
+                                <div class="metric-preview-value">840.3</div>
+                                <div class="metric-preview-label">多线程时间</div>
+                            </div>
+
+                        </div>
+                        <div class="expand-icon">▼</div>
+                    </div>
+                    <div class="test-body">
+                        <div class="metrics-grid">
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">单线程时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">878.19</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">多线程时间</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">840.34</span>
+                                    <span class="metric-unit">ms</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">加速比</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">1.05</span>
+                                    <span class="metric-unit">x</span>
+                                </div>
+                                <div class="metric-baseline">基准: 0.95 x</div>
+                                <span class="metric-diff positive">+10.0%</span>
+                            </div>
+
+                            <div class="metric-item pass">
+                                <div class="metric-name">并行效率</div>
+                                <div class="metric-value-row">
+                                    <span class="metric-actual">3.27</span>
+                                    <span class="metric-unit">%</span>
+                                </div>
+                                <div class="metric-baseline"></div>
+                                
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+
+    <section class="charts-section">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">📈 性能概览</h2>
+            </div>
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <div class="chart-title">构建速度对比 (页/秒)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="speedChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-title">测试结果分布</div>
+                    <div class="chart-wrapper">
+                        <canvas id="resultChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="charts-grid" style="margin-top: 1rem;">
+                <div class="chart-card">
+                    <div class="chart-title">内存使用对比 (总分配量 MB)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="memoryChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-title">内存增量对比 (MB)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="memoryDeltaChart"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="charts-grid" style="margin-top: 1rem;">
+                <div class="chart-card">
+                    <div class="chart-title">Markdown 解析性能 (文件/秒)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="markdownChart"></canvas>
+                    </div>
+                </div>
+                <div class="chart-card">
+                    <div class="chart-title">模板渲染性能 (页/秒)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="templateChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <section class="env-section">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">💻 测试环境</h2>
+            </div>
+            <div class="env-grid">
+                <div class="env-item">
+                    <div class="env-label">操作系统</div>
+                    <div class="env-value">Microsoft Windows 10.0.19045</div>
+                </div>
+                <div class="env-item">
+                    <div class="env-label">处理器架构</div>
+                    <div class="env-value">X64</div>
+                </div>
+                <div class="env-item">
+                    <div class="env-label">CPU 核心</div>
+                    <div class="env-value">32 核</div>
+                </div>
+                <div class="env-item">
+                    <div class="env-label">.NET 版本</div>
+                    <div class="env-value">.NET 10.0.11</div>
+                </div>
+                <div class="env-item">
+                    <div class="env-label">机器名称</div>
+                    <div class="env-value">DESKTOP-IDCGOGO</div>
+                </div>
+                <div class="env-item">
+                    <div class="env-label">可用内存</div>
+                    <div class="env-value">32,048 MB</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+
+    <footer class="footer">
+        <p>Flint 性能测试报告 · 2026-09-07 21:34:00</p>
+        <p>Powered by Flint v0.1.0</p>
+    </footer>
+
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        function toggleTest(header) {
+            header.closest('.test-card').classList.toggle('expanded');
+        }
+        
+        function filterTests(status) {
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.closest('.filter-btn').classList.add('active');
+            
+            document.querySelectorAll('.test-card').forEach(card => {
+                if (status === 'all') {
+                    card.style.display = '';
+                } else {
+                    card.style.display = card.dataset.status === status ? '' : 'none';
+                }
+            });
+        }
+        
+        // 全局禁用动画，防止图表不断重绘
+        Chart.defaults.animation = false;
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = '#334155';
+        
+        // 构建速度对比图表
+        new Chart(document.getElementById('speedChart'), {
+            type: 'bar',
+            data: {
+                labels: ["\u5C0F\u578B\u7AD9\u70B9\u6784\u5EFA","\u4E2D\u578B\u7AD9\u70B9\u6784\u5EFA","\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u8D85\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u590D\u6742\u4E3B\u9898\u7AD9\u70B9\u6784\u5EFA"],
+                datasets: [
+                    {
+                        label: '实际速度',
+                        data: [962,993.8,1080.3,1254.6,1938.6],
+                        backgroundColor: '#6366f1',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    },
+                    {
+                        label: '基准速度',
+                        data: [500,500,500,500,500],
+                        backgroundColor: '#64748b',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ctx.dataset.label + ': ' + ctx.raw + ' 页/秒';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { color: '#1e293b' } },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: '#1e293b' },
+                        ticks: {
+                            callback: function(v) { return v + ' 页/秒'; }
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 测试结果分布图
+        new Chart(document.getElementById('resultChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['通过', '失败'],
+                datasets: [{
+                    data: [10, 1],
+                    backgroundColor: ['#10b981', '#ef4444'],
+                    borderWidth: 0,
+                    spacing: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                cutout: '65%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { padding: 20 } }
+                }
+            }
+        });
+
+        // 内存使用对比图表（总分配量）- 显示基准
+        new Chart(document.getElementById('memoryChart'), {
+            type: 'bar',
+            data: {
+                labels: ["\u5C0F\u578B\u7AD9\u70B9\u6784\u5EFA","\u4E2D\u578B\u7AD9\u70B9\u6784\u5EFA","\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u8D85\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u590D\u6742\u4E3B\u9898\u7AD9\u70B9\u6784\u5EFA"],
+                datasets: [
+                    {
+                        label: '总分配量',
+                        data: [12.8,56.13,103.87,1004.43,290.35],
+                        backgroundColor: '#8b5cf6',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    },
+                    {
+                        label: '基准限制',
+                        data: [33,85,150,1320,700],
+                        backgroundColor: '#64748b',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ctx.dataset.label + ': ' + ctx.raw + ' MB';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { color: '#1e293b' } },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: '#1e293b' },
+                        ticks: {
+                            callback: function(v) { return v + ' MB'; }
+                        }
+                    }
+                }
+            }
+        });
+
+        // 内存增量图表 - 不显示基准
+        new Chart(document.getElementById('memoryDeltaChart'), {
+            type: 'bar',
+            data: {
+                labels: ["\u5C0F\u578B\u7AD9\u70B9\u6784\u5EFA","\u4E2D\u578B\u7AD9\u70B9\u6784\u5EFA","\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u8D85\u5927\u578B\u7AD9\u70B9\u6784\u5EFA","\u590D\u6742\u4E3B\u9898\u7AD9\u70B9\u6784\u5EFA"],
+                datasets: [{
+                    label: '内存增量',
+                    data: [1.13,3.95,7.42,21.72,5.26],
+                    backgroundColor: '#ec4899',
+                    borderRadius: 4,
+                    barPercentage: 0.6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return '内存增量: ' + ctx.raw + ' MB';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { color: '#1e293b' } },
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: '#1e293b' },
+                        ticks: {
+                            callback: function(v) { return v + ' MB'; }
+                        }
+                    }
+                }
+            }
+        });
+
+        // Markdown 解析性能图表
+        new Chart(document.getElementById('markdownChart'), {
+            type: 'bar',
+            data: {
+                labels: ['Markdown 解析'],
+                datasets: [
+                    {
+                        label: '实际速度',
+                        data: [204077],
+                        backgroundColor: '#10b981',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    },
+                    {
+                        label: '基准速度',
+                        data: [50000],
+                        backgroundColor: '#64748b',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                indexAxis: 'y',
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ctx.dataset.label + ': ' + ctx.raw.toLocaleString() + ' 文件/秒';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: '#1e293b' },
+                        ticks: {
+                            callback: function(v) { return (v/1000).toFixed(0) + 'K'; }
+                        }
+                    },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+
+        // 模板渲染性能图表
+        new Chart(document.getElementById('templateChart'), {
+            type: 'bar',
+            data: {
+                labels: ['模板渲染'],
+                datasets: [
+                    {
+                        label: '实际速度',
+                        data: [15860],
+                        backgroundColor: '#f59e0b',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    },
+                    {
+                        label: '基准速度',
+                        data: [10000],
+                        backgroundColor: '#64748b',
+                        borderRadius: 4,
+                        barPercentage: 0.4
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                indexAxis: 'y',
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return ctx.dataset.label + ': ' + ctx.raw.toLocaleString() + ' 页/秒';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: '#1e293b' },
+                        ticks: {
+                            callback: function(v) { return (v/1000).toFixed(0) + 'K'; }
+                        }
+                    },
+                    y: { grid: { display: false } }
+                }
+            }
+        });
+    </script>
+
+</body>
+</html>
