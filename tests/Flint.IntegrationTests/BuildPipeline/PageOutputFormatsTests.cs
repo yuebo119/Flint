@@ -69,11 +69,11 @@ public sealed class PageOutputFormatsTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue(": {0}", string.Join("; ", result.Errors.Select(e => e.Message)));
-        var jsonPath = Path.Combine(_outputRoot, "a", "index.json");
+        var jsonPath = Path.Combine(_outputRoot, "posts", "a", "index.json");
         File.Exists(jsonPath).Should().BeTrue("json 输出格式应产出 index.json");
         File.ReadAllText(jsonPath).Should().Contain("\"Post A\"");
         // html 主格式不受影响
-        File.ReadAllText(Path.Combine(_outputRoot, "a", "index.html"))
+        File.ReadAllText(Path.Combine(_outputRoot, "posts", "a", "index.html"))
             .Should().Contain("<article>Post A</article>");
     }
 
@@ -96,8 +96,8 @@ public sealed class PageOutputFormatsTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue();
-        File.Exists(Path.Combine(_outputRoot, "b", "index.html")).Should().BeTrue("html 主格式应正常产出");
-        File.Exists(Path.Combine(_outputRoot, "b", "index.json")).Should().BeFalse("无变体模板时 json 应跳过");
+        File.Exists(Path.Combine(_outputRoot, "posts", "b", "index.html")).Should().BeTrue("html 主格式应正常产出");
+        File.Exists(Path.Combine(_outputRoot, "posts", "b", "index.json")).Should().BeFalse("无变体模板时 json 应跳过");
     }
 
     [Fact]
@@ -120,7 +120,7 @@ public sealed class PageOutputFormatsTests : IDisposable
 
         // Assert
         result.Success.Should().BeTrue();
-        File.Exists(Path.Combine(_outputRoot, "plain", "index.json")).Should().BeFalse(
+        File.Exists(Path.Combine(_outputRoot, "posts", "plain", "index.json")).Should().BeFalse(
             "未声明 json 输出的页面不应产出 index.json");
     }
 }

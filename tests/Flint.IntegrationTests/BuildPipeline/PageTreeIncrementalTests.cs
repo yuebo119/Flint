@@ -71,7 +71,7 @@ public sealed class PageTreeIncrementalTests : IDisposable
         {
             result.Success.Should().BeTrue(": {0}", string.Join("; ", result.Errors.Select(e => e.Message)));
             var html = File.ReadAllText(
-                Path.Combine(_siteRoot, "public", "a", "index.html"), System.Text.Encoding.UTF8);
+                Path.Combine(_siteRoot, "public", "posts", "a", "index.html"), System.Text.Encoding.UTF8);
             html.Should().Contain("UPDATED-A", "增量构建后内容应更新");
             html.Should().NotContain("Content A");
         }
@@ -83,7 +83,7 @@ public sealed class PageTreeIncrementalTests : IDisposable
         WriteInitialSite();
         var builder = TestSiteFactory.CreateBuilder(_siteRoot);
         (await builder.BuildAsync(Options(_siteRoot))).Success.Should().BeTrue();
-        var stalePage = Path.Combine(_siteRoot, "public", "b", "index.html");
+        var stalePage = Path.Combine(_siteRoot, "public", "posts", "b", "index.html");
         File.Exists(stalePage).Should().BeTrue("全量构建应生成 b 页");
 
         // 删除 b.md
@@ -118,7 +118,7 @@ public sealed class PageTreeIncrementalTests : IDisposable
         using (new AssertionScope())
         {
             result.Success.Should().BeTrue(": {0}", string.Join("; ", result.Errors.Select(e => e.Message)));
-            var newPage = Path.Combine(_siteRoot, "public", "c", "index.html");
+            var newPage = Path.Combine(_siteRoot, "public", "docs", "c", "index.html");
             File.Exists(newPage).Should().BeTrue("新增页应被构建");
             File.ReadAllText(newPage).Should().Contain("Content C");
         }
@@ -142,7 +142,7 @@ public sealed class PageTreeIncrementalTests : IDisposable
             result.Success.Should().BeTrue(": {0}", string.Join("; ", result.Errors.Select(e => e.Message)));
 
             var pageA = File.ReadAllText(
-                Path.Combine(_siteRoot, "public", "a", "index.html"), System.Text.Encoding.UTF8);
+                Path.Combine(_siteRoot, "public", "posts", "a", "index.html"), System.Text.Encoding.UTF8);
             pageA.Should().Contain("<section>A</section>", "受影响页应使用新模板渲染");
             pageA.Should().NotContain("<article>", "旧模板输出应被替换");
 
@@ -200,7 +200,7 @@ public sealed class PageTreeIncrementalTests : IDisposable
         {
             SourcePath = _siteRoot,
             OutputPath = Path.Combine(_siteRoot, "public"),
-            PreferredUrls = (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/a/" }
+            PreferredUrls = (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "/posts/a/" }
         };
 
         var result = await builder.IncrementalBuildAsync(options, [singlePath]);
@@ -209,9 +209,9 @@ public sealed class PageTreeIncrementalTests : IDisposable
         {
             result.Success.Should().BeTrue(": {0}", string.Join("; ", result.Errors.Select(e => e.Message)));
 
-            File.ReadAllText(Path.Combine(_siteRoot, "public", "a", "index.html"))
+            File.ReadAllText(Path.Combine(_siteRoot, "public", "posts", "a", "index.html"))
                 .Should().Contain("<fast>A</fast>", "访问中的页面应秒刷为新模板");
-            File.ReadAllText(Path.Combine(_siteRoot, "public", "b", "index.html"))
+            File.ReadAllText(Path.Combine(_siteRoot, "public", "posts", "b", "index.html"))
                 .Should().Contain("<article>", "未访问页面的输出保持不变（fast render 语义）");
         }
     }
