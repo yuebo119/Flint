@@ -411,7 +411,7 @@ public class SiteBuilderTests : IDisposable
         var sourcePath = Path.Combine(Path.GetTempPath(), "content", "posts", "my-post.md");
 
         // Act
-        var result = SiteBuilder.ExpandPermalinkTokens(pattern, date, "my-post", "my-slug", sourcePath, "");
+        var result = PermalinkEngine.ExpandPermalinkTokens(pattern, date, "my-post", "my-slug", sourcePath, "");
 
         // Assert
         Assert.Equal(expected, result);
@@ -420,7 +420,7 @@ public class SiteBuilderTests : IDisposable
     [Fact]
     public void ExpandPermalinkTokens_未知Token应原样保留()
     {
-        var result = SiteBuilder.ExpandPermalinkTokens(
+        var result = PermalinkEngine.ExpandPermalinkTokens(
             "/:unknowntoken/:year/", new DateTimeOffset(2024, 1, 15, 0, 0, 0, TimeSpan.Zero),
             "x", "", "", "");
         Assert.Equal("/:unknowntoken/2024/", result);
@@ -430,7 +430,7 @@ public class SiteBuilderTests : IDisposable
     public void ExpandPermalinkTokens_内容根文件无目录链时sections为空()
     {
         var sourcePath = Path.Combine(Path.GetTempPath(), "content", "top.md");
-        var result = SiteBuilder.ExpandPermalinkTokens(
+        var result = PermalinkEngine.ExpandPermalinkTokens(
             "/:sections/:section/:title/", new DateTimeOffset(2024, 1, 15, 0, 0, 0, TimeSpan.Zero),
             "top", "", sourcePath, "");
         // sections/section 均展开为空串，pattern 的字面斜杠保留（机械结果）
