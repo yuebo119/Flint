@@ -194,3 +194,20 @@ GeneratePermalink 只认 front matter 的 type 字段——content/posts/ 下的
 修复影响面：所有 content/<子目录>/ 下无 slug 页面的默认 URL 变更 +
 大量测试路径断言更新。属行为变更裁决项，修复方向已定（front matter
 type 显式声明优先，否则按 section 判定接通 Posts 模式），待确认后执行。
+
+
+## 真实内容对比实测（2026-09-08，bep/hugo-benchmark 官方数据集）
+
+数据集：Hugo 作者官方基准项目（bep/hugo-benchmark）的 5 个真实站点
+（ado-hugo/az.com/hugo/kieranhealy/rdegges）合并语料——3978 页真实异构内容
+（剔除 400 个依赖原主题 shortcode 的页面、4 个重复 YAML 键页面），
+统一简单模板口径（single/index/list），冷构建 3 次中位数：
+
+| 引擎 | 3978 页真实内容 | 单页 |
+| ---- | ---------------- | ---- |
+| Hugo v0.165.0 | 1044ms | 0.263ms |
+| **Flint 0.1.0** | **1027ms** | **0.258ms** |
+
+结论：真实异构内容口径下 Flint 略优（0.98x）；与万页合成对比（0.92-0.95x）
+交叉印证——**两种内容形态下 Flint 与 Hugo 持平略优**。万页合成对比
+（ssg-bench.py）与本次真实内容对比共同构成性能对比的完整证据链。
