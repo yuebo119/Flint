@@ -26,71 +26,102 @@ public sealed partial class ScribanTemplateRenderer
     // 新构建产生新列表实例，按引用自动失效。CWT 防列表驻留导致缓存泄漏
     private static readonly ConditionalWeakTable<IReadOnlyList<FlintPageContext>, LazyPageList> SharedPageLists = new();
 
+    // 页面对象复用缓存：同一 PageContext 的 ScriptObject 跨渲染共享——
+    // prev/next 交叉引用（A 的 prev 是 B）时复用 B 的对象避免重复全键构建；
+    // CWT 键为 PageContext 引用，随构建周期回收
+    private static readonly ConditionalWeakTable<FlintPageContext, LazyPageObject> SharedPageObjects = new();
+
     private static ScriptObject CreatePageObject(FlintPageContext page)
     {
-        // term 页 page.pages（词条页面集合）与 taxonomy 页 page.terms（词条列表）
-        // 的数据源——渲染器以手工 ScriptObject 暴露成员（不走反射），PageContext
-        // 新属性必须在此映射，否则模板拿到 null 渲染空列表（端到端冒烟发现的回归）
-        object? pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
-        object? termsValue = page.Terms is not null
-            ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
-            : null;
+        return SharedPageObjects.GetValue(page, static p => new LazyPageObject(p));
+    }
 
-        return new ScriptObject
+    /// <summary>
+    /// 惰性页面对象：常规键构造时直接绑定；高成本的 prev/next 递归页对象延迟到
+    /// 模板实际访问时构建（默认主题不访问 prev/next——万页构建可省 2×N 次全键
+    /// 构建），并经 SharedPageObjects 复用。TryGetValue 只读不回写（并发渲染下
+    /// ScriptObject 的写入非线程安全），全部可变状态在构造期完成
+    /// </summary>
+    private sealed class LazyPageObject : ScriptObject
+    {
+        private readonly FlintPageContext _page;
+        private readonly object? _pagesValue;
+        private readonly object? _termsValue;
+
+        public LazyPageObject(FlintPageContext page)
         {
-            ["title"] = page.Title,
-            ["content"] = page.Content,            ["output_format"] = page.OutputFormat,
-            ["permalink"] = page.Permalink,
-            ["rel_permalink"] = page.RelPermalink,
-            ["date"] = page.Date,
-            ["lastmod"] = page.LastMod,
-            ["tags"] = page.Tags,
-            ["categories"] = page.Categories,
-            ["word_count"] = page.WordCount,
-            ["reading_time"] = page.ReadingTime,
-            ["description"] = page.Description,
-            ["summary"] = page.Summary,
-            ["prev_page"] = page.PrevPage != null ? CreatePageObject(page.PrevPage) : null,
-            ["next_page"] = page.NextPage != null ? CreatePageObject(page.NextPage) : null,
-            ["type"] = page.Type,
-            ["layout"] = page.Layout,
-            ["draft"] = page.Draft,
-            ["weight"] = page.Weight,
-            ["params"] = page.Params,
-            ["resources"] = page.Resources,
-            ["pages"] = pagesValue,
-            ["terms"] = termsValue,
-            ["table_of_contents"] = page.TableOfContents,
-            ["plain"] = page.Plain,
-            ["raw_content"] = page.RawContent,
+            _page = page;
+            _pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
+            _termsValue = page.Terms is not null
+                ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
+                : null;
+
+            SetValue("title", page.Title, false);
+            SetValue("content", page.Content, false);
+            SetValue("output_format", page.OutputFormat, false);
+            SetValue("permalink", page.Permalink, false);
+            SetValue("rel_permalink", page.RelPermalink, false);
+            SetValue("date", page.Date, false);
+            SetValue("lastmod", page.LastMod, false);
+            SetValue("tags", page.Tags, false);
+            SetValue("categories", page.Categories, false);
+            SetValue("word_count", page.WordCount, false);
+            SetValue("reading_time", page.ReadingTime, false);
+            SetValue("description", page.Description, false);
+            SetValue("summary", page.Summary, false);
+            SetValue("type", page.Type, false);
+            SetValue("layout", page.Layout, false);
+            SetValue("draft", page.Draft, false);
+            SetValue("weight", page.Weight, false);
+            SetValue("params", page.Params, false);
+            SetValue("resources", page.Resources, false);
+            SetValue("pages", _pagesValue, false);
+            SetValue("terms", _termsValue, false);
+            SetValue("table_of_contents", page.TableOfContents, false);
+            SetValue("plain", page.Plain, false);
+            SetValue("raw_content", page.RawContent, false);
 
             // Hugo 兼容别名（大写开头）
-            ["Title"] = page.Title,
-            ["Content"] = page.Content,
-            ["Permalink"] = page.Permalink,
-            ["RelPermalink"] = page.RelPermalink,
-            ["Date"] = page.Date,
-            ["Lastmod"] = page.LastMod,
-            ["Tags"] = page.Tags,
-            ["Categories"] = page.Categories,
-            ["WordCount"] = page.WordCount,
-            ["ReadingTime"] = page.ReadingTime,
-            ["Description"] = page.Description,
-            ["Summary"] = page.Summary,
-            ["PrevPage"] = page.PrevPage != null ? CreatePageObject(page.PrevPage) : null,
-            ["NextPage"] = page.NextPage != null ? CreatePageObject(page.NextPage) : null,
-            ["Type"] = page.Type,
-            ["Layout"] = page.Layout,
-            ["Draft"] = page.Draft,
-            ["Weight"] = page.Weight,
-            ["Params"] = page.Params,
-            ["Resources"] = page.Resources,
-            ["Pages"] = pagesValue,
-            ["Terms"] = termsValue,
-            ["TableOfContents"] = page.TableOfContents,
-            ["Plain"] = page.Plain,
-            ["RawContent"] = page.RawContent,
-        };
+            SetValue("Title", page.Title, false);
+            SetValue("Content", page.Content, false);
+            SetValue("Permalink", page.Permalink, false);
+            SetValue("RelPermalink", page.RelPermalink, false);
+            SetValue("Date", page.Date, false);
+            SetValue("Lastmod", page.LastMod, false);
+            SetValue("Tags", page.Tags, false);
+            SetValue("Categories", page.Categories, false);
+            SetValue("WordCount", page.WordCount, false);
+            SetValue("ReadingTime", page.ReadingTime, false);
+            SetValue("Description", page.Description, false);
+            SetValue("Summary", page.Summary, false);
+            SetValue("Type", page.Type, false);
+            SetValue("Layout", page.Layout, false);
+            SetValue("Draft", page.Draft, false);
+            SetValue("Weight", page.Weight, false);
+            SetValue("Params", page.Params, false);
+            SetValue("Resources", page.Resources, false);
+            SetValue("Pages", _pagesValue, false);
+            SetValue("Terms", _termsValue, false);
+            SetValue("TableOfContents", page.TableOfContents, false);
+            SetValue("Plain", page.Plain, false);
+            SetValue("RawContent", page.RawContent, false);
+        }
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            // prev/next 懒构建：CWT 复用（相邻页面对象全构建内共享），只读不回写
+            if (member is "prev_page" or "PrevPage")
+            {
+                value = _page.PrevPage is not null ? CreatePageObject(_page.PrevPage) : null;
+                return true;
+            }
+            if (member is "next_page" or "NextPage")
+            {
+                value = _page.NextPage is not null ? CreatePageObject(_page.NextPage) : null;
+                return true;
+            }
+            return base.TryGetValue(context, span, member, out value);
+        }
     }
 
     private static ScriptObject CreateSiteObject(FlintSiteContext site)
