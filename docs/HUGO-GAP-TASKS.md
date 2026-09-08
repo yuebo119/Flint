@@ -271,15 +271,20 @@ Markdown 201k 文件/秒。
 方法：固定 1000 页语料，三级复杂度主题（L1 基础单页渲染、L2 侧边栏
 O(N) 全站循环、L3 双 O(N) 循环 + 嵌套 partial + partialCached），
 Hugo 语法与 Scriban 语法**逻辑等价双实现**（产物结构经 diff 验证一致），
-冷构建 3 次中位数。脚本：scripts/complexity-bench.py。
+冷构建 3 次中位数 + 进程峰值 RSS 采样。脚本：scripts/complexity-bench.py。
 
-| 层级 | Hugo | Flint | 比值 |
-| ---- | ---- | ----- | ---- |
-| L1 基础 | 634ms | 546ms | 0.86x |
-| L2 侧边栏循环 | 1087ms | 972ms | 0.89x |
-| L3 双 O(N) 循环+嵌套 partial | 1863ms | 1592ms | 0.85x |
+| 层级 | Hugo | Flint | 比值 | 峰值 RSS Hugo / Flint |
+| ---- | ---- | ----- | ---- | ----------------- |
+| L1 基础 | 634ms | 546ms | 0.86x | — |
+| L2 侧边栏循环 | 1087ms | 972ms | 0.89x | 135MB / 257MB |
+| L3 双 O(N) 循环+嵌套 partial | 1863ms | 1592ms | 0.85x | 153MB / **408MB** |
 
-结论：**复杂度每升一级两引擎等比例变慢（斜率几乎相同），Flint 全层级
-保持 12-15% 领先**——Flint 的优势不是"只在简单场景"，主题复杂度增长
-不会反转差距。partialCached 在两引擎的 L3 均生效。产物结构经 diff
-验证等价（nav×2/aside/article/footer/h1 计数一致）。
+结论：
+1. **时间**：复杂度每升一级两引擎等比例变慢（斜率几乎相同），
+   Flint 全层级保持 12-15% 领先——主题复杂度增长不会反转差距。
+   partialCached 在两引擎的 L3 均生效。产物结构经 diff 验证等价。
+2. **内存【Flint 劣势】**：L2/L3 下 Flint 峰值 RSS 为 Hugo 的 1.9-2.7 倍
+   （L2 257 vs 135；L3 408 vs 153）——根因是 Scriban ScriptObject 每页
+   50+ 键双别名（snake+Pascal）的对象树驻留，Go template 按需求值无此
+   驻留。真实重型文档主题（Docsy 级）下 Flint 的内存占用是需要正视的
+   trade-off。缓解方向：页面对象池化 / 按需键（Lazy 模式仅覆盖 prev/next）。
