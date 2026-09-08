@@ -1,20 +1,27 @@
 # Flint 静态站点生成器
 
 <p align="left">
-  <strong>🔥 .NET 10 打造的高性能静态站点生成器 · NativeAOT 单文件 · 无需运行时</strong>
+  <strong>🔥 .NET 10 打造的高性能静态站点生成器 · 万页构建 3.4 秒 · 增量 43ms · 内存比 Hugo 低 10-38% · NativeAOT 单文件</strong>
+</p>
+
+<p align="left">
+同机同语料实测（1000~14974 页 × 三种内容形态）：构建时间全面快于
+Hugo v0.165.0（0.67~0.93x），复杂主题内存峰值低 41%（技术文档大语料）。
+完整数据与方法论见 <a href="benchmarks/REPORT.md">benchmarks/REPORT.md</a>。
 </p>
 
 ---
 
 ## ✨ 特性
 
-- **🚀 极速构建**：万页站点 3~4 秒，增量 43ms（NativeAOT 原生二进制，无 JIT 预热）
-- **📦 单文件部署**：~18MB 原生 exe，无运行时依赖，Server GC 多核并行回收
-- **🔄 Hugo 语义兼容**：目录结构、Front Matter（YAML/TOML/JSON）、permalink、taxonomy、渲染钩子、partialCached
-- **📝 现代内容管线**：CommonMark + GFM、语法高亮、数学公式、渲染钩子（链接/图片/标题）
-- **⚡ 开发体验**：Kestrel 热重载、增量构建、多格式配置、环境变量覆盖
-- **🎨 Scriban 模板**：完整脚本语言（条件/循环/函数/继承），AI 辅助转写友好
-- **🛡️ 生产加固**：路径逃逸防护、缓存原子写、AOT 全链路验证、性能回归门禁
+- **🚀 极速构建**：万页站点 3.4 秒（0.76× Hugo 同语料实测），官方数据集 365ms（0.28×），增量 43ms
+- **🧠 低内存**：构建内存峰值比 Hugo 低 10-41%（三语料实测），技术文档大语料优势最大
+- **📦 单文件部署**：~18MB AOT 原生 exe，无运行时依赖，Server GC 多核并行回收
+- **🔄 Hugo 语义兼容**：目录结构、Front Matter（YAML/TOML/JSON）、permalink、taxonomy、渲染钩子、partialCached、`:git` 日期源、环境变量覆盖
+- **📝 现代内容管线**：CommonMark + GFM、语法高亮、数学公式、渲染钩子（链接/图片/标题）、短码
+- **⚡ 开发体验**：Kestrel 热重载、增量构建 43ms、多格式配置、`--missing-layout` 宽容模式
+- **🎨 Scriban 模板**：完整脚本语言（条件/循环/函数/继承），LoopLimit 对齐 Hugo 无限制语义
+- **🛡️ 生产加固**：路径逃逸防护、缓存原子写、AOT 全链路验证、性能回归门禁（`scripts/perf-gate.ps1`）
 
 ---
 
