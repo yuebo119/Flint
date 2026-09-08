@@ -39,16 +39,26 @@ def convert_mdn(mdn_root: str, engine: str, site: str) -> int:
     for dirpath, dirs, files in os.walk(src):
         if "index.md" not in files:
             continue
-        rel = os.path.relpath(dirpath, src)
-        target_dir = os.path.join(site, "content", "mdn", rel.replace(os.sep, "/"))
+        rel = os.path.relpath(dirpath, src).replace(os.sep, "/")
+        if rel == ".":
+            continue  # MDN 根页面跳过
+        # 扁平化命名：web/api/gamepad → web-api-gamepad.md——目录与同名页面
+        # 文件在 Flint 树中 key 冲突（页面与 section/bundle 不能共存，BUILD001），
+        # Hugo 虽容忍但为两引擎同构统一扁平化
+        fname = "mdn-" + rel.replace("/", "-") + ".md"
+        target_dir = os.path.join(site, "content", "mdn")
         os.makedirs(target_dir, exist_ok=True)
         src_file = os.path.join(dirpath, "index.md")
         raw = open(src_file, encoding="utf-8", errors="ignore").read()
         cleaned = strip_macros(raw)
-        # 无 front matter：生成 title（首个 # 标题）
+        # 剥离 MDN 原文件自带的 front matter 块（避免与生成 FM 双重嵌套）
+        if cleaned.startswith("---"):
+            end = cleaned.find("\n---", 3)
+            if end >= 0:
+                cleaned = cleaned[cleaned.find("\n", end + 1):].lstrip("\n")
         title = extract_title(cleaned)
         body = re.sub(r"^# .*$", "", cleaned, count=1, flags=re.M).strip()
-        with open(os.path.join(target_dir, "index.md"), "w", encoding="utf-8") as f:
+        with open(os.path.join(target_dir, fname), "w", encoding="utf-8") as f:
             f.write(f'---\ntitle: "{title}"\n---\n\n{body}\n')
         count += 1
     return count
