@@ -63,6 +63,10 @@ public sealed partial class FrontMatterParser
                     "tags", "categories", "keywords", "authors", "aliases", "outputs" },
             StringComparer.OrdinalIgnoreCase);
 
+    // 简单标量值的禁用字符：引号嵌套/结构括号——命中即回退完整解析器
+    private static readonly System.Buffers.SearchValues<char> SimpleValueForbiddenChars =
+        System.Buffers.SearchValues.Create(new[] { '"', '\'', '[', ']', '{', '}' });
+
     /// <summary>
     /// YAML 快速路径：简单标量 front matter（key: 裸标量/引号串/行内数组）手写解析，
     /// 跳过 YamlDotNet 引擎（每页 100-200μs 的解析器构建与反射开销在万页站点放大
@@ -221,7 +225,7 @@ public sealed partial class FrontMatterParser
                 }
                 list.Add(t[1..^1]);
             }
-            else if (t.IndexOfAny(new[] { '"', '\'', '[', ']', '{', '}' }) >= 0)
+            else if (t.AsSpan().IndexOfAny(SimpleValueForbiddenChars) >= 0)
             {
                 return false;
             }
