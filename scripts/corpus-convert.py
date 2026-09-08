@@ -102,9 +102,9 @@ def write_layouts(site: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mdn", default=r"C:\Users\Andy\AppData\Local\Temp\mdn-content")
-    ap.add_argument("--k8s", default=r"C:\Users\Andy\AppData\Local\Temp\k8s-website")
-    ap.add_argument("--out", default=r"C:\Users\Andy\AppData\Local\Temp\corpus-merged")
+    ap.add_argument("--mdn", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "mdn-content"))
+    ap.add_argument("--k8s", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "k8s-website"))
+    ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "corpus-merged"))
     args = ap.parse_args()
     shutil.rmtree(args.out, ignore_errors=True)
     for engine in ("hugo", "flint"):
