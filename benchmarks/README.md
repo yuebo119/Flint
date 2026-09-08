@@ -16,7 +16,6 @@
 | 资料 | 位置 | 再生方式 |
 | ---- | ---- | -------- |
 | Hugo v0.165.0 Extended | `tools/hugo.exe` | GitHub release `hugo_extended_0.165.0_windows-amd64.zip` 解压 |
-| bep/hugo-benchmark 官方语料 | `corpus/hbench-merged/`（转换后）；原始克隆 `C:\dev\GitHub\hugo-benchmark` | `git clone --recursive https://github.com/bep/hugo-benchmark.git` |
 | 万页合成语料 | `corpus/ssg-bench/` | `python scripts/ssg-bench.py --pages 10000` |
 | MDN 源仓库与转换语料 | `corpus/mdn-content/`、`corpus/corpus-merged/` | 克隆 mdn/content（depth 1），再 `python scripts/corpus-convert.py` |
 | k8s 源仓库与转换语料 | `corpus/k8s-website/`（含于 corpus-merged） | 同上 |
@@ -26,7 +25,8 @@
 | 口径 | 页数 | Flint/Hugo |
 | ---- | ---- | ---------- |
 | 合成（ssg-bench） | 10000 | 0.92-0.95x |
-| 官方基准真实内容 | 3978 | 0.98x |
-| MDN+k8s 真实内容 | 14970 | 0.89x（快 11%，方差 1/5） |
+| MDN 真实内容 | 14621 | 0.72x |
 
 规律：规模越大 Flint 并行管线优势越明显。详细记录见 docs/HUGO-GAP-TASKS.md。
+（历史口径说明：bep 官方基准 3978 页与 MDN+k8s 合并语料 14970 页两轮对比
+因产出页数不对称/未对称审计已移除，记录见 git 历史。）
