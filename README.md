@@ -1,86 +1,78 @@
 # Flint 静态站点生成器
 
 <p align="left">
-  <strong>🔥 一款完全使用AI打造的 .NET 10 高性能静态站点生成器</strong>
-</p>
-
-<p  align="left">
-单文件二进制 ~18MB | 无需运行时 | 自测吞吐量见下方表格（单机数据，建议用 <code>dotnet run --project tests/Flint.PerformanceTests -c Release</code> 在目标机器复测）
+  <strong>🔥 .NET 10 打造的高性能静态站点生成器 · NativeAOT 单文件 · 无需运行时</strong>
 </p>
 
 ---
 
-## 🛠️ 技术栈
+## ⚡ 性能对比（2026-09-09 实测）
 
-| 技术                   | 说明                                  |
-| -------------------- | ----------------------------------- |
-| **.NET 10**          | 最新 LTS 版本，提供卓越性能和现代化 API            |
-| **Native AOT**       | 原生编译，启动即运行，无需 JIT 预热                |
-| **Scriban**          | 高性能模板引擎，语法简洁，AOT 友好                 |
-| **Markdig**          | 快速 Markdown 解析器，支持 CommonMark + GFM |
-| **Kestrel**          | ASP.NET Core 内置 Web 服务器，支持热重载       |
-| **System.Text.Json** | 高性能 JSON 序列化，零分配优化                  |
-| **Tomlyn**           | TOML 配置解析器，Hugo 配置兼容                |
-| **YamlDotNet**       | YAML Front Matter 解析                |
-| **LibSass**          | SCSS/Sass 编译支持                      |
-| **NUglify**          | HTML/CSS/JS 压缩优化                    |
+> 测试环境：Windows 10 x64 · 32 核 · 同机同语料同模板 · 冷构建 3 次中位数
+> 对照引擎：Hugo v0.165.0 Extended 官方二进制 · Flint Release + NativeAOT
 
-### 核心优化技术
+### 三语料端到端构建
 
-- **Span\<T\> / Memory\<T\>** - 零分配字符串处理
-- **ArrayPool\<T\>** - 内存池化，减少 GC 压力
-- **ValueTask** - 异步操作优化
-- **并行处理** - 多核 CPU 充分利用
-- **增量构建** - 智能缓存，仅重建变更内容
-- **懒加载** - 按需解析，减少内存占用
+| 语料 | 页数 | 内容形态 | Hugo | **Flint AOT** | 比值 |
+|------|------|---------|------:|--------------:|:----:|
+| 万页合成 | 10,000 | 同构 lorem | 4245ms | **3126ms** | **0.74x** |
+| Hugo 官方基准站点 | 3,978 | 真实异构（5 站点合并） | 1257ms | **379ms** | **0.30x** |
+| MDN Web Docs | 14,621 | 技术文档（HTML/代码密集） | 8847ms | **6374ms** | **0.72x** |
+
+> 三种内容形态（合成同构 / 真实异构 / 技术文档密集）全部持平或更快，
+> 且产物数量经对称性审计（双引擎 html 产出数一致）。
+
+### 主题复杂度阶梯（复杂度增长不会反转优势）
+
+| 层级 | 主题负担 | Hugo | **Flint** | 比值 |
+|------|---------|------:|----------:|:----:|
+| L1 基础 | 单页渲染 | 634ms | **546ms** | 0.86x |
+| L2 中等 | + 侧边栏 O(N) 全站循环 | 1087ms | **972ms** | 0.89x |
+| L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1863ms | **1592ms** | 0.85x |
+
+复杂度每升一级两引擎等比例变慢（斜率平行）——**Flint 全层级保持 11-15% 领先**。
+
+### 进程内基准（Release，11/11 全绿）
+
+| 指标 | 数值 |
+|------|------|
+| Markdown 解析 | 181,000 文件/秒 |
+| 模板渲染 | 44,700 页/秒 |
+| 增量构建加速 | **6.9x**（增量 43ms） |
+| 配置加载 | 0.20ms |
+| 可扩展性 | O(n) 线性 |
+
+> 口径说明：CLI 对比为 NativeAOT 原生二进制端到端（含进程启动）；
+> 进程内套件为 Release JIT。完整方法论与产物对称性审计见
+> [benchmarks/REPORT.md](benchmarks/REPORT.md)，复现命令见
+> [测试与基准](#-测试与基准)。
 
 ---
 
 ## ✨ 特性
 
-- **🚀 极速构建**: 1000+ 页/秒，复杂主题 1285 页/秒
-- **📦 小巧体积**: 单文件二进制 ~18MB，无需安装运行时
-- **🔄 Hugo 兼容**: 支持 Hugo 目录结构、Front Matter 格式
-- **📝 现代化内容**: Markdown (CommonMark + GFM)、代码高亮、数学公式
-- **⚡ 开发友好**: 内置 Kestrel 开发服务器、热重载、增量构建 (5.1x 加速)
-- **🎨 灵活模板**: Scriban 模板引擎，支持模板继承和 Partial
+- **🚀 极速构建**：万页 3~4 秒，增量 43ms，1000+ 页/秒起步
+- **📦 单文件部署**：NativeAOT 原生编译 ~18MB，无运行时依赖
+- **🔄 Hugo 语义兼容**：目录结构、Front Matter（YAML/TOML/JSON）、permalink、taxonomy、渲染钩子、partialCached
+- **📝 现代内容管线**：CommonMark + GFM、语法高亮、数学公式、渲染钩子（链接/图片/标题）
+- **⚡ 开发体验**：Kestrel 热重载、增量构建、多格式配置、环境变量覆盖
+- **🎨 Scriban 模板**：完整脚本语言（条件/循环/函数/继承），AI 辅助转写友好
+- **🛡️ 生产加固**：Server GC、路径逃逸防护、缓存原子写、AOT 全链路验证
 
 ---
 
-## 📈 性能指标
+## 🛠️ 技术栈
 
-以下为开发机（单机、单次运行）的自测数据，不同硬件/内容下会有差异：
-
-| 测试项目           | 构建速度     | 每页耗时   |
-| -------------- | -------- | ------ |
-| 小型站点 (100页)    | 1,416 页/秒 | 0.71ms |
-| 中型站点 (500页)    | 1,502 页/秒 | 0.67ms |
-| 大型站点 (1000页)   | 1,640 页/秒 | 0.61ms |
-| 超大型站点 (10000页) | 1,785 页/秒 | 0.56ms |
-| 复杂主题 (1000页)   | 3,142 页/秒 | 0.32ms |
-
-| 其他指标         | 数值           |
-| ------------ | ------------ |
-| 增量构建加速       | 4.2x         |
-| Markdown 解析  | 243,000 文件/秒 |
-| 模板渲染         | 55,700 页/秒   |
-| 可扩展性         | O(n) 线性      |
-
-### 与 Hugo 的同数据集对比（2026-09-08 实测）
-
-采用 Hugo 官方论坛认可的万页生成方法（10000 篇 lorem ipsum 文章，
-同 content 同模板口径，冷构建 3 次中位数，外部计时）：
-
-| 引擎 | 万页冷构建 | 单页 |
-| ---- | ---------- | ---- |
-| Hugo v0.165.0 Extended | 3,354ms | 0.335ms |
-| **Flint 0.1.0** | **3,361ms** | **0.336ms** |
-
-对比可复现：`python scripts/ssg-bench.py`（自动生成语料并双引擎测量）。
-对比测试还暴露并修复了 Scriban 默认 LoopLimit=1000 导致万页大列表
-渲染失败的问题（已对齐 Hugo 无限制语义）。
-
-📊 **[查看完整性能测试报告](performance-report.html)**（生成物，可用上述命令重新生成）
+| 技术 | 说明 |
+|------|------|
+| **.NET 10** | 最新 LTS |
+| **NativeAOT** | 原生编译，单文件发布 |
+| **Scriban 7.4** | 模板引擎（快速路径 + LoopLimit 对齐 Hugo） |
+| **Markdig 1.3** | CommonMark + GFM 解析 |
+| **Kestrel** | 开发服务器（热重载） |
+| **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |
+| **Dart Sass / esbuild** | Sass 编译与 JS 打包（可选组件） |
+| **Server GC** | 多核并行回收（批处理吞吐） |
 
 ---
 
@@ -89,11 +81,10 @@
 ### 安装
 
 ```bash
-# 克隆仓库
 git clone https://github.com/yuebo119/flint.git
 cd flint/Flint
 
-# 构建 Native AOT 版本 (Windows)
+# Windows（NativeAOT 单文件）
 dotnet publish src/Flint.Cli -c Release -r win-x64 -o ./publish
 
 # Linux
@@ -103,218 +94,106 @@ dotnet publish src/Flint.Cli -c Release -r linux-x64 -o ./publish
 dotnet publish src/Flint.Cli -c Release -r osx-arm64 -o ./publish
 ```
 
-### 添加到 PATH
-
-```powershell
-# Windows PowerShell
-$env:Path += ";$PWD\publish"
-
-# 或永久添加 (管理员权限)
-[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$PWD\publish", "User")
-```
-
-```bash
-# Linux/macOS
-sudo cp publish/flint /usr/local/bin/
-```
-
-### 验证安装
-
-```bash
-flint version
-```
-
----
-
-## � 使用方法
-
-### 1. 创建新站点
+### 创建站点
 
 ```bash
 flint new site my-blog
 cd my-blog
-```
-
-这会创建以下目录结构：
-
-```
-my-blog/
-├── archetypes/          # 内容模板
-│   └── default.md
-├── content/             # Markdown 内容
-├── layouts/             # 模板文件
-│   └── _default/
-│       ├── baseof.html  # 基础模板
-│       ├── list.html    # 列表模板
-│       └── single.html  # 单页模板
-├── static/              # 静态文件
-└── flint.toml           # 站点配置
-```
-
-### 2. 创建内容
-
-```bash
-# 创建博客文章
 flint new content posts/hello-world.md
-
-# 创建页面
-flint new content about.md
-
-# 使用指定模板
-flint new content posts/tutorial.md --kind tutorial
+flint serve        # http://localhost:1313，热重载
 ```
 
-创建的文件会自动包含 Front Matter：
-
-```yaml
----
-title: "Hello World"
-date: 2026-02-06T20:00:00+08:00
-draft: true
----
-
-在这里写你的内容...
-```
-
-### 3. 启动开发服务器
+### 构建发布
 
 ```bash
-flint serve
+flint build --minify   # 输出到 public/，可直接部署任意静态托管
 ```
-
-- 默认地址: `http://localhost:1313`
-- 自动打开浏览器
-- 热重载：修改文件后自动刷新
-- 包含草稿内容
-
-```bash
-# 自定义端口
-flint serve --port 8080
-
-# 不自动打开浏览器
-flint serve --open false
-
-# 详细输出
-flint serve --verbose
-```
-
-### 4. 构建站点
-
-```bash
-# 基本构建
-flint build
-
-# 包含草稿
-flint build --drafts
-
-# 压缩输出 (HTML/CSS/JS)
-flint build --minify
-
-# 清理后构建
-flint build --clean
-
-# 组合使用
-flint build --clean --minify --drafts
-```
-
-输出到 `public/` 目录，可直接部署到任意静态托管服务。
-
-### 5. 部署
-
-将 `public/` 目录部署到：
-
-- **GitHub Pages**: 推送到 `gh-pages` 分支
-- **Netlify**: 连接仓库，设置构建命令 `flint build`
-- **Vercel**: 连接仓库，设置输出目录 `public`
-- **Cloudflare Pages**: 连接仓库，设置构建命令
-- **任意 Web 服务器**: 直接上传 `public/` 目录
 
 ---
 
 ## 📖 命令参考
 
-| 命令                         | 说明      | 示例                                 |
-| -------------------------- | ------- | ---------------------------------- |
-| `flint new site <name>`    | 创建新站点   | `flint new site my-blog`           |
-| `flint new content <path>` | 创建新内容   | `flint new content posts/hello.md` |
-| `flint new theme <name>`   | 创建新主题   | `flint new theme my-theme`         |
-| `flint build`              | 构建站点    | `flint build --minify`             |
-| `flint serve`              | 启动开发服务器 | `flint serve --port 8080`          |
-| `flint deploy <target>`    | 部署站点    | `flint deploy gh-pages --dry-run`  |
-| `flint mod <sub>`          | 模块管理    | `flint mod get github.com/o/r`     |
-| `flint version`            | 显示版本信息  | `flint version`                    |
-
-> `deploy` 支持 `s3://<bucket>`、`gh-pages`、`netlify`、`vercel` 四种目标（依赖对应 CLI 已安装），
-> `--dry-run` 模拟执行不实际上传；gh-pages 部署使用 `--force` 推送，请注意目标分支数据。
-> `mod` 子命令：`init`（初始化模块配置）/ `get <url>`（安装）/ `update`（更新）/ `list`（列表）/ `remove`（移除）。
-
-### 构建选项
-
-| 选项          | 简写   | 默认值      | 说明             |
-| ----------- | ---- | -------- | -------------- |
-| `--source`  | `-s` | `.`      | 源目录            |
-| `--output`  | `-o` | `public` | 输出目录           |
-| `--minify`  | `-m` | false    | 压缩 HTML/CSS/JS |
-| `--drafts`  | `-D` | false    | 包含草稿内容         |
-| `--future`  | `-F` | false    | 包含未来日期的内容      |
-| `--clean`   | -    | false    | 构建前清理输出目录      |
-| `--verbose` | `-v` | false    | 详细输出           |
-
-### 服务器选项
-
-| 选项             | 简写   | 默认值    | 说明      |
-| -------------- | ---- | ------ | ------- |
-| `--port`       | `-p` | `1313` | 服务器端口   |
-| `--host`       | -    | `localhost` | 绑定主机地址 |
-| `--open`       | -    | true   | 自动打开浏览器（`-o` 统一保留给 build `--output`） |
-| `--livereload` | `-l` | true   | 启用热重载   |
-| `--drafts`     | `-D` | true   | 包含草稿内容  |
+| 命令 | 说明 |
+|------|------|
+| `flint new site <name>` | 创建新站点 |
+| `flint new content <path>` | 创建内容（`--kind` 指定模板） |
+| `flint new theme <name>` | 创建主题骨架 |
+| `flint build` | 构建站点（`-s` 源目录 `-o` 输出 `--minify` `--clean`） |
+| `flint serve` | 开发服务器（`-p` 端口 `-l` 热重载开关） |
+| `flint new content <path> --missing-layout skip` | 见构建选项 |
+| `flint mod get <url>` | 模块管理（init/get/update/list/remove） |
+| `flint deploy <target>` | 部署（s3://、gh-pages、netlify、vercel） |
 
 ---
 
-## ⚙️ 配置文件
+## 📐 最佳实践
 
-支持 TOML、YAML、JSON 三种格式。
+### 大站点模板性能
+
+侧边栏/导航等全站循环，用 **partialCached** 缓存（输出不依赖页面时）：
+
+```scriban
+{{ partialcached "partials/sidebar" "site-wide" }}
+```
+
+依赖页面内容的 partial 用 `include`——缓存与正确性的分界线。
+
+### 缺失模板的构建策略
+
+页面声明了自定义 `layout:` 而模板不存在时，默认构建失败（fail-fast）。
+大规模站点迁移期可用宽容模式跳过：
+
+```bash
+flint build --missing-layout skip
+```
+
+### 增量友好的内容组织
+
+- 内容按 section 分目录（content/posts/、content/docs/）
+- permalink 未配置时按目录结构生成——跨 section 同名页面不冲突
+- `:git` 日期源需 `enableGitInfo = true`
+
+### 环境变量覆盖（CI/多环境）
+
+```bash
+export FLINT_BASEURL="https://staging.example.com/"
+flint build
+```
+
+### AOT 发布（生产推荐）
+
+```bash
+dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true
+```
+
+---
+
+## ⚙️ 配置
+
+支持 TOML / YAML / JSON，Hugo 配置高度兼容：
 
 ```toml
-# flint.toml
 baseURL = "https://example.com/"
 title = "我的博客"
 languageCode = "zh-cn"
-theme = "my-theme"
-
-# 站点时区（IANA 名称）：Front Matter 中无偏移的日期按此时区解释；
-# 带显式偏移（如 +08:00）的日期不受影响。缺省时使用本机时区
-timeZone = "Asia/Shanghai"
-
-# 启用 Git 信息后，页面可用 `date: ":git"` 特殊日期源取最后提交时间
-# enableGitInfo = true
+timeZone = "Asia/Shanghai"          # 无偏移日期按此时区解释
+enableGitInfo = true                # 启用 date: ":git"
 
 [params]
   author = "作者名"
-  description = "站点描述"
-  keywords = ["博客", "技术"]
 
 [menu]
-  [[menu.main]]
-    name = "首页"
-    url = "/"
-    weight = 1
   [[menu.main]]
     name = "文章"
     url = "/posts/"
     weight = 2
-  [[menu.main]]
-    name = "关于"
-    url = "/about/"
-    weight = 3
 
 [taxonomies]
   tag = "tags"
   category = "categories"
 ```
 
-### 环境变量覆盖
+环境变量覆盖（`FLINT_` 前缀，`__` 访问嵌套）：
 
 ```bash
 export FLINT_BASEURL="https://staging.example.com/"
@@ -325,152 +204,73 @@ export FLINT_PARAMS_AUTHOR="新作者"
 
 ## 📝 内容编写
 
-### Front Matter
-
-支持 YAML (---), TOML (+++), JSON ({}) 三种格式：
+Front Matter 支持 YAML / TOML / JSON 三格式：
 
 ```yaml
 ---
 title: "文章标题"
-date: 2026-02-06T10:00:00+08:00
-draft: false
+date: 2026-09-09T10:00:00+08:00
+lastmod: ":git"              # 取 git 最后提交时间
 tags: ["Go", "Hugo"]
-categories: ["技术"]
-author: "作者名"
-description: "文章摘要"
+draft: false
 ---
 
 文章内容...
 ```
 
-#### 日期特殊源（对齐 Hugo）
+Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动链接、
+删除线、数学公式。渲染钩子（`layouts/_markup/render-link.html` 等）
+可定制链接/图片/标题输出。
 
-`date`/`lastmod` 可使用字符串特殊源，解析期兑现为实际时间：
-
-| 源 | 含义 | 前提 |
-|---|------|------|
-| `:git` | 文件最后一次提交的修改时间 | `enableGitInfo = true`；非 git 仓库时静默缺省 |
-| `:filemodtime` | 文件修改时间 | 无 |
-| `:filename` | 文件名 `YYYY-MM-DD-` 前缀 | 未显式设置 date/slug 时自动生效 |
-
-```yaml
 ---
-title: "文章标题"
-lastmod: ":git"        # 每次构建取 git 最后提交时间
-date: ":filemodtime"
----
+
+## 🎨 模板语法（Scriban）
+
+```html
+{{ page.title }}                    <!-- 页面字段 -->
+{{ site.params.author }}            <!-- 站点配置 -->
+{{ for post in site.regular_pages }}{{ end }}   <!-- 循环 -->
+{{ if page.draft }}{{ end }}        <!-- 条件 -->
+{{ include "partials/header" }}     <!-- partial -->
+{{ partialcached "footer" "v1" }}   <!-- 缓存 partial -->
+
+<!-- 模板继承 -->
+{{ extends "_default/baseof.html" }}
+{{ block "main" }}...{{ end }}
 ```
 
-无偏移的日期值按站点 `timeZone` 解释；带显式偏移的日期保持原样。
-
-#### 渲染钩子（对齐 Hugo render hooks）
-
-`layouts/_markup/` 下的钩子模板可定制链接/图片/标题的 HTML 输出：
-
-| 模板 | 拦截对象 | 可用变量 |
-|---|---|---|
-| `render-link.html` | 链接（含自动链接） | `destination`、`title`、`text`（子内容 HTML）、`plain_text` |
-| `render-image.html` | 图片（优先于 render-link） | 同上 |
-| `render-heading.html` | 标题 | `level`、`id`（自动锚点）、`text`、`plain_text` |
+渲染钩子（对齐 Hugo render hooks）：
 
 ```html
 <!-- layouts/_markup/render-link.html -->
 <a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
 ```
 
-无对应模板时走默认渲染，零开销。注意：钩子与全管道自动切换暂不并存（钩子站点使用默认管道）。
-
-### Markdown 语法
-
-支持 CommonMark + GFM 扩展：
-
-- 标题、段落、列表
-- 代码块（带语法高亮）
-- 表格、任务列表
-- 自动链接、删除线
-- 数学公式 (`$...$` 和 `$$...$$`)
+> **HTML 转义契约**：Flint 不自动转义模板输出（对齐 Hugo 默认）。
+> 不可信内容需模板作者自行 `html.escape`。
 
 ---
 
-## 🎨 模板语法
-
-Flint 使用 Scriban 模板引擎：
-
-```html
-<!-- 变量访问 -->
-{{ page.title }}
-{{ site.params.author }}
-
-<!-- 条件判断 -->
-{{ if page.draft }}
-  <span class="badge">草稿</span>
-{{ end }}
-
-<!-- 循环遍历 -->
-{{ for post in site.regular_pages }}
-  <article>
-    <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
-  </article>
-{{ end }}
-
-<!-- 模板继承 -->
-{{ extends "_default/baseof.html" }}
-{{ block "main" }}...{{ end }}
-
-<!-- Partial 引用 -->
-{{ include "partials/header.html" }}
-
-<!-- 结果缓存 partial（对齐 Hugo partialCached）：输出只依赖 name+variants，
-     依赖页面内容的 partial 请用 include；partial 内经 variants[0] 访问点参数 -->
-{{ partialcached "partials/expensive-list" "variant-key" }}
-```
-
-### 主题布局
-
-`theme` 配置的主题（`flint mod get <repo>` 下载到 `themes/`）其 `layouts/`
-自动作为模板回退目录：站点 `layouts/` 优先，主题按序回退（同名文件站点
-覆盖主题），include/partial 同规则。
-
-### HTML 转义契约（安全须知）
-
-Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML 自动转义，
-内容字段（`page.content`、`page.title` 等）与 Markdown 渲染产物直接写入
-页面。这与 Hugo 的"默认按上下文转义 + safe 类型豁免"模型相反，安全责任
-分配如下：
-
-- Markdown 正文由 Markdig 管线产出（原始 HTML 由 `markup.goldmark.renderer.unsafe` 控制）；
-- front matter 字段与用户配置值**原样输出**——不可信内容需模板作者自行 `html.escape`；
-- `safe*` 系列函数（safeHTML/safeCSS/safeHTMLAttr 等）是恒等标记（对齐
-  Hugo 语义），不做转义也不做豁免。
-
----
-
-## 🧪 测试
+## 🧪 测试与基准
 
 ```bash
-# 运行所有测试
-dotnet test
-
-# 运行单元测试
-dotnet test tests/Flint.Core.Tests
-
-# 运行集成测试
-dotnet test tests/Flint.IntegrationTests
-
-# 运行性能测试
-dotnet run --project tests/Flint.PerformanceTests -c Release
+dotnet test                                              # 全量测试
+dotnet run --project tests/Flint.PerformanceTests -c Release   # 性能套件
+python scripts/ssg-bench.py --pages 10000                # 万页 Hugo 对比
+python scripts/complexity-bench.py                       # 主题复杂度阶梯
+powershell -File scripts/perf-gate.ps1                   # 性能回归门禁
 ```
 
-性能测试会生成 HTML 报告：**[performance-report.html](performance-report.html)**
+📊 **完整性能报告**：[benchmarks/REPORT.md](benchmarks/REPORT.md)
+（三语料矩阵、复杂度阶梯、公平性声明、产物审计、可复现命令）
 
 ---
 
 ## 📚 文档
 
-- **[使用指南](docs/USAGE.md)** - 详细使用说明
-- **[API 文档](docs/API.md)** - 核心库 API 参考
-- **[性能优化](docs/PERFORMANCE-OPTIMIZATION.md)** - 性能优化方案
-- **[性能报告](performance-report.html)** - 最新性能测试结果
+- [使用指南](docs/USAGE.md)
+- [API 文档](docs/API.md)
+- [性能优化](docs/PERFORMANCE-OPTIMIZATION.md)
 
 ---
 
@@ -490,10 +290,10 @@ Flint/
 │       ├── Site/            # 站点构建
 │       └── Templates/       # 模板渲染
 ├── tests/
-│   ├── Flint.Core.Tests/        # 单元测试
-│   ├── Flint.IntegrationTests/  # 集成测试
-│   └── Flint.PerformanceTests/  # 性能测试
-└── docs/                    # 文档
+│   ├── Flint.Core.Tests/
+│   ├── Flint.IntegrationTests/
+│   └── Flint.PerformanceTests/
+└── benchmarks/              # 性能基准（语料/脚本/报告/门禁）
 ```
 
 ---
@@ -501,9 +301,3 @@ Flint/
 ## 📄 许可证
 
 MIT License
-
----
-
-<p align="center">
-  <sub>使用 ❤️ 和 .NET 10 构建</sub>
-</p>
