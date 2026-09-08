@@ -14,6 +14,13 @@ public sealed class BuildOptions
     public required string SourcePath { get; init; }
 
     /// <summary>
+    /// 缺失模板的处理哲学（对齐讨论：Flint fail-fast vs Hugo 宽容降级）：
+    /// Error（默认）构建失败暴露问题；Skip 跳过缺模板页面继续（真实大站点
+    /// 声明自定义 layout 依赖原主题时不阻塞全站）
+    /// </summary>
+    public MissingLayoutBehavior MissingLayout { get; init; } = MissingLayoutBehavior.Error;
+
+    /// <summary>
     /// 输出目录路径
     /// </summary>
     public required string OutputPath { get; init; }
@@ -89,4 +96,15 @@ public sealed class BuildOptions
     /// 是否启用调试模式
     /// </summary>
     public bool Debug { get; init; }
+}
+
+/// <summary>
+/// 缺失模板行为
+/// </summary>
+public enum MissingLayoutBehavior
+{
+    /// <summary>构建失败（默认，fail-fast）</summary>
+    Error,
+    /// <summary>跳过该页继续构建（对齐 Hugo 大规模宽容语义）</summary>
+    Skip
 }

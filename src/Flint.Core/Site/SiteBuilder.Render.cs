@@ -248,6 +248,11 @@ public sealed partial class SiteBuilder
                             });
                         }
                     }
+                    catch (Flint.Core.Templates.TemplateNotFoundException) when (options.MissingLayout == MissingLayoutBehavior.Skip)
+                    {
+                        // 宽容模式：缺模板页面跳过（对齐 Hugo 大规模"带病通过"语义），
+                        // 错误不累积——页面声明了引擎无对应布局的 layout 时可选此路径
+                    }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
                         errors.Add(new BuildError

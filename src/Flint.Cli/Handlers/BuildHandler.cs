@@ -28,6 +28,7 @@ internal static class BuildHandler
         string source,
         bool clean,
         bool verbose,
+        string? missingLayout = null,
         CancellationToken cancellationToken = default)
     {
         var sourcePath = Path.GetFullPath(source);
@@ -132,7 +133,10 @@ internal static class BuildHandler
                 Minify = minify,
                 IncludeDrafts = drafts,
                 IncludeFuture = future,
-                Parallelism = Environment.ProcessorCount
+                Parallelism = Environment.ProcessorCount,
+                MissingLayout = string.Equals(missingLayout, "skip", StringComparison.OrdinalIgnoreCase)
+                    ? Flint.Core.Models.MissingLayoutBehavior.Skip
+                    : Flint.Core.Models.MissingLayoutBehavior.Error
             };
 
             var result = await siteBuilder.BuildAsync(buildOptions, cancellationToken);
