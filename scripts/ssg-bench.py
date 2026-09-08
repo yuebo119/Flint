@@ -67,8 +67,8 @@ def main():
     ap.add_argument("--pages", type=int, default=10000)
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--flint", default=r"src\Flint.Cli\bin\Debug\net10.0\win-x64\Flint.exe")
-    ap.add_argument("--hugo", default=r"C:\Users\Andy\AppData\Local\Temp\hugo-bin\hugo.exe")
-    ap.add_argument("--root", default=r"C:\Users\Andy\AppData\Local\Temp\ssg-bench")
+    ap.add_argument("--hugo", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "tools", "hugo.exe"))
+    ap.add_argument("--root", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "ssg-bench"))
     args = ap.parse_args()
 
     root = os.path.abspath(args.root)

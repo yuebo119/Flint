@@ -8,14 +8,15 @@
 - `scripts/corpus-convert.py`：真实语料转换器（MDN/k8s → 统一站点）
 - `scripts/perf-gate.ps1` + `perf-baseline.json`：性能回归门禁
 
-## 外部工具与语料（不入库，按下表可再生）
+## 外部工具与语料（已统一保留在 benchmarks/ 下；corpus/ 与 tools/ 不入库）
 
 | 资料 | 位置 | 再生方式 |
 | ---- | ---- | -------- |
-| Hugo v0.165.0 Extended | 原 /tmp/hugo-bin/hugo.exe（临时目录，需重下） | GitHub release `hugo_extended_0.165.0_windows-amd64.zip` 解压 |
-| bep/hugo-benchmark 官方语料 | C:\dev\GitHub\hugo-benchmark | `git clone --recursive https://github.com/bep/hugo-benchmark.git` |
-| 万页合成语料 | scripts/ssg-bench.py 自动生成 | `python scripts/ssg-bench.py --pages 10000` |
-| MDN/k8s 转换语料 | scripts/corpus-convert.py 自动生成 | 先克隆 mdn/content 与 kubernetes/website（depth 1），再 `python scripts/corpus-convert.py` |
+| Hugo v0.165.0 Extended | `tools/hugo.exe` | GitHub release `hugo_extended_0.165.0_windows-amd64.zip` 解压 |
+| bep/hugo-benchmark 官方语料 | `corpus/hbench-merged/`（转换后）；原始克隆 `C:\dev\GitHub\hugo-benchmark` | `git clone --recursive https://github.com/bep/hugo-benchmark.git` |
+| 万页合成语料 | `corpus/ssg-bench/` | `python scripts/ssg-bench.py --pages 10000` |
+| MDN 源仓库与转换语料 | `corpus/mdn-content/`、`corpus/corpus-merged/` | 克隆 mdn/content（depth 1），再 `python scripts/corpus-convert.py` |
+| k8s 源仓库与转换语料 | `corpus/k8s-website/`（含于 corpus-merged） | 同上 |
 
 ## 对比实测结论（2026-09-08）
 
