@@ -154,10 +154,17 @@ public sealed partial class FrontMatterParser
                 return false;
             }
 
-            // 引号字符串：成对闭合剥外壳；内部转义/不闭合回退
+            // 引号字符串：成对闭合剥外壳；内部转义/不闭合回退。
+            // 双引号内反斜杠是 YAML 转义序列（\n \t \\ 等，YamlDotNet 会解释），
+            // 快速路径不解释转义——含反斜杠回退；单引号内仅 '' 转义（已由
+            // 内部引号检查覆盖），反斜杠在单引号内是字面量，无需回退
             if (v0 is '"' or '\'')
             {
                 if (value.Length < 2 || value[^1] != v0 || value[1..^1].IndexOf(v0) >= 0)
+                {
+                    return false;
+                }
+                if (v0 == '"' && value[1..^1].Contains('\\'))
                 {
                     return false;
                 }
@@ -242,6 +249,17 @@ public sealed partial class FrontMatterParser
     {
         return value[0] == '[' && value[^1] == ']' &&
                value[1..^1].IndexOfAny(stackalloc char[] { '[', ']', '{', '}' }) < 0;
+    }
+
+    /// <summary>
+    /// 测试钩子：强制走 YamlDotNet 完整解析（绕过快速路径），
+    /// 供快速路径等价性对比测试使用
+    /// </summary>
+    internal static FrontMatter ParseViaYamlEngineForTest(string yaml)
+    {
+        var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(yaml)
+            ?? new Dictionary<string, object>();
+        return ConvertDictToFrontMatter(dict, FrontMatterFormat.Yaml, null);
     }
 
     /// <inheritdoc />
