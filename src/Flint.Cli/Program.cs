@@ -115,17 +115,24 @@ internal static class Program
         cmd.Options.Add(outputOpt);
         cmd.Options.Add(sourceOpt);
         cmd.Options.Add(cleanOpt);
+        var missingLayoutOpt = new Option<string>("--missing-layout")
+        {
+            Description = "缺失模板的处理: error（构建失败，默认）或 skip（跳过该页继续）",
+            DefaultValueFactory = _ => "error"
+        };
+        cmd.Options.Add(missingLayoutOpt);
 
         cmd.SetAction(async (ctx, token) =>
         {
             var minify = ctx.GetValue(minifyOpt);
+            var missingLayout = ctx.GetValue(missingLayoutOpt);
             var drafts = ctx.GetValue(draftsOpt);
             var future = ctx.GetValue(futureOpt);
             var output = ctx.GetValue(outputOpt);
             var source = ctx.GetValue(sourceOpt);
             var clean = ctx.GetValue(cleanOpt);
             var verbose = ctx.GetValue(verboseOption);
-            return await BuildHandler.ExecuteAsync(minify, drafts, future, output!, source!, clean, verbose, token);
+            return await BuildHandler.ExecuteAsync(minify, drafts, future, output!, source!, clean, verbose, missingLayout, token);
         });
 
         rootCommand.Subcommands.Add(cmd);
