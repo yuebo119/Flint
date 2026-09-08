@@ -204,14 +204,16 @@ public sealed class SiteConfig
 public sealed class PermalinkConfig
 {
     /// <summary>
-    /// 文章永久链接模式
+    /// 文章永久链接模式。对齐 Hugo 现代语义（用户裁决 2026-09-08）：
+    /// 未配置（空串）时 URL = content 相对路径的目录结构（/posts/page-1/）；
+    /// 显式配置 pattern 才展开 token
     /// </summary>
-    public string Posts { get; init; } = "/:year/:month/:title/";
+    public string Posts { get; init; } = "";
 
     /// <summary>
-    /// 页面永久链接模式
+    /// 页面永久链接模式。语义同 Posts：空串 = 目录结构
     /// </summary>
-    public string Pages { get; init; } = "/:title/";
+    public string Pages { get; init; } = "";
 
     /// <summary>
     /// 分类永久链接模式

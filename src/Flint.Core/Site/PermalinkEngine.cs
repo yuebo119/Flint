@@ -13,29 +13,25 @@ internal static class PermalinkEngine
 {
     internal static string GeneratePermalink(ParsedContent content, SiteConfig config)
     {
-        // 如果有自定义 slug，使用它
-        if (!string.IsNullOrEmpty(content.Metadata.Slug))
-        {
-            return "/" + content.Metadata.Slug.Trim('/') + "/";
-        }
-
-        // 根据内容类型选择 permalink 模式
+        // pattern 分派：front matter type 显式指定（post→Posts、其他→Pages）。
+        // 对齐 Hugo 现代语义（用户裁决 2026-09-08）：pattern 未配置时 URL =
+        // content 相对路径的目录结构（/posts/page-1/）——旧默认 /:year/:month/:title/
+        // 与 /:title/ 曾使全部页面挤在根目录（PermalinkConfig.Posts 声明值形同
+        // 虚设，万页对比测试实证）
         var pattern = content.Metadata.Type?.ToLowerInvariant() switch
         {
-            "post" => config.Permalinks?.Posts ?? "/:year/:month/:title/",
-            _ => config.Permalinks?.Pages ?? "/:title/"
+            "post" => config.Permalinks?.Posts,
+            _ => config.Permalinks?.Pages
         };
 
         var date = content.Metadata.Date ?? DateTimeOffset.Now;
-
-        // 优先使用文件名作为 slug（不含扩展名），这样更符合 Hugo 的行为
-        // 如果文件名是 index.md，则使用父目录名
         var fileName = Path.GetFileNameWithoutExtension(content.SourcePath);
+
+        // slug 变量：显式 slug 优先，否则文件名（index.md/_index.md 用父目录名）
         string slug;
         if (fileName.Equals("index", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("_index", StringComparison.OrdinalIgnoreCase))
         {
-            // 使用父目录名
             var parentDir = Path.GetDirectoryName(content.SourcePath);
             slug = !string.IsNullOrEmpty(parentDir)
                 ? GenerateSlug(Path.GetFileName(parentDir))
@@ -43,14 +39,46 @@ internal static class PermalinkEngine
         }
         else
         {
-            slug = GenerateSlug(fileName);
+            slug = GenerateSlug(string.IsNullOrEmpty(content.Metadata.Slug) ? fileName : content.Metadata.Slug);
         }
 
-        var permalink = ExpandPermalinkTokens(
-            pattern, date, slug, content.Metadata.Slug ?? "",
-            content.SourcePath, config.ContentDir);
+        if (!string.IsNullOrEmpty(pattern))
+        {
+            return ExpandPermalinkTokens(
+                pattern, date, slug, content.Metadata.Slug ?? "",
+                content.SourcePath, config.ContentDir);
+        }
 
-        return permalink;
+        // 目录结构（对齐 Hugo 默认）：URL = content 相对路径去扩展名；
+        // index.md 归并为目录 URL；显式 slug 替换文件名段但保留 section 前缀
+        var rel = "";
+        if (!string.IsNullOrEmpty(content.SourcePath))
+        {
+            var full = Path.GetFullPath(content.SourcePath).Replace('\\', '/');
+            var contentDirName = string.IsNullOrEmpty(config.ContentDir) ? "content" : config.ContentDir;
+            var marker = "/" + contentDirName.Trim('/') + "/";
+            var idx = full.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            rel = idx >= 0
+                ? full[(idx + marker.Length)..]
+                : Path.GetFileName(content.SourcePath).Replace('\\', '/');
+        }
+
+        var relNoExt = rel[..^Path.GetExtension(rel).Length].TrimEnd('/');
+        if (relNoExt.EndsWith("/index", StringComparison.OrdinalIgnoreCase) ||
+            relNoExt.Equals("index", StringComparison.OrdinalIgnoreCase))
+        {
+            relNoExt = relNoExt[..^"index".Length].TrimEnd('/');
+        }
+
+        if (!string.IsNullOrEmpty(content.Metadata.Slug))
+        {
+            var dirPart = relNoExt.Contains('/')
+                ? relNoExt[..(relNoExt.LastIndexOf('/') + 1)]
+                : "";
+            relNoExt = dirPart + GenerateSlug(content.Metadata.Slug);
+        }
+
+        return "/" + relNoExt.Trim('/') + "/";
     }
 
     /// <summary>

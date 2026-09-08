@@ -97,7 +97,7 @@ public sealed class PageTreeCascadeTests : IDisposable
             result.Success.Should().BeTrue("构建应成功: {0}",
                 string.Join("; ", result.Errors.Select(e => e.Message)));
 
-            var deepA = Path.Combine(_siteRoot, "public", "a", "index.html"); // 现有 permalink：按文件名扁平在根
+            var deepA = Path.Combine(_siteRoot, "public", "notes", "deep", "a", "index.html"); // 目录结构语义：/notes/deep/a/
             File.Exists(deepA).Should().BeTrue("深层子页应被构建");
             var html = File.ReadAllText(deepA, Encoding.UTF8);
             html.Should().Contain("banner=from-notes-cascade", "cascade 值应级联到深层后代");
@@ -112,7 +112,7 @@ public sealed class PageTreeCascadeTests : IDisposable
         using (new AssertionScope())
         {
             result.Success.Should().BeTrue();
-            var deepA = Path.Combine(_siteRoot, "public", "a", "index.html"); // 现有 permalink：按文件名扁平在根
+            var deepA = Path.Combine(_siteRoot, "public", "notes", "deep", "a", "index.html"); // 目录结构语义：/notes/deep/a/
             var html = File.ReadAllText(deepA, Encoding.UTF8);
             html.Should().Contain("theme=page-override", "页面显式 Params 应覆盖级联值");
         }
@@ -161,7 +161,7 @@ public sealed class PageTreeCascadeTests : IDisposable
         using (new AssertionScope())
         {
             result.Success.Should().BeTrue();
-            var html = File.ReadAllText(Path.Combine(_siteRoot, "public", "a", "index.html"), Encoding.UTF8);
+            var html = File.ReadAllText(Path.Combine(_siteRoot, "public", "notes", "deep", "a", "index.html"), Encoding.UTF8);
             html.Should().NotContain("should-not-appear", "_target.path 不匹配时级联不生效");
         }
     }
@@ -193,7 +193,7 @@ public sealed class PageTreeCascadeTests : IDisposable
         using (new AssertionScope())
         {
             result.Success.Should().BeTrue();
-            var html = File.ReadAllText(Path.Combine(_siteRoot, "public", "a", "index.html"), Encoding.UTF8);
+            var html = File.ReadAllText(Path.Combine(_siteRoot, "public", "notes", "deep", "a", "index.html"), Encoding.UTF8);
             html.Should().Contain("banner=kind-filtered", "_target.kind=page 时后代页面应命中");
         }
     }
@@ -228,7 +228,7 @@ public sealed class PageTreeCascadeTests : IDisposable
         {
             result.Success.Should().BeTrue();
             // a.md 显式声明了 title: "Deep A"——页面显式值必须恒优先
-            var htmlA = File.ReadAllText(Path.Combine(_siteRoot, "public", "a", "index.html"), Encoding.UTF8);
+            var htmlA = File.ReadAllText(Path.Combine(_siteRoot, "public", "notes", "deep", "a", "index.html"), Encoding.UTF8);
             htmlA.Should().Contain("title=Deep A", "页面显式 title 优先于级联");
             htmlA.Should().Contain("draft=true", "子页未设 draft 时级联 draft=true 应生效");
         }
