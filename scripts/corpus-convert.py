@@ -70,8 +70,8 @@ def convert_k8s(k8s_root: str, engine: str, site: str) -> int:
                 continue  # 短码密集页剔除
             if re.search(r"^_build\s*:", text, re.M):
                 continue  # 含已移除的 _build 键（Hugo 0.145+ 拒绝）
-            if re.search(r"^layout\s*:\s*\S+", text, re.M):
-                continue  # 声明自定义 layout 的页面依赖原主题布局，双引擎均无
+            # layout 声明页保留：两引擎对缺失 layout 均回退默认查找链
+            #（Flint 0.92+ 对齐 Hugo）
             shutil.copy2(fp, os.path.join(target_dir, f))
             count += 1
     return count

@@ -187,16 +187,21 @@ public sealed partial class SiteBuilder
                 {
                     try
                     {
-                        // 模板选择对齐 Hugo kind 语义：home→index、section→list、普通页→single；
-                        // front matter layout 声明优先，缺文件回退 single（与旧行为一致，
-                        // 内置回退模板继续兜底 term/taxonomy）。此前一律 single：
-                        // 首页 layouts/index.html 被 renderSet 的 home 页覆盖、section 永远不走 list
-                        var baseTemplateName = page.Type switch
-                        {
-                            "home" => page.Layout ?? (_templateRenderer.TemplateExists("index") ? "index" : "single"),
-                            "section" => page.Layout ?? (_templateRenderer.TemplateExists("list") ? "list" : "single"),
-                            _ => page.Layout ?? "single"
-                        };
+                        // 模板选择对齐 Hugo kind 语义：home→index、section→list、普通页→single。
+                        // front matter layout 是优先提示而非强制（对齐 Hugo）：声明的 layout
+                        // 存在则优先使用，不存在（如依赖原主题布局）时回退该 kind 的默认
+                        // 查找链——此前直接使用导致声明依赖原主题布局的页面构建失败
+                        //（MDN+k8s 对比测试实证）。此前一律 single：首页 layouts/index.html
+                        // 被 renderSet 的 home 页覆盖、section 永远不走 list
+                        var baseTemplateName =
+                            !string.IsNullOrEmpty(page.Layout) && _templateRenderer.TemplateExists(page.Layout)
+                                ? page.Layout
+                                : page.Type switch
+                                {
+                                    "home" => _templateRenderer.TemplateExists("index") ? "index" : "single",
+                                    "section" => _templateRenderer.TemplateExists("list") ? "list" : "single",
+                                    _ => "single"
+                                };
 
                         // 输出格式：页面级 outputs 覆盖（对齐 Hugo），空则仅 html。
                         // html 恒渲染；非 html 格式（json 等）需存在输出格式变体模板
