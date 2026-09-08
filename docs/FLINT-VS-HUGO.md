@@ -31,14 +31,14 @@
   接线或裁决）。
 - **现状**：PermalinkConfig 默认值改空（目录结构语义），显式配置才展开。
 
-## 4. 缺失模板：fail-fast vs 宽容降级
+## 4. 缺失模板：fail-fast vs 宽容降级 【已处置：--missing-layout skip/error，43acc92】
 
 - **现象**：合并真实站点中声明自定义 layout（glossary、kubectl-all-subcommands）
   的页面，Flint 构建失败（RENDER001），Hugo 同场景输出占位/跳过继续。
 - **根因**：Flint 对缺失模板 fail-fast（错误可见性好），Hugo 宽容降级
   （大规模构建"带病通过"）。
-- **现状**：两种哲学各有取舍。Flint 在转换语料时剔除这类页面保证对比；
-  产品层面保留 fail-fast（错误早暴露），可讨论增加 --lenient 选项。
+- **现状**：【已实现】build --missing-layout skip/error（默认 error 保持
+  fail-fast），Skip 模式缺模板页面跳过继续——两种哲学都保留，用户选择。
 
 ## 5. 数据杂质容忍度：旧键与重复键
 
