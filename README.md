@@ -103,11 +103,34 @@ flint new content posts/hello-world.md
 flint serve        # http://localhost:1313，热重载
 ```
 
+生成的目录结构：
+
+```
+my-blog/
+├── archetypes/          # 内容模板
+│   └── default.md
+├── content/             # Markdown 内容
+├── layouts/             # 模板文件
+│   └── _default/
+│       ├── baseof.html  # 基础模板
+│       ├── list.html    # 列表模板
+│       └── single.html  # 单页模板
+├── static/              # 静态文件
+└── flint.toml           # 站点配置
+```
+
 ### 构建发布
 
 ```bash
 flint build --minify   # 输出到 public/，可直接部署任意静态托管
 ```
+
+### 部署
+
+`public/` 目录可部署到：**GitHub Pages**（推送到 gh-pages 分支）、
+**Netlify / Vercel / Cloudflare Pages**（连接仓库设置构建命令）、
+**任意 Web 服务器**（直接上传）。或使用 `flint deploy <target>`
+（s3://、gh-pages、netlify、vercel，依赖对应 CLI）。
 
 ---
 
@@ -123,6 +146,29 @@ flint build --minify   # 输出到 public/，可直接部署任意静态托管
 | `flint new content <path> --missing-layout skip` | 见构建选项 |
 | `flint mod get <url>` | 模块管理（init/get/update/list/remove） |
 | `flint deploy <target>` | 部署（s3://、gh-pages、netlify、vercel） |
+
+### 构建选项
+
+| 选项 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--source` | `-s` | `.` | 源目录 |
+| `--output` | `-o` | `public` | 输出目录 |
+| `--minify` | `-m` | false | 压缩 HTML/CSS/JS |
+| `--drafts` | `-D` | false | 包含草稿内容 |
+| `--future` | `-F` | false | 包含未来日期的内容 |
+| `--missing-layout` | - | `error` | 缺失模板处理：`error` / `skip` |
+| `--clean` | - | false | 构建前清理输出目录 |
+| `--verbose` | `-v` | false | 详细输出 |
+
+### 服务器选项
+
+| 选项 | 简写 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--port` | `-p` | `1313` | 服务器端口 |
+| `--host` | - | `localhost` | 绑定主机地址 |
+| `--open` | - | true | 自动打开浏览器 |
+| `--livereload` | `-l` | true | 启用热重载 |
+| `--drafts` | `-D` | true | 包含草稿内容 |
 
 ---
 
@@ -219,8 +265,32 @@ draft: false
 ```
 
 Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动链接、
-删除线、数学公式。渲染钩子（`layouts/_markup/render-link.html` 等）
-可定制链接/图片/标题输出。
+删除线、数学公式。
+
+#### 日期特殊源（对齐 Hugo）
+
+| 源 | 含义 | 前提 |
+|---|------|------|
+| `:git` | 文件最后一次提交的修改时间 | `enableGitInfo = true` |
+| `:filemodtime` | 文件修改时间 | 无 |
+| `:filename` | 文件名 `YYYY-MM-DD-` 前缀 | 未显式设置 date 时自动生效 |
+
+#### 渲染钩子（对齐 Hugo render hooks）
+
+`layouts/_markup/` 下的钩子模板可定制链接/图片/标题的 HTML 输出：
+
+| 模板 | 拦截对象 | 可用变量 |
+|---|---|---|
+| `render-link.html` | 链接（含自动链接） | `destination`、`title`、`text`、`plain_text` |
+| `render-image.html` | 图片（优先于 render-link） | 同上 |
+| `render-heading.html` | 标题 | `level`、`id`（自动锚点）、`text`、`plain_text` |
+
+```html
+<!-- layouts/_markup/render-link.html -->
+<a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
+```
+
+无对应模板时走默认渲染，零开销。
 
 ---
 
@@ -246,8 +316,17 @@ Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动
 <a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
 ```
 
-> **HTML 转义契约**：Flint 不自动转义模板输出（对齐 Hugo 默认）。
-> 不可信内容需模板作者自行 `html.escape`。
+### HTML 转义契约（安全须知）
+
+Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML 自动转义，
+内容字段（`page.content`、`page.title` 等）与 Markdown 渲染产物直接写入
+页面。这与 Hugo 的"默认按上下文转义 + safe 类型豁免"模型相反，安全责任
+分配如下：
+
+- Markdown 正文由 Markdig 管线产出（原始 HTML 由 `markup.goldmark.renderer.unsafe` 控制）；
+- front matter 字段与用户配置值**原样输出**——不可信内容需模板作者自行 `html.escape`；
+- `safe*` 系列函数（safeHTML/safeCSS/safeHTMLAttr 等）是恒等标记（对齐
+  Hugo 语义），不做转义也不做豁免。
 
 ---
 
