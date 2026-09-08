@@ -179,3 +179,18 @@ graph LR
 2. **第二批**：T1.5（简化版 ref）→ T2.0 spike（产出设计文档后停下等裁决）
 3. **第三批（T2.0 裁决通过后）**：T2.1 → T2.2 → T2.3，每个完成后全量回归
 4. **第四批起**：T3/T4 按依赖链推进，T4.1a 调研结果决定 T4 系列是否继续
+
+
+## 已知语义差异（对比测试记录，待裁决）
+
+### 默认 permalink 的 section 判定断链（2026-09-08 万页对比测试发现）
+
+PermalinkConfig.Posts 默认值声明了 /:year/:month/:title/，但
+GeneratePermalink 只认 front matter 的 type 字段——content/posts/ 下的
+页面（无 type 声明）全部落入 Pages 模式 /:title/，PermalinkConfig.Posts
+形同虚设；Hugo 按 section 判定（content/posts/ 下的页面默认
+/:section/:filename 目录结构）。
+
+修复影响面：所有 content/<子目录>/ 下无 slug 页面的默认 URL 变更 +
+大量测试路径断言更新。属行为变更裁决项，修复方向已定（front matter
+type 显式声明优先，否则按 section 判定接通 Posts 模式），待确认后执行。

@@ -267,6 +267,10 @@ public class PerformanceTestRunner
         var firstFile = Directory.GetFiles(contentDir, "*.md").First();
         await File.AppendAllTextAsync(firstFile, "\n\n更新内容");
 
+        // 预热：首次增量含 JIT 与文件系统缓存冷启动，单次测量方差曾达 10%+
+        await IncrementalBuildAsync(siteDir, [firstFile]);
+        await File.AppendAllTextAsync(firstFile, "\n\n再次更新内容");
+
         GC.Collect();
         var incrementalSw = Stopwatch.StartNew();
         await IncrementalBuildAsync(siteDir, [firstFile]);
