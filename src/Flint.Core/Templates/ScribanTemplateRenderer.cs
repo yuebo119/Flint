@@ -210,7 +210,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         {
             TemplateLoader = _templateLoader,
             MemberRenamer = member => member.Name,
-            StrictVariables = false
+            StrictVariables = false,
+            // 对齐 Hugo：循环迭代数不做 1000 级人为限制——万页站点的列表/
+            // taxonomy 页单循环即超默认值（同数据集对比测试实证）
+            LoopLimit = 1_000_000
         };
         context.PushGlobal(globals);
 
@@ -310,7 +313,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             {
                 TemplateLoader = _templateLoader,
                 MemberRenamer = member => member.Name,
-                StrictVariables = false
+                StrictVariables = false,
+                LoopLimit = 1_000_000
             };
             var partialGlobals = new ScriptObject();
             partialGlobals["variants"] = new ScriptArray(variants.Select(v => (object)v));
@@ -563,7 +567,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         {
             TemplateLoader = _templateLoader,
             MemberRenamer = member => member.Name, // 保持原始属性名
-            StrictVariables = false // 允许访问未定义的变量
+            StrictVariables = false, // 允许访问未定义的变量
+            LoopLimit = 1_000_000 // 万页站点的大列表循环（同数据集对比测试实证）
         };
 
         // 渲染期依赖收集（T4.1）：按页面初始化依赖快照容器
