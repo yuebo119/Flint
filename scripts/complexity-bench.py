@@ -10,6 +10,8 @@ import statistics
 import subprocess
 import time
 
+import psutil
+
 HUGO = r"C:\Users\Andy\AppData\Local\Temp\hugo-bin\hugo.exe"
 FLINT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      "benchmarks", "tools", "flint-aot", "Flint.exe")
@@ -131,22 +133,34 @@ def main():
         else:
             cmd = [FLINT, "build", "-s", site, "-o", pub]
         times = []
+        peaks = []
         for i in range(args.runs + 1):  # 首轮预热
             shutil.rmtree(pub, ignore_errors=True)
             t0 = time.perf_counter()
-            r = subprocess.run(cmd, capture_output=True)
+            p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            proc = psutil.Process(p.pid)
+            peak_rss = 0
+            while p.poll() is None:
+                try:
+                    peak_rss = max(peak_rss, proc.memory_info().rss)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    break
+                time.sleep(0.02)
+            p.wait()
             el = (time.perf_counter() - t0) * 1000
-            assert r.returncode == 0, (name, r.stderr[-300:] if r.stderr else r.stdout[-300:])
+            assert p.returncode == 0, (name, p.returncode)
             if i > 0:
                 times.append(el)
+                peaks.append(peak_rss / 1048576)
         med = statistics.median(times)
-        matrix[name] = med
-        print(f"{name}: " + " ".join(f"{t:.0f}" for t in times) + f" | median={med:.0f}ms")
+        peak_med = statistics.median(peaks)
+        matrix[name] = (med, peak_med)
+        print(f"{name}: " + " ".join(f"{t:.0f}" for t in times) + f" | median={med:.0f}ms | peakRSS={peak_med:.0f}MB")
 
-    print("\n=== 复杂度-性能曲线（中位数 ms）===")
-    print(f"{'层级':<6}{'Hugo':>10}{'Flint':>10}{'比值':>8}")
+    print("\n=== 复杂度-性能曲线（中位数 ms | 峰值 RSS MB）===")
+    print(f"{'层级':<6}{'Hugo':>10}{'Flint':>10}{'比值':>8}{'RSS比':>8}")
     for lv in ("L1", "L2", "L3"):
-        h = matrix[f"{lv}-hugo"]; f_ = matrix[f"{lv}-flint"]
+        h = matrix[f"{lv}-hugo"][0]; f_ = matrix[f"{lv}-flint"][0]
         print(f"{lv:<6}{h:>10.0f}{f_:>10.0f}{f_/h:>8.2f}")
 
 if __name__ == "__main__":
