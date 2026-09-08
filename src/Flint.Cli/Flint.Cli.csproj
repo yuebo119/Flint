@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- 批处理吞吐：Server GC 多核并行回收（万页构建 GC 压力大，Workstation
+         GC 单线程回收在多核机器上是吞吐瓶颈） -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <!-- 项目基本信息 -->
     <OutputType>Exe</OutputType>
     <RootNamespace>Flint.Cli</RootNamespace>
