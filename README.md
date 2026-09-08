@@ -6,67 +6,15 @@
 
 ---
 
-## ⚡ 性能对比（2026-09-09 实测）
-
-> 测试环境：Windows 10 x64 · 32 核 · 同机同语料同模板 · 冷构建 3 次中位数
-> 对照引擎：Hugo v0.165.0 Extended 官方二进制 · Flint Release + NativeAOT
-
-### 三语料端到端构建
-
-> 页数 = 实际构建产出（html 页面，非语料文件数）；内存 = 构建进程峰值
-> （USS，进程独占内存，psutil 采样）。每格双引擎 3 次中位数。
-
-| 语料 | 语料 md | **产出页面（Hugo / Flint）** | 内容形态 | Hugo | **Flint AOT** | 比值 | 峰值内存 Hugo / Flint |
-|------|--------:|------|---------|------:|--------------:|:----:|------|
-| 万页合成 | 10,000 | 10,001 / 10,004 ✓ | 同构 lorem | 5540ms | **4245ms** | 0.77x | 392MB / **326MB** |
-| MDN Web Docs | 14,621 | 14,623 / 14,576 ✓ | 技术文档 | 8847ms | **6374ms** | 0.72x | — |
-
-### 内存峰值（psutil 实测，3 轮中位数）
-
-| 语料 | Hugo RSS / USS | **Flint RSS / USS** | USS 差异 |
-|------|---------------|---------------------|---------|
-| 万页合成 10,000 页 | 409 / 383 MB | **367 / 326 MB** | -10% |
-| MDN 14,621 页 | 1486 / 1416 MB | **921 / 886 MB** | **-38%** |
-
-MDN 大语料下 Flint 内存优势最显著（Goldmark 与 Scriban 管线的
-中间分配远少于 Hugo+YamlDotNet 组合）。
-
-### 主题复杂度阶梯（复杂度增长不会反转优势）
-
-| 层级 | 主题负担 | Hugo | **Flint** | 比值 |
-|------|---------|------:|----------:|:----:|
-| L1 基础 | 单页渲染 | 634ms | **546ms** | 0.86x |
-| L2 中等 | + 侧边栏 O(N) 全站循环 | 1087ms | **972ms** | 0.89x |
-| L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1863ms | **1592ms** | 0.85x |
-
-复杂度每升一级两引擎等比例变慢（斜率平行）——**Flint 全层级保持 11-15% 领先**。
-
-### 进程内基准（Release，11/11 全绿）
-
-| 指标 | 数值 |
-|------|------|
-| Markdown 解析 | 181,000 文件/秒 |
-| 模板渲染 | 44,700 页/秒 |
-| 增量构建加速 | **6.9x**（增量 43ms） |
-| 配置加载 | 0.20ms |
-| 可扩展性 | O(n) 线性 |
-
-> 口径说明：CLI 对比为 NativeAOT 原生二进制端到端（含进程启动）；
-> 进程内套件为 Release JIT。完整方法论与产物对称性审计见
-> [benchmarks/REPORT.md](benchmarks/REPORT.md)，复现命令见
-> [测试与基准](#-测试与基准)。
-
----
-
 ## ✨ 特性
 
-- **🚀 极速构建**：万页 3~4 秒，增量 43ms，1000+ 页/秒起步
-- **📦 单文件部署**：NativeAOT 原生编译 ~18MB，无运行时依赖
+- **🚀 极速构建**：万页站点 3~4 秒，增量 43ms（NativeAOT 原生二进制，无 JIT 预热）
+- **📦 单文件部署**：~18MB 原生 exe，无运行时依赖，Server GC 多核并行回收
 - **🔄 Hugo 语义兼容**：目录结构、Front Matter（YAML/TOML/JSON）、permalink、taxonomy、渲染钩子、partialCached
 - **📝 现代内容管线**：CommonMark + GFM、语法高亮、数学公式、渲染钩子（链接/图片/标题）
 - **⚡ 开发体验**：Kestrel 热重载、增量构建、多格式配置、环境变量覆盖
 - **🎨 Scriban 模板**：完整脚本语言（条件/循环/函数/继承），AI 辅助转写友好
-- **🛡️ 生产加固**：Server GC、路径逃逸防护、缓存原子写、AOT 全链路验证
+- **🛡️ 生产加固**：路径逃逸防护、缓存原子写、AOT 全链路验证、性能回归门禁
 
 ---
 
@@ -76,7 +24,7 @@ MDN 大语料下 Flint 内存优势最显著（Goldmark 与 Scriban 管线的
 |------|------|
 | **.NET 10** | 最新 LTS |
 | **NativeAOT** | 原生编译，单文件发布 |
-| **Scriban 7.4** | 模板引擎（快速路径 + LoopLimit 对齐 Hugo） |
+| **Scriban 7.4** | 模板引擎（LoopLimit 对齐 Hugo 无限制语义） |
 | **Markdig 1.3** | CommonMark + GFM 解析 |
 | **Kestrel** | 开发服务器（热重载） |
 | **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |
@@ -143,6 +91,121 @@ flint build --minify   # 输出到 public/，可直接部署任意静态托管
 
 ---
 
+## 📖 使用指南
+
+### 内容编写
+
+Front Matter 支持 YAML / TOML / JSON 三格式：
+
+```yaml
+---
+title: "文章标题"
+date: 2026-09-09T10:00:00+08:00
+lastmod: ":git"              # 取 git 最后提交时间
+tags: ["Go", "Hugo"]
+draft: false
+---
+
+文章内容...
+```
+
+Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动链接、
+删除线、数学公式。
+
+#### 日期特殊源（对齐 Hugo）
+
+| 源 | 含义 | 前提 |
+|---|------|------|
+| `:git` | 文件最后一次提交的修改时间 | `enableGitInfo = true` |
+| `:filemodtime` | 文件修改时间 | 无 |
+| `:filename` | 文件名 `YYYY-MM-DD-` 前缀 | 未显式设置 date 时自动生效 |
+
+#### 渲染钩子（对齐 Hugo render hooks）
+
+`layouts/_markup/` 下的钩子模板可定制链接/图片/标题的 HTML 输出：
+
+| 模板 | 拦截对象 | 可用变量 |
+|---|---|---|
+| `render-link.html` | 链接（含自动链接） | `destination`、`title`、`text`、`plain_text` |
+| `render-image.html` | 图片（优先于 render-link） | 同上 |
+| `render-heading.html` | 标题 | `level`、`id`（自动锚点）、`text`、`plain_text` |
+
+```html
+<!-- layouts/_markup/render-link.html -->
+<a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
+```
+
+无对应模板时走默认渲染，零开销。
+
+### 模板语法（Scriban）
+
+```html
+{{ page.title }}                    <!-- 页面字段 -->
+{{ site.params.author }}            <!-- 站点配置 -->
+{{ for post in site.regular_pages }}{{ end }}   <!-- 循环 -->
+{{ if page.draft }}{{ end }}        <!-- 条件 -->
+{{ include "partials/header" }}     <!-- partial -->
+{{ partialcached "footer" "v1" }}   <!-- 缓存 partial：输出不依赖页面时用 -->
+
+<!-- 模板继承 -->
+{{ extends "_default/baseof.html" }}
+{{ block "main" }}...{{ end }}
+```
+
+### HTML 转义契约（安全须知）
+
+Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML 自动转义，
+内容字段（`page.content`、`page.title` 等）与 Markdown 渲染产物直接写入
+页面。这与 Hugo 的"默认按上下文转义 + safe 类型豁免"模型相反，安全责任
+分配如下：
+
+- Markdown 正文由 Markdig 管线产出（原始 HTML 由 `markup.goldmark.renderer.unsafe` 控制）；
+- front matter 字段与用户配置值**原样输出**——不可信内容需模板作者自行 `html.escape`；
+- `safe*` 系列函数（safeHTML/safeCSS/safeHTMLAttr 等）是恒等标记（对齐
+  Hugo 语义），不做转义也不做豁免。
+
+### 主题布局
+
+`theme` 配置的主题（`flint mod get <repo>` 下载到 `themes/`）其 `layouts/`
+自动作为模板回退目录：站点 `layouts/` 优先，主题按序回退（同名文件站点
+覆盖主题），include/partial 同规则。
+
+---
+
+## ⚙️ 配置
+
+支持 TOML / YAML / JSON，Hugo 配置高度兼容：
+
+```toml
+baseURL = "https://example.com/"
+title = "我的博客"
+languageCode = "zh-cn"
+timeZone = "Asia/Shanghai"          # 无偏移日期按此时区解释
+enableGitInfo = true                # 启用 date: ":git"
+
+[params]
+  author = "作者名"
+
+[menu]
+  [[menu.main]]
+    name = "文章"
+    url = "/posts/"
+    weight = 2
+
+[taxonomies]
+  tag = "tags"
+  category = "categories"
+```
+
+环境变量覆盖（`FLINT_` 前缀，`__` 访问嵌套）：
+
+```bash
+export FLINT_BASEURL="https://staging.example.com/"
+export FLINT_PARAMS_AUTHOR="新作者"
+```
+
+---
+
 ## 📖 命令参考
 
 | 命令 | 说明 |
@@ -150,11 +213,11 @@ flint build --minify   # 输出到 public/，可直接部署任意静态托管
 | `flint new site <name>` | 创建新站点 |
 | `flint new content <path>` | 创建内容（`--kind` 指定模板） |
 | `flint new theme <name>` | 创建主题骨架 |
-| `flint build` | 构建站点（`-s` 源目录 `-o` 输出 `--minify` `--clean`） |
-| `flint serve` | 开发服务器（`-p` 端口 `-l` 热重载开关） |
-| `flint new content <path> --missing-layout skip` | 见构建选项 |
-| `flint mod get <url>` | 模块管理（init/get/update/list/remove） |
-| `flint deploy <target>` | 部署（s3://、gh-pages、netlify、vercel） |
+| `flint build` | 构建站点 |
+| `flint serve` | 启动开发服务器 |
+| `flint mod <sub>` | 模块管理（init/get/update/list/remove） |
+| `flint deploy <target>` | 部署站点（s3://、gh-pages、netlify、vercel） |
+| `flint version` | 显示版本信息 |
 
 ### 构建选项
 
@@ -212,7 +275,7 @@ flint build --missing-layout skip
 
 ```bash
 export FLINT_BASEURL="https://staging.example.com/"
-flint build
+export FLINT_PARAMS_AUTHOR="新作者"
 ```
 
 ### AOT 发布（生产推荐）
@@ -223,119 +286,51 @@ dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true
 
 ---
 
-## ⚙️ 配置
+## 📊 性能
 
-支持 TOML / YAML / JSON，Hugo 配置高度兼容：
+> 测试环境：Windows 10 x64 · 32 核 · 同机同语料同模板 · 冷构建 3 次中位数
+> 对照：Hugo v0.165.0 Extended 官方二进制 vs Flint Release+NativeAOT
+> 完整方法论、产物对称性审计与公平性声明见 **[benchmarks/REPORT.md](benchmarks/REPORT.md)**
 
-```toml
-baseURL = "https://example.com/"
-title = "我的博客"
-languageCode = "zh-cn"
-timeZone = "Asia/Shanghai"          # 无偏移日期按此时区解释
-enableGitInfo = true                # 启用 date: ":git"
+### 端到端构建（三语料 × 双引擎 × 3 次中位数）
 
-[params]
-  author = "作者名"
+| 语料 | 页数（构建产出） | 内容形态 | Hugo | **Flint AOT** | 比值 |
+|------|------|---------|------:|--------------:|:----:|
+| 万页合成 | 10,007 | 同构 lorem | 4530ms | **3433ms** | **0.76x** |
+| Hugo 官方基准站点* | 718 | 真实异构（5 站点） | 1206ms | **369ms** | **0.31x** |
+| MDN Web Docs | 14,576 | 技术文档（HTML/代码密集） | 8058ms | **5431ms** | **0.67x** |
 
-[menu]
-  [[menu.main]]
-    name = "文章"
-    url = "/posts/"
-    weight = 2
+\* 官方基准站点行两引擎产出页数不同（Hugo 2239 含全目录 list 与双语言
+展开 / Flint 718），页面映射规则不同，总时间不可直接对比，仅作量级参考。
 
-[taxonomies]
-  tag = "tags"
-  category = "categories"
-```
+### 内存峰值（构建进程，psutil 采样）
 
-环境变量覆盖（`FLINT_` 前缀，`__` 访问嵌套）：
+| 语料 | Hugo RSS/USS | **Flint RSS/USS** | USS 差异 |
+|------|-------------|-------------------|---------|
+| 万页合成 | 409 / 383 MB | **367 / 326 MB** | **-10%** |
+| MDN 14,621 页 | 1486 / 1416 MB | **921 / 886 MB** | **-38%** |
 
-```bash
-export FLINT_BASEURL="https://staging.example.com/"
-export FLINT_PARAMS_AUTHOR="新作者"
-```
+### 主题复杂度阶梯（1000 页 × L1/L2/L3 × 双语法等价实现）
 
----
+| 层级 | 主题内容 | Hugo | **Flint** | 比值 |
+| ---- | -------- | ---- | ----- | ---- |
+| L1 基础 | 单页渲染 | 634ms | **546ms** | 0.86x |
+| L2 中等 | + 侧边栏 O(N) 全站循环 | 1087ms | **972ms** | 0.89x |
+| L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1863ms | **1592ms** | 0.85x |
 
-## 📝 内容编写
+复杂度每升一级两引擎等比例变慢（斜率平行）——主题复杂度增长不会反转
+Flint 的优势。partialCached 双引擎均生效。
 
-Front Matter 支持 YAML / TOML / JSON 三格式：
+### 进程内套件（Release，11/11 全绿）
 
-```yaml
----
-title: "文章标题"
-date: 2026-09-09T10:00:00+08:00
-lastmod: ":git"              # 取 git 最后提交时间
-tags: ["Go", "Hugo"]
-draft: false
----
-
-文章内容...
-```
-
-Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动链接、
-删除线、数学公式。
-
-#### 日期特殊源（对齐 Hugo）
-
-| 源 | 含义 | 前提 |
-|---|------|------|
-| `:git` | 文件最后一次提交的修改时间 | `enableGitInfo = true` |
-| `:filemodtime` | 文件修改时间 | 无 |
-| `:filename` | 文件名 `YYYY-MM-DD-` 前缀 | 未显式设置 date 时自动生效 |
-
-#### 渲染钩子（对齐 Hugo render hooks）
-
-`layouts/_markup/` 下的钩子模板可定制链接/图片/标题的 HTML 输出：
-
-| 模板 | 拦截对象 | 可用变量 |
-|---|---|---|
-| `render-link.html` | 链接（含自动链接） | `destination`、`title`、`text`、`plain_text` |
-| `render-image.html` | 图片（优先于 render-link） | 同上 |
-| `render-heading.html` | 标题 | `level`、`id`（自动锚点）、`text`、`plain_text` |
-
-```html
-<!-- layouts/_markup/render-link.html -->
-<a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
-```
-
-无对应模板时走默认渲染，零开销。
-
----
-
-## 🎨 模板语法（Scriban）
-
-```html
-{{ page.title }}                    <!-- 页面字段 -->
-{{ site.params.author }}            <!-- 站点配置 -->
-{{ for post in site.regular_pages }}{{ end }}   <!-- 循环 -->
-{{ if page.draft }}{{ end }}        <!-- 条件 -->
-{{ include "partials/header" }}     <!-- partial -->
-{{ partialcached "footer" "v1" }}   <!-- 缓存 partial -->
-
-<!-- 模板继承 -->
-{{ extends "_default/baseof.html" }}
-{{ block "main" }}...{{ end }}
-```
-
-渲染钩子（对齐 Hugo render hooks）：
-
-```html
-<!-- layouts/_markup/render-link.html -->
-<a class="ext" href="{{ destination }}" rel="noopener">{{ plain_text }}</a>
-```
-
-### HTML 转义契约（安全须知）
-
-Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML 自动转义，
-内容字段（`page.content`、`page.title` 等）与 Markdown 渲染产物直接写入
-页面。这与 Hugo 的"默认按上下文转义 + safe 类型豁免"模型相反，安全责任
-分配如下：
-
-- Markdown 正文由 Markdig 管线产出（原始 HTML 由 `markup.goldmark.renderer.unsafe` 控制）；
-- front matter 字段与用户配置值**原样输出**——不可信内容需模板作者自行 `html.escape`；
-- `safe*` 系列函数（safeHTML/safeCSS/safeHTMLAttr 等）是恒等标记（对齐
-  Hugo 语义），不做转义也不做豁免。
+| 指标 | 数值 |
+|------|------|
+| Markdown 解析 | 5.3ms/千文件（188k 文件/秒） |
+| 模板渲染 | 20.2ms/千页（49.6k 页/秒） |
+| 增量构建 | 51ms（完整构建 216ms） |
+| 配置加载 | 0.17ms |
+| 并发构建加速比 | 1.04x |
+| 病态检测 | 48/48 全绿 |
 
 ---
 
@@ -345,12 +340,12 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 dotnet test                                              # 全量测试
 dotnet run --project tests/Flint.PerformanceTests -c Release   # 性能套件
 python scripts/ssg-bench.py --pages 10000                # 万页 Hugo 对比
-python scripts/complexity-bench.py                       # 主题复杂度阶梯
+python scripts/complexity-bench.py           
 powershell -File scripts/perf-gate.ps1                   # 性能回归门禁
 ```
 
 📊 **完整性能报告**：[benchmarks/REPORT.md](benchmarks/REPORT.md)
-（三语料矩阵、复杂度阶梯、公平性声明、产物审计、可复现命令）
+（三语料矩阵、复杂度阶梯、内存峰值、公平性声明、产物审计、可复现命令）
 
 ---
 
