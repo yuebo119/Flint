@@ -55,4 +55,4 @@ performance-report.html
 # 性能基准语料与工具（大体积本地数据，脚本可再生，不入库；
 # benchmarks/reports/ 与 README.md 仍入库）
 benchmarks/corpus/
-benchmarks/tools/*.exe
+benchmarks/tools/
