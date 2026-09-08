@@ -1,8 +1,8 @@
-# 多语料转换器：将真实世界 markdown 语料转换为 Flint/Hugo 可构建的统一站点
+# MDN 语料转换器：将 MDN Web Docs 内容转换为 Flint/Hugo 可构建的统一站点
 # 来源与规则：
-#   mdn-content  files/en-us/**/index.md —— 逐行剔除 {{...}} 宏行，title 从首个 # 标题生成
-#   k8s-website  content/en/**/*.md      —— 剔除含 {{< 短码的页面，保留原 front matter
-#   progit       剔除（已迁 AsciiDoc，无 markdown 源）
+#   mdn-content  files/en-us/**/index.md —— 逐行剔除 {{...}} 宏行，
+#                剥离原文件自带 front matter，title 从首个 # 标题生成，
+#                输出为扁平命名的普通页面（mdn-<路径>.md，避免 bundle 嵌套）
 # 用法: python scripts/corpus-convert.py --out <root>  （生成 <root>/{hugo,flint}/）
 
 import argparse
@@ -64,29 +64,6 @@ def convert_mdn(mdn_root: str, engine: str, site: str) -> int:
     return count
 
 
-def convert_k8s(k8s_root: str, engine: str, site: str) -> int:
-    src = os.path.join(k8s_root, "content", "en", "docs")
-    count = 0
-    for dirpath, dirs, files in os.walk(src):
-        rel = os.path.relpath(dirpath, src)
-        target_dir = os.path.join(site, "content", "k8s", rel.replace(os.sep, "/"))
-        os.makedirs(target_dir, exist_ok=True)
-        for f in files:
-            if not f.endswith(".md"):
-                continue
-            fp = os.path.join(dirpath, f)
-            text = open(fp, encoding="utf-8", errors="ignore").read()
-            if SHORTCODE.search(text):
-                continue  # 短码密集页剔除
-            if re.search(r"^_build\s*:", text, re.M):
-                continue  # 含已移除的 _build 键（Hugo 0.145+ 拒绝）
-            # layout 声明页保留：两引擎对缺失 layout 均回退默认查找链
-            #（Flint 0.92+ 对齐 Hugo）
-            shutil.copy2(fp, os.path.join(target_dir, f))
-            count += 1
-    return count
-
-
 def write_layouts(site: str):
     os.makedirs(os.path.join(site, "layouts", "_default"), exist_ok=True)
     os.makedirs(os.path.join(site, "layouts"), exist_ok=True)
@@ -113,16 +90,14 @@ def write_layouts(site: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mdn", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "mdn-content"))
-    ap.add_argument("--k8s", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "k8s-website"))
     ap.add_argument("--out", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "benchmarks", "corpus", "corpus-merged"))
     args = ap.parse_args()
     shutil.rmtree(args.out, ignore_errors=True)
     for engine in ("hugo", "flint"):
         site = os.path.join(args.out, engine)
         n_mdn = convert_mdn(args.mdn, engine, site)
-        n_k8s = convert_k8s(args.k8s, engine, site)
         write_layouts(site)
-        print(f"{engine}: mdn={n_mdn} k8s={n_k8s}")
+        print(f"{engine}: mdn={n_mdn}")
 
 
 if __name__ == "__main__":
