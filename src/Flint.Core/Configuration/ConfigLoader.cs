@@ -84,7 +84,11 @@ public sealed class ConfigLoader : IConfigLoader
                 $"在目录 {directory} 中未找到配置文件。支持的文件名: {string.Join(", ", ConfigFileNames)}");
         }
 
-        return await LoadAsync(configPath, cancellationToken).ConfigureAwait(false);
+        var config = await LoadAsync(configPath, cancellationToken).ConfigureAwait(false);
+
+        // 主题默认参数合并（主题系统 P1-2）：主题 theme.toml 的 [params] 作为默认值，
+        // 站点配置深覆盖——AutoLoadAsync 是生产装配唯一入口，stub 测试语义不受影响
+        return ThemeParamsMerger.Merge(config, directory);
     }
 
     /// <inheritdoc />
