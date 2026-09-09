@@ -153,18 +153,26 @@ public sealed partial class SiteBuilder
                     // 必须在摘除节点前取 permalink
                     var key = ContentKeyFor(options.SourcePath, config, deleted);
                     var oldNode = tree.Get(key);
+                    string? staleOutput = null;
                     if (oldNode?.Content is not null)
                     {
                         var oldRelPermalink = PermalinkEngine.GeneratePermalink(oldNode.Content, config);
-                        var staleOutput = GetOutputPath(oldRelPermalink, options.OutputPath);
-                        if (File.Exists(staleOutput))
-                        {
-                            File.Delete(staleOutput);
-                        }
+                        staleOutput = GetOutputPath(oldRelPermalink, options.OutputPath);
                     }
                     tree.Delete(key);
                     // 节点已摘除：签名条目缓存同步失效
                     _taxonomyEntryCache.Remove(key);
+
+                    if (staleOutput is null)
+                    {
+                        continue;
+                    }
+                    if (File.Exists(staleOutput))
+                    {
+                        File.Delete(staleOutput);
+                    }
+                    // 清理因此变空的目录链（只删 index.html 会留下目录壳，部署产物含无效空目录）
+                    PruneEmptyDirectories(staleOutput, options.OutputPath);
                 }
 
                 // 2. 全量上下文从树产出（零重解析）
@@ -424,5 +432,42 @@ public sealed partial class SiteBuilder
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 从被删输出文件向上清理变空的目录链（只删 index.html 会留下目录壳，
+    /// 部署产物因此含无效空目录）。安全边界：严格限制在输出根之下，输出根
+    /// 本身永不删除；目录非空/被占用即停（父目录不可能为空），清理失败不
+    /// 放大为构建失败
+    /// </summary>
+    private static void PruneEmptyDirectories(string staleOutputPath, string outputRootPath)
+    {
+        var outputRoot = Path.GetFullPath(outputRootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var dir = Path.GetDirectoryName(Path.GetFullPath(staleOutputPath));
+        while (!string.IsNullOrEmpty(dir))
+        {
+            var full = Path.GetFullPath(dir);
+            if (full.Length <= outputRoot.Length ||
+                !full.StartsWith(outputRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                break; // 越界或已到输出根：输出根本身永不删除
+            }
+            bool deleted;
+            try
+            {
+                Directory.Delete(full, recursive: false);
+                deleted = true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                deleted = false; // 非空或被占用：向上终止
+            }
+            if (!deleted)
+            {
+                break;
+            }
+            dir = Path.GetDirectoryName(full);
+        }
     }
 }
