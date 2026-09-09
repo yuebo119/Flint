@@ -10,6 +10,7 @@ namespace Flint.Core.Tests.Configuration;
 /// <summary>
 /// EnvironmentOverrides 单元测试
 /// </summary>
+[Collection("EnvironmentSensitive")]
 public class EnvironmentOverridesTests : IDisposable
 {
     private readonly List<string> _setEnvVars = [];
