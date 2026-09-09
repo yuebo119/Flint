@@ -2,7 +2,7 @@
 // 测全量与增量构建时间。语料不存在时跳过（CI 无本地语料）。
 // 输出走 ITestOutputHelper，用于 cascade 增量化的收益评估。
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Performance;

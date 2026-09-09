@@ -2,7 +2,7 @@
 // 页面树测试
 
 using Flint.Core.Site.PageTrees;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
 

@@ -2,7 +2,7 @@
 // 快速路径接受的每个样本，双路径产物必须逐字段一致。
 // 这是"跳过 YamlDotNet 是否正确"的最终验证——不靠论证靠实测。
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests.Content;

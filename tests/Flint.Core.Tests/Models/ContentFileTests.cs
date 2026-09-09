@@ -3,7 +3,7 @@
 
 using System.Text;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests.Models;

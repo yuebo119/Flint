@@ -79,7 +79,11 @@ public class HotReloadNotificationPropertyTests
         var contentParser = new ContentParser();
         var templateRenderer = new ScribanTemplateRenderer(
             Path.Combine(fixture.SiteRoot, "layouts"));
-        var assetPipeline = new AssetPipeline();
+        var assetPipeline = new AssetPipeline(new AssetPipelineOptions
+        {
+            SourceDirectory = fixture.SiteRoot,
+            OutputDirectory = fixture.OutputPath
+        });
         var configLoader = new ConfigLoader();
 
         var siteBuilder = new SiteBuilder(

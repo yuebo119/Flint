@@ -1,7 +1,7 @@
 // Flint 静态站点生成器
 // 测试数据验证测试
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.TestData;

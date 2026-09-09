@@ -3,7 +3,7 @@
 // 验证构建管道对任意有效输入产生正确输出
 
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

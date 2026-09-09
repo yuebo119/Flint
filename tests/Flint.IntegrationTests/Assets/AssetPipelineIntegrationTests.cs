@@ -6,7 +6,7 @@ using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Assets;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using Xunit;

@@ -3,7 +3,7 @@
 // 验证 tags 和 categories 分类页面的正确生成
 
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

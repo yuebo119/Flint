@@ -3,7 +3,7 @@
 // 测试 version 命令的输出格式和内容
 
 using Flint.IntegrationTests.Utilities;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Cli;

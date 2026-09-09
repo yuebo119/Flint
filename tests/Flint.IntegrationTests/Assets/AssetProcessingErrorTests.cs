@@ -8,7 +8,7 @@ using DartSassHost;
 using Flint.Core.Abstractions;
 using Flint.Core.Assets;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 // 使用别名解决命名冲突
 using FlintSassCompiler = Flint.Core.Assets.SassCompiler;

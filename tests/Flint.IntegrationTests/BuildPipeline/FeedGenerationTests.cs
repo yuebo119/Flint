@@ -6,7 +6,7 @@ using System.Xml;
 using System.Xml.Linq;
 using Flint.Core.Models;
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;
@@ -734,7 +734,7 @@ public class DisableKindsFeedTests : IDisposable
     {
         var (success, publicDir) = await BuildWithConfigAsync("disableKinds = [\"RSS\", \"sitemap\"]\n");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
             File.Exists(Path.Combine(publicDir, "rss.xml")).Should().BeFalse("disableKinds 含 RSS 应跳过 feed");
@@ -749,7 +749,7 @@ public class DisableKindsFeedTests : IDisposable
     {
         var (success, publicDir) = await BuildWithConfigAsync("disableKinds = [\"taxonomy\", \"term\"]\n");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
             Directory.Exists(Path.Combine(publicDir, "categories")).Should().BeFalse("taxonomy 页应被跳过");
@@ -763,7 +763,7 @@ public class DisableKindsFeedTests : IDisposable
     {
         var (success, publicDir) = await BuildWithConfigAsync("");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
             File.Exists(Path.Combine(publicDir, "rss.xml")).Should().BeTrue();
@@ -778,7 +778,7 @@ public class DisableKindsFeedTests : IDisposable
         // outputs 配置消费（T3.2）：home 输出格式列表不含 rss 时不产出订阅文件
         var (success, publicDir) = await BuildWithConfigAsync("[outputs]\nhome = [\"HTML\"]\n");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
             File.Exists(Path.Combine(publicDir, "rss.xml")).Should().BeFalse("home outputs 不含 rss 应跳过 feed.xml");
@@ -792,7 +792,7 @@ public class DisableKindsFeedTests : IDisposable
     {
         var (success, publicDir) = await BuildWithConfigAsync("[outputs]\nhome = [\"HTML\", \"RSS\"]\n");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
             File.Exists(Path.Combine(publicDir, "rss.xml")).Should().BeTrue("显式配置 RSS 应产出 feed");
@@ -806,7 +806,7 @@ public class DisableKindsFeedTests : IDisposable
         // T3.1 验收：同一页面 HTML 与 RSS 双输出内容一致性（同一 ParsedContent 喂两个输出）
         var (success, publicDir) = await BuildWithConfigAsync("");
 
-        using (new FluentAssertions.Execution.AssertionScope())
+        using (new AwesomeAssertions.Execution.AssertionScope())
         {
             success.Should().BeTrue();
 

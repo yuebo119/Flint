@@ -2,7 +2,7 @@
 // DevServerTestClient 单元测试
 
 using System.Net;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Utilities;

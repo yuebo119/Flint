@@ -4,7 +4,7 @@
 // </copyright>
 // -----------------------------------------------------------------------
 
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

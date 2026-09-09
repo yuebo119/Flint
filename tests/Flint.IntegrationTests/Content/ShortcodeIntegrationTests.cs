@@ -8,7 +8,7 @@ using Flint.Core.Abstractions;
 using Flint.Core.Content;
 using Flint.Core.Content.Shortcodes;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Content;

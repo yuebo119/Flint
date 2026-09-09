@@ -3,7 +3,7 @@
 // 测试各种边界条件和极端情况
 
 using Flint.IntegrationTests.Utilities;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Cli;

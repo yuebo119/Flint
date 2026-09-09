@@ -2,7 +2,7 @@
 // FrontMatter 数据类型单元测试
 
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests.Models;

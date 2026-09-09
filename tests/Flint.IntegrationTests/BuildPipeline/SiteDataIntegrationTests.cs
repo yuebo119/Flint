@@ -3,7 +3,7 @@
 // 对模板可见（site.data.*），对齐 Hugo 的 data 目录特性
 
 using System.Text;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

@@ -7,7 +7,7 @@ using System.Text;
 using Flint.Core.Content;
 using Flint.Core.Models;
 using Flint.IntegrationTests.Utilities;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 // 使用类型别名解决命名空间冲突

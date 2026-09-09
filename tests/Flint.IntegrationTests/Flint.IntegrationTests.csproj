@@ -91,7 +91,7 @@
     </PackageReference>
     
     <!-- 断言库 -->
-    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="AwesomeAssertions" />
     
     <!-- 性能测试框架 -->
     <PackageReference Include="BenchmarkDotNet" />
