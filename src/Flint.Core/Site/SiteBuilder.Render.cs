@@ -123,7 +123,8 @@ public sealed partial class SiteBuilder
         SiteConfig config,
         List<PageContext> pages,
         TaxonomyCollection taxonomies,
-        IReadOnlyDictionary<string, object>? siteData = null)
+        IReadOnlyDictionary<string, object>? siteData = null,
+        IReadOnlyDictionary<string, string>? translations = null)
     {
         // 当页面列表为空时，使用当前时间作为 LastChange
         var lastChange = pages.Count > 0
@@ -156,7 +157,8 @@ public sealed partial class SiteBuilder
             BuildDate = DateTimeOffset.Now,
             LastChange = lastChange,
             IsMultiLingual = false,
-            Languages = [config.LanguageCode]
+            Languages = [config.LanguageCode],
+            Translations = translations ?? new Dictionary<string, string>()
         };
     }
 
