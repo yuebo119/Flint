@@ -177,7 +177,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 12. 生成 Sitemap 和 Feed（在输出目录创建后）
             await GenerateSitemapAndFeedsAsync(
-                pageContexts, config, options, cancellationToken);
+                pageContexts, siteContext, config, options, cancellationToken);
             Phase("12.sitemap/feed");
 
             stopwatch.Stop();

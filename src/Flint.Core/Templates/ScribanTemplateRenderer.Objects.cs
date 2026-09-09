@@ -154,6 +154,7 @@ public sealed partial class ScribanTemplateRenderer
             ["regular_pages"] = lazyRegularPages,
             ["taxonomies"] = lazyTaxonomies,
             ["menus"] = CreateMenusObject(site.Menus),
+            ["paginator"] = BuildPaginatorObject(site),
             ["config"] = site.Config,
             ["data"] = site.Data,
             ["params"] = site.Params,
@@ -357,6 +358,21 @@ public sealed partial class ScribanTemplateRenderer
             obj[name] = items.Select(CreateMenuItemObject).ToList();
         }
         return obj;
+    }
+
+    /// <summary>
+    /// 分页对象（主题兼容批次二 #8，对齐 Hugo .Paginator 字段子集）：
+    /// pages = 当前页切片（首版首页切片），total_pages/page_number/has_prev/has_next
+    /// </summary>
+    private static ScriptObject BuildPaginatorObject(FlintSiteContext site)
+    {
+        var so = new ScriptObject();
+        so["pages"] = GetSharedPageList(site.PaginatorPages);
+        so["total_pages"] = site.PaginatorTotalPages;
+        so["page_number"] = site.PaginatorPageNumber;
+        so["has_prev"] = site.PaginatorPageNumber > 1;
+        so["has_next"] = site.PaginatorPageNumber < site.PaginatorTotalPages;
+        return so;
     }
 
     private static ScriptObject CreateMenuItemObject(FlintMenuItem item)

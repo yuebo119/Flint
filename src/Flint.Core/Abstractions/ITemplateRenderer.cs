@@ -360,6 +360,17 @@ public sealed class SiteContext
     /// </summary>
     public IReadOnlyDictionary<string, string> Translations { get; init; } =
         new Dictionary<string, string>();
+
+    /// <summary>
+    /// 分页视图（列表页按 paginate 切片，首版仅首页切片）
+    /// </summary>
+    public IReadOnlyList<PageContext> PaginatorPages { get; init; } = [];
+
+    /// <summary>分页总页数（首版恒 1，分页 URL 产出属后续能力）</summary>
+    public int PaginatorTotalPages { get; init; } = 1;
+
+    /// <summary>当前分页页码（首版恒 1）</summary>
+    public int PaginatorPageNumber { get; init; } = 1;
 }
 
 /// <summary>
