@@ -63,6 +63,18 @@ public sealed partial class SiteBuilder : ISiteBuilder
         var errors = new ConcurrentBag<BuildError>();
         var warnings = new ConcurrentBag<BuildWarning>();
 
+        // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr
+        // 输出各阶段耗时；默认关闭，仅一个 bool 判断的开销
+        var tracePhases = Environment.GetEnvironmentVariable("FLINT_TRACE_PHASES") == "1";
+        var lastPhaseTs = 0L;
+        void Phase(string name)
+        {
+            if (!tracePhases) return;
+            var ts = stopwatch.ElapsedTicks;
+            Console.Error.WriteLine($"[phase] {name,-24} {(ts - lastPhaseTs) * 1000.0 / Stopwatch.Frequency,9:F1}ms");
+            lastPhaseTs = ts;
+        }
+
         // 构建边界：清 mtime 短窗缓存，保证本次构建看到全部模板的最新状态
         // （TTL 缓存只在单次构建内部生效，见渲染器 InvalidateMtimeCache）
         _templateRenderer.InvalidateMtimeCache();
@@ -73,6 +85,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             await _templateRenderer.PrecompileTemplatesAsync(cancellationToken);
             _templatesPrecompiled = true;
         }
+        Phase("0.模板预编译");
 
         try
         {
@@ -89,13 +102,16 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 1.5 注册站点级短代码（layouts/shortcodes/*.html，对齐 Hugo"短代码即模板"；
             // 项目模板覆盖内置同名短代码）
             RegisterSiteShortcodes(options.SourcePath, config);
+            Phase("1.配置加载+短码");
 
             // 2. 扫描内容文件
             var contentFiles = await ScanContentFilesAsync(options.SourcePath, cancellationToken);
+            Phase("2.扫描内容");
 
             // 3. 使用 Channel 并发解析内容
             var parsedContents = await ParseContentsAsync(
                 contentFiles, options, errors, cancellationToken);
+            Phase("3.解析");
 
             // 4. 过滤草稿和未来内容
             var filteredContents = FilterContents(parsedContents, options);
@@ -105,18 +121,22 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 5.5 注册 页面→模板 依赖（增量构建时模板变化可反查受影响页面）
             RegisterTemplateDependencies(pageContexts, config, options.SourcePath);
+            Phase("4.页面上下文");
 
             // 6. 构建分类系统
             var taxonomyService = new TaxonomyService(config.BaseURL);
             var taxonomies = taxonomyService.BuildTaxonomies(pageContexts);
+            Phase("6.taxonomy");
 
             // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）
             var siteData = await LoadSiteDataAsync(options, cancellationToken);
             var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData);
+            Phase("7.站点上下文");
 
             // 8. 渲染页面
             var renderedPages = await RenderPagesAsync(
                 pageContexts, siteContext, options, errors, cancellationToken);
+            Phase("8.渲染页面");
 
             // 8.5 生成首页——仅当树中不存在 home 页时兜底：
             // kind 分派（home→index）已让树版 home 页（带完整 front matter/params）
@@ -135,20 +155,29 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 9. 生成分类页面
             var taxonomyPages = await GenerateTaxonomyPagesAsync(
                 taxonomies, siteContext, config, options, errors, cancellationToken);
+            Phase("9.分类页");
 
             // 10. 处理资源文件
             var processedAssets = await ProcessAssetsAsync(
                 options.SourcePath, options, errors, cancellationToken);
+            Phase("10.资源");
 
             // 11. 写入输出文件（先创建目录）
             await WriteOutputAsync(
                 renderedPages, taxonomyPages, processedAssets, options, cancellationToken);
+            Phase("11.写入输出");
 
             // 12. 生成 Sitemap 和 Feed（在输出目录创建后）
             await GenerateSitemapAndFeedsAsync(
                 pageContexts, config, options, cancellationToken);
+            Phase("12.sitemap/feed");
 
             stopwatch.Stop();
+
+            if (tracePhases)
+            {
+                Console.Error.WriteLine($"[phase] {"总计",-24} {stopwatch.Elapsed.TotalMilliseconds,9:F1}ms");
+            }
 
             return new BuildResult
             {
