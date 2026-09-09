@@ -736,6 +736,41 @@ public class SiteBuilderTests : IDisposable
     }
 
     [Fact]
+    public async Task IncrementalBuildAsync_删页后陈旧输出与空目录壳都应清理()
+    {
+        // 回归防护：删除分支曾只删 index.html 留下目录壳——部署产物因此含
+        // 无效空目录（PruneEmptyDirectories 修复，向上清理到输出根为止）
+        var contentDir = Path.Combine(_testDir, "content");
+        var postA = Path.Combine(contentDir, "post-a.md");
+        var postB = Path.Combine(contentDir, "post-b.md");
+        await File.WriteAllTextAsync(postA, "---\ntitle: Post A\n---\nA");
+        await File.WriteAllTextAsync(postB, "---\ntitle: Post B\n---\nB");
+        Directory.CreateDirectory(Path.Combine(_testDir, "layouts", "_default"));
+        await File.WriteAllTextAsync(
+            Path.Combine(_testDir, "layouts", "_default", "single.html"), "S={{ page.title }}");
+
+        var builder = CreateRealContentSiteBuilder();
+        var options = CreateBuildOptions();
+        Assert.True((await builder.BuildAsync(options)).Success);
+
+        // permalink 按目录结构 = /post-a/（title slug），先确认输出形态再断言
+        var aOutput = Path.Combine(_outputDir, "post-a", "index.html");
+        var aDir = Path.Combine(_outputDir, "post-a");
+        Assert.True(File.Exists(aOutput), "全量构建后 post-a 页应存在");
+
+        // Act - 删除 post-a 源文件后增量
+        File.Delete(postA);
+        var result = await builder.IncrementalBuildAsync(options, new List<string> { postA });
+
+        // Assert - 页面文件与目录壳都不应残留
+        Assert.True(result.Success);
+        Assert.False(File.Exists(aOutput), "被删页的输出文件不应残留");
+        Assert.False(Directory.Exists(aDir), "被删页的空目录壳不应残留");
+        Assert.True(File.Exists(Path.Combine(_outputDir, "post-b", "index.html")),
+            "存活页输出不受删除影响");
+    }
+
+    [Fact]
     public async Task IncrementalBuildAsync_改slug后term页应更新链接()
     {
         // taxonomy 签名含 Slug：改 slug 改变 term 页内的 permalink 输出，
