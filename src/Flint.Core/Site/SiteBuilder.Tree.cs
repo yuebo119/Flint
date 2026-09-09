@@ -585,6 +585,7 @@ public sealed partial class SiteBuilder
             LastMod = content.Metadata.LastMod,
             Tags = content.Metadata.Tags,
             Categories = content.Metadata.Categories,
+            Aliases = content.Metadata.Aliases,
             WordCount = content.WordCount,
             ReadingTime = content.ReadingTime,
             Description = description,

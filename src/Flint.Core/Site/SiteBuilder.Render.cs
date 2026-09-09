@@ -15,16 +15,24 @@ namespace Flint.Core.Site;
 public sealed partial class SiteBuilder
 {
     /// <summary>
-    /// 注册站点级短代码：扫描 layouts/shortcodes/*.html，每个文件注册为 TemplateShortcode
-    /// （模板语法错误让构建失败——fail-fast 与未知短代码语义一致）
+    /// 注册短代码：主题 layouts/shortcodes 先注册（低优先），站点后注册覆盖同名——
+    /// 对齐 Hugo 主题语义（站点覆盖主题）。模板语法错误 fail-fast
     /// </summary>
     private void RegisterSiteShortcodes(string sourcePath, SiteConfig config)
     {
-        var shortcodesDir = Path.Combine(
-            sourcePath,
-            string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir,
-            "shortcodes");
+        var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
 
+        // 主题列表前面的优先：反序注册，前面的主题后注册覆盖后面的
+        foreach (var themeName in config.ThemeNames.Reverse())
+        {
+            RegisterShortcodesFrom(Path.Combine(sourcePath, "themes", themeName, layoutDirName, "shortcodes"), themeName);
+        }
+
+        RegisterShortcodesFrom(Path.Combine(sourcePath, layoutDirName, "shortcodes"), "站点");
+    }
+
+    private void RegisterShortcodesFrom(string shortcodesDir, string origin)
+    {
         if (!Directory.Exists(shortcodesDir))
         {
             return;
@@ -41,7 +49,7 @@ public sealed partial class SiteBuilder
             }
             catch (FormatException ex)
             {
-                throw new FormatException($"加载站点短代码失败: {file}", ex);
+                throw new FormatException($"加载短代码失败（{origin}）: {file}", ex);
             }
         }
     }
@@ -108,15 +116,38 @@ public sealed partial class SiteBuilder
 
     /// <summary>
     /// 加载 data/ 目录数据（site.data 模板变量的来源）；
+    /// 主题 data/ 先加载（低优先），站点后加载覆盖同名键；
     /// 目录不存在时返回空字典
     /// </summary>
     private async Task<IReadOnlyDictionary<string, object>> LoadSiteDataAsync(
         BuildOptions options,
+        IReadOnlyList<string> themeNames,
         CancellationToken cancellationToken)
     {
-        var dataDir = Path.Combine(options.SourcePath,
-            "data");
-        return await _dataLoader.LoadAsync(dataDir, cancellationToken);
+        var merged = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var themeName in themeNames.Reverse())
+        {
+            var themeDataDir = Path.Combine(options.SourcePath, "themes", themeName, "data");
+            if (Directory.Exists(themeDataDir))
+            {
+                foreach (var (key, value) in await _dataLoader.LoadAsync(themeDataDir, cancellationToken))
+                {
+                    merged[key] = value;
+                }
+            }
+        }
+
+        var dataDir = Path.Combine(options.SourcePath, "data");
+        if (Directory.Exists(dataDir))
+        {
+            foreach (var (key, value) in await _dataLoader.LoadAsync(dataDir, cancellationToken))
+            {
+                merged[key] = value;
+            }
+        }
+
+        return merged;
     }
 
     private SiteContext BuildSiteContext(
@@ -226,6 +257,7 @@ public sealed partial class SiteBuilder
                             {
                                 Page = page,
                                 Site = siteContext,
+                                Data = siteContext.Data,
                                 IsSingle = baseTemplateName == "single",
                                 // 随 kind 分派同步置位：首页/列表页模板的 is_home/is_list
                                 // 判断依赖此标志（taxonomy 路径已设 IsList，此处对齐）
@@ -313,6 +345,7 @@ public sealed partial class SiteBuilder
             {
                 Page = pageContext,
                 Site = siteContext,
+                Data = siteContext.Data,
                 IsHome = true
             };
 

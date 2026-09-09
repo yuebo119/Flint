@@ -37,29 +37,49 @@ public sealed class RenderHooks
     /// 从 layouts/_markup/ 探测钩子模板并构建钩子集合；
     /// 目录或模板不存在时返回 null（走 Markdig 默认渲染，零开销）
     /// </summary>
-    public static RenderHooks? Load(string layoutsDirectory, ScribanTemplateRenderer renderer)
+    public static RenderHooks? Load(
+        string layoutsDirectory,
+        ScribanTemplateRenderer renderer,
+        IEnumerable<string>? themeLayoutDirectories = null)
     {
-        var markupDir = Path.Combine(layoutsDirectory, "_markup");
-        if (!Directory.Exists(markupDir))
+        // 站点 _markup 优先，主题 _markup 回退（同名钩子站点覆盖主题）——
+        // 对齐 Hugo 主题语义；无任何钩子目录时返回 null（默认渲染零开销）
+        var markupDirs = new List<string> { Path.Combine(layoutsDirectory, "_markup") };
+        if (themeLayoutDirectories is not null)
+        {
+            foreach (var themeDir in themeLayoutDirectories)
+            {
+                markupDirs.Add(Path.Combine(themeDir, "_markup"));
+            }
+        }
+
+        if (markupDirs.All(d => !Directory.Exists(d)))
         {
             return null;
         }
 
-        var link = TryLoad(markupDir, "render-link", renderer);
-        var image = TryLoad(markupDir, "render-image", renderer);
-        var heading = TryLoad(markupDir, "render-heading", renderer);
-        var codeBlock = TryLoad(markupDir, "render-codeblock", renderer);
+        var link = TryLoadMulti(markupDirs, "render-link", renderer);
+        var image = TryLoadMulti(markupDirs, "render-image", renderer);
+        var heading = TryLoadMulti(markupDirs, "render-heading", renderer);
+        var codeBlock = TryLoadMulti(markupDirs, "render-codeblock", renderer);
 
         // 语言专属变体：render-codeblock-<lang>.html（优先于通用 codeblock 钩子）
         var byLang = new Dictionary<string, Func<IReadOnlyDictionary<string, object>, string>>(StringComparer.OrdinalIgnoreCase);
-        foreach (var file in Directory.EnumerateFiles(markupDir, "render-codeblock-*.html"))
+        foreach (var markupDir in markupDirs)
         {
-            var name = Path.GetFileNameWithoutExtension(file);
-            var lang = name["render-codeblock-".Length..];
-            if (lang.Length > 0)
+            if (!Directory.Exists(markupDir))
             {
-                byLang[lang] = vars => renderer.RenderHookTemplate("_markup/" + name, vars)
-                    ?? throw new InvalidOperationException($"渲染钩子模板 {name} 未产出内容");
+                continue;
+            }
+            foreach (var file in Directory.EnumerateFiles(markupDir, "render-codeblock-*.html"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var lang = name["render-codeblock-".Length..];
+                if (lang.Length > 0)
+                {
+                    byLang[lang] = vars => renderer.RenderHookTemplate("_markup/" + name, vars)
+                        ?? throw new InvalidOperationException($"渲染钩子模板 {name} 未产出内容");
+                }
             }
         }
 
@@ -72,6 +92,20 @@ public sealed class RenderHooks
             CodeBlockByLang = byLang
         };
         return hooks.HasAny ? hooks : null;
+    }
+
+    private static Func<IReadOnlyDictionary<string, object>, string>? TryLoadMulti(
+        IEnumerable<string> markupDirs, string name, ScribanTemplateRenderer renderer)
+    {
+        foreach (var dir in markupDirs)
+        {
+            var result = TryLoad(dir, name, renderer);
+            if (result is not null)
+            {
+                return result; // 站点目录在序列首位，先命中即覆盖主题
+            }
+        }
+        return null;
     }
 
     private static Func<IReadOnlyDictionary<string, object>, string>? TryLoad(

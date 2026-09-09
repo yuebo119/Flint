@@ -357,6 +357,22 @@ public sealed partial class SiteBuilder
         return combined;
     }
 
+    /// <summary>站点优先、主题回退的辅助模板文件查找（如 robots.txt）</summary>
+    private static string? FindAuxTemplateFile(string sourcePath, SiteConfig config, string fileName)
+    {
+        var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
+        foreach (var themeName in config.ThemeNames.Reverse())
+        {
+            var candidate = Path.Combine(sourcePath, "themes", themeName, layoutDirName, fileName);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        var siteCandidate = Path.Combine(sourcePath, layoutDirName, fileName);
+        return File.Exists(siteCandidate) ? siteCandidate : null;
+    }
+
     private static string GetOutputPath(string relPermalink, string outputPath)
     {
         var path = relPermalink.TrimStart('/');
@@ -410,4 +426,111 @@ public sealed partial class SiteBuilder
             _ => "application/octet-stream"
         };
     }
+
+    /// <summary>
+    /// 辅助输出（主题兼容批次一）：front matter aliases 重定向页、404 模板、robots.txt 模板。
+    /// 全部为可选能力——模板不存在/页面未声明别名时零产出
+    /// </summary>
+    private async Task GenerateAuxiliaryOutputsAsync(
+        List<PageContext> pages,
+        SiteContext siteContext,
+        SiteConfig config,
+        BuildOptions options,
+        CancellationToken cancellationToken)
+    {
+        // 1. aliases 重定向页（Hugo front matter aliases 语义）：每个别名路径产出
+        //    meta-refresh 页面，指向页面真实 Permalink；路径逃逸的别名跳过
+        foreach (var page in pages.Where(p => p.Aliases is { Count: > 0 }))
+        {
+            foreach (var alias in page.Aliases!)
+            {
+                var aliasOutput = ResolveAliasOutputPath(alias, options.OutputPath);
+                if (aliasOutput is null)
+                {
+                    continue;
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(aliasOutput)!);
+                var redirect = "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">" +
+                    $"<title>{System.Net.WebUtility.HtmlEncode(page.Title)}</title>" +
+                    $"<link rel=\"canonical\" href=\"{page.Permalink}\">" +
+                    $"<meta http-equiv=\"refresh\" content=\"0; url={page.Permalink}\">" +
+                    $"</head><body>Redirecting to <a href=\"{page.Permalink}\">{page.Permalink}</a></body></html>\n";
+                await File.WriteAllTextAsync(aliasOutput, redirect, cancellationToken);
+            }
+        }
+
+        // 2. 404 模板（layouts/404.html 存在时渲染输出 404.html）
+        if (_templateRenderer.TemplateExists("404"))
+        {
+            var notFoundPage = new PageContext
+            {
+                Title = "404 Page not found",
+                Content = "",
+                Permalink = config.BaseURL.TrimEnd('/') + "/404.html",
+                RelPermalink = "/404.html",
+                Date = DateTimeOffset.Now,
+                Tags = [],
+                Categories = [],
+                WordCount = 0,
+                ReadingTime = TimeSpan.Zero,
+                Type = "page"
+            };
+            var ctx = new TemplateContext { Page = notFoundPage, Site = siteContext };
+            var html = await _templateRenderer.RenderAsync("404", ctx, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "404.html"), html, cancellationToken);
+        }
+
+        // 3. robots.txt 模板（layouts/robots.txt 站点优先、主题回退）。
+        // 文件直读+模板渲染（模板查找链只扫 .html，不覆盖 .txt 形态）
+        var robotsSrc = FindAuxTemplateFile(options.SourcePath, config, "robots.txt");
+        if (robotsSrc is not null)
+        {
+            var robotsPage = new PageContext
+            {
+                Title = "robots",
+                Content = "",
+                Permalink = config.BaseURL.TrimEnd('/') + "/robots.txt",
+                RelPermalink = "/robots.txt",
+                Date = DateTimeOffset.Now,
+                Tags = [],
+                Categories = [],
+                WordCount = 0,
+                ReadingTime = TimeSpan.Zero,
+                Type = "page"
+            };
+            var ctx = new TemplateContext { Page = robotsPage, Site = siteContext };
+            var txt = await _templateRenderer.RenderTemplateFileAsync(robotsSrc, ctx, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "robots.txt"), txt, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// 别名 → 输出路径（目录形态 index.html）；路径逃逸（越出输出根）返回 null
+    /// </summary>
+    private static string? ResolveAliasOutputPath(string alias, string outputRootPath)
+    {
+        if (string.IsNullOrWhiteSpace(alias))
+        {
+            return null;
+        }
+        var rel = alias.Trim().TrimStart('/');
+        if (rel.Length == 0)
+        {
+            return null;
+        }
+        if (rel.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            rel = rel[..^5];
+        }
+        var combined = Path.Combine(outputRootPath, rel.Replace('/', Path.DirectorySeparatorChar), "index.html");
+        var outputRoot = Path.GetFullPath(outputRootPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            return null; // 逃逸拒绝
+        }
+        return combined;
+    }
+
 }

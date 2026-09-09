@@ -59,7 +59,7 @@ internal static class ServeHandler
                 themeLayoutDirs);
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染
-            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), templateRenderer);
+            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), templateRenderer, themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser, new ShortcodeProcessor());
             ContentParserDateSetup.Apply(contentParser, config,
