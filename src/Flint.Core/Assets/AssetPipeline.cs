@@ -83,9 +83,10 @@ public sealed class AssetPipeline : IAssetPipeline
         AssetFile asset,
         CancellationToken cancellationToken = default)
     {
-        // 输出路径规范化必须在所有出口（含缓存命中）统一生效：缓存条目可能携带
-        // 旧 OutputPath（bundler 原位路径），规范化是入口契约而非处理步骤
-        return NormalizeOutputPath(await ProcessCoreAsync(asset, cancellationToken));
+        // 输出路径规范化必须在所有出口（含缓存命中）统一生效：持久缓存条目携带
+        // 旧构建的绝对 SourcePath/OutputPath，命中返回的条目属于"别的构建"——
+        // 规范化只信当前调用的 asset.SourcePath（参数），不信条目内的路径
+        return NormalizeOutputPath(asset, await ProcessCoreAsync(asset, cancellationToken));
     }
 
     private async ValueTask<ProcessedAsset> ProcessCoreAsync(
@@ -129,11 +130,6 @@ public sealed class AssetPipeline : IAssetPipeline
         // 更新处理时间
         var processingTime = DateTime.UtcNow - startTime;
         processed = processed with { ProcessingTime = processingTime };
-
-        // 输出路径规范化：处理器各自生成 OutputPath（bundler 按源路径原位生成），
-        // 原位路径会令写入阶段把产物覆盖回 assets/ 源文件（数据破坏）且 public 丢资源；
-        // 统一收敛到输出目录之下
-        processed = NormalizeOutputPath(processed);
 
         if (isFallback)
         {
@@ -339,37 +335,38 @@ public sealed class AssetPipeline : IAssetPipeline
     /// 创建直通资源（不处理，只添加哈希）
     /// </summary>
     /// <summary>
-    /// 输出路径规范化：处理器各自产出 OutputPath（bundler 按源路径原位生成），
-    /// 落在输出目录之外的产物按"源相对路径"重定向到输出目录之下，防止写入阶段
-    /// 把产物覆盖回 assets/ 源文件；无法判定归属（源不在源目录内）时原样保留。
+    /// 输出路径规范化：OutputPath 一律按"源相对路径 + 输出目录"直算，与缓存无关
+    /// （持久缓存条目携带的旧绝对路径指向其他构建的输出目录，条件式判断覆盖不了）；
+    /// 源不在源目录内时无法确定相对位置，保留处理器给出的路径
     /// </summary>
-    private ProcessedAsset NormalizeOutputPath(ProcessedAsset asset)
+    private ProcessedAsset NormalizeOutputPath(AssetFile sourceAsset, ProcessedAsset processed)
     {
         if (string.IsNullOrEmpty(_options.OutputDirectory) || string.IsNullOrEmpty(_options.SourceDirectory))
         {
-            return asset;
-        }
-
-        var outputRoot = Path.GetFullPath(_options.OutputDirectory)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var outFull = Path.GetFullPath(asset.OutputPath);
-        if (outFull.Equals(outputRoot, StringComparison.OrdinalIgnoreCase) ||
-            outFull.StartsWith(outputRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-        {
-            return asset; // 已在输出目录内
+            return processed;
         }
 
         var sourceRoot = Path.GetFullPath(_options.SourceDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var srcFull = Path.GetFullPath(asset.SourcePath);
-        if (srcFull.StartsWith(sourceRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) &&
-            outFull.StartsWith(sourceRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+        var srcFull = Path.GetFullPath(sourceAsset.SourcePath);
+        if (!srcFull.StartsWith(sourceRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
         {
-            var rel = srcFull[(sourceRoot.Length + 1)..];
-            return asset with { OutputPath = Path.Combine(_options.OutputDirectory, rel) };
+            return processed;
         }
 
-        return asset;
+        var rel = srcFull[(sourceRoot.Length + 1)..];
+        var outputPath = Path.Combine(_options.OutputDirectory, rel);
+        var fingerprinted = string.IsNullOrEmpty(processed.ContentHash)
+            ? processed.FingerprintedPath
+            : Path.Combine(
+                Path.GetDirectoryName(outputPath) ?? string.Empty,
+                $"{Path.GetFileNameWithoutExtension(outputPath)}.{processed.ContentHash[..8]}{Path.GetExtension(outputPath)}");
+        return processed with
+        {
+            SourcePath = sourceAsset.SourcePath,
+            OutputPath = outputPath,
+            FingerprintedPath = fingerprinted
+        };
     }
 
     private ProcessedAsset CreatePassthroughAsset(AssetFile asset, bool minify = false)
