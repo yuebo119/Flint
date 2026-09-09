@@ -12,15 +12,14 @@ import time
 import psutil
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HUGO = r"C:\Users\Andy\AppData\Local\Temp\hugo-bin\hugo.exe"
+HUGO = os.path.join(BASE, "benchmarks", "tools", "hugo.exe")
 FLINT = os.path.join(BASE, "benchmarks", "tools", "flint-aot", "Flint.exe")
 CB = os.path.join(BASE, "benchmarks", "corpus")
 
 JOBS = [
     ("万页合成-Hugo",  HUGO,  ["-s", os.path.join(CB, "ssg-bench", "hugo"), "-d", os.path.join(CB, "ssg-bench", "hugo-pub"), "--quiet"], os.path.join(CB, "ssg-bench", "hugo-pub")),
     ("万页合成-Flint", FLINT, ["build", "-s", os.path.join(CB, "ssg-bench", "flint"), "-o", os.path.join(CB, "ssg-bench", "flint-pub")], os.path.join(CB, "ssg-bench", "flint-pub")),
-    ("官方3978-Hugo",  HUGO,  ["-s", os.path.join(CB, "hbench-merged", "hugo"), "-d", os.path.join(CB, "hbench-merged", "hugo-pub"), "--quiet"], os.path.join(CB, "hbench-merged", "hugo-pub")),
-    ("官方3978-Flint", FLINT, ["build", "-s", os.path.join(CB, "hbench-merged", "flint"), "-o", os.path.join(CB, "hbench-merged", "flint-pub")], os.path.join(CB, "hbench-merged", "flint-pub")),
+    # 官方基准语料（hbench-merged）已停用：双引擎产出页数口径差异不可比（用户裁决）
     ("MDN14621-Hugo",  HUGO,  ["-s", os.path.join(CB, "corpus-merged", "hugo"), "-d", os.path.join(CB, "corpus-merged", "hugo-pub"), "--quiet"], os.path.join(CB, "corpus-merged", "hugo-pub")),
     ("MDN14621-Flint", FLINT, ["build", "-s", os.path.join(CB, "corpus-merged", "flint"), "-o", os.path.join(CB, "corpus-merged", "flint-pub")], os.path.join(CB, "corpus-merged", "flint-pub")),
 ]

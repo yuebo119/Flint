@@ -12,7 +12,8 @@ import time
 
 import psutil
 
-HUGO = r"C:\Users\Andy\AppData\Local\Temp\hugo-bin\hugo.exe"
+HUGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "benchmarks", "tools", "hugo.exe")
 FLINT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      "benchmarks", "tools", "flint-aot", "Flint.exe")
 ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
