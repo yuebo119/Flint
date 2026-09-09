@@ -41,7 +41,7 @@ public sealed class I18nTests : IDisposable
             "hello = \"站点你好\"\n");
 
         // Act
-        var translations = Translations.Load(_testDir, "t1", "zh-cn");
+        var translations = Translations.Load(_testDir, ["t1"], "zh-cn");
 
         // Assert
         translations["hello"].Should().Be("站点你好", "站点覆盖主题");

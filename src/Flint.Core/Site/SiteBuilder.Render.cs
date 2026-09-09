@@ -154,6 +154,8 @@ public sealed partial class SiteBuilder
             Menus = menuBuilder.Build(),
             Config = config,
             Data = siteData ?? new Dictionary<string, object>(),
+            // 站点参数装配（曾缺失：模板 site.params.* 恒空——README 文档化的用法）
+            Params = config.Params,
             BuildDate = DateTimeOffset.Now,
             LastChange = lastChange,
             IsMultiLingual = false,

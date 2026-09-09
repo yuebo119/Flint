@@ -179,6 +179,12 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 及 git URL（git clone）、本地目录路径（需含 theme.toml）；安装版本写入
 `Flint.lock` 锁定。
 
+多主题叠加：`theme = "t1,t2"`（前面的优先）——模板、资源、参数、archetypes
+全链路按序回退，站点覆盖 t1、t1 覆盖 t2。
+
+i18n：`i18n/<lang>.toml`（站点覆盖主题），模板 `{{ i18n "key" }}` 取翻译，
+缺键返回空串（对齐 Hugo）；兼容 Hugo 的 `[key] other = "..."` 文件形态。
+
 ---
 
 ## ⚙️ 配置

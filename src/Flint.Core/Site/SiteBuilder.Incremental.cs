@@ -188,7 +188,7 @@ public sealed partial class SiteBuilder
                 // 必然伴随全量重建，重新加载保证 site.data 反映最新内容
                 var siteData = await LoadSiteDataAsync(options, cancellationToken);
                 var translations = Translations.Load(
-                    options.SourcePath, config.Theme, config.LanguageCode);
+                    options.SourcePath, config.ThemeNames, config.LanguageCode);
                 var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations);
 // 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
                 //    （列表页聚合"最新内容"，任何内容变化都可能影响；数量 = section 数，远小于页数。

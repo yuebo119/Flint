@@ -16,25 +16,36 @@ public static class ThemeParamsMerger
     /// </summary>
     public static SiteConfig Merge(SiteConfig config, string sourcePath)
     {
-        if (string.IsNullOrWhiteSpace(config.Theme))
+        var themeNames = config.ThemeNames;
+        if (themeNames.Count == 0)
         {
             return config;
         }
 
-        var themeToml = Path.Combine(sourcePath, "themes", config.Theme, "theme.toml");
-        if (!File.Exists(themeToml))
+        // 多主题 defaults 层叠：从最后面的主题往前合并 defaults（前面的覆盖后面的），
+        // 最终站点 DeepMerge 覆盖全部主题默认——对齐 Hugo theme 数组优先级
+        var layered = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        foreach (var themeName in themeNames.Reverse())
+        {
+            var themeToml = Path.Combine(sourcePath, "themes", themeName, "theme.toml");
+            if (!File.Exists(themeToml))
+            {
+                continue;
+            }
+            var table = TomlynCompat.TryParseTable(File.ReadAllText(themeToml));
+            if (table is null || !table.TryGetValue("params", out var raw) || raw is not TomlTable themeParams)
+            {
+                continue;
+            }
+            layered = DeepMerge(ToPlainDictionary(themeParams), layered);
+        }
+
+        if (layered.Count == 0)
         {
             return config;
         }
 
-        var table = TomlynCompat.TryParseTable(File.ReadAllText(themeToml));
-        if (table is null || !table.TryGetValue("params", out var raw) || raw is not TomlTable themeParams)
-        {
-            return config;
-        }
-
-        var themeDefaults = ToPlainDictionary(themeParams);
-        var merged = DeepMerge(ToMutable(config.Params), themeDefaults);
+        var merged = DeepMerge(ToMutable(config.Params), layered);
         return RebuildWithParams(config, merged);
     }
 
