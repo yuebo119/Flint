@@ -167,9 +167,17 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 
 ### 主题布局
 
-`theme` 配置的主题（`flint mod get <repo>` 下载到 `themes/`）其 `layouts/`
-自动作为模板回退目录：站点 `layouts/` 优先，主题按序回退（同名文件站点
-覆盖主题），include/partial 同规则。
+`theme` 配置的主题（`flint mod get <repo>` 下载到 `themes/`）自动参与构建的
+各层级回退，同名时站点覆盖主题：
+
+- **模板**：站点 `layouts/` 优先，主题按序回退，include/partial 同规则
+- **资源**：主题 `static/` 与 `assets/` 合并进输出，与站点同名资源时站点覆盖
+- **参数**：主题 `theme.toml` 的 `[params]` 段作为默认值，站点 `[params]` 深覆盖（支持嵌套表递归）
+- **archetypes**：`new content` 模板查找站点优先、主题回退
+
+模块安装支持三种来源：`owner/repo`（GitHub Releases）、`owner/repo@分支或标签`
+及 git URL（git clone）、本地目录路径（需含 theme.toml）；安装版本写入
+`Flint.lock` 锁定。
 
 ---
 
