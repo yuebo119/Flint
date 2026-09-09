@@ -650,8 +650,87 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 捕获本页 siteContext 的翻译表，随 SiteContext 每构建装配
         globals.TrySetValue(scribanContext, default, "i18n",
             new I18nFunction(context.Site.Translations), readOnly: true);
+
+        // 内容视图函数（主题兼容批次二 #7，对齐 Hugo .Render "view"）：
+        // 按当前页查找视图模板（{section}/{view} → {view}）并渲染当前页上下文
+        globals.TrySetValue(scribanContext, default, "render",
+            new RenderViewFunction(this, context.Page, context.Site), readOnly: true);
         scribanContext.PushGlobal(globals);
         return scribanContext;
+    }
+
+    /// <summary>
+    /// 内容视图渲染函数包装：单参数（视图名），模板候选 = content section 目录形态优先
+    /// </summary>
+    private sealed class RenderViewFunction(
+        ScribanTemplateRenderer renderer,
+        PageContext page,
+        SiteContext site)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var view = arguments.Count > 0 ? arguments[0]?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(view))
+            {
+                return "";
+            }
+
+            var candidates = new List<string>();
+            if (!string.IsNullOrEmpty(page.SourcePath))
+            {
+                var full = page.SourcePath.Replace('\\', '/');
+                var idx = full.LastIndexOf("/content/", StringComparison.OrdinalIgnoreCase);
+                if (idx >= 0)
+                {
+                    var after = full[(idx + "/content/".Length)..].Split('/');
+                    if (after.Length > 1)
+                    {
+                        candidates.Add(after[0] + "/" + view);
+                    }
+                }
+            }
+            candidates.Add(view);
+
+            foreach (var candidate in candidates)
+            {
+                if (renderer.TemplateExists(candidate))
+                {
+                    var childCtx = new FlintTemplateContext { Page = page, Site = site };
+                    return renderer.RenderAsync(candidate, childCtx).AsTask().GetAwaiter().GetResult();
+                }
+            }
+            return "";
+        }
+
+        public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            return new System.Threading.Tasks.ValueTask<object?>(
+                Invoke(context, callerContext, arguments, blockStatement));
+        }
+
+        public int RequiredParameterCount => 1;
+
+        public int ParameterCount => 1;
+
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+
+        public Type ReturnType => typeof(object);
+
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "view");
+
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
     }
 
     /// <summary>

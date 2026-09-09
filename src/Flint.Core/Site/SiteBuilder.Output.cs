@@ -173,6 +173,7 @@ public sealed partial class SiteBuilder
 
     private async Task GenerateSitemapAndFeedsAsync(
         List<PageContext> pages,
+        SiteContext siteContext,
         SiteConfig config,
         BuildOptions options,
         CancellationToken cancellationToken)
@@ -186,13 +187,28 @@ public sealed partial class SiteBuilder
             || disabled.Contains("RSS", StringComparer.OrdinalIgnoreCase)
             || !OutputFormats.Includes(config.Outputs.Home, "rss");
 
-        // 生成 Sitemap
+        var homePage = pages.FirstOrDefault(p => p.Type == "home") ?? pages.FirstOrDefault();
+
+        // 生成 Sitemap（主题兼容批次二 #9：站点/主题 sitemap 模板存在时覆盖内置生成器）
         if (!sitemapDisabled)
         {
-            var sitemapGenerator = new SitemapGenerator(config.BaseURL);
-            var sitemap = sitemapGenerator.Generate(pages);
-            var sitemapPath = Path.Combine(options.OutputPath, "sitemap.xml");
-            await File.WriteAllTextAsync(sitemapPath, sitemap, cancellationToken);
+            if (_templateRenderer.TemplateExists("sitemap"))
+            {
+                var ctx = new TemplateContext { Site = siteContext, Page = homePage ?? new PageContext
+                {
+                    Title = config.Title, Content = "", Permalink = config.BaseURL,
+                    RelPermalink = "/", Date = DateTimeOffset.Now, Tags = [], Categories = [],
+                    WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
+                }};
+                var sitemap = await _templateRenderer.RenderAsync("sitemap", ctx, cancellationToken);
+                await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "sitemap.xml"), sitemap, cancellationToken);
+            }
+            else
+            {
+                var sitemapGenerator = new SitemapGenerator(config.BaseURL);
+                var sitemap = sitemapGenerator.Generate(pages);
+                await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "sitemap.xml"), sitemap, cancellationToken);
+            }
         }
 
         if (rssDisabled)
@@ -209,6 +225,20 @@ public sealed partial class SiteBuilder
             FeedPath = "/rss.xml"
         };
         var feedGenerator = new FeedGenerator(feedOptions);
+
+        // 主题兼容批次二 #9：rss 模板存在时覆盖内置生成器
+        if (_templateRenderer.TemplateExists("rss"))
+        {
+            var rssCtx = new TemplateContext { Site = siteContext, Page = homePage ?? new PageContext
+            {
+                Title = config.Title, Content = "", Permalink = config.BaseURL,
+                RelPermalink = "/", Date = DateTimeOffset.Now, Tags = [], Categories = [],
+                WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
+            }};
+            var rssContent = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "rss.xml"), rssContent, cancellationToken);
+            return;
+        }
 
         var rss = feedGenerator.GenerateRss(pages);
         var rssPath = Path.Combine(options.OutputPath, "rss.xml");

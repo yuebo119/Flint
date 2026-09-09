@@ -191,7 +191,10 @@ public sealed partial class SiteBuilder
             LastChange = lastChange,
             IsMultiLingual = false,
             Languages = [config.LanguageCode],
-            Translations = translations ?? new Dictionary<string, string>()
+            Translations = translations ?? new Dictionary<string, string>(),
+            PaginatorPages = pages.Where(p => p.Type != "section").Take(Math.Max(1, config.Paginate)).ToList(),
+            PaginatorTotalPages = Math.Max(1, (int)Math.Ceiling(pages.Count(p => p.Type != "section") / (double)Math.Max(1, config.Paginate))),
+            PaginatorPageNumber = 1,
         };
     }
 

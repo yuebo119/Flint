@@ -258,7 +258,7 @@ public sealed partial class SiteBuilder
                 if (hasContentChanges)
                 {
                     await GenerateSitemapAndFeedsAsync(
-                        allPageContexts, config, options, cancellationToken);
+                        allPageContexts, siteContext, config, options, cancellationToken);
                 }
 
                 pagesBuilt = renderedPages.Count + taxonomyPagesIncremental.Count;
@@ -373,6 +373,19 @@ public sealed partial class SiteBuilder
 
         // 与上方 config 前缀判定同口径：目录大小写不同的站点（Data/Archetypes）
         // 变更同样归入全局 identity
+        // 主题兼容批次二：主题资产的站点级身份——themes/<name>/ 下的 shortcodes、
+        // data、_markup（render hooks）、archetypes 变更影响面广（短码注册/数据/
+        // 渲染钩子/内容模板），归入全局 identity 强制全量装配
+        if (segments.Length >= 3 &&
+            string.Equals(segments[0], "themes", StringComparison.OrdinalIgnoreCase))
+        {
+            var assetDirName = segments[2];
+            return string.Equals(assetDirName, "shortcodes", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(assetDirName, "data", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(assetDirName, "_markup", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(assetDirName, "archetypes", StringComparison.OrdinalIgnoreCase);
+        }
+
         return string.Equals(segments[0], "data", StringComparison.OrdinalIgnoreCase)
             || string.Equals(segments[0], "archetypes", StringComparison.OrdinalIgnoreCase);
     }
