@@ -2,7 +2,7 @@
 // TestSiteFixture 属性测试
 // Property 19: 测试隔离性
 
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

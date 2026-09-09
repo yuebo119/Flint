@@ -5,7 +5,7 @@
 using System.Diagnostics;
 using Flint.Core.Models;
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

@@ -1,7 +1,7 @@
 // Flint 核心库测试
 // FlintInfo 类的单元测试
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests;

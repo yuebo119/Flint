@@ -6,7 +6,7 @@
 using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Templates;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Templates;

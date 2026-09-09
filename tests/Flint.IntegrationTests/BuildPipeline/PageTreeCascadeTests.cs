@@ -4,8 +4,8 @@
 using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Models;
-using FluentAssertions;
-using FluentAssertions.Execution;
+using AwesomeAssertions;
+using AwesomeAssertions.Execution;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

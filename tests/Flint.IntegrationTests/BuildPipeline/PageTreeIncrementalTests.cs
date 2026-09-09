@@ -1,8 +1,8 @@
 // Flint 静态站点生成器
 // 页面树增量精确替换集成测试（T2.3）
 
-using FluentAssertions;
-using FluentAssertions.Execution;
+using AwesomeAssertions;
+using AwesomeAssertions.Execution;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

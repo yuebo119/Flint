@@ -3,7 +3,7 @@
 // 验证 tags 和 categories 分类页面生成的正确性
 
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

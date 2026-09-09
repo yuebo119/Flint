@@ -2,7 +2,7 @@
 // FsCheck 生成器验证测试
 // 验证生成的数据符合约束和分布合理性
 
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

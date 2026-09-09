@@ -6,7 +6,7 @@
 
 using Flint.Core.Content;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

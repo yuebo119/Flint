@@ -5,7 +5,7 @@
 
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Configuration;

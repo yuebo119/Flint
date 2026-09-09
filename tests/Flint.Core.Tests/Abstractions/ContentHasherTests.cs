@@ -3,7 +3,7 @@
 
 using System.Text;
 using Flint.Core.Content;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests.Abstractions;

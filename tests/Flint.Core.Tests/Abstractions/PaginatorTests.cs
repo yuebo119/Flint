@@ -2,7 +2,7 @@
 // Paginator 分页器单元测试
 
 using Flint.Core.Site;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.Core.Tests.Abstractions;

@@ -3,7 +3,7 @@
 // 测试 new site 命令的功能和错误处理
 
 using Flint.IntegrationTests.Utilities;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Cli;

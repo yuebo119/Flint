@@ -6,7 +6,7 @@
 using System.Text;
 using Flint.Core.Content;
 using Flint.Core.Models;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Content;

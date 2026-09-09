@@ -1,6 +1,6 @@
 // 页面级多输出格式集成测试（对齐 Hugo 页面级 outputs 覆盖）
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.BuildPipeline;

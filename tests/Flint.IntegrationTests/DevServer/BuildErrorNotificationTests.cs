@@ -11,7 +11,7 @@ using Flint.Core.Site;
 using Flint.Core.Templates;
 using Flint.IntegrationTests.Fixtures;
 using Flint.IntegrationTests.Utilities;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 // 解决命名空间冲突
@@ -76,7 +76,11 @@ public class BuildErrorNotificationTests : IAsyncLifetime
         var contentParser = new ContentParser();
         var templateRenderer = new ScribanTemplateRenderer(
             Path.Combine(_fixture.SiteRoot, "layouts"));
-        var assetPipeline = new AssetPipeline();
+        var assetPipeline = new AssetPipeline(new AssetPipelineOptions
+        {
+            SourceDirectory = _fixture.SiteRoot,
+            OutputDirectory = _fixture.OutputPath
+        });
         var configLoader = new ConfigLoader();
 
         var siteBuilder = new SiteBuilder(

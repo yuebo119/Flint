@@ -2,7 +2,7 @@
 // 边界条件生成器验证测试
 // 验证边界条件生成器的覆盖率和正确性
 
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

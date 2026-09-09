@@ -4,7 +4,7 @@
 
 using Flint.Core.Modules;
 using Flint.IntegrationTests.Fixtures;
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.Modules;

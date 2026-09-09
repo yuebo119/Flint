@@ -11,7 +11,7 @@
 using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Templates;
-using FluentAssertions;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;

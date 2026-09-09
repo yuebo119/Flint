@@ -1,7 +1,7 @@
 // Flint 静态站点生成器
 // ErrorInjector 单元测试
 
-using FluentAssertions;
+using AwesomeAssertions;
 using Xunit;
 
 namespace Flint.IntegrationTests.ErrorInjection;
