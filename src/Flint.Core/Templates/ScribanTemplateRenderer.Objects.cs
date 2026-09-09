@@ -31,6 +31,19 @@ public sealed partial class ScribanTemplateRenderer
     // CWT 键为 PageContext 引用，随构建周期回收
     private static readonly ConditionalWeakTable<FlintPageContext, LazyPageObject> SharedPageObjects = new();
 
+    // 站点对象复用缓存：同一 SiteContext 的 site ScriptObject 跨渲染共享——
+    // 站点级数据（title/params/menus/taxonomies）在单次构建内对所有页面相同，
+    // 万页构建下每页重建 ~30 键 ScriptObject + menus 双份列表是纯浪费。
+    // 依赖记录写入 per-render TemplateContext.Tags（非对象自身状态），复用安全；
+    // 模板对 site.* 显式赋值属非常规用法（与 SharedPageObjects 同一风险模型）。
+    // CWT 键为 SiteContext 引用，随构建周期回收
+    private static readonly ConditionalWeakTable<FlintSiteContext, ScriptObject> SharedSiteObjects = new();
+
+    private static ScriptObject CreateSiteObject(FlintSiteContext site)
+    {
+        return SharedSiteObjects.GetValue(site, static s => BuildSiteObject(s));
+    }
+
     private static ScriptObject CreatePageObject(FlintPageContext page)
     {
         return SharedPageObjects.GetValue(page, static p => new LazyPageObject(p));
@@ -124,7 +137,7 @@ public sealed partial class ScribanTemplateRenderer
         }
     }
 
-    private static ScriptObject CreateSiteObject(FlintSiteContext site)
+    private static ScriptObject BuildSiteObject(FlintSiteContext site)
     {
         // 惰加载包装器跨渲染共享（见 SharedPageLists）；GetConvertedPages 内部有锁保证并发安全
         var lazyPages = GetSharedPageList(site.Pages);
