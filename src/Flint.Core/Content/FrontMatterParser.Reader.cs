@@ -248,7 +248,7 @@ public sealed partial class FrontMatterParser
     private static bool IsInlineArray(ReadOnlySpan<char> value)
     {
         return value[0] == '[' && value[^1] == ']' &&
-               value[1..^1].IndexOfAny(stackalloc char[] { '[', ']', '{', '}' }) < 0;
+               value[1..^1].IndexOfAny(stackalloc[] { '[', ']', '{', '}' }) < 0;
     }
 
     /// <summary>

@@ -140,10 +140,10 @@ internal static class SiteCreator
               category = "categories"
               tag = "tags"
 
-            # 永久链接
-            [permalinks]
-              posts = "/:year/:month/:title/"
-              pages = "/:title/"
+            # 永久链接：未配置时按 content 目录结构生成（/posts/:filename/，
+            # 对齐 Hugo 默认）。如需日期式 URL 可显式配置，如：
+            # [permalinks]
+            #   posts = "/:year/:month/:title/"
 
             # 菜单配置
             [menus]
