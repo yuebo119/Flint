@@ -52,7 +52,7 @@ public sealed partial class SiteBuilder
 
     private async Task<List<ProcessedAsset>> ProcessAssetsAsync(
         string sourcePath,
-        string themeName,
+        IReadOnlyList<string> themeNames,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
         CancellationToken cancellationToken)
@@ -64,7 +64,8 @@ public sealed partial class SiteBuilder
         CollectAssetFiles(Path.Combine(sourcePath, "assets"), "assets", isTheme: false, assetsByRelative);
         CollectAssetFiles(Path.Combine(sourcePath, "static"), "static", isTheme: false, assetsByRelative);
 
-        if (!string.IsNullOrWhiteSpace(themeName))
+        // 主题列表按序收集（前面的优先，TryAdd 先到先得形成覆盖链）
+        foreach (var themeName in themeNames)
         {
             var themeRoot = Path.Combine(sourcePath, "themes", themeName);
             CollectAssetFiles(Path.Combine(themeRoot, "assets"), "assets", isTheme: true, assetsByRelative);
@@ -99,7 +100,7 @@ public sealed partial class SiteBuilder
                     // 主题资源与站点资源输出到同一命名空间；非预期形态保留原样
                     if (isTheme)
                     {
-                        var remapped = RemapThemeOutputPath(processed.OutputPath, themeName);
+                        var remapped = RemapThemeOutputPath(processed.OutputPath, themeNames);
                         if (remapped is not null)
                         {
                             processed = processed with { OutputPath = remapped };
@@ -149,21 +150,25 @@ public sealed partial class SiteBuilder
     /// 部分（输出根 + 主题目录链）剥除，保留 "&lt;static|assets&gt;/&lt;rel&gt;" 尾段——
     /// 与站点同名资源的输出位置一致；不匹配预期形态时返回 null（保留原样）
     /// </summary>
-    private static string? RemapThemeOutputPath(string outputPath, string themeName)
+    private static string? RemapThemeOutputPath(string outputPath, IReadOnlyList<string> themeNames)
     {
         var normalized = outputPath.Replace('\\', '/');
-        var marker = "/themes/" + themeName + "/";
-        var idx = normalized.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (idx < 0)
+        foreach (var themeName in themeNames)
         {
-            return null;
-        }
+            var marker = "/themes/" + themeName + "/";
+            var idx = normalized.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0)
+            {
+                continue;
+            }
 
-        var tail = normalized[(idx + marker.Length)..];
-        return tail.StartsWith("static/", StringComparison.OrdinalIgnoreCase) ||
-               tail.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)
-            ? tail
-            : null;
+            var tail = normalized[(idx + marker.Length)..];
+            return tail.StartsWith("static/", StringComparison.OrdinalIgnoreCase) ||
+                   tail.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)
+                ? tail
+                : null;
+        }
+        return null;
     }
 
     private async Task GenerateSitemapAndFeedsAsync(

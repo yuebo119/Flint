@@ -45,9 +45,17 @@ public sealed class SiteConfig
     public string LanguageCode { get; init; } = "en";
 
     /// <summary>
-    /// 主题名称
+    /// 主题名称（多主题以逗号分隔，前面的优先——对齐 Hugo theme 数组语义）
     /// </summary>
     public string Theme { get; init; } = "";
+
+    /// <summary>
+    /// 主题名列表（Theme 按逗号拆分，保序，前面的优先）；
+    /// 模板/资源/参数/archetypes 的主题回退链统一消费此列表
+    /// </summary>
+    public IReadOnlyList<string> ThemeNames => Theme
+        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+        .ToArray();
 
     /// <summary>
     /// 是否构建草稿

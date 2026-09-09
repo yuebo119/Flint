@@ -132,7 +132,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）
             var siteData = await LoadSiteDataAsync(options, cancellationToken);
             var translations = Translations.Load(
-                options.SourcePath, config.Theme, config.LanguageCode);
+                options.SourcePath, config.ThemeNames, config.LanguageCode);
             var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations);
             Phase("7.站点上下文");
 
@@ -162,7 +162,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 10. 处理资源文件（含主题 static/assets 合并，站点覆盖主题）
             var processedAssets = await ProcessAssetsAsync(
-                options.SourcePath, config.Theme, options, errors, cancellationToken);
+                options.SourcePath, config.ThemeNames, options, errors, cancellationToken);
             Phase("10.资源");
 
             // 11. 写入输出文件（先创建目录）

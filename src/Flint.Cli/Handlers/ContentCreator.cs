@@ -124,13 +124,15 @@ internal static class ContentCreator
 
         var archetypesDir = Path.Combine(sitePath, "archetypes");
         var themeName = ReadThemeName(sitePath);
-        var themeArchetypesDir = string.IsNullOrWhiteSpace(themeName)
-            ? null
-            : Path.Combine(sitePath, "themes", themeName, "archetypes");
+        var themeArchetypesDirs = themeName is null
+            ? []
+            : themeName.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => Path.Combine(sitePath, "themes", t, "archetypes"))
+                .ToArray();
 
         // 1. 指定的 kind（站点 → 主题）
         var archetype = TryReadArchetype(archetypesDir, $"{kind}.md")
-                        ?? TryReadArchetype(themeArchetypesDir, $"{kind}.md");
+                        ?? TryReadArchetypes(themeArchetypesDirs, $"{kind}.md");
         if (archetype is not null)
         {
             return archetype;
@@ -141,7 +143,7 @@ internal static class ContentCreator
         if (!string.IsNullOrEmpty(section))
         {
             archetype = TryReadArchetype(archetypesDir, $"{section}.md")
-                        ?? TryReadArchetype(themeArchetypesDir, $"{section}.md");
+                        ?? TryReadArchetypes(themeArchetypesDirs, $"{section}.md");
             if (archetype is not null)
             {
                 return archetype;
@@ -150,7 +152,7 @@ internal static class ContentCreator
 
         // 3. 默认 archetype（站点 → 主题）
         archetype = TryReadArchetype(archetypesDir, "default.md")
-                    ?? TryReadArchetype(themeArchetypesDir, "default.md");
+                    ?? TryReadArchetypes(themeArchetypesDirs, "default.md");
         if (archetype is not null)
         {
             return archetype;
@@ -168,6 +170,19 @@ internal static class ContentCreator
         }
         var path = Path.Combine(directory, fileName);
         return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    private static string? TryReadArchetypes(string?[] directories, string fileName)
+    {
+        foreach (var directory in directories)
+        {
+            var content = TryReadArchetype(directory, fileName);
+            if (content is not null)
+            {
+                return content;
+            }
+        }
+        return null;
     }
 
     /// <summary>

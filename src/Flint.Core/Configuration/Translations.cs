@@ -14,7 +14,7 @@ public static class Translations
     /// 站点后注册覆盖）。回退链：精确语言码 → 语言主段（zh-cn → zh）→ 空表
     /// </summary>
     public static IReadOnlyDictionary<string, string> Load(
-        string sourcePath, string? themeName, string? language)
+        string sourcePath, IReadOnlyList<string>? themeNames, string? language)
     {
         var merged = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (string.IsNullOrWhiteSpace(language))
@@ -24,9 +24,13 @@ public static class Translations
 
         // 主题在前（低优先），站点在后（覆盖）
         var roots = new List<string>();
-        if (!string.IsNullOrWhiteSpace(themeName))
+        // 主题列表按序：后面的主题先入（低优先），前面的主题后入（覆盖），站点最后
+        if (themeNames is not null)
         {
-            roots.Add(Path.Combine(sourcePath, "themes", themeName, "i18n"));
+            foreach (var themeName in themeNames.Reverse())
+            {
+                roots.Add(Path.Combine(sourcePath, "themes", themeName, "i18n"));
+            }
         }
         roots.Add(Path.Combine(sourcePath, "i18n"));
 
