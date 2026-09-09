@@ -50,6 +50,10 @@ public sealed class ThemeAssetMergeTests : IDisposable
         await File.WriteAllTextAsync(siteCss, "site-value");
         await File.WriteAllTextAsync(themeCss, "theme-value");
         await File.WriteAllTextAsync(themeJs, "theme-only");
+        // Arrange 自验：三个源文件在构建前必须可见（区分测试环境 IO 时序与构建收集缺陷）
+        Assert.True(File.Exists(siteCss), "Arrange 自验失败：站点 css 不可见");
+        Assert.True(File.Exists(themeCss), "Arrange 自验失败：主题 css 不可见");
+        Assert.True(File.Exists(themeJs), "Arrange 自验失败：主题 js 不可见");
 
         var builder = new Flint.Core.Site.SiteBuilder(
             new Flint.Core.Content.ContentParser(),
@@ -74,6 +78,9 @@ public sealed class ThemeAssetMergeTests : IDisposable
 
         // Assert
         Assert.True(result.Success, string.Join(";", result.Errors.Select(e => e.Message)));
+        // 3 源 2 键：主题 css 与站点 css 同相对路径被覆盖合并，theme.js 独立产出
+        Assert.True(result.AssetsProcessed == 2,
+            $"资源处理数异常: {result.AssetsProcessed}（预期 2）");
         // 同名：站点覆盖主题
         var cssPath = Path.Combine(_outputDir, "static", "css", "site.css");
         Assert.True(File.Exists(cssPath), "同名资源应产出");

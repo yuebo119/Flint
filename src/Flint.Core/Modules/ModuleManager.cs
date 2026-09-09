@@ -44,6 +44,31 @@ public sealed partial class ModuleManager : IDisposable
 
     public async ValueTask<ModuleDescriptor> GetAsync(string repository, string? version = null, CancellationToken cancellationToken = default)
     {
+        // 安装源分发（对齐 Hugo 生态现实：主题存量以 git repo 形态托管）：
+        // ① git URL / *.git → git clone；② 本地目录 → 复制安装；③ owner/repo → GitHub Releases。
+        // .git 后缀判定先于目录判定："<repo>/.git" 是真实目录但语义是 git 仓库
+        if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ||
+            repository.Contains("://"))
+        {
+            return await InstallFromGitAsync(repository, version, cancellationToken);
+        }
+
+        if (Directory.Exists(repository))
+        {
+            return await InstallFromLocalAsync(repository, cancellationToken);
+        }
+
+        // owner/repo 形态：@ref 后缀（tag/branch）走 git；纯 tag/版本走 Releases
+        string? gitRef = null;
+        var atSign = repository.IndexOf('@');
+        if (atSign > 0)
+        {
+            gitRef = repository[(atSign + 1)..];
+            repository = repository[..atSign];
+            return await InstallFromGitAsync(
+                $"https://github.com/{ParseRepository(repository)}.git", gitRef, cancellationToken);
+        }
+
         var (owner, repo) = ParseRepository(repository);
 
         // lockfile 中已固定版本的模块优先于 latest（保证可复现安装）
@@ -55,6 +80,131 @@ public sealed partial class ModuleManager : IDisposable
         var descriptor = await ReadModuleDescriptorAsync(modulePath, cancellationToken);
         await UpdateLockFileAsync(repo, descriptor, version, sha256, cancellationToken);
         return descriptor;
+    }
+
+    /// <summary>
+    /// 本地路径安装：目录必须含 theme.toml，复制到 themes/&lt;name&gt;（已有则报错，
+    /// 更新走 update 语义）；lockfile 记录 source=local
+    /// </summary>
+    private async ValueTask<ModuleDescriptor> InstallFromLocalAsync(string sourcePath, CancellationToken ct)
+    {
+        var themeToml = Path.Combine(sourcePath, "theme.toml");
+        if (!File.Exists(themeToml))
+        {
+            throw new InvalidOperationException($"本地主题缺少 theme.toml: {sourcePath}");
+        }
+
+        var descriptor = await ReadModuleDescriptorAsync(sourcePath, ct);
+        ValidateModuleName(descriptor.Name);
+        var modulePath = Path.Combine(_modulesPath, descriptor.Name);
+        if (Directory.Exists(modulePath))
+        {
+            throw new InvalidOperationException($"模块已存在: {descriptor.Name}（先 remove 再安装）");
+        }
+
+        Directory.CreateDirectory(_modulesPath);
+        CopyDirectory(sourcePath, modulePath);
+        var verified = await ReadModuleDescriptorAsync(modulePath, ct);
+        await UpdateLockFileAsync(descriptor.Name, verified, "local", "local", ct);
+        return verified;
+    }
+
+    /// <summary>
+    /// git 安装：clone --depth 1 到临时目录，取 HEAD 短 SHA 写 lockfile；
+    /// ref 为空时用默认分支。git 不可用/仓库无 theme.toml 时显式报错
+    /// </summary>
+    private async ValueTask<ModuleDescriptor> InstallFromGitAsync(string gitUrl, string? refName, CancellationToken ct)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"flint-mod-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            var args = refName is null
+                ? $"clone --depth 1 --quiet \"{gitUrl}\" \"{tempDir}\""
+                : $"clone --depth 1 --quiet --branch \"{refName}\" \"{gitUrl}\" \"{tempDir}\"";
+            var (code, output, error) = await RunGitAsync(args, ct);
+            if (code != 0)
+            {
+                throw new InvalidOperationException($"git clone 失败（{gitUrl}@{refName ?? "默认分支"}）: {error}{output}");
+            }
+
+            var descriptor = await ReadModuleDescriptorAsync(tempDir, ct);
+            ValidateModuleName(descriptor.Name);
+            var modulePath = Path.Combine(_modulesPath, descriptor.Name);
+            if (Directory.Exists(modulePath))
+            {
+                throw new InvalidOperationException($"模块已存在: {descriptor.Name}（先 remove 再安装）");
+            }
+
+            Directory.CreateDirectory(_modulesPath);
+            CopyDirectory(tempDir, modulePath);
+            // HEAD 短 SHA 是 lockfile 的最佳努力信息：部分环境（杀软实时扫描锁新写
+            // pack 文件）会令紧随 clone 的读取被拒，此时不阻断安装，sha 记 "unknown"
+            var headSha = "unknown";
+            try
+            {
+                var (_, shaOut, _) = await RunGitAsync("-C \"" + tempDir + "\" rev-parse HEAD", ct);
+                var trimmed = shaOut.Trim();
+                if (trimmed.Length > 0)
+                {
+                    headSha = trimmed[..Math.Min(12, trimmed.Length)];
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+            }
+            var verified = await ReadModuleDescriptorAsync(modulePath, ct);
+            await UpdateLockFileAsync(descriptor.Name, verified, refName ?? headSha, headSha, ct);
+            return verified;
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+
+    private static async Task<(int Code, string Output, string Error)> RunGitAsync(string arguments, CancellationToken ct)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = "git",
+            Arguments = arguments,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        using var process = System.Diagnostics.Process.Start(psi)
+            ?? throw new InvalidOperationException("无法启动 git 进程（git 是否已安装？）");
+        var output = await process.StandardOutput.ReadToEndAsync(ct);
+        var error = await process.StandardError.ReadToEndAsync(ct);
+        await process.WaitForExitAsync(ct);
+        return (process.ExitCode, output, error);
+    }
+
+    private static void CopyDirectory(string source, string target)
+    {
+        foreach (var dir in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(source, dir);
+            if (rel.StartsWith(".git", StringComparison.Ordinal))
+            {
+                continue; // 不搬运 git 元数据
+            }
+            Directory.CreateDirectory(Path.Combine(target, rel));
+        }
+        Directory.CreateDirectory(target);
+        foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(source, file);
+            if (rel.StartsWith(".git", StringComparison.Ordinal) ||
+                rel.Split(Path.DirectorySeparatorChar).Any(p => p is ".git" or ".gitignore" && p == ".git"))
+            {
+                continue;
+            }
+            File.Copy(file, Path.Combine(target, rel), overwrite: true);
+        }
     }
 
     public async ValueTask UpdateAsync(string moduleName, string? version = null, CancellationToken cancellationToken = default)
