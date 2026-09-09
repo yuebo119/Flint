@@ -5,8 +5,6 @@ using JavaScriptEngineSwitcher.Core;
 using JavaScriptEngineSwitcher.V8;
 using Xunit;
 
-[assembly: CollectionBehavior(DisableTestParallelization = false)]
-
 namespace Flint.Core.Tests;
 
 /// <summary>

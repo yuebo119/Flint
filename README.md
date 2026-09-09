@@ -334,7 +334,8 @@ Flint 的优势。partialCached 双引擎均生效。
 ## 🧪 测试与基准
 
 ```bash
-dotnet test                                              # 全量测试
+dotnet run --project tests/Flint.Core.Tests -c Release        # Core 全量测试（xunit v3 原生 runner）
+dotnet run --project tests/Flint.IntegrationTests -c Release  # 集成测试
 dotnet run --project tests/Flint.PerformanceTests -c Release   # 性能套件
 python scripts/ssg-bench.py --pages 10000                # 万页 Hugo 对比
 python scripts/complexity-bench.py           

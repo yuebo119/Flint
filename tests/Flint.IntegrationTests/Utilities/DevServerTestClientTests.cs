@@ -15,12 +15,12 @@ public class DevServerTestClientTests : IAsyncLifetime
 {
     private DevServerTestClient? _client;
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_client != null)
         {

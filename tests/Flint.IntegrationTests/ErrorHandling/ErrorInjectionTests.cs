@@ -34,13 +34,13 @@ public sealed class ErrorInjectionTests : IAsyncLifetime
         _errorInjector = new ErrorInjector();
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await _fixture.InitializeAsync();
         await _fixture.CreateSiteAsync("default");
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
         _errorInjector.Dispose();

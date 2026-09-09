@@ -33,7 +33,7 @@ public sealed class CliNewContentTests : IAsyncLifetime
         _createdFiles = [];
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // 创建测试目录
         Directory.CreateDirectory(_testDir);
@@ -53,7 +53,7 @@ public sealed class CliNewContentTests : IAsyncLifetime
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
 

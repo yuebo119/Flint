@@ -212,3 +212,9 @@ indent_size = 2
 # Markdown 文件
 [*.md]
 trim_trailing_whitespace = false
+
+# xunit v3 迁移：xUnit1051（CancellationToken 建议用 TestContext.Current）为建议性规则。
+# 测试中的 CancellationToken.None 为刻意选择（不预期取消），不为此引入 TestContext 耦合；
+# 降为 suggestion，其余 xunit analyzers 维持 error。
+[*.cs]
+dotnet_diagnostic.xUnit1051.severity = suggestion

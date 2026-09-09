@@ -30,12 +30,12 @@ public class ModuleManagerIntegrationTests : IAsyncLifetime
         _fixture = new TestSiteFixture();
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await _fixture.CreateSiteAsync("minimal");
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _moduleManager?.Dispose();
         await _fixture.DisposeAsync();

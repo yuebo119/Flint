@@ -4,7 +4,6 @@
 
 using FluentAssertions;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Flint.IntegrationTests.Performance;
 

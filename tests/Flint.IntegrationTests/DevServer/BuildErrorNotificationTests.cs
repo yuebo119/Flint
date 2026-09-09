@@ -41,13 +41,13 @@ public class BuildErrorNotificationTests : IAsyncLifetime
         _fixture = new TestSiteFixture();
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await _fixture.CreateSiteAsync("minimal");
         await _fixture.BuildAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_client != null)
         {

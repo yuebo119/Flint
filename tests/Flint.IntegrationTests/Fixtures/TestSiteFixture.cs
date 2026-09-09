@@ -86,16 +86,16 @@ public sealed class TestSiteFixture : IAsyncLifetime, IDisposable
     /// <summary>
     /// 异步初始化
     /// </summary>
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         // 初始化时不创建站点，等待显式调用 CreateSiteAsync
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     /// <summary>
     /// 异步清理
     /// </summary>
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await CleanupAsync();
     }
@@ -778,7 +778,14 @@ public sealed class TestSiteFixture : IAsyncLifetime, IDisposable
     {
         var contentParser = new ContentParser();
         var templateRenderer = new ScribanTemplateRenderer(Path.Combine(_siteRoot!, "layouts"));
-        var assetPipeline = new AssetPipeline();
+        // 对齐生产装配（BuildHandler）：SourceDirectory/OutputDirectory 必须是站点绝对路径，
+        // 缺省值 "assets"/"public/assets" 是相对字符串——绝对资源路径前缀剥离失败会被
+        // 路径逃逸防护误判为越界写出（曾致 12 个 BuildPipeline/Feed 测试假失败）
+        var assetPipeline = new AssetPipeline(new AssetPipelineOptions
+        {
+            SourceDirectory = _siteRoot!,
+            OutputDirectory = _outputPath!
+        });
         var configLoader = new ConfigLoader();
 
         _siteBuilder = new SiteBuilder(
