@@ -4,7 +4,6 @@ using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.Models;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Flint.Core.Tests.Content;
 

@@ -33,14 +33,14 @@ public sealed class CliErrorHandlingTests : IAsyncLifetime
         _testDir = Path.Combine(Path.GetTempPath(), "Flint-error-tests", Guid.NewGuid().ToString("N")[..8]);
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         Directory.CreateDirectory(_testDir);
         await _fixture.InitializeAsync();
         await _fixture.CreateSiteAsync("default");
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
         await _fixture.DisposeAsync();

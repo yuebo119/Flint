@@ -6,7 +6,6 @@ using Flint.Core.Models;
 using Flint.IntegrationTests.Fixtures;
 using FluentAssertions;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Flint.IntegrationTests.BuildPipeline;
 
@@ -49,7 +48,7 @@ public class BuildPipelineErrorRecoveryTests : IAsyncLifetime
     /// <summary>
     /// 异步初始化
     /// </summary>
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await _fixture.InitializeAsync();
     }
@@ -57,7 +56,7 @@ public class BuildPipelineErrorRecoveryTests : IAsyncLifetime
     /// <summary>
     /// 异步清理
     /// </summary>
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         await _fixture.DisposeAsync();
     }

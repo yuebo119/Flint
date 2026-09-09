@@ -58,7 +58,7 @@ public sealed class CliNewThemeTests : IAsyncLifetime
         _createdDirs = [];
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         // 创建测试目录
         Directory.CreateDirectory(_testDir);
@@ -81,7 +81,7 @@ public sealed class CliNewThemeTests : IAsyncLifetime
         }
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
 

@@ -19,13 +19,13 @@ public class TestSiteFixtureTests : IAsyncLifetime
 {
     private TestSiteFixture? _fixture;
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         _fixture = new TestSiteFixture();
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         if (_fixture != null)
         {

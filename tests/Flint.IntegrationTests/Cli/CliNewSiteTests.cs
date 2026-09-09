@@ -31,14 +31,14 @@ public sealed class CliNewSiteTests : IAsyncLifetime
         _createdDirs = [];
     }
 
-    public Task InitializeAsync()
+    public ValueTask InitializeAsync()
     {
         // 创建测试目录
         Directory.CreateDirectory(_testDir);
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
 

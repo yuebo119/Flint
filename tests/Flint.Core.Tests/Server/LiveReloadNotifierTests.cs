@@ -320,12 +320,12 @@ internal class MockWebSocket : WebSocket
     public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
     {
         _state = WebSocketState.Closed;
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
     {
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
     public override void Dispose() { }
@@ -338,6 +338,6 @@ internal class MockWebSocket : WebSocket
     public override Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken)
     {
         MessagesSent++;
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 }

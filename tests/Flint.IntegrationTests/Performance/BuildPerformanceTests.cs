@@ -6,7 +6,6 @@ using Flint.IntegrationTests.Fixtures;
 using Flint.IntegrationTests.Utilities;
 using FluentAssertions;
 using Xunit;
-using Xunit.Abstractions;
 
 namespace Flint.IntegrationTests.Performance;
 
@@ -36,13 +35,13 @@ public sealed class BuildPerformanceTests : IAsyncLifetime
         _baseline = new PerformanceBaseline();
     }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         await _fixture.InitializeAsync();
         await _baseline.LoadAsync();
     }
 
-    public async Task DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _cli.Dispose();
         await _fixture.DisposeAsync();
