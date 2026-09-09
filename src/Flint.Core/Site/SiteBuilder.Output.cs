@@ -52,33 +52,37 @@ public sealed partial class SiteBuilder
 
     private async Task<List<ProcessedAsset>> ProcessAssetsAsync(
         string sourcePath,
+        string themeName,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
         CancellationToken cancellationToken)
     {
-        var assetsPath = Path.Combine(sourcePath, "assets");
-        var staticPath = Path.Combine(sourcePath, "static");
+        // 资源收集（对齐 Hugo 主题语义）：站点 assets/static 优先，主题目录回退——
+        // 同一相对路径站点覆盖主题（与模板查找同规则）。键形态 "static/<rel>"、
+        // "assets/<rel>"，跨目录不冲突
+        var assetsByRelative = new Dictionary<string, (string Path, bool IsTheme)>(StringComparer.OrdinalIgnoreCase);
+        CollectAssetFiles(Path.Combine(sourcePath, "assets"), "assets", isTheme: false, assetsByRelative);
+        CollectAssetFiles(Path.Combine(sourcePath, "static"), "static", isTheme: false, assetsByRelative);
+
+        if (!string.IsNullOrWhiteSpace(themeName))
+        {
+            var themeRoot = Path.Combine(sourcePath, "themes", themeName);
+            CollectAssetFiles(Path.Combine(themeRoot, "assets"), "assets", isTheme: true, assetsByRelative);
+            CollectAssetFiles(Path.Combine(themeRoot, "static"), "static", isTheme: true, assetsByRelative);
+        }
+
         var results = new ConcurrentBag<ProcessedAsset>();
 
-        var assetFiles = new List<string>();
-        if (Directory.Exists(assetsPath))
-        {
-            assetFiles.AddRange(Directory.EnumerateFiles(assetsPath, "*", SearchOption.AllDirectories));
-        }
-        if (Directory.Exists(staticPath))
-        {
-            assetFiles.AddRange(Directory.EnumerateFiles(staticPath, "*", SearchOption.AllDirectories));
-        }
-
         await Parallel.ForEachAsync(
-            assetFiles,
+            assetsByRelative,
             new ParallelOptions
             {
                 MaxDegreeOfParallelism = options.Parallelism,
                 CancellationToken = cancellationToken
             },
-            async (filePath, ct) =>
+            async (entry, ct) =>
             {
+                var (relativeKey, (filePath, isTheme)) = entry;
                 try
                 {
                     var asset = new AssetFile
@@ -90,6 +94,17 @@ public sealed partial class SiteBuilder
                     };
 
                     var processed = await _assetPipeline.ProcessAsync(asset, ct);
+                    // 主题文件的物理路径含 themes/<name>/ 前缀，产物 OutputPath 派生自
+                    // 该物理路径——重映射回站点相对位置（"static/<rel>"、"assets/<rel>"），
+                    // 主题资源与站点资源输出到同一命名空间；非预期形态保留原样
+                    if (isTheme)
+                    {
+                        var remapped = RemapThemeOutputPath(processed.OutputPath, themeName);
+                        if (remapped is not null)
+                        {
+                            processed = processed with { OutputPath = remapped };
+                        }
+                    }
                     results.Add(processed);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -106,6 +121,49 @@ public sealed partial class SiteBuilder
             });
 
         return [.. results];
+    }
+
+    /// <summary>
+    /// 收集目录下的资源文件到 relativeKey → 物理路径 字典；键 = "<segment>/<相对路径>"。
+    /// 已存在的键不覆盖（先注册者胜——站点先于主题注册即形成覆盖语义）
+    /// </summary>
+    private static void CollectAssetFiles(
+        string directory, string segment, bool isTheme,
+        Dictionary<string, (string Path, bool IsTheme)> assetsByRelative)
+    {
+        if (!Directory.Exists(directory))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(directory, file).Replace('\\', '/');
+            var key = segment + "/" + rel;
+            assetsByRelative.TryAdd(key, (file, isTheme));
+        }
+    }
+
+    /// <summary>
+    /// 主题产物路径重映射：把 OutputPath 中 "themes/&lt;name&gt;/(static|assets)/" 之前的
+    /// 部分（输出根 + 主题目录链）剥除，保留 "&lt;static|assets&gt;/&lt;rel&gt;" 尾段——
+    /// 与站点同名资源的输出位置一致；不匹配预期形态时返回 null（保留原样）
+    /// </summary>
+    private static string? RemapThemeOutputPath(string outputPath, string themeName)
+    {
+        var normalized = outputPath.Replace('\\', '/');
+        var marker = "/themes/" + themeName + "/";
+        var idx = normalized.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (idx < 0)
+        {
+            return null;
+        }
+
+        var tail = normalized[(idx + marker.Length)..];
+        return tail.StartsWith("static/", StringComparison.OrdinalIgnoreCase) ||
+               tail.StartsWith("assets/", StringComparison.OrdinalIgnoreCase)
+            ? tail
+            : null;
     }
 
     private async Task GenerateSitemapAndFeedsAsync(

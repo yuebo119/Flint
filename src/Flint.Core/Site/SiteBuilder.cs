@@ -157,9 +157,9 @@ public sealed partial class SiteBuilder : ISiteBuilder
                 taxonomies, siteContext, config, options, errors, cancellationToken);
             Phase("9.分类页");
 
-            // 10. 处理资源文件
+            // 10. 处理资源文件（含主题 static/assets 合并，站点覆盖主题）
             var processedAssets = await ProcessAssetsAsync(
-                options.SourcePath, options, errors, cancellationToken);
+                options.SourcePath, config.Theme, options, errors, cancellationToken);
             Phase("10.资源");
 
             // 11. 写入输出文件（先创建目录）
