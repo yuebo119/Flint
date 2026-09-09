@@ -1,13 +1,7 @@
 # Flint 静态站点生成器
 
 <p align="left">
-  <strong>🔥 .NET 10 打造的高性能静态站点生成器——大站点秒级构建，增量即改即见，单文件开箱即用</strong>
-</p>
-
-<p align="left">
-为大规模内容站点而生：万页站点的构建以秒计，内存占用克制而可预期，构建耗时随页数与主题复杂度线性增长——规模再大，速度不失速，内存不失控。
-NativeAOT 编译为单个原生可执行文件，零运行时依赖，本地、服务器、CI 开箱即跑。
-完整性能数据与方法论见 <a href="benchmarks/REPORT.md">benchmarks/REPORT.md</a>。
+  <strong>🔥 .NET 10 打造的高性能静态站点生成器 · NativeAOT 原生编译</strong>
 </p>
 
 ---
