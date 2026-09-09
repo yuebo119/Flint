@@ -344,6 +344,13 @@ public sealed class SiteContext
     /// 可用语言列表
     /// </summary>
     public IReadOnlyList<string> Languages { get; init; } = [];
+
+    /// <summary>
+    /// i18n 翻译表（站点覆盖主题，键为翻译 ID）；
+    /// i18n 模板函数消费，缺键返回空串（对齐 Hugo）
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Translations { get; init; } =
+        new Dictionary<string, string>();
 }
 
 /// <summary>

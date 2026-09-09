@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Models;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
 using PageTreeNode = Flint.Core.Site.PageTrees.PageTreeNode;
@@ -186,7 +187,9 @@ public sealed partial class SiteBuilder
                 // data identity 已在 IsGlobalIdentityPath 归为全量装配——此处 data 变化
                 // 必然伴随全量重建，重新加载保证 site.data 反映最新内容
                 var siteData = await LoadSiteDataAsync(options, cancellationToken);
-                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData);
+                var translations = Translations.Load(
+                    options.SourcePath, config.Theme, config.LanguageCode);
+                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations);
 // 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
                 //    （列表页聚合"最新内容"，任何内容变化都可能影响；数量 = section 数，远小于页数。
                 //     Hugo 以运行时依赖追踪精确到页，此处为无追踪前提下的保守折中）

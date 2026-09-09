@@ -626,8 +626,55 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             [".Data"] = context.Data,
         };
 
+        // i18n 翻译函数（主题系统 P3）：按站点 Translations 查键，缺键返回空串（对齐 Hugo）。
+        // IScriptCustomFunction 显式实现（不经反射，AOT 安全——PartialCachedFunction 同模式）；
+        // 捕获本页 siteContext 的翻译表，随 SiteContext 每构建装配
+        globals.TrySetValue(scribanContext, default, "i18n",
+            new I18nFunction(context.Site.Translations), readOnly: true);
         scribanContext.PushGlobal(globals);
         return scribanContext;
+    }
+
+    /// <summary>
+    /// i18n 翻译函数包装：单参数（翻译 ID），缺键返回空串
+    /// </summary>
+    private sealed class I18nFunction(IReadOnlyDictionary<string, string> translations)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var key = arguments.Count > 0 ? arguments[0]?.ToString() : null;
+            return key is not null && translations.TryGetValue(key, out var value) ? value : "";
+        }
+
+        public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            return new System.Threading.Tasks.ValueTask<object?>(
+                Invoke(context, callerContext, arguments, blockStatement));
+        }
+
+        public int RequiredParameterCount => 1;
+
+        public int ParameterCount => 1;
+
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+
+        public Type ReturnType => typeof(object);
+
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "key");
+
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
     }
 
     private void CollectDependencies(

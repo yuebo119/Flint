@@ -6,6 +6,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.Models;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
@@ -130,7 +131,9 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）
             var siteData = await LoadSiteDataAsync(options, cancellationToken);
-            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData);
+            var translations = Translations.Load(
+                options.SourcePath, config.Theme, config.LanguageCode);
+            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations);
             Phase("7.站点上下文");
 
             // 8. 渲染页面
