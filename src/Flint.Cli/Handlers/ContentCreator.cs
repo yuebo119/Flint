@@ -116,41 +116,67 @@ internal static class ContentCreator
 
     private static string FindArchetype(string sitePath, string kind, string contentPath)
     {
-        // 搜索顺序：
-        // 1. archetypes/{kind}.md
-        // 2. archetypes/{section}.md (从路径推断)
-        // 3. archetypes/default.md
+        // 搜索顺序（对齐主题回退规则：站点优先、主题补缺）：
+        // 1. archetypes/{kind}.md        → 主题 archetypes/{kind}.md
+        // 2. archetypes/{section}.md     → 主题 archetypes/{section}.md
+        // 3. archetypes/default.md       → 主题 archetypes/default.md
         // 4. 内置默认模板
 
         var archetypesDir = Path.Combine(sitePath, "archetypes");
+        var themeName = ReadThemeName(sitePath);
+        var themeArchetypesDir = string.IsNullOrWhiteSpace(themeName)
+            ? null
+            : Path.Combine(sitePath, "themes", themeName, "archetypes");
 
-        // 1. 指定的 kind
-        var kindPath = Path.Combine(archetypesDir, $"{kind}.md");
-        if (File.Exists(kindPath))
+        // 1. 指定的 kind（站点 → 主题）
+        var archetype = TryReadArchetype(archetypesDir, $"{kind}.md")
+                        ?? TryReadArchetype(themeArchetypesDir, $"{kind}.md");
+        if (archetype is not null)
         {
-            return File.ReadAllText(kindPath);
+            return archetype;
         }
 
-        // 2. 从路径推断 section
+        // 2. 从路径推断 section（站点 → 主题）
         var section = GetSectionFromPath(contentPath);
         if (!string.IsNullOrEmpty(section))
         {
-            var sectionPath = Path.Combine(archetypesDir, $"{section}.md");
-            if (File.Exists(sectionPath))
+            archetype = TryReadArchetype(archetypesDir, $"{section}.md")
+                        ?? TryReadArchetype(themeArchetypesDir, $"{section}.md");
+            if (archetype is not null)
             {
-                return File.ReadAllText(sectionPath);
+                return archetype;
             }
         }
 
-        // 3. 默认 archetype
-        var defaultPath = Path.Combine(archetypesDir, "default.md");
-        if (File.Exists(defaultPath))
+        // 3. 默认 archetype（站点 → 主题）
+        archetype = TryReadArchetype(archetypesDir, "default.md")
+                    ?? TryReadArchetype(themeArchetypesDir, "default.md");
+        if (archetype is not null)
         {
-            return File.ReadAllText(defaultPath);
+            return archetype;
         }
 
         // 4. 内置默认模板
         return GetBuiltinArchetype();
+    }
+
+    private static string? TryReadArchetype(string? directory, string fileName)
+    {
+        if (directory is null)
+        {
+            return null;
+        }
+        var path = Path.Combine(directory, fileName);
+        return File.Exists(path) ? File.ReadAllText(path) : null;
+    }
+
+    /// <summary>
+    /// 读取站点配置的 theme 名（主题 archetype 回退用）。
+    /// 已知边界：TOML 兼容层只解析 TOML 形态配置，YAML/JSON 配置的站点主题回退降级为站点级
+    /// </summary>
+    private static string? ReadThemeName(string siteDir)
+    {
+        return ConfigLoader.TryGetThemeName(siteDir);
     }
 
     private static string? GetSectionFromPath(string path)

@@ -129,6 +129,33 @@ public sealed class ConfigLoader : IConfigLoader
     }
 
     /// <summary>
+    /// 读取站点配置的 theme 名（主题 archetype/资源回退判定用）。
+    /// 已知边界：TOML 兼容层只解析 TOML 形态配置，YAML/JSON 配置的站点返回 null
+    /// </summary>
+    public static string? TryGetThemeName(string siteDir)
+    {
+        try
+        {
+            var configPath = FindConfigFile(siteDir);
+            if (configPath is null || !configPath.EndsWith(".toml", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+            var table = TomlynCompat.TryParseTable(File.ReadAllText(configPath));
+            if (table is null || !table.TryGetValue("theme", out var value))
+            {
+                return null;
+            }
+            var theme = value?.ToString();
+            return string.IsNullOrWhiteSpace(theme) ? null : theme;
+        }
+        catch (Exception ex) when (ex is IOException or Tomlyn.TomlException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// 检查目录是否包含配置文件
     /// </summary>
     /// <param name="directory">目录路径</param>
