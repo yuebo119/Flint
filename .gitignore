@@ -59,3 +59,8 @@ benchmarks/corpus/
 # 本地基准工具二进制（hugo.exe / flint-aot 发布产物）不入库
 benchmarks/tools/
 .serena/
+
+# 临时探测站与编译缓存
+temp-*/
+__pycache__/
+*.pyc

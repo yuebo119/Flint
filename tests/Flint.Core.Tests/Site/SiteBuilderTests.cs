@@ -543,7 +543,9 @@ public class SiteBuilderTests : IDisposable
             return ValueTask.FromResult("<html><body>Test</body></html>");
         }
 
-        public bool TemplateExists(string templateName) => false;
+        public ValueTask<string> RenderTemplateFileAsync(string filePath, Flint.Core.Abstractions.TemplateContext context, System.Threading.CancellationToken cancellationToken) => ValueTask.FromResult(string.Empty);
+
+public bool TemplateExists(string templateName) => false;
 
         public IReadOnlyList<string> GetDependencies(string templateName) => [];
 

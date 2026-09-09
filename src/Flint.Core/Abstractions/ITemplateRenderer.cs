@@ -30,6 +30,14 @@ public interface ITemplateRenderer
     bool TemplateExists(string templateName);
 
     /// <summary>
+    /// 渲染指定模板文件（不走模板名查找链，用于 robots.txt 等非 .html 形态辅助模板）
+    /// </summary>
+    ValueTask<string> RenderTemplateFileAsync(
+        string filePath,
+        TemplateContext context,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// 获取模板的依赖列表
     /// </summary>
     /// <param name="templateName">模板名称</param>
@@ -154,6 +162,7 @@ public sealed class PageContext
     /// 标签列表
     /// </summary>
     public required IReadOnlyList<string> Tags { get; init; }
+    public IReadOnlyList<string> Aliases { get; init; } = [];
 
     /// <summary>
     /// 分类列表

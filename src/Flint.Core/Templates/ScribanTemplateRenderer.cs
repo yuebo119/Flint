@@ -142,6 +142,25 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <inheritdoc />
+    public async ValueTask<string> RenderTemplateFileAsync(
+        string filePath,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var content = await File.ReadAllTextAsync(filePath, cancellationToken);
+        var template = Template.Parse(content, filePath);
+        if (template.HasErrors)
+        {
+            throw new TemplateParseException(
+                filePath,
+                template.Messages.Select(m => m.ToString()).ToList());
+        }
+
+        var scribanContext = CreateScribanContext(context);
+        return await template.RenderAsync(scribanContext);
+    }
+
+    /// <inheritdoc />
     public async ValueTask<string> RenderAsync(
         string templateName,
         FlintTemplateContext context,
