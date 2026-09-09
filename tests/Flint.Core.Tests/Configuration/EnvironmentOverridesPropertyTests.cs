@@ -1,6 +1,7 @@
 // Flint 静态站点生成器
 // 环境变量覆盖属性测试
 
+using Xunit;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using FsCheck;
@@ -13,6 +14,7 @@ namespace Flint.Core.Tests.Configuration;
 /// 环境变量覆盖属性测试
 /// **验证: 需求 7.6**
 /// </summary>
+[Collection("EnvironmentSensitive")]
 public sealed class EnvironmentOverridesPropertyTests : IDisposable
 {
     private readonly List<string> _setEnvVars = [];

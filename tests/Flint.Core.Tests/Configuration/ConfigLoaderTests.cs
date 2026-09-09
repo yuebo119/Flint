@@ -10,6 +10,7 @@ namespace Flint.Core.Tests.Configuration;
 /// <summary>
 /// ConfigLoader 单元测试
 /// </summary>
+[Collection("EnvironmentSensitive")]
 public class ConfigLoaderTests : IDisposable
 {
     private readonly string _testDir;
