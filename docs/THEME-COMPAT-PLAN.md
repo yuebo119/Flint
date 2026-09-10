@@ -10,7 +10,8 @@
 static/assets 合并、主题 params 深合并、archetypes 回退、i18n（Hugo 形态）、
 多主题叠加、三形态安装源、lockfile、短码双语义、data/（含主题）、
 render hooks（含主题）、cascade、taxonomy/term 模板、输出格式变体、
-内容视图 `render "view"`、`site.paginator`、RSS/sitemap 模板覆盖、
+内容视图 `render "view"`、分页多页产出与 `page.paginator`/`paginator`、
+RSS/sitemap 模板覆盖、
 aliases 重定向页、404 模板、robots.txt 模板、主题短码容错。
 
 ## 二、缺口清单（本轮新发现以 ★ 标记）
@@ -45,10 +46,10 @@ aliases 重定向页、404 模板、robots.txt 模板、主题短码容错。
 
 | # | 缺口 | 说明 |
 |---|---|---|
-| C1 | 分页 URL 产出（`/page/2/` 多页） | 当前仅首页切片；`PaginationService` 已有内核，缺多页产出与 Paginator 逐页绑定 |
+| C1 ✅ | 分页 URL 产出（`/page/2/` 多页） | **已实现**：home/section 列表页按 `paginate` 切片，逐页产出 `{列表页}page/{N}/`；`PaginatorView` 逐页绑定 `page.paginator` 与全局 `paginator`（pages/page_number/total_pages/pager_size/has_prev/has_next/url/first/last/prev/next/pagers）；内置 `pagination` 模板（Hugo embedded default 格式的 Scriban 等价）供 `include "pagination"` 命中 |
 | C2 | 完整输出格式矩阵（自定义 mediaType/多格式） | 页面级 outputs 已有；格式定义扩展不做 |
 | C3 | 模板内资源管线（完整 `resources.Get \| toCSS \| minify` 链） | 受限等价：`resources.get` 映射管线产物 |
-| C4 | 内容视图的 section 目录查找（`layouts/<section>/<view>.html`） | 已实现基础版，需核对与 Hugo 查找序一致 |
+| C4 ✅ | 内容视图的 section 目录查找（`layouts/<section>/<view>.html`） | **已修正对齐 Hugo**：候选路径按页面 `.Path` 从深到浅逐级上溯（`docs/api/summary`→`docs/summary`→`summary`），精确目录匹配（不再用文件名段模糊匹配，消除同名视图跨目录误命中）；`render "view" <page>` 支持显式接收者（对齐 Hugo `.Render` 页面方法） |
 
 ### D 组 · 永久放弃（代价 > 价值）
 
@@ -71,8 +72,17 @@ A3 是影响面最大的单项（所有主题的资源引用）；其余五项�
 B5（`.Resources` 装配）+ B6（Store）+ B7/B8（集合与构造函数）+
 B9/B10（内容/URL 函数补全）+ B11/B12（查询与参数）——按转换器 TODO 分布排序实施。
 
-### 批次五
+### 批次五 ✅（已完成）
+
 A2 + A3 + A4（主题分发完整性）+ C1（分页多页）+ C4（视图查找序核对）。
+C1/C4 为最后收官项：C1 增加列表页多页产出与逐页 Paginator 绑定；
+C4 把视图查找从"文件名段模糊匹配"收紧为"Hugo 目录语义精确匹配 +
+全路径逐级上溯"，并补 `render` 显式接收者。
+
+同时修复了 Ananke 迁移的转换器残留：Scriban `with` 无 `else`（改
+`$w = expr; if $w`）、`with $x = expr` 非法目标、多行布尔链、`.Related`/
+`.Scratch` 等深度语义降级为可追溯 TODO。Ananke 探针站从 12 个构建错误
+降到 0（详见下节）。
 
 ## 四、验收标准
 
@@ -85,7 +95,30 @@ A2 + A3 + A4（主题分发完整性）+ C1（分页多页）+ C4（视图查找
 
 | 指标 | 数值 |
 |---|---|
-| Ananke 模板解析错误 | 5 个文件（errors: GetFeaturedImage ×2、page-header、summary、taxonomy） |
-| Ananke TODO 标记 | 120 处（从首版 515 降） |
-| Ananke 对缺口能力的实际调用 | `.Get` 11、`.IsNamedParams` 2、`:= partials.Include` 9、`.File.Path` 1、`.Params` 2 |
+| Ananke 模板解析错误 | **0**（批次五后；此前 5 个文件、12 个构建错误） |
+| Ananke TODO 标记 | 136 处（Hugo 深度语义降级，产出合法 Scriban + 可追溯注释） |
+| Ananke 探针站产物 | 16 个页面（home/posts/8 篇 post/taxonomy 首页与词条/分页页）+ 199 资源，EXIT=0 |
 | Flint 内置模板函数 | 136 个（Hugo 约 300+） |
+
+### 批次五端到端实证（Ananke 探针站，paginate=3，8 篇文章）
+
+```
+EXIT=0，页面 16，资源 199
+public/: 404, categories/, tags/, index.html, page/2/, page/3/,
+         posts/index.html, posts/page/2/, posts/page/3/, posts/post-1..8/
+posts/        → Post 8/7/6（第 1 页）
+posts/page/2/ → Post 5/4/3
+posts/page/3/ → Post 2/1
+每张卡片 summary 渲染自身文章上下文（render 接收者修正）
+分页导航：pagination-default 模板，First/Prev/页码槽/Next/Last 齐全
+```
+
+## 六、Ananke 迁移的已知降级（非错误）
+
+以下 Hugo 深度语义无 Flint 等价，转换器产出 `##TODO-HUGO: ...##` 注释或
+空值（不吞周围结构、不产出非法语法），功能表现为空/隐藏：
+
+`.Related`（相关内容）、`.Scratch`/`.Store`（页面级暂存）、`templates.Defer`、
+`collections.Dictionary` 传参 partial、多行布尔链、`compare.Conditional`、
+`fmt.Printf`/`Warnf`、`urls.RelURL`、`resources.Get`、`.GetTerms`/`.Translations`/
+`.Resources.*`/`.File.*`（部分）。如需真实语义需引擎侧新增能力。

@@ -74,6 +74,56 @@ public sealed class TemplateLookup
     }
 
     /// <summary>
+    /// 精确相对路径解析（视图查找用，C4）：只返回 MatchName 与请求逐字相等的
+    /// 描述符（不模糊文件名段匹配），且必须是 html 主形态（排除 .json 等变体）。
+    /// 多根时根序在前者优先，同根并列取路径字典序。
+    ///
+    /// 与 <see cref="Resolve"/> 的区别：Resolve 允许"文件名段"命中（请求 "summary"
+    /// 可命中 _views/summary.html）——视图查找需要 Huge 的目录语义（目录必须匹配
+    /// 页面路径），故用本方法。
+    /// </summary>
+    public string? ResolveExact(string relativeName)
+    {
+        var normalized = relativeName.Replace('\\', '/');
+        if (normalized.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[..^5];
+        }
+
+        var descriptors = _descriptorCache ??= ScanAll();
+        TemplateDescriptor? best = null;
+        foreach (var descriptor in descriptors)
+        {
+            // html 主形态：输出格式变体（single.json.html）不参与视图查找
+            if (descriptor.OutputFormat is not null)
+            {
+                continue;
+            }
+            if (!descriptor.MatchName.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            if (best is null ||
+                descriptor.RootOrder < best.RootOrder ||
+                (descriptor.RootOrder == best.RootOrder &&
+                 string.CompareOrdinal(descriptor.RelativePath, best.RelativePath) < 0))
+            {
+                best = descriptor;
+            }
+        }
+
+        if (best is not null)
+        {
+            return best.PhysicalPath;
+        }
+
+        // 直查兜底：描述符缓存快照之后新增的模板文件
+        var directRoot = _roots.Length > 0 ? _roots[0] : string.Empty;
+        var direct = Path.Combine(directRoot, normalized + ".html");
+        return File.Exists(direct) ? direct : null;
+    }
+
+    /// <summary>
     /// 加权查找：返回最优匹配的物理路径；无匹配返回 null。
     /// requestName 支持 "{kind/layout 名}" 与 "{名}.{输出格式}"（如 single.json）两种形态
     /// </summary>

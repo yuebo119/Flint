@@ -33,9 +33,16 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     }
 
     /// <summary>
+    /// 内置模板的 include 哨兵前缀：include "pagination" 等 Hugo 内置模板
+    /// 在文件系统中无对应文件，命中时以该前缀回传给 <see cref="Load"/> 取内置内容
+    /// </summary>
+    internal const string BuiltinPrefix = "\u0001builtin:";
+
+    /// <summary>
     /// Scriban include 的路径解析入口：按根序（站点→主题）探测候选形态，
     /// 返回实际存在的物理路径——主题回退必须在此完成（Scriban 先 GetPath
-    /// 后 Load，Load 拿到的已是探测结果）
+    /// 后 Load，Load 拿到的已是探测结果）。全部未命中时若为内置模板
+    /// （pagination 等）返回内置哨兵
     /// </summary>
     public string GetPath(Scriban.TemplateContext context, SourceSpan callerSpan, string templateName)
     {
@@ -67,6 +74,14 @@ internal sealed class FileTemplateLoader : ITemplateLoader
             }
         }
 
+        // 内置模板回退（Hugo embedded templates）：include "pagination" 这类
+        // 主题内置依赖在文件系统无文件，顶层解析路径有回退但 include 此前没有——
+        // 导致 Ananke 的 {{ include "pagination" }} 必然失败
+        if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(templateName))
+        {
+            return BuiltinPrefix + templateName;
+        }
+
         // 未命中：返回主根形态，让 Load 抛出带上下文的 FileNotFoundException
         return Path.Combine(_basePath, templateName);
     }
@@ -76,6 +91,17 @@ internal sealed class FileTemplateLoader : ITemplateLoader
 
     public string Load(Scriban.TemplateContext context, SourceSpan callerSpan, string templatePath)
     {
+        // 内置模板哨兵：直接返回内置模板内容（无物理文件，不做路径校验）
+        if (templatePath.StartsWith(BuiltinPrefix, StringComparison.Ordinal))
+        {
+            var name = templatePath[BuiltinPrefix.Length..];
+            if (ScribanTemplateRenderer.BuiltinTemplates.TryGetValue(name, out var builtinContent))
+            {
+                return builtinContent;
+            }
+            throw new FileNotFoundException($"内置模板未找到: {name}");
+        }
+
         // include 路径源自模板内容，读取前校验仍在任一根内——
         // 与 DevServer 静态服务的防穿越标准对齐，"..\" 类路径不再读出模板目录。
         // 无条件 GetFullPath：模板根为相对路径时组合产物非 rooted，

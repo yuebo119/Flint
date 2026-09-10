@@ -240,7 +240,7 @@ public sealed partial class SiteBuilder
                     f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
 
                 var renderedPages = await RenderPagesAsync(
-                    renderSet, siteContext, options, errors, cancellationToken);
+                    renderSet, siteContext, config, options, errors, cancellationToken);
 
                 // 分类/词条页聚合全部内容的 tags/categories——tags/categories 增删改
                 // 使其陈旧必须重产；纯正文编辑（taxonomy 签名一致）跳过重产。

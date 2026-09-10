@@ -138,7 +138,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 8. 渲染页面
             var renderedPages = await RenderPagesAsync(
-                pageContexts, siteContext, options, errors, cancellationToken);
+                pageContexts, siteContext, config, options, errors, cancellationToken);
             Phase("8.渲染页面");
 
             // 8.5 生成首页——仅当树中不存在 home 页时兜底：

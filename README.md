@@ -187,12 +187,20 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 主题自带 `404.html` / `robots.txt` / `rss.xml` / `sitemap.xml` 模板时，
 构建器以模板渲染替代内置生成。
 
-模板可用 `{{ render "view" }}` 渲染内容视图（对齐 Hugo `.Render`）、
+模板可用 `{{ render "view" }}` 渲染内容视图（对齐 Hugo `.Render`，按页面
+`.Path` 逐级查找 `<section>/<view>`，可传显式接收者 `{{ render "summary" post }}`）、
 `{{ partial "func/x" }}` 取 partial 返回值（标量类型还原）、`{{ includeCached "x" }}`
 缓存 partial、`{{ page.file.path }}` 访问 `.File.*` 方法族、
-`{{ page.resources }}` 访问 bundle 资源、`{{ site.paginator.pages }}` 分页切片、
-`{{ i18n "key" }}` 取翻译；内置函数含 Hugo 兼容的 `where`/`sortBy`/`after`/`in`/
+`{{ page.resources }}` 访问 bundle 资源、`{{ i18n "key" }}` 取翻译；
+内置函数含 Hugo 兼容的 `where`/`sortBy`/`after`/`in`/
 `dict`/`merge`/`urlize`/`markdownify`/`plainify`/`emojify`/`humanize` 等。
+
+分页：列表页（home/section）按站点 `paginate`/`paginatePath` 切片，逐页产出
+`{列表页}page/{N}/`（如 `posts/page/2/`）。每页绑定 `page.paginator` 与全局
+`paginator`（`pages`/`page_number`/`total_pages`/`pager_size`/`has_prev`/
+`has_next`/`url`/`first`/`last`/`prev`/`next`/`pagers`），`{{ include "pagination" }}`
+命中内置分页导航模板（Hugo embedded default 格式等价）；站点或主题同名
+`pagination.html` 可覆盖。
 
 模块安装支持三种来源：`owner/repo`（GitHub Releases）、`owner/repo@分支或标签`
 及 git URL（git clone）、本地目录路径（需含 theme.toml）；安装版本写入

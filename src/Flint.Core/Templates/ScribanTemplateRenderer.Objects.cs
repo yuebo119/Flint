@@ -60,6 +60,7 @@ public sealed partial class ScribanTemplateRenderer
         private readonly FlintPageContext _page;
         private readonly object? _pagesValue;
         private readonly object? _termsValue;
+        private readonly object? _paginatorValue;
 
         public LazyPageObject(FlintPageContext page)
         {
@@ -67,6 +68,10 @@ public sealed partial class ScribanTemplateRenderer
             _pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
             _termsValue = page.Terms is not null
                 ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
+                : null;
+            // C1：列表页的 pager 渲染实例携带本页分页器（page.paginator，对齐 Hugo）
+            _paginatorValue = page.Paginator is not null
+                ? BuildPaginatorObject(page.Paginator)
                 : null;
 
             SetValue("title", page.Title, false);
@@ -90,6 +95,8 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("resources", page.Resources, false);
             SetValue("pages", _pagesValue, false);
             SetValue("terms", _termsValue, false);
+            SetValue("paginator", _paginatorValue, false);
+            SetValue("section", page.Section, false);
             SetValue("table_of_contents", page.TableOfContents, false);
             SetValue("plain", page.Plain, false);
             SetValue("raw_content", page.RawContent, false);
@@ -117,6 +124,8 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("Resources", page.Resources, false);
             SetValue("Pages", _pagesValue, false);
             SetValue("Terms", _termsValue, false);
+            SetValue("Paginator", _paginatorValue, false);
+            SetValue("Section", page.Section, false);
             SetValue("TableOfContents", page.TableOfContents, false);
             SetValue("Plain", page.Plain, false);
             SetValue("RawContent", page.RawContent, false);
@@ -137,6 +146,12 @@ public sealed partial class ScribanTemplateRenderer
             }
             return base.TryGetValue(context, span, member, out value);
         }
+
+        /// <summary>
+        /// 包装的页面上下文（C4 视图接收者）：render "view" &lt;page&gt; 需要从
+        /// 模板传入的页面对象反查真实 PageContext 作为渲染上下文
+        /// </summary>
+        internal FlintPageContext PageContext => _page;
     }
 
     private static ScriptObject BuildSiteObject(FlintSiteContext site)
@@ -407,8 +422,8 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
-    /// 分页对象（主题兼容批次二 #8，对齐 Hugo .Paginator 字段子集）：
-    /// pages = 当前页切片（首版首页切片），total_pages/page_number/has_prev/has_next
+    /// 站点级分页对象（无逐页绑定时回落，保持既有行为）：
+    /// pages = 首版首页切片，total_pages/page_number/has_prev/has_next
     /// </summary>
     private static ScriptObject BuildPaginatorObject(FlintSiteContext site)
     {
@@ -419,6 +434,173 @@ public sealed partial class ScribanTemplateRenderer
         so["has_prev"] = site.PaginatorPageNumber > 1;
         so["has_next"] = site.PaginatorPageNumber < site.PaginatorTotalPages;
         return so;
+    }
+
+    // 逐页绑定的分页对象复用缓存：同一 PaginatorView（一个列表页的所有 pager 共享）
+    // 跨渲染/跨 site.paginator 与 page.paginator 只构建一次；CWT 键为视图引用，
+    // 随构建周期回收（与 SharedPageObjects 同一模型）
+    private static readonly ConditionalWeakTable<PaginatorView, ScriptObject> SharedPaginatorObjects = new();
+
+    private static ScriptObject BuildPaginatorObject(PaginatorView view)
+    {
+        return SharedPaginatorObjects.GetValue(view, static v => BuildPaginatorObjectCore(v));
+    }
+
+    /// <summary>
+    /// 分页器对象（C1，对齐 Hugo Pager 字段子集）：
+    /// pages/page_number/total_pages/pager_size/number_of_elements/total_number_of_elements/
+    /// has_prev/has_next/is_first/is_last/url，以及 first/last/prev/next/pagers（均 pager 对象）。
+    /// pagers 为惰性列表——模板未访问时不物化（大站点避免 O(N) 分页对象构造）
+    /// </summary>
+    private static ScriptObject BuildPaginatorObjectCore(PaginatorView view)
+    {
+        var so = new ScriptObject();
+        var pages = GetSharedPageList(view.Pages);
+        so["pages"] = pages;
+        so["page_number"] = view.PageNumber;
+        so["total_pages"] = view.TotalPages;
+        so["pager_size"] = view.PageSize;
+        so["number_of_elements"] = view.NumberOfElements;
+        so["total_number_of_elements"] = view.TotalItems;
+        so["has_prev"] = view.HasPrev;
+        so["has_next"] = view.HasNext;
+        so["is_first"] = view.IsFirst;
+        so["is_last"] = view.IsLast;
+        so["url"] = view.URL;
+        so["first"] = new PagerObject(view.First);
+        so["last"] = new PagerObject(view.Last);
+        so["prev"] = view.Prev is not null ? new PagerObject(view.Prev) : null;
+        so["next"] = view.Next is not null ? new PagerObject(view.Next) : null;
+        so["pagers"] = new LazyPagers(view.Pagers);
+
+        // Hugo 兼容大写别名
+        so["Pages"] = pages;
+        so["PageNumber"] = view.PageNumber;
+        so["TotalPages"] = view.TotalPages;
+        so["PagerSize"] = view.PageSize;
+        so["NumberOfElements"] = view.NumberOfElements;
+        so["TotalNumberOfElements"] = view.TotalItems;
+        so["HasPrev"] = view.HasPrev;
+        so["HasNext"] = view.HasNext;
+        so["URL"] = view.URL;
+        return so;
+    }
+
+    /// <summary>
+    /// 单个 pager 对象：标量元数据即时绑定，pages 切片惰性求值
+    /// （视图共享，切片本身在 PaginatorView 内已缓存）
+    /// </summary>
+    private sealed class PagerObject : ScriptObject
+    {
+        private readonly PaginatorView _pager;
+        private LazyPageList? _pages;
+
+        public PagerObject(PaginatorView pager)
+        {
+            _pager = pager;
+            var url = pager.URL;
+            SetValue("url", url, false);
+            SetValue("page_number", pager.PageNumber, false);
+            SetValue("total_pages", pager.TotalPages, false);
+            SetValue("pager_size", pager.PageSize, false);
+            SetValue("has_prev", pager.HasPrev, false);
+            SetValue("has_next", pager.HasNext, false);
+            SetValue("is_first", pager.IsFirst, false);
+            SetValue("is_last", pager.IsLast, false);
+
+            SetValue("URL", url, false);
+            SetValue("PageNumber", pager.PageNumber, false);
+            SetValue("TotalPages", pager.TotalPages, false);
+            SetValue("PagerSize", pager.PageSize, false);
+            SetValue("HasPrev", pager.HasPrev, false);
+            SetValue("HasNext", pager.HasNext, false);
+        }
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            if (member is "pages" or "Pages")
+            {
+                _pages ??= GetSharedPageList(_pager.Pages);
+                value = _pages;
+                return true;
+            }
+            return base.TryGetValue(context, span, member, out value);
+        }
+    }
+
+    /// <summary>
+    /// 惰性 pager 列表（脚本对象包装）：模板访问 pagers 时才把视图列表转成对象列表，
+    /// 未访问零开销。IList&lt;ScriptObject&gt; 实现供 Scriban 的索引/len/size 消费
+    /// （与 LazyPageList 同一模式）
+    /// </summary>
+    private sealed class LazyPagers : ScriptObject, IEnumerable<ScriptObject>, IList<ScriptObject>
+    {
+        private readonly IReadOnlyList<PaginatorView> _pagers;
+        private List<ScriptObject>? _items;
+        private readonly object _lock = new();
+
+        public LazyPagers(IReadOnlyList<PaginatorView> pagers)
+        {
+            _pagers = pagers;
+            SetValue("count", pagers.Count, false);
+            SetValue("length", pagers.Count, false);
+            SetValue("size", pagers.Count, false);
+            SetValue("Count", pagers.Count, false);
+            SetValue("Length", pagers.Count, false);
+        }
+
+        int ICollection<ScriptObject>.Count => _pagers.Count;
+        bool ICollection<ScriptObject>.IsReadOnly => true;
+
+        public ScriptObject this[int index]
+        {
+            get => GetItems()[index];
+            set => throw new NotSupportedException();
+        }
+
+        public int IndexOf(ScriptObject item) => GetItems().IndexOf(item);
+        public bool Contains(ScriptObject item) => GetItems().Contains(item);
+        public void CopyTo(ScriptObject[] array, int arrayIndex) => GetItems().CopyTo(array, arrayIndex);
+        void ICollection<ScriptObject>.Add(ScriptObject item) => throw new NotSupportedException();
+        void ICollection<ScriptObject>.Clear() => throw new NotSupportedException();
+        bool ICollection<ScriptObject>.Remove(ScriptObject item) => throw new NotSupportedException();
+        public void Insert(int index, ScriptObject item) => throw new NotSupportedException();
+        public void RemoveAt(int index) => throw new NotSupportedException();
+
+        private List<ScriptObject> GetItems()
+        {
+            if (_items is not null)
+            {
+                return _items;
+            }
+            lock (_lock)
+            {
+                return _items ??= _pagers.Select(p => (ScriptObject)new PagerObject(p)).ToList();
+            }
+        }
+
+        public new IEnumerator<ScriptObject> GetEnumerator() => GetItems().GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetItems().GetEnumerator();
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            if (int.TryParse(member, out var index) && index >= 0 && index < _pagers.Count)
+            {
+                value = GetItems()[index];
+                return true;
+            }
+            switch (member.ToLowerInvariant())
+            {
+                case "first":
+                    value = _pagers.Count > 0 ? GetItems()[0] : null;
+                    return true;
+                case "last":
+                    value = _pagers.Count > 0 ? GetItems()[^1] : null;
+                    return true;
+            }
+            return base.TryGetValue(context, span, member, out value);
+        }
     }
 
     private static ScriptObject CreateMenuItemObject(FlintMenuItem item)
