@@ -12,7 +12,10 @@ namespace Flint.Core.Content.Shortcodes;
 /// 模板驱动的用户短代码
 /// 从站点 <c>layouts/shortcodes/&lt;name&gt;.html</c> 加载 Scriban 模板并渲染——
 /// 对齐 Hugo"短代码即模板"的语义：站点可用模板覆盖内置短代码。
-/// 模板内可用变量：<c>params.src</c> 等命名参数、<c>positional.0</c> 位置参数、<c>inner</c> 内部内容、<c>name</c> 短代码名。
+/// 模板内可用变量（Hugo 短码 API 对齐）：
+///   <c>get "key"</c> / <c>get 0</c>（命名优先，数字取位置参数）
+///   <c>is_named_params</c>（是否命名参数调用）、<c>params</c>（全参数表）
+///   <c>params.foo</c>、<c>positional.0</c>、<c>inner</c>、<c>name</c>
 /// </summary>
 public sealed class TemplateShortcode : IShortcodeProcessor
 {
@@ -51,6 +54,18 @@ public sealed class TemplateShortcode : IShortcodeProcessor
     {
         var globals = new ScriptObject();
 
+        // 全参数表（Hugo .Params）：命名参数 + 位置参数（数字键）
+        var paramsObject = new ScriptObject();
+        foreach (var (key, value) in context.Parameters)
+        {
+            paramsObject[key] = value;
+        }
+        for (var i = 0; i < context.PositionalArgs.Count; i++)
+        {
+            paramsObject[i.ToString(InvariantCulture)] = context.PositionalArgs[i];
+        }
+        globals["params"] = paramsObject;
+
         // 命名参数：小写与 Pascal 双键注册（与渲染器 Page/Site 对象的双键约定一致）
         foreach (var (key, value) in context.Parameters)
         {
@@ -72,6 +87,27 @@ public sealed class TemplateShortcode : IShortcodeProcessor
         // 内部内容与短代码名
         globals["inner"] = context.InnerContent ?? string.Empty;
         globals["name"] = context.Name;
+
+        // Hugo 短码 API 对齐：is_named_params + get（命名优先、数字取位置参数）
+        globals["is_named_params"] = context.Parameters.Count > 0;
+#pragma warning disable IL2026, IL3050 // Scriban Import 走反射构造 DynamicCustomFunction；lambda 装箱后方法体被 linker 保留，运行时安全（与 BuiltinTemplateFunctions 同口径）
+        globals.Import("get", (object? key) =>
+        {
+            if (key is null)
+            {
+                return "";
+            }
+            var name = key.ToString() ?? "";
+            // 数字键 → 位置参数（Hugo .Get 0 语义）
+            if (int.TryParse(name, NumberStyles.Integer, InvariantCulture, out var index))
+            {
+                return index >= 0 && index < context.PositionalArgs.Count
+                    ? context.PositionalArgs[index]
+                    : "";
+            }
+            return context.Parameters.TryGetValue(name, out var value) ? value : "";
+        });
+#pragma warning restore IL2026, IL3050
 
         var templateContext = new Scriban.TemplateContext();
         templateContext.PushGlobal(globals);
