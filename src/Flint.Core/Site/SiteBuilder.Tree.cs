@@ -273,6 +273,75 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>节点 → Hugo kind 语义字符串（cascade _target 的 kind 过滤依据）</summary>
+    /// <summary>
+    /// leaf bundle 资源装配（B5）：index.md 同目录下的非 Markdown 文件归页面所有
+    /// （Hugo Page Resources 语义）。返回 {name, path, rel_permalink, media_type, size} 字典列表；
+    /// 资源同时经 assets 管线发布，模板引用其 rel_permalink 即可
+    /// </summary>
+    private static IReadOnlyList<object> LoadBundleResources(string? sourcePath)
+    {
+        if (string.IsNullOrEmpty(sourcePath)
+            || !Path.GetFileName(sourcePath).Equals("index.md", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var bundleDir = Path.GetDirectoryName(sourcePath);
+        if (string.IsNullOrEmpty(bundleDir) || !Directory.Exists(bundleDir))
+        {
+            return [];
+        }
+
+        // bundle 目录的站点相对路径（用于推导资源 URL）
+        var normalizedDir = bundleDir.Replace('\\', '/');
+        var contentIdx = normalizedDir.LastIndexOf("/content/", StringComparison.OrdinalIgnoreCase);
+        var dirRel = contentIdx >= 0
+            ? normalizedDir[(contentIdx + "/content/".Length)..]
+            : "";
+
+        var resources = new List<object>();
+        foreach (var file in Directory.EnumerateFiles(bundleDir, "*", SearchOption.TopDirectoryOnly))
+        {
+            var name = Path.GetFileName(file);
+            if (name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            {
+                continue; // Markdown 是页面本体，不是资源
+            }
+            var info = new FileInfo(file);
+            resources.Add(new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["name"] = name,
+                ["title"] = Path.GetFileNameWithoutExtension(name),
+                ["path"] = dirRel.Length > 0 ? $"/{dirRel}/{name}" : $"/{name}",
+                ["rel_permalink"] = dirRel.Length > 0 ? $"/{dirRel}/{name}" : $"/{name}",
+                ["media_type"] = GetMediaTypeByName(name),
+                ["size"] = info.Length,
+                ["resource_type"] = "page"
+            });
+        }
+        return resources;
+    }
+
+    private static string GetMediaTypeByName(string name)
+    {
+        var ext = Path.GetExtension(name).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" => "image/png",
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".gif" => "image/gif",
+            ".svg" => "image/svg+xml",
+            ".webp" => "image/webp",
+            ".avif" => "image/avif",
+            ".css" => "text/css",
+            ".js" => "application/javascript",
+            ".json" => "application/json",
+            ".pdf" => "application/pdf",
+            ".xml" => "application/xml",
+            _ => "application/octet-stream"
+        };
+    }
+
     private static string KindOfNode(PageTreeNode node)
     {
         if (node.Key.Length == 0)
@@ -493,7 +562,7 @@ public sealed partial class SiteBuilder
     {
         if (node.Content is not null)
         {
-            return CreatePageContext(node.Content, config, cascadedParams, cascadeDataChain);
+            return CreatePageContext(node.Content, config, cascadedParams, cascadeDataChain, KindOfNode(node));
         }
 
         var kind = node.Key.Length == 0 ? "home" : "section";
@@ -538,7 +607,8 @@ public sealed partial class SiteBuilder
         ParsedContent content,
         SiteConfig config,
         IReadOnlyDictionary<string, object>? cascadedParams = null,
-        List<FrontMatter>? cascadeDataChain = null)
+        List<FrontMatter>? cascadeDataChain = null,
+        string? nodeKind = null)
     {
         var permalink = PermalinkEngine.GeneratePermalink(content, config);
         var relPermalink = permalink.StartsWith(config.BaseURL)
@@ -590,10 +660,14 @@ public sealed partial class SiteBuilder
             ReadingTime = content.ReadingTime,
             Description = description,
             Summary = content.Summary,
-            Type = content.Metadata.Type ?? "page",
+            // kind 由树节点 bundle 类型推导（前置：front matter 显式 type 覆盖）——
+            // _index.md 归一为 branch 节点后必须产出 section 语义（list 模板、IsList），
+            // 此前用 "page" 兜底致真实 section 页走 single 模板
+            Type = content.Metadata.Type ?? nodeKind ?? "page",
             Layout = layout,
             Outputs = content.Metadata.Outputs,
             SourcePath = content.SourcePath,
+            Resources = LoadBundleResources(content.SourcePath),
             Draft = draft,
             Weight = weight,
             MenuEntries = content.Metadata.Menus is { Count: > 0 } menus
