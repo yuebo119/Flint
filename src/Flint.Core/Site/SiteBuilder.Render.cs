@@ -25,10 +25,15 @@ public sealed partial class SiteBuilder
         // 主题列表前面的优先：反序注册，前面的主题后注册覆盖后面的
         foreach (var themeName in config.ThemeNames.Reverse())
         {
-            RegisterShortcodesFrom(Path.Combine(sourcePath, "themes", themeName, layoutDirName, "shortcodes"), themeName);
+            var themeLayout = Path.Combine(sourcePath, "themes", themeName, layoutDirName);
+            // shortcodes/ 与 _shortcodes/ 双形态（后者为 Hugo v0.146+ 新目录约定）
+            RegisterShortcodesFrom(Path.Combine(themeLayout, "_shortcodes"), themeName);
+            RegisterShortcodesFrom(Path.Combine(themeLayout, "shortcodes"), themeName);
         }
 
-        RegisterShortcodesFrom(Path.Combine(sourcePath, layoutDirName, "shortcodes"), "站点");
+        var siteLayout = Path.Combine(sourcePath, layoutDirName);
+        RegisterShortcodesFrom(Path.Combine(siteLayout, "_shortcodes"), "站点");
+        RegisterShortcodesFrom(Path.Combine(siteLayout, "shortcodes"), "站点");
     }
 
     private void RegisterShortcodesFrom(string shortcodesDir, string origin)
@@ -38,6 +43,7 @@ public sealed partial class SiteBuilder
             return;
         }
 
+        var isSite = string.Equals(origin, "站点", StringComparison.Ordinal);
         var registry = _contentParser.ShortcodeProcessor.Registry;
         foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.html"))
         {
@@ -46,6 +52,12 @@ public sealed partial class SiteBuilder
             try
             {
                 registry.Register(new TemplateShortcode(name, content));
+            }
+            catch (FormatException ex) when (!isSite)
+            {
+                // 主题短码为第三方内容：单个短码语法错误不应阻断整个构建
+                // （Hugo 对主题短码同样容忍；站点短码保持 fail-fast）
+                Console.Error.WriteLine($"[警告] 跳过无法解析的主题短代码（{origin}）: {file} — {ex.Message}");
             }
             catch (FormatException ex)
             {
