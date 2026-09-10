@@ -2,6 +2,7 @@
 // 模板渲染器接口
 
 using Flint.Core.Configuration;
+using Flint.Core.Templates;
 
 namespace Flint.Core.Abstractions;
 
@@ -21,6 +22,23 @@ public interface ITemplateRenderer
         string templateName,
         TemplateContext context,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 页面感知渲染（A 组查找链）：按页面特征（kind/layout/type/section/taxonomy
+    /// + 输出格式）构造有序候选链，逐级解析并渲染。
+    /// 对齐 Hugo lookup order 的"页面 → 模板"语义；候选链全部未命中时
+    /// 回退内置模板（taxonomy/term/list），仍无则抛 <c>TemplateNotFoundException</c>。
+    /// </summary>
+    ValueTask<string> RenderPageAsync(
+        PageTemplateQuery query,
+        TemplateContext context,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// 页面感知的物理模板存在性（不含内置兜底模板）：
+    /// 候选链命中任一物理模板即 true。用于输出格式变体产出判定。
+    /// </summary>
+    bool PageTemplateExists(PageTemplateQuery query);
 
     /// <summary>
     /// 检查模板是否存在
@@ -341,6 +359,38 @@ public sealed class PageContext
     public string? Type { get; init; }
 
     /// <summary>
+    /// 页面 kind（home / section / page / taxonomy / term）——模板查找链的 kind
+    /// 维度与模板 <c>.Kind</c> 的来源。与 <see cref="Type"/> 分离：Type 保留
+    /// "front matter 显式 type ?? kind" 的既有模板语义（Hugo 中 .Kind 与 .Type
+    /// 是两个独立概念，此前 Flint 用单一字段承载导致查找链无法区分）
+    /// </summary>
+    public string Kind { get; init; } = "page";
+
+    /// <summary>
+    /// front matter 显式声明的 type（未声明为 null）——模板查找链的 type 维度。
+    /// 缺省时由 <see cref="Templates.PageTemplateQuery.EffectiveType"/> 回退到 section 名
+    /// （对齐 Hugo：type 默认取根 section 名）。Ananke 的 <c>type: page</c> 页面
+    /// 依赖此字段命中 <c>layouts/page/single.html</c>
+    /// </summary>
+    public string? DeclaredType { get; init; }
+
+    /// <summary>
+    /// taxonomy 名（仅 taxonomy/term 页非空，如 categories）——模板查找链的
+    /// taxonomy 维度（<c>layouts/{taxonomy}/terms.html</c> 等候选级）
+    /// </summary>
+    public string? TaxonomyName { get; init; }
+
+    /// <summary>
+    /// 分类单数名（对齐 Hugo <c>.Data.Singular</c>）
+    /// </summary>
+    public string? TaxonomySingular { get; init; }
+
+    /// <summary>
+    /// 分类复数名（对齐 Hugo <c>.Data.Plural</c>）
+    /// </summary>
+    public string? TaxonomyPlural { get; init; }
+
+    /// <summary>
     /// 页面布局
     /// </summary>
     public string? Layout { get; init; }
@@ -471,6 +521,11 @@ public sealed class PageContext
             PrevPage = PrevPage,
             NextPage = NextPage,
             Type = Type,
+            Kind = Kind,
+            DeclaredType = DeclaredType,
+            TaxonomyName = TaxonomyName,
+            TaxonomySingular = TaxonomySingular,
+            TaxonomyPlural = TaxonomyPlural,
             Layout = Layout,
             Outputs = Outputs,
             SourcePath = SourcePath,

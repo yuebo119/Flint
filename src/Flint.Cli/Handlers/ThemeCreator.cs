@@ -172,9 +172,11 @@ internal static class ThemeCreator
         Console.WriteLine("  创建布局: layouts/_default/baseof.html");
 
         // single.html
+        // 继承用 Scriban 的 capture + 命名参数 include 实现（Scriban 7.4 无
+        // block/extends 语句；此前生成的 {{ extends }}{{ block content }} 无法解析，
+        // 新建主题开箱即构建失败）
         var singleContent = """
-            {{ extends "baseof.html" }}
-            {{ block content }}
+            {{ capture content }}
             <article class="post">
                 <header class="post-header">
                     <h1 class="post-title">{{ page.title }}</h1>
@@ -203,6 +205,7 @@ internal static class ThemeCreator
                 {{ end }}
             </article>
             {{ end }}
+            {{ include "baseof.html" content: content }}
             """;
 
         File.WriteAllText(Path.Combine(themePath, "layouts", "_default", "single.html"), singleContent);
@@ -210,8 +213,7 @@ internal static class ThemeCreator
 
         // list.html
         var listContent = """
-            {{ extends "baseof.html" }}
-            {{ block content }}
+            {{ capture content }}
             <div class="list-page">
                 <h1 class="list-title">{{ page.title | default "文章" }}</h1>
                 <ul class="post-list">
@@ -235,6 +237,7 @@ internal static class ThemeCreator
                 </ul>
             </div>
             {{ end }}
+            {{ include "baseof.html" content: content }}
             """;
 
         File.WriteAllText(Path.Combine(themePath, "layouts", "_default", "list.html"), listContent);

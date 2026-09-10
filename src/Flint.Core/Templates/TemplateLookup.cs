@@ -50,8 +50,12 @@ public sealed class TemplateLookup
     // 模板文件集不变是安全假设
     private IReadOnlyList<TemplateDescriptor>? _descriptorCache;
 
-    /// <summary>清空描述符缓存（构建边界由渲染器调用）</summary>
-    public void Invalidate() => _descriptorCache = null;
+    /// <summary>清空描述符缓存与派生路径索引（构建边界由渲染器调用）</summary>
+    public void Invalidate()
+    {
+        _descriptorCache = null;
+        _pathIndex = null;
+    }
 
     private IReadOnlyList<TemplateDescriptor> ScanAll()
     {
@@ -72,6 +76,84 @@ public sealed class TemplateLookup
         }
         return list;
     }
+
+    /// <summary>
+    /// 分层解析（页面感知候选链，A 组核心）：按候选级顺序逐级探测，
+    /// 级内先站点根再各主题根，同根内根形态（<c>{root}/{name}.html</c>）
+    /// 优先于 _default 兜底形态（<c>{root}/_default/{name}.html</c>）。
+    ///
+    /// 与 <see cref="Resolve"/> 的判据方向相反，这是刻意的：
+    /// - Resolve 用于 partial / render hook / 视图等**无页面上下文**场景，
+    ///   此时根序优先正确（站点 partial 覆盖主题 partial）。
+    /// - 本方法用于**页面布局**查找：候选级顺序（路径具体度）是第一判据，
+    ///   根序是第二判据——对齐 Hugo "distance 优先、站点/主题 interleave" 语义。
+    ///   反例（修复前实证）：站点 <c>layouts/_default/single.html</c> 会压过主题
+    ///   <c>layouts/posts/single.html</c>，使主题 section 布局永久失效。
+    /// </summary>
+    /// <param name="levels">有序候选级（靠前 = 更具体）</param>
+    /// <returns>首个命中的物理路径；全部未命中返回 null</returns>
+    public string? ResolveLayered(IReadOnlyList<TemplateCandidate> levels)
+    {
+        ArgumentNullException.ThrowIfNull(levels);
+        var index = GetPathIndex();
+        // 外层候选级（specificity 第一判据），内层根序（第二判据）——
+        // 顺序不可颠倒：站点 _default/single 不得压过主题 posts/single
+        foreach (var level in levels)
+        {
+            var relative = level.Name.Replace('\\', '/').Trim('/');
+            if (relative.Length == 0)
+            {
+                continue;
+            }
+
+            for (var rootOrder = 0; rootOrder < _roots.Length; rootOrder++)
+            {
+                // 同根内根形态优先于 _default 兜底形态
+                if (index.TryGetValue(PathKey(rootOrder, relative + ".html"), out var direct))
+                {
+                    return direct;
+                }
+
+                if (level.AllowDefaultForm &&
+                    index.TryGetValue(PathKey(rootOrder, "_default/" + relative + ".html"), out var fallback))
+                {
+                    return fallback;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 分层解析的已解析路径缓存：key = 根序 + 相对路径（小写），value = 物理路径。
+    /// 由描述符快照派生，热路径零 IO（万页站点每页候选链约 10 级 × N 根，
+    /// 逐次 File.Exists 会放大为数十万次 stat）。与描述符缓存同生命周期
+    /// </summary>
+    private Dictionary<string, string>? _pathIndex;
+
+    private Dictionary<string, string> GetPathIndex()
+    {
+        if (_pathIndex is not null)
+        {
+            return _pathIndex;
+        }
+
+        var descriptors = _descriptorCache ??= ScanAll();
+        var index = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var descriptor in descriptors)
+        {
+            index[PathKey(descriptor.RootOrder, descriptor.RelativePath)] = descriptor.PhysicalPath;
+        }
+
+        return _pathIndex = index;
+    }
+
+    private static string PathKey(int rootOrder, string relative) =>
+        string.Concat(
+            rootOrder.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "\u0001",
+            relative);
 
     /// <summary>
     /// 精确相对路径解析（视图查找用，C4）：只返回 MatchName 与请求逐字相等的

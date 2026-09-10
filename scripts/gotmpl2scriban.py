@@ -10,9 +10,15 @@ TODO_LIST = []
 # define 块闭合后待发出的调用（convert_template 逐表达式排空）：
 # `{{ func main() }}...{{ end }}{{ main() }}` 需要 end 与调用分属两个 {{ }}
 PENDING_CALLS = []
+# 本文件 define 捕获的 block 名：convert_template 结束时统一生成
+# `{{ include "baseof.html" blk_X: blk_X }}` 把子模板块传给 baseof。
+# 这是 Scriban 无 block/extends 语句时的继承等价物（capture + 命名参数 include）
+DEFINED_BLOCKS = []
 
-# ctx_stack 中「不参与裸点映射」的帧类型：define 是函数标记，__block__ 是 if 的占位帧
-NON_CTX_FRAMES = ("__define__", "__block__")
+# ctx_stack 中「不参与裸点映射」的帧类型：define 是函数标记，__block__ 是 if 的占位帧，
+# __blockdef__ 是 baseof 的 block 声明（帧值是 block 名，不是上下文对象——若参与
+# 裸点映射会把 `{{ .Params.Title }}` 误映射为 `title.params.title`）
+NON_CTX_FRAMES = ("__define__", "__block__", "__blockdef__", "__skipblock__")
 
 def dot_ctx(ctx_stack):
     """块内裸点（`.`）应映射到的变量：最近的 with/range 帧，否则 page"""
@@ -156,8 +162,15 @@ def convert_expr(expr, ctx_stack, file):
         if ctx_stack:
             top = ctx_stack.pop()
             if top[0] == "__define__":
-                # define 块闭合：函数体结束，调用由其后的独立 {{ name() }} 发出
-                PENDING_CALLS.append(top[1])
+                # 子模板块闭合：内容已由 capture 收进 blk_X，调用在文件末尾
+                # 统一以 include "baseof.html" 发出（不再自调用 func）
+                return "end"
+            if top[0] == "__blockdef__":
+                # baseof 的 block 声明闭合：用它捕获的默认内容兜底，
+                # 子模板通过 include 传入 blk_X 时优先用子模板内容
+                n = top[1]
+                return ("end }}{{ if $.blk_" + n + " }}{{ $.blk_" + n
+                        + " }}{{ else }}{{ __def_" + n + " }}{{ end")
             return "end"
         return "end"
 
@@ -191,11 +204,31 @@ def convert_expr(expr, ctx_stack, file):
     if re.match(r"^/\*.*\*/$", expr, re.S):
         return ""
 
-    m = re.match(r'^define\s+"([\w.-]+)"$', expr)
+    m = re.match(r'^define\s+"([\w./-]+)"$', expr)
     if m:
-        # Scriban 继承 = extends 后重定义同名 func（无 block 语句）
-        ctx_stack.append(("__define__", m.group(1)))
-        return f"func {m.group(1)}()"
+        # 子模板块 → capture（Hugo define 的等价物）；Scriban 无 extends/block，
+        # 文件末尾以 include "baseof.html" 命名参数把捕获内容传给 baseof。
+        # 仅简单标识符名是 baseof 块；路径名（"_partials/x.html"）是 Hugo 内联
+        # partial 定义，捕获后无法作为 partial 取用 → 结构保持式降级（if false）
+        name = m.group(1)
+        if re.match(r"^[\w-]+$", name):
+            ctx_stack.append(("__define__", name))
+            DEFINED_BLOCKS.append(name)
+            return "capture blk_" + name
+        ctx_stack.append(("__skipblock__", None))
+        TODO_LIST.append((file, expr))
+        # 只产出 TODO 标记：块开头的 TODO 由 convert_template 统一降级为
+        # `... }}{{ if false` 保持 if/end 配对，此处再拼一次会产生双份 `}}`
+        return f"##TODO-HUGO(内联partial定义): define \"{name}\"##"
+
+    m = re.match(r'^block\s+"([\w-]+)"(?:\s+.+)?$', expr)
+    if m:
+        # baseof 的 block 声明（带默认内容）→ capture 默认内容 + 结束处条件输出。
+        # 此前该形态未被识别而原样保留，产出字面 `{{ block "x" . }}` 文本，
+        # 使子模板与 baseof 完全脱节（Ananke 迁移产物无 <!DOCTYPE html> 的根因）
+        name = m.group(1)
+        ctx_stack.append(("__blockdef__", name))
+        return "capture __def_" + name
 
     m = re.match(r'^partials\.Include(Cached)?\s+"([\w/.-]+)"(?:\s+(.+))?$', expr, re.S)
     if m:
@@ -386,7 +419,9 @@ def convert_expr(expr, ctx_stack, file):
 
     m = re.match(r'^template\s+"([\w.-]+)"', expr)
     if m:
-        return f'block "{m.group(1)}"'
+        # {{ template "x" . }} 是调用（不是声明）→ include；此前转成 `block "x"`
+        # 在 Scriban 中无对应语义（block 非函数），属误译
+        return 'include "' + m.group(1) + '"'
 
     if "\n" in expr:
         TODO_LIST.append((file, expr))
@@ -401,6 +436,7 @@ def convert_expr(expr, ctx_stack, file):
 def convert_template(text, file):
     ctx_stack = []
     PENDING_CALLS.clear()  # 每文件独立：避免上一个文件未闭合 define 的残留调用泄漏
+    DEFINED_BLOCKS.clear()
     out = []
     pos = 0
     # 注释 token 优先整段匹配（含跨行与两侧 trim 标记），避免注释内的 `}}`
@@ -419,7 +455,8 @@ def convert_template(text, file):
         if "TODO-HUGO" in converted:
             stripped = converted.strip()
             if stripped.startswith("##TODO-HUGO") and re.match(
-                    r"^\s*(if|with|else\s+if|range)\b", inner.strip().lstrip("-").strip()):
+                    r"^\s*(if|with|else\s+if|range|define|block)\b",
+                    inner.strip().lstrip("-").strip()):
                 converted = stripped + " }}{{ if false"
         if converted.strip():
             out.append("{{ " + converted + " }}")  # 空表达式（如 Go 注释）不产出 {{ }}
@@ -427,6 +464,12 @@ def convert_template(text, file):
             out.append("{{ " + name + "() }}")
         pos = m.end()
     out.append(text[pos:])
+    # 子模板块传给 baseof：Scriban 无 extends/block 语句，用 include 命名参数
+    # 传递捕获的块。仅当本文件有 define 时生成（baseof 自身只有 block 声明）
+    if DEFINED_BLOCKS:
+        # Scriban 命名参数以空白分隔（无逗号）
+        pairs = " ".join("blk_" + n + ": blk_" + n for n in DEFINED_BLOCKS)
+        out.append('\n{{ include "baseof.html" ' + pairs + ' }}\n')
     return "".join(out)
 
 def main():
@@ -454,11 +497,6 @@ def main():
             if f.endswith((".html", ".xml", ".json", ".txt")):
                 text = open(src_file, encoding="utf-8", errors="replace").read()
                 converted = convert_template(text, rel_root)
-                # Hugo 子模板隐式 extends baseof；Scriban 需显式声明
-                baseof = os.path.join(src, "layouts", "baseof.html")
-                has_block = "block " in converted
-                if has_block and "{{ extends" not in converted and os.path.exists(baseof):
-                    converted = '{{ extends "baseof.html" }}\n' + converted
                 with open(dst_file, "w", encoding="utf-8", newline="") as fh:
                     fh.write(converted)
                 n_todo = converted.count("TODO-HUGO")
