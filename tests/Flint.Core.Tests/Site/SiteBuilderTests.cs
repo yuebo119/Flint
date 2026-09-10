@@ -543,6 +543,13 @@ public class SiteBuilderTests : IDisposable
             return ValueTask.FromResult("<html><body>Test</body></html>");
         }
 
+        public ValueTask<string> RenderPageAsync(Flint.Core.Templates.PageTemplateQuery query, TemplateContext context, CancellationToken cancellationToken = default)
+        {
+            return ValueTask.FromResult("<html><body>Test</body></html>");
+        }
+
+        public bool PageTemplateExists(Flint.Core.Templates.PageTemplateQuery query) => true;
+
         public ValueTask<string> RenderTemplateFileAsync(string filePath, Flint.Core.Abstractions.TemplateContext context, System.Threading.CancellationToken cancellationToken) => ValueTask.FromResult(string.Empty);
 
 public bool TemplateExists(string templateName) => false;

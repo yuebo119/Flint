@@ -6,6 +6,7 @@ using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Content.Shortcodes;
 using Flint.Core.Models;
+using Flint.Core.Templates;
 
 namespace Flint.Core.Site;
 
@@ -35,6 +36,26 @@ public sealed partial class SiteBuilder
         RegisterShortcodesFrom(Path.Combine(siteLayout, "_shortcodes"), "站点");
         RegisterShortcodesFrom(Path.Combine(siteLayout, "shortcodes"), "站点");
     }
+
+    /// <summary>
+    /// 由页面上下文构造模板查找查询（A 组）：kind 来自树节点类型，
+    /// layout/type/section 参与候选级排序。layout 是"优先提示而非强制"——
+    /// 候选链把 {type}/{layout}、{section}/{layout}、{layout} 置于默认名之前，
+    /// 声明了但物理缺失时自然回退默认名（对齐 Hugo，且不再需要预先 TemplateExists 探测）。
+    /// </summary>
+    private static PageTemplateQuery BuildPageTemplateQuery(PageContext page) =>
+        new()
+        {
+            Kind = string.IsNullOrEmpty(page.Kind) ? "page" : page.Kind,
+            Layout = page.Layout,
+            DeclaredType = page.DeclaredType,
+            Section = page.Section,
+            Taxonomy = page.TaxonomyName
+        };
+
+    private static bool IsHtmlFormat(string? formatName) =>
+        string.IsNullOrEmpty(formatName) ||
+        formatName.Equals("html", StringComparison.OrdinalIgnoreCase);
 
     private void RegisterShortcodesFrom(string shortcodesDir, string origin)
     {
@@ -261,25 +282,14 @@ public sealed partial class SiteBuilder
                 {
                     try
                     {
-                        // 模板选择对齐 Hugo kind 语义：home→index、section→list、普通页→single。
-                        // front matter layout 是优先提示而非强制（对齐 Hugo）：声明的 layout
-                        // 存在则优先使用，不存在（如依赖原主题布局）时回退该 kind 的默认
-                        // 查找链——此前直接使用导致声明依赖原主题布局的页面构建失败
-                        //（MDN+k8s 对比测试实证）。此前一律 single：首页 layouts/index.html
-                        // 被 renderSet 的 home 页覆盖、section 永远不走 list
-                        var baseTemplateName =
-                            !string.IsNullOrEmpty(page.Layout) && _templateRenderer.TemplateExists(page.Layout)
-                                ? page.Layout
-                                : page.Type switch
-                                {
-                                    "home" => _templateRenderer.TemplateExists("index") ? "index" : "single",
-                                    "section" => _templateRenderer.TemplateExists("list") ? "list" : "single",
-                                    _ => "single"
-                                };
+                        // A 组：页面感知候选链（对齐 Hugo lookup order）。
+                        // kind 来自树节点（home/section/page），layout/type/section 参与
+                        // 候选级排序——此前只按单一名字全局加权，导致 section/type 目录
+                        // 模板互相污染（Ananke 的 page/single.html 实测吞掉全站）
+                        var baseQuery = BuildPageTemplateQuery(page);
 
                         // 输出格式：页面级 outputs 覆盖（对齐 Hugo），空则仅 html。
-                        // html 恒渲染；非 html 格式（json 等）需存在输出格式变体模板
-                        //（{kind/ayout 名}.{format}.html）才产出，无模板跳过
+                        // 格式变体模板由候选链按 .{format} 后缀解析（含主题回退）
                         var formats = page.Outputs.Count > 0
                             ? page.Outputs
                             : (IReadOnlyList<string>)["html"];
@@ -297,28 +307,25 @@ public sealed partial class SiteBuilder
                                 Page = page,
                                 Site = siteContext,
                                 Data = siteContext.Data,
-                                IsSingle = baseTemplateName == "single",
+                                IsSingle = baseQuery.Kind == "page",
                                 // 随 kind 分派同步置位：首页/列表页模板的 is_home/is_list
                                 // 判断依赖此标志（taxonomy 路径已设 IsList，此处对齐）
-                                IsHome = page.Type == "home",
-                                IsList = page.Type == "section"
+                                IsHome = baseQuery.Kind == "home",
+                                IsList = baseQuery.Kind == "section"
                             };
 
-                            string html;
-                            if (format.Name == "html")
+                            // 非 html 格式：候选链已带格式后缀，未命中物理模板即跳过
+                            //（格式互不替代，不回退 html 主形态——PageOutputFormats 契约）
+                            if (!IsHtmlFormat(format.Name) &&
+                                !_templateRenderer.PageTemplateExists(baseQuery with { OutputFormat = format.Name }))
                             {
-                                html = await _templateRenderer.RenderAsync(baseTemplateName, context, ct);
+                                continue;
                             }
-                            else
-                            {
-                                // 输出格式变体模板：{基模板名}.{格式名}（如 single.json）
-                                var variantTemplate = $"{baseTemplateName}.{format.Name}";
-                                if (!_templateRenderer.TemplateExists(variantTemplate))
-                                {
-                                    continue;
-                                }
-                                html = await _templateRenderer.RenderAsync(variantTemplate, context, ct);
-                            }
+
+                            var html = await _templateRenderer.RenderPageAsync(
+                                baseQuery with { OutputFormat = format.Name },
+                                context,
+                                ct);
 
                             RegisterRenderedDependencies(context);
                             results.Add(new RenderedPage
@@ -359,8 +366,13 @@ public sealed partial class SiteBuilder
     {
         try
         {
-            // 检查是否存在首页模板
-            if (!_templateRenderer.TemplateExists("index"))
+            // A 组候选链：index → home → list（home.html 为 Hugo 0.146+ 标准名，
+            // 此前硬编码 index 导致仅用 home.html 的主题首页渲染为空）
+            var homeQuery = new PageTemplateQuery { Kind = "home" };
+
+            // 无任何 home 布局（含 _default 兜底）时不做兜底页——树中 home 页
+            // 已由 RenderPagesAsync 处理，此处仅补手建场景
+            if (!_templateRenderer.PageTemplateExists(homeQuery))
             {
                 return null;
             }
@@ -377,7 +389,8 @@ public sealed partial class SiteBuilder
                 Categories = [],
                 WordCount = 0,
                 ReadingTime = TimeSpan.Zero,
-                Type = "home"
+                Type = "home",
+                Kind = "home"
             };
 
             var context = new TemplateContext
@@ -388,8 +401,23 @@ public sealed partial class SiteBuilder
                 IsHome = true
             };
 
-            var html = await _templateRenderer.RenderAsync("index", context, cancellationToken);
+            var html = await _templateRenderer.RenderPageAsync(homeQuery, context, cancellationToken);
             RegisterRenderedDependencies(context);
+            // 模板命中却产出空内容（典型：裸 {{ define "main" }} 未配套 baseof）视为
+            // 首页生成失败——静默写空 index.html 比报错更贵（Ananke 目录形态实证）
+            if (string.IsNullOrWhiteSpace(html))
+            {
+                errors.Add(new BuildError
+                {
+                    FilePath = "/",
+                    Line = 0,
+                    Column = 0,
+                    Message = "首页模板产出为空（检查 home/index 模板的 block 与 baseof 配套）",
+                    ErrorCode = "HOME001"
+                });
+                return null;
+            }
+
             return new RenderedPage
             {
                 OutputPath = Path.Combine(options.OutputPath, "index.html"),
@@ -458,6 +486,7 @@ public sealed partial class SiteBuilder
                 }
 
                 // 创建分类页面的上下文
+                var isTaxonomyList = taxPage.PageType == TaxonomyPageType.TaxonomyList;
                 var pageContext = new PageContext
                 {
                     Title = taxPage.TermName ?? taxPage.TaxonomyName,
@@ -469,38 +498,18 @@ public sealed partial class SiteBuilder
                     Categories = [],
                     WordCount = 0,
                     ReadingTime = TimeSpan.Zero,
+                    // Type 保留既有模板语义（"taxonomy"），Kind 承载查找链维度
                     Type = "taxonomy",
+                    Kind = isTaxonomyList ? "taxonomy" : "term",
+                    TaxonomyName = taxPage.TaxonomyName,
+                    TaxonomySingular = taxPage.TaxonomySingular,
+                    TaxonomyPlural = taxPage.TaxonomyPlural,
                     // 模板 page.pages（term 页词条页面集合）与 page.terms（taxonomy
                     // 页词条列表）的数据源——默认主题模板依赖此二者，缺省时
                     // 词条/分类页渲染为空列表（端到端冒烟发现的回归）
                     Pages = taxPage.Pages,
                     Terms = taxPage.Terms
                 };
-
-                var templateName = taxPage.PageType == TaxonomyPageType.TaxonomyList
-                    ? "taxonomy"
-                    : "term";
-
-                // 如果 term 模板不存在，回退到 taxonomy 或 list 模板
-                if (templateName == "term" && !_templateRenderer.TemplateExists("term"))
-                {
-                    if (_templateRenderer.TemplateExists("taxonomy"))
-                    {
-                        templateName = "taxonomy";
-                    }
-                    else if (_templateRenderer.TemplateExists("list"))
-                    {
-                        templateName = "list";
-                    }
-                }
-                // 如果 taxonomy 模板不存在，回退到 list 模板
-                else if (templateName == "taxonomy" && !_templateRenderer.TemplateExists("taxonomy"))
-                {
-                    if (_templateRenderer.TemplateExists("list"))
-                    {
-                        templateName = "list";
-                    }
-                }
 
                 var context = new TemplateContext
                 {
@@ -512,7 +521,10 @@ public sealed partial class SiteBuilder
                     Pages = taxPage.Pages
                 };
 
-                var html = await _templateRenderer.RenderAsync(templateName, context, cancellationToken);
+                // A 组候选链：{taxonomy}/terms → {taxonomy}/taxonomy → ... → list，
+                // 未命中物理模板时渲染器回退内置模板（taxonomy/term/list）
+                var query = BuildPageTemplateQuery(pageContext);
+                var html = await _templateRenderer.RenderPageAsync(query, context, cancellationToken);
                 RegisterRenderedDependencies(context);
                 results.Add(new RenderedPage
                 {

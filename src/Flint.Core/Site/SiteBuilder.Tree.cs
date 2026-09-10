@@ -656,6 +656,8 @@ public sealed partial class SiteBuilder
             WordCount = 0,
             ReadingTime = TimeSpan.Zero,
             Type = kind,
+            // 合成列表页（section/home）：kind 即节点类型，无显式 type 声明
+            Kind = kind,
             Draft = draft,
             Section = SectionOfKind(relPermalink),
             Params = cascadedParams
@@ -730,6 +732,11 @@ public sealed partial class SiteBuilder
             // _index.md 归一为 branch 节点后必须产出 section 语义（list 模板、IsList），
             // 此前用 "page" 兜底致真实 section 页走 single 模板
             Type = content.Metadata.Type ?? nodeKind ?? "page",
+            // 模板查找链维度（A 组）：kind 来自树节点类型（用户 type 不覆盖它），
+            // DeclaredType 只记 front matter 显式声明——两者分离后候选链才能既让
+            // Ananke 的 type:page 命中 layouts/page/single.html，又不让普通页误命中
+            Kind = nodeKind ?? "page",
+            DeclaredType = content.Metadata.Type,
             Layout = layout,
             Outputs = content.Metadata.Outputs,
             SourcePath = content.SourcePath,

@@ -48,6 +48,17 @@ public sealed partial class TaxonomyService
     }
 
     /// <summary>
+    /// 取分类的单数/复数名（对齐 Hugo <c>.Data.Singular</c> / <c>.Data.Plural</c>）。
+    /// 未注册的自定义分类退化为名字本身（不抛异常，宽容对齐 Hugo）
+    /// </summary>
+    public (string Singular, string Plural) GetTaxonomyNames(string taxonomyName)
+    {
+        return _taxonomyConfigs.TryGetValue(taxonomyName, out var config)
+            ? (config.Singular, config.Plural)
+            : (taxonomyName, taxonomyName);
+    }
+
+    /// <summary>
     /// 为指定分类构建术语列表
     /// </summary>
     private List<TaxonomyTerm> BuildTaxonomyTerms(
@@ -304,11 +315,14 @@ public sealed class TaxonomyPageGenerator
 
         foreach (var (taxonomyName, terms) in taxonomies.Taxonomies)
         {
+            var (singular, plural) = _taxonomyService.GetTaxonomyNames(taxonomyName);
             // 生成分类列表页
             var listPermalink = _taxonomyService.GenerateTaxonomyListPermalink(taxonomyName);
             pages.Add(new TaxonomyPageInfo
             {
                 TaxonomyName = taxonomyName,
+                TaxonomySingular = singular,
+                TaxonomyPlural = plural,
                 TermName = null,
                 PageType = TaxonomyPageType.TaxonomyList,
                 Permalink = listPermalink,
@@ -333,6 +347,8 @@ public sealed class TaxonomyPageGenerator
                     pages.Add(new TaxonomyPageInfo
                     {
                         TaxonomyName = taxonomyName,
+                        TaxonomySingular = singular,
+                        TaxonomyPlural = plural,
                         TermName = term.Name,
                         TermSlug = term.Slug,
                         PageType = TaxonomyPageType.TermPage,
@@ -360,6 +376,16 @@ public sealed class TaxonomyPageInfo
     /// 分类名称
     /// </summary>
     public required string TaxonomyName { get; init; }
+
+    /// <summary>
+    /// 分类单数名（对齐 Hugo <c>.Data.Singular</c>，如 category）
+    /// </summary>
+    public string? TaxonomySingular { get; init; }
+
+    /// <summary>
+    /// 分类复数名（对齐 Hugo <c>.Data.Plural</c>，如 categories）
+    /// </summary>
+    public string? TaxonomyPlural { get; init; }
 
     /// <summary>
     /// 术语名称（如果是术语页面）

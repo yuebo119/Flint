@@ -148,10 +148,14 @@ Markdown 支持 CommonMark + GFM：代码高亮、表格、任务列表、自动
 {{ include "partials/header" }}     <!-- partial -->
 {{ partialcached "footer" "v1" }}   <!-- 缓存 partial：输出不依赖页面时用 -->
 
-<!-- 模板继承 -->
-{{ extends "_default/baseof.html" }}
-{{ block "main" }}...{{ end }}
+<!-- 模板继承：Scriban 无 extends/block，用 capture + 命名参数 include 组合 -->
+{{ capture content }}
+<article>{{ page.content }}</article>
+{{ end }}
+{{ include "baseof.html" content: content }}
 ```
+
+> `layouts/_default/baseof.html` 里用 `{{ content }}` 占位接收上面捕获的块。
 
 ### HTML 转义契约（安全须知）
 
@@ -172,6 +176,20 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 
 - **模板**：站点 `layouts/` 优先，主题按序回退，include/partial 同规则；
   `partials/` 与 `_partials/`、`shortcodes/` 与 `_shortcodes/` 双形态支持（兼容 Hugo v0.146+ 新目录约定）
+- **模板查找（页面感知）**：布局模板按**页面特征**逐级查找，对齐 Hugo lookup order——
+
+  | 页面 kind | 候选顺序（靠前优先） |
+  |---|---|
+  | 普通页 | `{type}/{layout}` → `{type}/single` → `{section}/{layout}` → `{section}/single` → `{layout}` → `single` → `all` |
+  | 首页 | `index` → `home` → `list` → `all`（`home.html` 为 v0.146+ 标准名） |
+  | section | `{section}/section` → `{section}/list` → `section/section` → `section/list` → `list` → `all` |
+  | taxonomy | `{taxonomy}/terms` → `{taxonomy}/taxonomy` → `{taxonomy}/list` → `terms` → `taxonomy` → `list` |
+  | term | `{taxonomy}/term` → `{taxonomy}/taxonomy` → … → `term` → `taxonomy` → `list` |
+
+  同一候选级内站点优先于主题，同根内根形态（`layouts/x.html`）优先于
+  `_default` 形态（`layouts/_default/x.html`）；输出格式变体（`home.rss.html`）
+  按 `.{format}` 后缀解析。这让 `layouts/posts/single.html` **只对 posts 下的
+  页面生效**，`layouts/blog/` 按 front matter `type` 路由。
 - **资源**：主题 `static/` 与 `assets/` 合并进输出，与站点同名资源时站点覆盖；
   `static/` 内容映射到输出根（`static/css/a.css` → `public/css/a.css`，对齐 Hugo）
 - **内容**：主题 `content/` 合并（站点优先、主题补缺），主题示例内容可直接构建
@@ -192,6 +210,9 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 `{{ partial "func/x" }}` 取 partial 返回值（标量类型还原）、`{{ includeCached "x" }}`
 缓存 partial、`{{ page.file.path }}` 访问 `.File.*` 方法族、
 `{{ page.resources }}` 访问 bundle 资源、`{{ i18n "key" }}` 取翻译；
+分类页提供 Hugo `.Data` 对象：`page.data.singular`/`plural`（单复数名）、
+`page.data.terms`（含 `.Alphabetical`/`.ByCount` 视图）、`page.data.pages`
+（taxonomy 列表页为词条对象，含 `.title`/`.rel_permalink`/`.pages`；term 页为内容页集合）；
 内置函数含 Hugo 兼容的 `where`/`sortBy`/`after`/`in`/
 `dict`/`merge`/`urlize`/`markdownify`/`plainify`/`emojify`/`humanize` 等。
 

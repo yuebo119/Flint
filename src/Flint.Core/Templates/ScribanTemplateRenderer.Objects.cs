@@ -103,6 +103,17 @@ public sealed partial class ScribanTemplateRenderer
             // B4：Hugo .File.* 方法族（主题常用 .File.Path / .File.ContentBaseName）
             SetValue("file", BuildFileObject(page.SourcePath), false);
 
+            // taxonomy 页数据对象（对齐 Hugo .Data）：Singular/Plural/Terms/Pages。
+            // Ananke 的 terms.html 迭代 page.Data.pages 枚举词条（词条对象含
+            // title/rel_permalink/pages），taxonomy.html 用 page.pages 枚举内容页——
+            // 缺此对象时 terms.html 报 "Cannot get the member page.Data.pages for a null object"
+            var pageData = BuildPageDataObject(page);
+            if (pageData is not null)
+            {
+                SetValue("data", pageData, false);
+                SetValue("Data", pageData, false);
+            }
+
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
             SetValue("Content", page.Content, false);
@@ -152,6 +163,164 @@ public sealed partial class ScribanTemplateRenderer
         /// 模板传入的页面对象反查真实 PageContext 作为渲染上下文
         /// </summary>
         internal FlintPageContext PageContext => _page;
+    }
+
+    /// <summary>
+    /// 绝对 URL（或已是相对路径）→ 相对路径（对齐 Hugo <c>.RelPermalink</c>）。
+    /// 用 <see cref="Uri.PathAndQuery"/> 取路径部分，不依赖站点 baseURL 拼接形态；
+    /// 解析失败时原样返回（宽容，不因脏数据中断渲染）
+    /// </summary>
+    private static string ToRelPermalink(string? permalink)
+    {
+        if (string.IsNullOrEmpty(permalink))
+        {
+            return "/";
+        }
+
+        if (permalink.StartsWith('/'))
+        {
+            return permalink;
+        }
+
+        return Uri.TryCreate(permalink, UriKind.Absolute, out var uri)
+            ? uri.PathAndQuery
+            : permalink;
+    }
+
+    /// <summary>
+    /// 分类页数据对象（对齐 Hugo <c>.Data</c>）：
+    /// <c>singular</c>/<c>plural</c>/<c>terms</c>（含 Alphabetical/ByCount）/<c>pages</c>。
+    /// kind=taxonomy（terms.html）的 <c>pages</c> 为词条对象列表；
+    /// kind=term（taxonomy.html）的 <c>pages</c> 为内容页列表。
+    /// 非分类页返回 null（不注册 <c>data</c> 键，模板访问得 null 而非误值）
+    /// </summary>
+    private static ScriptObject? BuildPageDataObject(FlintPageContext page)
+    {
+        var isTaxonomyList = page.Kind.Equals("taxonomy", StringComparison.OrdinalIgnoreCase);
+        var isTerm = page.Kind.Equals("term", StringComparison.OrdinalIgnoreCase);
+        if (!isTaxonomyList && !isTerm)
+        {
+            return null;
+        }
+
+        var data = new ScriptObject
+        {
+            ["singular"] = page.TaxonomySingular ?? page.TaxonomyName,
+            ["plural"] = page.TaxonomyPlural ?? page.TaxonomyName,
+            ["Singular"] = page.TaxonomySingular ?? page.TaxonomyName,
+            ["Plural"] = page.TaxonomyPlural ?? page.TaxonomyName
+        };
+
+        // Terms：词条名 → 词条对象，另提供 Alphabetical / ByCount 排序视图
+        var terms = page.Terms ?? [];
+        var termsMap = new LazyTermsMap(terms);
+        data["terms"] = termsMap;
+        data["Terms"] = termsMap;
+
+        // Pages：taxonomy 列表页给词条对象（Ananke terms.html 语义），
+        // term 页给内容页集合（Ananke taxonomy.html 用 page.pages，此处同源）
+        var pagesValue = isTaxonomyList
+            ? terms.Select(t => (object)new LazyTermPage(t)).ToList()
+            : (object?)GetSharedPageList(page.Pages ?? []);
+        data["pages"] = pagesValue;
+        data["Pages"] = pagesValue;
+
+        return data;
+    }
+
+    /// <summary>
+    /// 词条对象（Hugo 词条页视角）：title/rel_permalink/permalink/pages/count。
+    /// terms.html 迭代 <c>Data.Pages</c> 时按此形状访问
+    /// </summary>
+    private sealed class LazyTermPage : ScriptObject
+    {
+        private readonly TaxonomyTerm _term;
+        private LazyPageList? _lazyPages;
+
+        public LazyTermPage(TaxonomyTerm term)
+        {
+            _term = term;
+            // RelPermalink 为相对路径（对齐 Hugo .RelPermalink 语义）——主题把它
+            // 放进 href 或与锚点拼接时，绝对 URL 会产出错误链接
+            var rel = ToRelPermalink(term.Permalink);
+            SetValue("title", term.Name, false);
+            SetValue("name", term.Name, false);
+            SetValue("rel_permalink", rel, false);
+            SetValue("permalink", term.Permalink, false);
+            SetValue("count", term.Count, false);
+            SetValue("slug", term.Slug, false);
+
+            SetValue("Title", term.Name, false);
+            SetValue("Name", term.Name, false);
+            SetValue("RelPermalink", rel, false);
+            SetValue("Permalink", term.Permalink, false);
+            SetValue("Count", term.Count, false);
+            SetValue("Slug", term.Slug, false);
+        }
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            if (member.Equals("pages", StringComparison.OrdinalIgnoreCase))
+            {
+                _lazyPages ??= GetSharedPageList(_term.Pages);
+                value = _lazyPages;
+                return true;
+            }
+
+            return base.TryGetValue(context, span, member, out value);
+        }
+    }
+
+    /// <summary>
+    /// 词条映射（Hugo <c>.Data.Terms</c>）：按词条名取值，另有
+    /// <c>Alphabetical</c>（按名序）与 <c>ByCount</c>（按数量降序）两个排序视图，
+    /// 对齐 Hugo 文档的 taxonomy 用法
+    /// </summary>
+    private sealed class LazyTermsMap : ScriptObject
+    {
+        private readonly IReadOnlyList<TaxonomyTerm> _terms;
+        private List<object>? _alphabetical;
+        private List<object>? _byCount;
+
+        public LazyTermsMap(IReadOnlyList<TaxonomyTerm> terms)
+        {
+            _terms = terms;
+            SetValue("count", terms.Count, false);
+            SetValue("Count", terms.Count, false);
+        }
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            switch (member.ToLowerInvariant())
+            {
+                case "alphabetical":
+                    _alphabetical ??= _terms
+                        .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(t => (object)new LazyTermPage(t))
+                        .ToList();
+                    value = _alphabetical;
+                    return true;
+                case "bycount":
+                    _byCount ??= _terms
+                        .OrderByDescending(t => t.Count)
+                        .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+                        .Select(t => (object)new LazyTermPage(t))
+                        .ToList();
+                    value = _byCount;
+                    return true;
+            }
+
+            // 词条名直接取值（.Data.Terms.foo）
+            var match = _terms.FirstOrDefault(t =>
+                t.Name.Equals(member, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
+            {
+                value = new LazyTermPage(match);
+                return true;
+            }
+
+            return base.TryGetValue(context, span, member, out value);
+        }
     }
 
     private static ScriptObject BuildSiteObject(FlintSiteContext site)

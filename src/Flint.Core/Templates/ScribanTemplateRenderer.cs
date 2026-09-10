@@ -141,6 +141,217 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         return _templateCache.Count;
     }
 
+    /// <summary>
+    /// 页面感知渲染（A 组查找链）：候选链解析 → 物理模板 / 内置兜底 → 渲染。
+    /// 候选链未命中且无内置兜底时抛 TemplateNotFoundException（SiteBuilder 据此
+    /// 在 Skip 模式跳页、Error 模式 fail-fast）。
+    /// </summary>
+    public async ValueTask<string> RenderPageAsync(
+        PageTemplateQuery query,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var path = ResolvePageTemplatePath(query);
+        if (path is null)
+        {
+            // 内置兜底（对齐 Hugo embedded templates）：kind → 内置模板名。
+            // 仅 html 格式——内置模板是 HTML 形态，格式变体不适用
+            var builtinName = BuiltinNameForKind(query.Kind);
+            if (builtinName is not null && IsHtmlOutputFormat(query.OutputFormat))
+            {
+                return await RenderBuiltinAsync(builtinName, context, cancellationToken);
+            }
+
+            throw new TemplateNotFoundException(
+                DescribePageQuery(query),
+                PageTemplateCandidates.Build(query)
+                    .SelectMany(level => new[]
+                    {
+                        level.Name + ".html",
+                        "_default/" + level.Name + ".html"
+                    })
+                    .ToList());
+        }
+
+        var logicalName = ToLogicalName(path);
+        var template = await GetOrLoadTemplateAtPathAsync(logicalName, path, cancellationToken);
+        return await RenderLoadedAsync(template, logicalName, path, context, cancellationToken);
+    }
+
+    /// <summary>
+    /// 共用渲染入口：依赖追踪（逻辑名 + 已知物理路径）+ 运行时异常包装。
+    /// <paramref name="physicalPath"/> 为 null 时（内置模板）只记逻辑名。
+    /// </summary>
+    private async ValueTask<string> RenderLoadedAsync(
+        Template template,
+        string templateName,
+        string? physicalPath,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken)
+    {
+        var scribanContext = CreateScribanContext(context);
+        RenderDependencyTracker.Track(scribanContext, templateName);
+        if (physicalPath is not null)
+        {
+            RenderDependencyTracker.Track(scribanContext, Path.GetFullPath(physicalPath));
+        }
+
+        try
+        {
+            var result = await template.RenderAsync(scribanContext);
+            context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
+            return result;
+        }
+        catch (Scriban.Syntax.ScriptRuntimeException ex)
+        {
+            // 携带模板名与行列位置，避免裸的 Scriban 内部堆栈直达用户
+            throw new TemplateRenderException(
+                templateName, ex.Message,
+                ex.Span.Start.Line + 1, ex.Span.Start.Column + 1, ex);
+        }
+    }
+
+    /// <summary>
+    /// 按已知物理路径加载模板（页面感知查找链命中后的加载）：
+    /// 缓存键为逻辑名，与 <see cref="GetOrLoadTemplateAsync"/> 的 mtime 失效语义一致
+    /// </summary>
+    private async ValueTask<Template> GetOrLoadTemplateAtPathAsync(
+        string templateName,
+        string templatePath,
+        CancellationToken cancellationToken)
+    {
+        if (_templateCache.TryGetValue(templateName, out var cached) && !IsStale(cached))
+        {
+            return cached.Template;
+        }
+
+        string content;
+        DateTime mtimeUtc;
+        // 读前取 mtime、读后复核：读期间被写会产出"旧内容+新 mtime"条目使 stale 永久失效
+        for (var attempt = 0; ; attempt++)
+        {
+            var mtimeBefore = File.GetLastWriteTimeUtc(templatePath);
+            content = await File.ReadAllTextAsync(templatePath, cancellationToken);
+            mtimeUtc = File.GetLastWriteTimeUtc(templatePath);
+            if (mtimeUtc == mtimeBefore || attempt >= 2)
+            {
+                break;
+            }
+        }
+
+        var parsed = Template.Parse(content, templatePath);
+        if (parsed.HasErrors)
+        {
+            throw new TemplateParseException(
+                templateName,
+                parsed.Messages.Select(m => m.ToString()).ToList());
+        }
+
+        _templateCache[templateName] = new CachedTemplate(parsed, templatePath, mtimeUtc);
+        // 模板重载说明磁盘模板可能变化，partialCached 结果缓存必须失效
+        _partialResultCache.Clear();
+        return parsed;
+    }
+
+    /// <summary>页面感知的物理模板存在性（不含内置兜底）</summary>
+    public bool PageTemplateExists(PageTemplateQuery query) => ResolvePageTemplatePath(query) is not null;
+
+    private string? ResolvePageTemplatePath(PageTemplateQuery query)
+    {
+        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        return lookup.ResolveLayered(PageTemplateCandidates.Build(query));
+    }
+
+    /// <summary>kind → 内置兜底模板名（仅 taxonomy/term/list 有内置；page/home 无）</summary>
+    private static string? BuiltinNameForKind(string kind) => kind.ToLowerInvariant() switch
+    {
+        "section" => "list",
+        "taxonomy" => "taxonomy",
+        "term" => "term",
+        _ => null
+    };
+
+    private static bool IsHtmlOutputFormat(string? format) =>
+        string.IsNullOrEmpty(format) || format.Equals("html", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>渲染内置模板（无物理文件路径，缓存键加 builtin: 前缀避免与同名物理模板冲突）</summary>
+    private async ValueTask<string> RenderBuiltinAsync(
+        string builtinName,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var cacheKey = "builtin:" + builtinName;
+        if (!_templateCache.TryGetValue(cacheKey, out var cached))
+        {
+            if (!BuiltinTemplates.TryGetValue(builtinName, out var builtinContent))
+            {
+                throw new TemplateNotFoundException(builtinName, []);
+            }
+
+            // SourcePath 为 null → IsStale 恒 false（内置内容不随磁盘变化）
+            cached = new CachedTemplate(
+                Template.Parse(builtinContent, cacheKey), null, DateTime.MinValue);
+            _templateCache[cacheKey] = cached;
+        }
+
+        return await RenderLoadedAsync(cached.Template, cacheKey, null, context, cancellationToken);
+    }
+
+    /// <summary>物理路径 → 逻辑名（相对站点 templates 根，统一 / 分隔；跨根时取相对该根的路径）</summary>
+    private string ToLogicalName(string physicalPath)
+    {
+        var full = Path.GetFullPath(physicalPath);
+        foreach (var root in new[] { _templatesPath }.Concat(_themeTemplatePaths))
+        {
+            if (string.IsNullOrEmpty(root))
+            {
+                continue;
+            }
+
+            var rootFull = Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+            {
+                return full[rootFull.Length..].Replace('\\', '/');
+            }
+        }
+
+        return Path.GetFileName(full);
+    }
+
+    private static string DescribePageQuery(PageTemplateQuery query)
+    {
+        var parts = new List<string> { "kind=" + query.Kind };
+        if (!string.IsNullOrEmpty(query.Layout))
+        {
+            parts.Add("layout=" + query.Layout);
+        }
+
+        if (!string.IsNullOrEmpty(query.DeclaredType))
+        {
+            parts.Add("type=" + query.DeclaredType);
+        }
+
+        if (!string.IsNullOrEmpty(query.Section))
+        {
+            parts.Add("section=" + query.Section);
+        }
+
+        if (!string.IsNullOrEmpty(query.Taxonomy))
+        {
+            parts.Add("taxonomy=" + query.Taxonomy);
+        }
+
+        if (!IsHtmlOutputFormat(query.OutputFormat))
+        {
+            parts.Add("format=" + query.OutputFormat);
+        }
+
+        return string.Join(", ", parts);
+    }
+
     /// <inheritdoc />
     public async ValueTask<string> RenderTemplateFileAsync(
         string filePath,
