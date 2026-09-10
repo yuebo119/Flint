@@ -27,4 +27,24 @@ public sealed class ModuleDescriptor
     /// 本地路径
     /// </summary>
     public string? LocalPath { get; init; }
+
+    /// <summary>
+    /// 主题描述（theme.toml description，A4 元数据）
+    /// </summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// 许可证标识（theme.toml license，如 MIT）
+    /// </summary>
+    public string? License { get; init; }
+
+    /// <summary>
+    /// 主题声明的最低 Hugo 版本（theme.toml min_version；Flint 用于兼容性提示）
+    /// </summary>
+    public string? MinVersion { get; init; }
+
+    /// <summary>
+    /// 主题标签（theme.toml tags，mod list 展示用）
+    /// </summary>
+    public IReadOnlyList<string> Tags { get; init; } = [];
 }
