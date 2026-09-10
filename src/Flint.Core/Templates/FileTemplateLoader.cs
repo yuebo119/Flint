@@ -44,11 +44,15 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         relativeForms.Add(Path.Combine("_default", templateName));
         relativeForms.Add(Path.Combine("_default", templateName + ".html"));
         var hasPartialsPrefix = templateName.StartsWith("partials/", StringComparison.OrdinalIgnoreCase) ||
+                                templateName.StartsWith("_partials/", StringComparison.OrdinalIgnoreCase) ||
                                 templatePathStartsWithBackslash(templateName);
         if (!hasPartialsPrefix)
         {
+            // partials/ 与 _partials/ 双形态（后者为 Hugo v0.146+ 新目录约定）
             relativeForms.Add(Path.Combine("partials", templateName));
             relativeForms.Add(Path.Combine("partials", templateName + ".html"));
+            relativeForms.Add(Path.Combine("_partials", templateName));
+            relativeForms.Add(Path.Combine("_partials", templateName + ".html"));
         }
 
         foreach (var root in Roots)

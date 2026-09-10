@@ -17,11 +17,24 @@ VAR_MAP = [
     (r"\.Site\.Language", "site.language"),
     (r"\.Site\.Copyright", "site.copyright"),
     (r"\.Site\.RegularPages", "site.regular_pages"),
-    (r"\.RegularPages", "site.regular_pages"),
+    (r"\.RegularPages\b", "site.regular_pages"),
     (r"\.Site\.Pages", "site.pages"),
-    (r"\.Pages", "site.pages"),
+    # taxonomy/term 页的数据视图（Hugo .Data.*）：映射到 Flint 页面级集合
+    (r"\.Data\.Pages", "page.pages"),
+    (r"\.Data\.Terms", "page.terms"),
+    (r"\.Data\.Singular", "page.title"),
+    (r"\.Data\.Plural", "page.title"),
+    (r"\.Paginator\.Pages", "site.paginator.pages"),
+    (r"\.Paginator\.TotalPages", "site.paginator.total_pages"),
+    (r"\.Paginator\.PageNumber", "site.paginator.page_number"),
+    (r"\.Paginator\.HasPrev", "site.paginator.has_prev"),
+    (r"\.Paginator\.HasNext", "site.paginator.has_next"),
+    (r"\.Pages\b", "site.pages"),
     (r"\.Site\.Data\.([\w.]+)", r"site.data.\1"),
     (r"\.Site\b", "site"),
+    (r"\.CurrentSection\.Title", "page.section"),
+    (r"\.CurrentSection", "page.section"),
+    (r"\.Parent\.Title", "page.section"),
     (r"\.Params\.(\w+)", r"page.params.\1"),
     (r"\.RelPermalink", "page.rel_permalink"),
     (r"\.Permalink", "page.permalink"),
@@ -37,6 +50,13 @@ VAR_MAP = [
     (r"\.Date", "page.date"),
     (r"\.Tags", "page.tags"),
     (r"\.Categories", "page.categories"),
+    (r"\.CurrentSection\.Title", "page.section"),
+    (r"\.CurrentSection", "page.section"),
+    (r"\.Parent\.Title", "page.section"),
+    (r"\.Kind", "page.type"),
+    (r"\.IsPage", "true"),
+    (r"\.IsHome", "is_home"),
+    (r"\.IsSection", "is_list"),
 ]
 
 GO_DATE_TOKENS = [
@@ -56,8 +76,8 @@ GO_DATE_TOKENS = [
 
 HUGO_NS_RE = re.compile(
     r"\b(compare|collections|transform|urls|hugo|resources|lang|fmt|inflect|crypto|data)\."
-    r"|\.(Scratch|File|Resources|Paginator|GetPage|Next|Prev|Render)\b"
-    r"|\b(template|warnf|printf|default|after|first|last|where|shuffle|uniq|Get)\b")
+    r"|\.(Scratch|File|Resources|GetPage|Next|Prev|Related|OutputFormats)\b"
+    r"|\b(warnf|printf|after\s|first\s|last\s|where\s|shuffle|uniq|dict\s|slice\s|\.Get\b|delimit\b)")
 
 def convert_go_date_layout(layout):
     out = layout
@@ -68,6 +88,12 @@ def convert_go_date_layout(layout):
 def convert_expr(expr, ctx_stack, file):
     expr = re.sub(r"^\-+\s*", "", expr).strip()
     expr = re.sub(r"\s*\-+$", "", expr).strip()
+
+    # 多行表达式（Hugo 的括号换行风格）与 return 语句：无 Scriban 等价，
+    # 一律 TODO——必须在任何函数处理器之前拦截（and/or 的空白切分会把多行拆坏）
+    if "\n" in expr or re.match(r"^return\b", expr):
+        TODO_LIST.append((file, expr))
+        return f"##TODO-HUGO: {expr.replace(chr(10), ' ')[:60]}##"
 
     if expr == "end":
         if ctx_stack:
@@ -82,7 +108,9 @@ def convert_expr(expr, ctx_stack, file):
         return "else"
     if expr.startswith("else if"):
         inner = re.sub(r"^else\s+if\s*", "", expr)
-        return "else if " + convert_expr(inner, ctx_stack, file)
+        converted = convert_expr(inner, ctx_stack, file)
+        # 条件不可转换时降级为裸 else（保留块结构，条件语义裁剪）
+        return "else" if "TODO-HUGO" in converted else "else if " + converted
 
     if re.match(r"^/\*.*\*/$", expr, re.S):
         return ""
@@ -111,6 +139,13 @@ def convert_expr(expr, ctx_stack, file):
             return f"##TODO-HUGO(partial-arg): include {name} {arg}##"
         return base
 
+    m = re.match(r'^\.Render\s+"([^"]+)"$', expr)
+    if m:
+        return 'render "' + m.group(1) + '"'
+    m = re.match(r'^\.Render\s+(\$\w+)$', expr)
+    if m:
+        return "render " + m.group(1)
+
     m = re.match(r'^\$\.Param\s+"([\w-]+)"$', expr)
     if m:
         return f"page.params.{m.group(1).replace('-', '_')}"
@@ -135,6 +170,19 @@ def convert_expr(expr, ctx_stack, file):
         net_fmt = convert_go_date_layout(m.group(2))
         return f"date.to_string {date_expr} \"{net_fmt}\""
 
+    # and/or/not → Scriban 逻辑运算符（Hugo 前缀函数形态）
+    m = re.match(r"^and\s+(.+)$", expr, re.S)
+    if m:
+        parts = [convert_expr(p, ctx_stack, file) for p in m.group(1).split()]
+        return " && ".join(parts)
+    m = re.match(r"^or\s+(.+)$", expr, re.S)
+    if m:
+        parts = [convert_expr(p, ctx_stack, file) for p in m.group(1).split()]
+        return " || ".join(parts)
+    m = re.match(r"^not\s+(.+)$", expr, re.S)
+    if m:
+        return "!(" + convert_expr(m.group(1), ctx_stack, file) + ")"
+
     for fn, op in (("eq", "=="), ("ne", "!="), ("gt", ">"), ("ge", ">="), ("lt", "<"), ("le", "<=")):
         m = re.match(rf"^{fn}\s+(.+?)\s+(.+)$", expr, re.S)
         if m:
@@ -151,9 +199,45 @@ def convert_expr(expr, ctx_stack, file):
     if m:
         return f"string.truncate {convert_expr(m.group(2), ctx_stack, file)} {m.group(1)}"
 
+    # 赋值先行：右值需递归转换（.Related/dict 等 Hugo 形态在递归内拦截），
+    # 必须在变量映射与 text!=expr 提前返回之前处理，否则 := 会被跳过
+    m = re.match(r"^\$(\w+)\s*:=\s*(.+)$", expr, re.S)
+    if m:
+        var, rhs = m.group(1), m.group(2)
+        converted_rhs = convert_expr(rhs, ctx_stack, file)
+        if "TODO-HUGO" in converted_rhs:
+            TODO_LIST.append((file, expr))
+            converted_rhs = '""'
+        return f"${var} = {converted_rhs}"
+    m = re.match(r"^\$(\w+)\s*=\s*(.+)$", expr, re.S)
+    if m:
+        var, rhs = m.group(1), m.group(2)
+        converted_rhs = convert_expr(rhs, ctx_stack, file)
+        if "TODO-HUGO" in converted_rhs:
+            TODO_LIST.append((file, expr))
+            converted_rhs = '""'
+        return f"${var} = {converted_rhs}"
+
+    # Hugo 特有命名空间/函数：先于变量映射与提前返回判定（否则 .RegularPages.Related
+    # 这类"部分可映射部分不可"的表达式会被变量映射的 text!=expr 提前放行）
+    if HUGO_NS_RE.search(expr):
+        TODO_LIST.append((file, expr))
+        return f"##TODO-HUGO: {expr}##"
+
     text = expr
     for pat, rep in VAR_MAP:
         text = re.sub(pat, rep, text)
+
+    # with：Scriban 要求"变量 = 表达式"目标形态，且裸点在块内指向该变量
+    # （Hugo 的 with 直接把上下文切到参数对象上）
+    m = re.match(r"^with\s+(.+)$", expr, re.S)
+    if m:
+        var = f"$__w{len(ctx_stack)}"
+        converted_arg = convert_expr(m.group(1), ctx_stack, file)
+        if "TODO-HUGO" in converted_arg:
+            converted_arg = "page"  # 参数不可转换：降级为页面上下文
+        ctx_stack.append(("__with__", var))
+        return f"with {var} = {converted_arg}"
 
     # range：栈式上下文（先于变量映射，避免 .Pages 等集合映射干扰）
     if expr.startswith("range"):
@@ -162,16 +246,15 @@ def convert_expr(expr, ctx_stack, file):
         var_name = None
         if m3:
             var_name, coll = "$" + m3.group(1), m3.group(2)
-        coll = re.sub(r"^\.\s*", "", coll)  # range 的集合无需 page 前缀
-        if coll in (".Pages", "Pages"):
-            coll = "site.pages"
+        # 集合表达式交给 convert_expr 统一映射（.Pages / .Paginator.Pages 等长模式优先）
         coll = convert_expr(coll, ctx_stack, file)
         var_name = var_name or f"_it{len(ctx_stack)}"
         ctx_stack.append((var_name, coll))
         return f"for {var_name} in {coll}"
 
     if text == ".":
-        return ctx_stack[-1][0] if ctx_stack else "page"
+        # 跳过 __define__ 标记（define 块内裸点语义 = 页面上下文，非方法名）
+        return next((v for k, v in reversed(ctx_stack) if k != "__define__"), "page")
     if re.search(r"(?<![\w.$])\.(?![\w])", text):
         repl = next((v for k, v in reversed(ctx_stack) if k != "__define__"), "page")
         text = re.sub(r"(?<![\w.$])\.(?![\w])", repl, text)
@@ -179,11 +262,6 @@ def convert_expr(expr, ctx_stack, file):
     if text != expr:
         return text
 
-    # 赋值与 $ 变量：Scriban 同形态保留（:= 转 =）
-    if re.match(r"^\$\w+\s*:=\s*.+$", expr, re.S):
-        return expr.replace(":=", "=", 1)
-    if re.match(r"^\$\w+\s*=\s*.+$", expr, re.S):
-        return expr
     if re.match(r"^\$\w+([\w.]*)?$", expr):
         return expr
     if expr.startswith("if $") or expr.startswith("with $"):
@@ -194,10 +272,6 @@ def convert_expr(expr, ctx_stack, file):
     m = re.match(r'^template\s+"([\w.-]+)"', expr)
     if m:
         return f'block "{m.group(1)}"'
-
-    if HUGO_NS_RE.search(expr):
-        TODO_LIST.append((file, expr))
-        return f"##TODO-HUGO: {expr}##"
 
     if "\n" in expr:
         TODO_LIST.append((file, expr))
@@ -217,6 +291,13 @@ def convert_template(text, file):
         out.append(text[pos:m.start()])
         inner = m.group(0)[2:-2]
         converted = convert_expr(inner, ctx_stack, file)
+        # 块关键字位置的 TODO：注释会破坏 if/with 与 end 的配对（end 悬空），
+        # 降级为 "if false" 保持块结构可解析（内容随之隐藏，语义等价于裁剪）
+        if "TODO-HUGO" in converted:
+            stripped = converted.strip()
+            if stripped.startswith("##TODO-HUGO") and re.match(
+                    r"^\s*(if|with|range)\b", inner.strip().lstrip("-").strip()):
+                converted = "if false"
         if converted.strip():
             out.append("{{ " + converted + " }}")  # 空表达式（如 Go 注释）不产出 {{ }}
         pos = m.end()
