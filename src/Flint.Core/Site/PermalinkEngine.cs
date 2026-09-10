@@ -27,19 +27,29 @@ internal static class PermalinkEngine
         var date = content.Metadata.Date ?? DateTimeOffset.Now;
         var fileName = Path.GetFileNameWithoutExtension(content.SourcePath);
 
-        // slug 变量：显式 slug 优先，否则文件名（index.md/_index.md 用父目录名）
+        // slug 变量：显式 slug 优先，否则文件名（index.md/_index.md 用父目录名）。
+        // 例外：content 根目录的 _index.md/index.md 是 home 页——父目录名恰为
+        // contentDir，取之作 slug 会产出 /content/ 而非 /（pattern 非空时尤其明显）
+        var homeDirName = string.IsNullOrEmpty(config.ContentDir) ? "content" : config.ContentDir;
         string slug;
         if (fileName.Equals("index", StringComparison.OrdinalIgnoreCase) ||
             fileName.Equals("_index", StringComparison.OrdinalIgnoreCase))
         {
             var parentDir = Path.GetDirectoryName(content.SourcePath);
-            slug = !string.IsNullOrEmpty(parentDir)
-                ? GenerateSlug(Path.GetFileName(parentDir))
-                : GenerateSlug(content.Metadata.Title);
+            var parentName = string.IsNullOrEmpty(parentDir) ? "" : Path.GetFileName(parentDir);
+            slug = parentName.Equals(homeDirName, StringComparison.OrdinalIgnoreCase)
+                ? ""   // home 页：无 slug
+                : GenerateSlug(parentName);
         }
         else
         {
             slug = GenerateSlug(string.IsNullOrEmpty(content.Metadata.Slug) ? fileName : content.Metadata.Slug);
+        }
+
+        // home 页恒为根 URL（无视 permalink pattern——Hugo 语义：home 不属于任何 section）
+        if (slug.Length == 0)
+        {
+            return "/";
         }
 
         if (!string.IsNullOrEmpty(pattern))
