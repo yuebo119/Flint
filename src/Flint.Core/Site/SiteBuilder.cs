@@ -163,6 +163,25 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 10. 处理资源文件（含主题 static/assets 合并，站点覆盖主题）
             var processedAssets = await ProcessAssetsAsync(
                 options.SourcePath, config.ThemeNames, options, errors, cancellationToken);
+
+            // 10.5 模板函数生成的资源产物（resources.Concat/FromString/Fingerprint）：
+            // 模板引用的 RelPermalink 必须真实存在，否则 404。渲染已完成，此时收集
+            foreach (var generated in _templateRenderer.GeneratedResources)
+            {
+                if (string.IsNullOrEmpty(generated.Content) || string.IsNullOrEmpty(generated.RelPermalink))
+                {
+                    continue;
+                }
+
+                processedAssets.Add(new ProcessedAsset
+                {
+                    OutputPath = generated.RelPermalink.TrimStart('/'),
+                    SourcePath = generated.Name,
+                    Content = System.Text.Encoding.UTF8.GetBytes(generated.Content),
+                    MediaType = generated.MediaType,
+                    ContentHash = ""
+                });
+            }
             Phase("10.资源");
 
             // 11. 写入输出文件（先创建目录）

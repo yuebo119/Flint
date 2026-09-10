@@ -73,6 +73,13 @@ public interface ITemplateRenderer
     /// 清空模板 mtime 短窗缓存（构建边界调用，保证每次构建看到模板最新状态）
     /// </summary>
     void InvalidateMtimeCache();
+
+    /// <summary>
+    /// 本构建内模板函数产生的资源产物（resources.Concat/FromString/Fingerprint 等），
+    /// 需由输出阶段写盘——否则模板引用的 RelPermalink 会 404。
+    /// 非资源类渲染器实现可返回空列表
+    /// </summary>
+    IReadOnlyList<Templates.TemplateResource> GeneratedResources => [];
 }
 
 /// <summary>
@@ -380,6 +387,29 @@ public sealed class PageContext
     /// </summary>
     public string? TaxonomyName { get; init; }
 
+    /// <summary>链接标题（对齐 Hugo .LinkTitle：缺省回退 Title；菜单/列表常用）</summary>
+    public string? LinkTitle { get; init; }
+
+    /// <summary>摘要是否被截断过（对齐 Hugo .Truncated）</summary>
+    public bool Truncated { get; init; }
+
+    /// <summary>页面逻辑路径（对齐 Hugo .Path，如 /posts/p1；home 为 /）</summary>
+    public string? PagePath { get; init; }
+
+    /// <summary>bundle 类型（leaf/branch/single，对齐 Hugo .BundleType）</summary>
+    public string? BundleType { get; init; }
+
+    /// <summary>发布日期（对齐 Hugo .PublishDate，缺省回退 Date）</summary>
+    public DateTimeOffset? PublishDate { get; init; }
+
+    /// <summary>失效日期（对齐 Hugo .ExpiryDate）</summary>
+    public DateTimeOffset? ExpiryDate { get; init; }
+
+    /// <summary>模糊字数（对齐 Hugo .FuzzyWordCount：百位近似）</summary>
+    public int FuzzyWordCount => WordCount < 100
+        ? WordCount
+        : (int)Math.Round(WordCount / 100.0, MidpointRounding.AwayFromZero) * 100;
+
     /// <summary>
     /// 分类单数名（对齐 Hugo <c>.Data.Singular</c>）
     /// </summary>
@@ -526,6 +556,12 @@ public sealed class PageContext
             TaxonomyName = TaxonomyName,
             TaxonomySingular = TaxonomySingular,
             TaxonomyPlural = TaxonomyPlural,
+            LinkTitle = LinkTitle,
+            Truncated = Truncated,
+            PagePath = PagePath,
+            BundleType = BundleType,
+            PublishDate = PublishDate,
+            ExpiryDate = ExpiryDate,
             Layout = Layout,
             Outputs = Outputs,
             SourcePath = SourcePath,

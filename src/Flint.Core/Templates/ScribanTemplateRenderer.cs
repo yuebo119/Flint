@@ -45,6 +45,30 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _timeProvider = TimeProvider.System;
     }
 
+    /// <summary>
+    /// 完整构造：接入模板资源提供者与环境信息（resources.*/css.*/hugo.* 命名空间）。
+    /// 构建入口用此重载；未提供时对应命名空间注册为空对象（模板访问得 null 而非崩溃）
+    /// </summary>
+    public ScribanTemplateRenderer(
+        string templatesPath,
+        string baseUrl,
+        TemplateEnvironmentInfo environment,
+        ITemplateResourceProvider? resources,
+        params string[] themeTemplatePaths)
+    {
+        _templatesPath = templatesPath;
+        _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
+        _builtinFunctions = new BuiltinTemplateFunctions(baseUrl, resources, environment);
+        _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _timeProvider = TimeProvider.System;
+    }
+
+    /// <summary>
+    /// 本构建内模板函数产生的资源产物（resources.Concat/FromString/Fingerprint 结果），
+    /// 由 SiteBuilder 输出阶段写盘——否则模板引用的 RelPermalink 会 404
+    /// </summary>
+    public IReadOnlyList<TemplateResource> GeneratedResources => _builtinFunctions.GeneratedResources;
+
     /// <summary>测试专用构造：时间源可注入</summary>
     public ScribanTemplateRenderer(string templatesPath, string baseUrl, TimeProvider timeProvider, params string[] themeTemplatePaths)
     {
@@ -875,8 +899,44 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ["list"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>",
             // Hugo 内置 pagination 模板（default 格式）的 Scriban 等价：总分页数 > 1 时
             // 输出首页/上一页/页码槽/下一页/末页。Pager 字段由 PaginatorView 对象提供
-            ["pagination"] = BuildPaginationTemplate()
+            ["pagination"] = BuildPaginationTemplate(),
+
+            // ---- Hugo embedded partials（主题不提供、由 Hugo 内置；主题直接 include）----
+            // 最小等价实现：输出合法 HTML 的元信息标签，主题可覆盖同名 partial。
+            // site.menus.main 等缺失时为循环空转，不报错
+            ["opengraph"] = BuildOpenGraphTemplate(),
+            ["schema"] = BuildSchemaTemplate(),
+            ["twitter_cards"] = BuildTwitterCardsTemplate(),
+            ["google_analytics"] = "",
+            ["disqus"] = ""
         };
+
+    /// <summary>
+    /// Hugo 内置 opengraph.html 的 Scriban 等价：输出 og:* 元信息。
+    /// 变量缺失时用 default 兜底，不产生空标签
+    /// </summary>
+    private static string BuildOpenGraphTemplate() =>
+        """
+        <meta property="og:title" content="{{ page.title | default site.title }}" />
+        <meta property="og:description" content="{{ page.description | default page.summary | default site.params.description }}" />
+        <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}" />
+        <meta property="og:url" content="{{ page.permalink | default site.base_url }}" />
+        {{ if site.title }}<meta property="og:site_name" content="{{ site.title }}" />{{ end }}
+        """;
+
+    /// <summary>Hugo 内置 schema.html 的 Scriban 等价：输出 JSON-LD 骨架</summary>
+    private static string BuildSchemaTemplate() =>
+        """
+        <script type="application/ld+json">{"@context":"https://schema.org","@type":"{{ if is_home }}WebSite{{ else }}BlogPosting{{ end }}","headline":"{{ page.title }}","url":"{{ page.permalink | default site.base_url }}"}</script>
+        """;
+
+    /// <summary>Hugo 内置 twitter_cards.html 的 Scriban 等价：输出 twitter:* 元信息</summary>
+    private static string BuildTwitterCardsTemplate() =>
+        """
+        <meta name="twitter:title" content="{{ page.title | default site.title }}" />
+        <meta name="twitter:description" content="{{ page.description | default page.summary }}" />
+        <meta name="twitter:card" content="summary_large_image" />
+        """;
 
     /// <summary>
     /// Hugo embedded pagination（default 格式）的 Scriban 翻译：

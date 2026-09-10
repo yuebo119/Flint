@@ -35,10 +35,20 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>
     /// 创建内置函数实例
     /// </summary>
-    public BuiltinTemplateFunctions(string baseUrl = "")
+    /// <param name="baseUrl">站点基址（URL 函数用）</param>
+    /// <param name="resources">模板资源提供者（resources.*/css.*/images.* 用；null 时命名空间注册为空对象）</param>
+    /// <param name="environment">模板环境信息（hugo.* 常量对象用）</param>
+    public BuiltinTemplateFunctions(
+        string baseUrl = "",
+        ITemplateResourceProvider? resources = null,
+        TemplateEnvironmentInfo? environment = null)
     {
         _baseUrl = baseUrl.TrimEnd('/');
+        _resources = resources;
+        _environment = environment ?? TemplateEnvironmentInfo.Default;
     }
+
+    private readonly TemplateEnvironmentInfo _environment;
 
     /// <summary>
     /// 注册所有内置函数到 ScriptObject
@@ -81,6 +91,48 @@ public sealed partial class BuiltinTemplateFunctions
 
         // Hugo 主题兼容函数组（B6~B12）：内容/URL/集合/构造/查询
         RegisterHugoCompatFunctions(scriptObject);
+
+        // ---- 命名空间层（Hugo 0.146+ 形态）----
+        // 顺序：先补缺失的全局实现 → 再建别名命名空间对象 → 最后建资源/环境命名空间
+        RegisterMissingFunctions(scriptObject);
+        RegisterNamespaceAliases(scriptObject);
+        RegisterEnvironmentNamespace(scriptObject);
+        RegisterResourceNamespaces(scriptObject);
+    }
+
+    /// <summary>
+    /// 数值归一：真实数值直接转；**数字字符串**也接受（Flint 的 front matter
+    /// 标量存为字符串，Hugo 则类型化为数值——故需容忍 "3" 这类输入）；
+    /// 真非数字（"hello"）抛异常，保持与 Hugo 一致的类型错误语义
+    /// </summary>
+    private static double ToNum(object? v)
+    {
+        switch (v)
+        {
+            case null:
+                return 0d;
+            case double d:
+                return d;
+            case float f:
+                return f;
+            case int i:
+                return i;
+            case long l:
+                return l;
+            case decimal m:
+                return (double)m;
+            case bool b:
+                return b ? 1d : 0d;
+        }
+
+        var text = v.ToString();
+        if (double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+        {
+            return parsed;
+        }
+
+        throw new ArgumentException($"数学函数收到非数值参数: '{text}'");
     }
 
     #region 字符串函数 (20+)
@@ -556,12 +608,30 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // append - 追加元素
-        obj.Import("append", (IEnumerable<object>? collection, object? item) =>
+        obj.Import("append", (Func<object?, object?, object?>)((collection, item) =>
         {
-            if (collection == null)
-                return item != null ? new[] { item } : [];
-            return item != null ? collection.Append(item) : collection;
-        });
+            // Hugo 语义：append 对**字符串**做拼接（$s = $s | append "x" 的常见用法），
+            // 对序列做追加。此前签名限定 IEnumerable，字符串初值的 $body_classes
+            // 会报 "Unable to convert type string to IEnumerable<Object>"（Ananke 实证）
+            if (collection is string s)
+            {
+                return s + (item?.ToString() ?? "");
+            }
+            if (collection is null)
+            {
+                return item != null ? new object[] { item } : Array.Empty<object>();
+            }
+            if (collection is System.Collections.IEnumerable en)
+            {
+                var list = en.Cast<object?>().ToList();
+                if (item != null)
+                {
+                    list.Add(item);
+                }
+                return list;
+            }
+            return item != null ? new[] { collection, item } : new[] { collection };
+        }));
 
         // prepend - 前置元素
         obj.Import("prepend", (IEnumerable<object>? collection, object? item) =>
@@ -702,50 +772,52 @@ public sealed partial class BuiltinTemplateFunctions
     private static void RegisterMathFunctions(ScriptObject obj)
     {
         // add - 加法
-        obj.Import("add", (double a, double b) => a + b);
+        obj.Import("add", (object? a, object? b) => ToNum(a) + ToNum(b));
 
         // sub - 减法
-        obj.Import("sub", (double a, double b) => a - b);
+        obj.Import("sub", (object? a, object? b) => ToNum(a) - ToNum(b));
 
         // mul - 乘法
-        obj.Import("mul", (double a, double b) => a * b);
+        obj.Import("mul", (object? a, object? b) => ToNum(a) * ToNum(b));
 
         // div - 除法
-        obj.Import("div", (double a, double b) => b != 0 ? a / b : 0);
+        obj.Import("div", (object? a, object? b) => ToNum(b) == 0 ? 0d : ToNum(a) / ToNum(b));
 
         // mod - 取模
         obj.Import("mod", (int a, int b) => b != 0 ? a % b : 0);
         obj.Import("modBool", (int a, int b) => b != 0 && a % b == 0);
 
         // ceil - 向上取整
-        obj.Import("ceil", (double n) => Math.Ceiling(n));
+        // 数学函数：参数用 object + ToNum 归一（模板变量常来自 front matter 字符串），
+        // 且按 Hugo 语义接受可选第二参（math.Round 单参即可，无需显式精度）
+        obj.Import("ceil", (object? n) => Math.Ceiling(ToNum(n)));
 
         // floor - 向下取整
-        obj.Import("floor", (double n) => Math.Floor(n));
+        obj.Import("floor", (object? n) => Math.Floor(ToNum(n)));
 
-        // round - 四舍五入
-        obj.Import("round", (double n, int? decimals) =>
-            Math.Round(n, decimals ?? 0));
+        // round - 四舍五入（第二参精度可选，对齐 Hugo math.Round）
+        obj.Import("round", (object? n, object? decimals = null) =>
+            Math.Round(ToNum(n), decimals is null ? 0 : (int)ToNum(decimals)));
 
         // abs - 绝对值
-        obj.Import("abs", (double n) => Math.Abs(n));
+        obj.Import("abs", (object? n) => Math.Abs(ToNum(n)));
 
         // max - 最大值
-        obj.Import("max", (params double[] nums) =>
-            nums.Length > 0 ? nums.Max() : 0);
+        obj.Import("max", (params object?[] nums) =>
+            nums.Length > 0 ? nums.Select(ToNum).Max() : 0d);
 
         // min - 最小值
-        obj.Import("min", (params double[] nums) =>
-            nums.Length > 0 ? nums.Min() : 0);
+        obj.Import("min", (params object?[] nums) =>
+            nums.Length > 0 ? nums.Select(ToNum).Min() : 0d);
 
         // pow - 幂运算
-        obj.Import("pow", (double @base, double exp) => Math.Pow(@base, exp));
+        obj.Import("pow", (object? @base, object? exp) => Math.Pow(ToNum(@base), ToNum(exp)));
 
         // sqrt - 平方根
-        obj.Import("sqrt", (double n) => Math.Sqrt(n));
+        obj.Import("sqrt", (object? n) => Math.Sqrt(ToNum(n)));
 
         // log - 对数
-        obj.Import("log", (double n) => Math.Log(n));
+        obj.Import("log", (object? n) => Math.Log(ToNum(n)));
 
         // counter - 计数器（全局递增；并行渲染下必须原子递增）
         var counter = 0L;
