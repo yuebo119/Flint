@@ -172,10 +172,14 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 
 - **模板**：站点 `layouts/` 优先，主题按序回退，include/partial 同规则；
   `partials/` 与 `_partials/`、`shortcodes/` 与 `_shortcodes/` 双形态支持（兼容 Hugo v0.146+ 新目录约定）
-- **资源**：主题 `static/` 与 `assets/` 合并进输出，与站点同名资源时站点覆盖
-- **参数**：主题 `theme.toml` 的 `[params]` 段作为默认值，站点 `[params]` 深覆盖（支持嵌套表递归）
+- **资源**：主题 `static/` 与 `assets/` 合并进输出，与站点同名资源时站点覆盖；
+  `static/` 内容映射到输出根（`static/css/a.css` → `public/css/a.css`，对齐 Hugo）
+- **内容**：主题 `content/` 合并（站点优先、主题补缺），主题示例内容可直接构建
+- **参数**：主题 `config/_default/params.{toml,yaml,json}`（Hugo 标准形态）与
+  `theme.toml` 的 `[params]` 段作为默认值，站点 `[params]` 深覆盖（嵌套表递归）
 - **archetypes**：`new content` 模板查找站点优先、主题回退
-- **短代码**：主题 `layouts/{_,}shortcodes/*.html` 注册（站点覆盖同名）
+- **短代码**：主题 `layouts/{_,}shortcodes/*.html` 注册（站点覆盖同名），
+  上下文提供 Hugo 短码 API（`get`/`is_named_params`/`params`/`inner`）
 - **render hooks**：主题 `_markup/render-*.html` 参与回退（站点优先）
 - **数据**：主题 `data/` 合并进 `site.data`（站点覆盖同名键）
 - **i18n**：主题 `i18n/` 参与回退（站点优先）
@@ -184,7 +188,11 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 构建器以模板渲染替代内置生成。
 
 模板可用 `{{ render "view" }}` 渲染内容视图（对齐 Hugo `.Render`）、
-`{{ site.paginator.pages }}` 访问分页切片、`{{ i18n "key" }}` 取翻译。
+`{{ partial "func/x" }}` 取 partial 返回值（标量类型还原）、`{{ includeCached "x" }}`
+缓存 partial、`{{ page.file.path }}` 访问 `.File.*` 方法族、
+`{{ page.resources }}` 访问 bundle 资源、`{{ site.paginator.pages }}` 分页切片、
+`{{ i18n "key" }}` 取翻译；内置函数含 Hugo 兼容的 `where`/`sortBy`/`after`/`in`/
+`dict`/`merge`/`urlize`/`markdownify`/`plainify`/`emojify`/`humanize` 等。
 
 模块安装支持三种来源：`owner/repo`（GitHub Releases）、`owner/repo@分支或标签`
 及 git URL（git clone）、本地目录路径（需含 theme.toml）；安装版本写入
