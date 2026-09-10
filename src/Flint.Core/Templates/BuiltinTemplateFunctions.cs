@@ -78,6 +78,9 @@ public sealed partial class BuiltinTemplateFunctions
 
         // 资源函数
         RegisterResourceFunctions(scriptObject);
+
+        // Hugo 主题兼容函数组（B6~B12）：内容/URL/集合/构造/查询
+        RegisterHugoCompatFunctions(scriptObject);
     }
 
     #region 字符串函数 (20+)
@@ -989,6 +992,292 @@ public sealed partial class BuiltinTemplateFunctions
 
         // resources.Get / resources.Match / resources.GetMatch / minify 未提供
         // （依赖资源对象模型），不注册：调用报函数未定义而非静默空转
+    }
+
+    /// <summary>
+    /// Hugo 主题兼容函数组（B6~B12）：内容处理、URL 处理、集合操作、构造合并、参数查询。
+    /// 命名与参数序保持 Hugo 一致以便主题模板直接迁移；声明为 static 便于独立测试
+    /// </summary>
+    private static void RegisterHugoCompatFunctions(ScriptObject obj)
+    {
+        // ---- B9 内容处理 ----
+        obj.Import("markdownify", (string? text) => MarkdownifyInline(text ?? ""));
+        obj.Import("plainify", (string? text) =>
+            string.IsNullOrEmpty(text) ? "" : Regex.Replace(text, "<[^>]+>", ""));
+        obj.Import("emojify", (string? text) => Emojify(text ?? ""));
+        obj.Import("htmlUnescape", (string? text) =>
+            string.IsNullOrEmpty(text) ? "" : System.Net.WebUtility.HtmlDecode(text));
+        obj.Import("htmlEscape", (string? text) =>
+            string.IsNullOrEmpty(text) ? "" : System.Net.WebUtility.HtmlEncode(text));
+
+        // ---- B10 URL 处理（Hugo 前缀函数语义）----
+        obj.Import("urlize", (string? text) => Urlize(text ?? ""));
+        obj.Import("anchorize", (string? text) => Urlize(text ?? ""));
+        obj.Import("humanize", (string? text) => Humanize(text ?? ""));
+        obj.Import("singularize", (string? text) => Singularize(text ?? ""));
+
+        // ---- B7 集合操作 ----
+        // 注意：first/last/uniq/shuffle/index 已有 Scriban 风格注册（单元素/单参数语义），
+        // 此处**不重复注册**（重复会覆盖既有语义致类型转换失败——实测 first 2 SEQ 报
+        // "Unable to convert int to IEnumerable"）。Hugo 的前缀形态 first N SEQ 由
+        // 转换器映射为 Scriban 管道形态（SEQ | array.limit N）。
+        // 真正新增的集合函数（Hugo 独有）：
+        obj.Import("after", (object? seq, object? count) =>
+            SliceSeq(seq, int.TryParse(count?.ToString(), out var n) ? n : 0, int.MaxValue));
+        obj.Import("where", (object? seq, object? key, object? value) =>
+            WhereSeq(seq, key?.ToString() ?? "", value));
+        obj.Import("sortBy", (object? seq, object? key) => SortSeq(seq, key?.ToString()));
+        obj.Import("in", (object? needle, object? haystack) => InSeq(needle, haystack));
+
+        // ---- B8 构造与合并 ----
+        // 注意：slice/index/sort 已有 Scriban 风格注册（含区间切片与字段排序），不重复注册。
+        // 真正新增（Hugo 独有）：
+        obj.Import("dict", (params object?[] args) => BuildDict(args));
+        obj.Import("merge", (params object?[] args) => MergeDicts(args));
+
+        // ---- B12 参数点路径查询 ----
+        obj.Import("paramLookup", (object? ctx, string path) => ParamLookup(ctx, path));
+    }
+
+    /// <summary>markdownify 行内受限实现（行内代码/粗体/斜体/链接——主题最常用形态）</summary>
+    private static string MarkdownifyInline(string text)
+    {
+        if (text.Length == 0)
+            return "";
+        var html = Regex.Replace(text, "`([^`]+)`", "<code>$1</code>");
+        html = Regex.Replace(html, @"\*\*([^*]+)\*\*", "<strong>$1</strong>");
+        html = Regex.Replace(html, @"\*([^*]+)\*", "<em>$1</em>");
+        html = Regex.Replace(html, @"\[([^\]]+)\]\(([^)]+)\)", "<a href=\"$2\">$1</a>");
+        return html;
+    }
+
+    private static readonly Dictionary<string, string> EmojiMap = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["smile"] = "😄", ["heart"] = "❤️", ["thumbsup"] = "👍", ["+1"] = "👍",
+        ["tada"] = "🎉", ["rocket"] = "🚀", ["fire"] = "🔥", ["star"] = "⭐",
+        ["warning"] = "⚠️", ["bulb"] = "💡", ["book"] = "📖",
+        ["check"] = "✅", ["x"] = "❌", ["sparkles"] = "✨", ["eyes"] = "👀"
+    };
+
+    private static string Emojify(string text) =>
+        Regex.Replace(text, @":([a-z0-9_+\-]+):", m =>
+            EmojiMap.TryGetValue(m.Groups[1].Value, out var emoji) ? emoji : m.Value);
+
+    /// <summary>urlize/anchorize：小写、非字母数字转连字符、去首尾连字符（保留非 ASCII）</summary>
+    private static string Urlize(string text)
+    {
+        var sb = new StringBuilder(text.Length);
+        var lastDash = false;
+        foreach (var ch in text.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(ch) || ch > 127)
+            {
+                sb.Append(ch);
+                lastDash = false;
+            }
+            else if (!lastDash && sb.Length > 0)
+            {
+                sb.Append('-');
+                lastDash = true;
+            }
+        }
+        return sb.ToString().Trim('-');
+    }
+
+    /// <summary>humanize：连字符/下划线转空格并首字母大写（Hugo 语义）</summary>
+    private static string Humanize(string text)
+    {
+        if (text.Length == 0)
+            return "";
+        var spaced = text.Replace('-', ' ').Replace('_', ' ');
+        return char.ToUpperInvariant(spaced[0]) + spaced[1..];
+    }
+
+    private static string Singularize(string text) =>
+        text.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && text.Length > 3
+            ? text[..^3] + "y"
+            : text.EndsWith('s') && !text.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
+                ? text[..^1]
+                : text;
+
+    private static IReadOnlyList<object?> ToList(object? seq) => seq switch
+    {
+        null => [],
+        string => [seq],
+        System.Collections.IDictionary => [seq],   // 字典视作单元素（Hugo range 语义不同，此处保守）
+        System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
+        _ => [seq]
+    };
+
+    /// <summary>是否为集合形态（非字符串/非字典的 IEnumerable）</summary>
+    private static bool IsCollection(object? value) =>
+        value is System.Collections.IEnumerable and not string and not System.Collections.IDictionary;
+
+    /// <summary>in：needle 是否在 haystack 中（Hugo in 语义，字符串按子串、集合按元素）</summary>
+    private static bool InSeq(object? needle, object? haystack)
+    {
+        if (haystack is string text)
+        {
+            return text.Contains(needle?.ToString() ?? "", StringComparison.Ordinal);
+        }
+        foreach (var item in ToList(haystack))
+        {
+            if (string.Equals(item?.ToString(), needle?.ToString(), StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>从两参中挑出集合（Hugo 前缀形态与管道形态的顺序自适配）</summary>
+    private static object? PickSeq(object? p1, object? p2) => IsCollection(p1) ? p1 : p2;
+
+
+    private static object SliceSeq(object? seq, int start, int count)
+    {
+        var list = ToList(seq);
+        var begin = start < 0 ? Math.Max(0, list.Count + start) : Math.Min(start, list.Count);
+        var take = Math.Min(Math.Max(0, count), list.Count - begin);
+        return list.Skip(begin).Take(take).ToList();
+    }
+
+
+
+    /// <summary>where：按字段等值过滤；value 为 null 时筛选空值（Hugo 语义子集）</summary>
+    private static object WhereSeq(object? seq, string key, object? value)
+    {
+        var result = new List<object?>();
+        var wantEmpty = value is null or "";
+        foreach (var item in ToList(seq))
+        {
+            var actual = GetMember(item, key);
+            var isMatch = wantEmpty
+                ? actual is null || (actual as string)?.Length == 0
+                : string.Equals(actual?.ToString(), value?.ToString(), StringComparison.Ordinal);
+            if (isMatch)
+            {
+                result.Add(item);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>成员访问（Hugo 的 where/sort 键路径）：支持点路径与命名变体（下划线/PascalCase）</summary>
+    internal static object? GetMember(object? item, string path)
+    {
+        if (item is null || path.Length == 0)
+        {
+            return null;
+        }
+        object? current = item;
+        foreach (var segment in path.Split('.'))
+        {
+            current = GetSingleMember(current, segment);
+            if (current is null)
+            {
+                return null;
+            }
+        }
+        return current;
+    }
+
+    private static object? GetSingleMember(object? item, string name)
+    {
+        if (item is null)
+        {
+            return null;
+        }
+        if (item is Scriban.Runtime.ScriptObject so)
+        {
+            foreach (var candidate in NameVariants(name))
+            {
+                if (so.TryGetValue(null, default, candidate, out var v))
+                {
+                    return v;
+                }
+            }
+            return null;
+        }
+        if (item is IDictionary<string, object> dict)
+        {
+            foreach (var candidate in NameVariants(name))
+            {
+                if (dict.TryGetValue(candidate, out var v))
+                {
+                    return v;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static IEnumerable<string> NameVariants(string name)
+    {
+        yield return name;
+        if (name.Length == 0)
+        {
+            yield break;
+        }
+        yield return char.ToUpperInvariant(name[0]) + name[1..];
+        var parts = name.Split('_');
+        if (parts.Length > 1)
+        {
+            // content_base_name → ContentBaseName（Hugo 的 PascalCase 别名）
+            yield return string.Concat(parts.Select(p => p.Length > 0
+                ? char.ToUpperInvariant(p[0]) + p[1..]
+                : p));
+        }
+    }
+
+    private static object SortSeq(object? seq, string? key)
+    {
+        var list = ToList(seq).ToList();
+        return string.IsNullOrEmpty(key)
+            ? list.OrderBy(v => v?.ToString() ?? "", StringComparer.Ordinal).ToList()
+            : list.OrderBy(v => GetMember(v, key)?.ToString() ?? "", StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>dict "k" v ... → 字典（奇数参数时末键配空串）</summary>
+    private static object BuildDict(object?[] args)
+    {
+        var dict = new ScriptObject();
+        for (var i = 0; i + 1 < args.Length; i += 2)
+        {
+            dict[args[i]?.ToString() ?? ""] = args[i + 1];
+        }
+        return dict;
+    }
+
+    /// <summary>merge：Hugo 语义为"前参优先"——从后往前填充缺失键</summary>
+    private static object MergeDicts(object?[] args)
+    {
+        var result = new ScriptObject();
+        for (var i = args.Length - 1; i >= 0; i--)
+        {
+            if (args[i] is ScriptObject so)
+            {
+                foreach (var kv in so)
+                {
+                    if (!result.ContainsKey(kv.Key))
+                    {
+                        result[kv.Key] = kv.Value;
+                    }
+                }
+            }
+        }
+        return result;
+    }
+
+
+    /// <summary>paramLookup：ctx 为 page/site 对象，path 点路径查 params（Hugo .Param 语义）</summary>
+    private static object? ParamLookup(object? ctx, string path)
+    {
+        if (ctx is ScriptObject so && so.TryGetValue(null, default, "params", out var prm) && prm is not null)
+        {
+            return GetMember(prm, path);
+        }
+        return null;
     }
 
     /// <summary>
