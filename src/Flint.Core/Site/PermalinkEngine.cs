@@ -64,10 +64,18 @@ internal static class PermalinkEngine
         }
 
         var relNoExt = rel[..^Path.GetExtension(rel).Length].TrimEnd('/');
+        // index.md 与 _index.md 都归并为目录 URL（Hugo 语义）：内容页 index.md →
+        // 所在目录；branch 页 _index.md → 该 section 目录。此前只处理 index，
+        // _index.md 产出 /posts/_index/ 死路径且丢失 section 列表页
         if (relNoExt.EndsWith("/index", StringComparison.OrdinalIgnoreCase) ||
             relNoExt.Equals("index", StringComparison.OrdinalIgnoreCase))
         {
             relNoExt = relNoExt[..^"index".Length].TrimEnd('/');
+        }
+        else if (relNoExt.EndsWith("/_index", StringComparison.OrdinalIgnoreCase) ||
+                 relNoExt.Equals("_index", StringComparison.OrdinalIgnoreCase))
+        {
+            relNoExt = relNoExt[..^"_index".Length].TrimEnd('/');
         }
 
         if (!string.IsNullOrEmpty(content.Metadata.Slug))
