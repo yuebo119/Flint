@@ -82,12 +82,12 @@ public sealed class ThemeAssetMergeTests : IDisposable
         Assert.True(result.AssetsProcessed == 2,
             $"资源处理数异常: {result.AssetsProcessed}（预期 2）");
         // 同名：站点覆盖主题
-        var cssPath = Path.Combine(_outputDir, "static", "css", "site.css");
+        var cssPath = Path.Combine(_outputDir, "css", "site.css");  // static/ 剥前缀（对齐 Hugo）
         Assert.True(File.Exists(cssPath), "同名资源应产出");
         Assert.Equal("site-value", await File.ReadAllTextAsync(cssPath));
         // 主题独有：正常产出（重映射到站点命名空间，不落 public/themes）
         Assert.Equal("theme-only",
-            await File.ReadAllTextAsync(Path.Combine(_outputDir, "static", "js", "theme.js")));
+            await File.ReadAllTextAsync(Path.Combine(_outputDir, "js", "theme.js")));
         Assert.False(Directory.Exists(Path.Combine(_outputDir, "themes")),
             "主题资源不得残留 themes/ 目录链");
     }
