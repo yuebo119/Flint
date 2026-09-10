@@ -460,20 +460,41 @@ public sealed partial class SiteBuilder
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
         return ext switch
         {
+            // 文本类（A3 后 static/ 直通输出根，文本类型必须正确而非 octet-stream）
             ".css" => "text/css",
-            ".js" => "application/javascript",
+            ".js" or ".mjs" => "application/javascript",
             ".json" => "application/json",
-            ".html" => "text/html",
+            ".html" or ".htm" => "text/html",
             ".xml" => "application/xml",
+            ".txt" => "text/plain",
+            ".md" => "text/markdown",
+            ".csv" => "text/csv",
+            ".yml" or ".yaml" => "text/yaml",
+            ".toml" => "text/plain",
+            ".map" => "application/json",
+            // 图像
             ".png" => "image/png",
             ".jpg" or ".jpeg" => "image/jpeg",
             ".gif" => "image/gif",
             ".svg" => "image/svg+xml",
             ".webp" => "image/webp",
+            ".avif" => "image/avif",
+            ".ico" => "image/x-icon",
+            ".bmp" => "image/bmp",
+            // 字体
             ".woff" => "font/woff",
             ".woff2" => "font/woff2",
             ".ttf" => "font/ttf",
+            ".otf" => "font/otf",
             ".eot" => "application/vnd.ms-fontobject",
+            // 文档与音视频
+            ".pdf" => "application/pdf",
+            ".zip" => "application/zip",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mp3" => "audio/mpeg",
+            ".ogg" => "audio/ogg",
+            ".wasm" => "application/wasm",
             _ => "application/octet-stream"
         };
     }

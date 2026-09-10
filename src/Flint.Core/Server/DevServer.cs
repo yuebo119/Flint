@@ -561,11 +561,17 @@ public sealed class DevServer : IDevServer, IDisposable
 
     private static string GetContentType(string filePath) => Path.GetExtension(filePath).ToLowerInvariant() switch
     {
-        ".html" => "text/html; charset=utf-8",
+        ".html" or ".htm" => "text/html; charset=utf-8",
         ".css" => "text/css; charset=utf-8",
-        ".js" => "application/javascript; charset=utf-8",
-        ".json" => "application/json; charset=utf-8",
+        ".js" or ".mjs" => "application/javascript; charset=utf-8",
+        ".json" or ".map" => "application/json; charset=utf-8",
         ".xml" => "application/xml; charset=utf-8",
+        // 文本类：A3 后 static/ 直通输出根，txt/md/csv 等常见文本类型必须正确
+        ".txt" => "text/plain; charset=utf-8",
+        ".md" => "text/markdown; charset=utf-8",
+        ".csv" => "text/csv; charset=utf-8",
+        ".yml" or ".yaml" => "text/yaml; charset=utf-8",
+        ".toml" => "text/plain; charset=utf-8",
         ".png" => "image/png",
         ".jpg" or ".jpeg" => "image/jpeg",
         ".gif" => "image/gif",
@@ -573,9 +579,11 @@ public sealed class DevServer : IDevServer, IDisposable
         ".webp" => "image/webp",
         ".avif" => "image/avif",
         ".ico" => "image/x-icon",
+        ".bmp" => "image/bmp",
         ".woff" => "font/woff",
         ".woff2" => "font/woff2",
         ".ttf" => "font/ttf",
+        ".otf" => "font/otf",
         ".eot" => "application/vnd.ms-fontobject",
         ".mp4" => "video/mp4",
         ".webm" => "video/webm",
@@ -583,6 +591,7 @@ public sealed class DevServer : IDevServer, IDisposable
         ".ogg" => "audio/ogg",
         ".pdf" => "application/pdf",
         ".zip" => "application/zip",
+        ".wasm" => "application/wasm",
         _ => "application/octet-stream"
     };
 
