@@ -118,6 +118,142 @@ public sealed class TemplateContext
 }
 
 /// <summary>
+/// 分页视图（C1）：一个列表页被切成 N 个 pager 时，某一页的绑定数据。
+/// 对齐 Hugo Pager 字段子集（Pages/PageNumber/TotalPages/PagerSize/URL/
+/// NumberOfElements/TotalNumberOfElements/HasPrev/HasNext/Prev/Next/First/Last/Pagers）。
+/// 由构建器逐页构造，渲染器转成模板对象（AOT 安全，无反射）。
+/// </summary>
+public sealed class PaginatorView
+{
+    /// <summary>全量页面集合（各 pager 的 Pages 由它按页切片）</summary>
+    public required IReadOnlyList<PageContext> AllItems { get; init; }
+
+    /// <summary>当前页码（从 1 开始）</summary>
+    public required int PageNumber { get; init; }
+
+    /// <summary>每页大小</summary>
+    public required int PageSize { get; init; }
+
+    /// <summary>列表页基准 URL（以 / 结尾，如 /posts/）</summary>
+    public required string BaseRelPermalink { get; init; }
+
+    /// <summary>分页路径段（对齐 Hugo paginatePath，默认 page）</summary>
+    public required string PaginatePath { get; init; }
+
+    private IReadOnlyList<PageContext>? _currentSlice;
+
+    /// <summary>当前页的项目切片</summary>
+    public IReadOnlyList<PageContext> Pages => _currentSlice ??= Slice(PageNumber);
+
+    /// <summary>总项目数</summary>
+    public int TotalItems => AllItems.Count;
+
+    /// <summary>总页数（空集合恒 1，对齐 Hugo：空列表也有一页）</summary>
+    public int TotalPages => TotalItems > 0
+        ? (int)Math.Ceiling(TotalItems / (double)PageSize)
+        : 1;
+
+    /// <summary>当前页项目数</summary>
+    public int NumberOfElements => Pages.Count;
+
+    /// <summary>是否有上一页</summary>
+    public bool HasPrev => PageNumber > 1;
+
+    /// <summary>是否有下一页</summary>
+    public bool HasNext => PageNumber < TotalPages;
+
+    /// <summary>是否首页</summary>
+    public bool IsFirst => PageNumber == 1;
+
+    /// <summary>是否末页</summary>
+    public bool IsLast => PageNumber == TotalPages;
+
+    /// <summary>指定页码的切片（页码越界时钳制到有效区间）</summary>
+    public IReadOnlyList<PageContext> Slice(int pageNumber)
+    {
+        var clamped = Math.Max(1, Math.Min(pageNumber, TotalPages));
+        var skip = (clamped - 1) * PageSize;
+        return AllItems.Skip(skip).Take(PageSize).ToList();
+    }
+
+    /// <summary>指定页码的 URL（首页 = 基准 URL，第 N 页 = {基准}{paginatePath}/{N}/）</summary>
+    public string UrlForPage(int pageNumber)
+    {
+        if (pageNumber <= 1)
+        {
+            return BaseRelPermalink;
+        }
+        return $"{BaseRelPermalink.TrimEnd('/')}/{PaginatePath}/{pageNumber}/";
+    }
+
+    /// <summary>当前页 URL</summary>
+    public string URL => UrlForPage(PageNumber);
+
+    /// <summary>指定页码的分页视图（共享 AllItems，切片按需）</summary>
+    public PaginatorView ForPage(int pageNumber) => new()
+    {
+        AllItems = AllItems,
+        PageNumber = Math.Max(1, Math.Min(pageNumber, TotalPages)),
+        PageSize = PageSize,
+        BaseRelPermalink = BaseRelPermalink,
+        PaginatePath = PaginatePath
+    };
+
+    /// <summary>首页 pager（对齐 Hugo .Paginator.First）</summary>
+    public PaginatorView First => ForPage(1);
+
+    /// <summary>末页 pager</summary>
+    public PaginatorView Last => ForPage(TotalPages);
+
+    /// <summary>上一页 pager（无则 null）</summary>
+    public PaginatorView? Prev => HasPrev ? ForPage(PageNumber - 1) : null;
+
+    /// <summary>下一页 pager（无则 null）</summary>
+    public PaginatorView? Next => HasNext ? ForPage(PageNumber + 1) : null;
+
+    /// <summary>全部分页视图（对齐 Hugo .Paginator.Pagers）</summary>
+    public IReadOnlyList<PaginatorView> Pagers => _pagers ??=
+        Enumerable.Range(1, TotalPages).Select(ForPage).ToList();
+
+    private IReadOnlyList<PaginatorView>? _pagers;
+
+    /// <summary>
+    /// 构造分页视图：pageSize &lt; 1 视为 1（防御除零），页码钳制到 [1, TotalPages]
+    /// </summary>
+    public static PaginatorView Create(
+        IReadOnlyList<PageContext> allItems,
+        int pageNumber,
+        int pageSize,
+        string baseRelPermalink,
+        string paginatePath)
+    {
+        ArgumentNullException.ThrowIfNull(allItems);
+        var size = Math.Max(1, pageSize);
+        var totalPages = allItems.Count > 0
+            ? (int)Math.Ceiling(allItems.Count / (double)size)
+            : 1;
+        var baseRel = string.IsNullOrEmpty(baseRelPermalink) ? "/" : baseRelPermalink;
+        if (baseRel[0] != '/')
+        {
+            baseRel = "/" + baseRel;
+        }
+        if (!baseRel.EndsWith('/'))
+        {
+            baseRel += "/";
+        }
+
+        return new PaginatorView
+        {
+            AllItems = allItems,
+            PageNumber = Math.Max(1, Math.Min(pageNumber, totalPages)),
+            PageSize = size,
+            BaseRelPermalink = baseRel,
+            PaginatePath = string.IsNullOrEmpty(paginatePath) ? "page" : paginatePath
+        };
+    }
+}
+
+/// <summary>
 /// 页面上下文
 /// </summary>
 public sealed class PageContext
@@ -238,6 +374,18 @@ public sealed class PageContext
     public IReadOnlyList<PageContext>? Pages { get; init; }
 
     /// <summary>
+    /// 本页绑定的分页器（C1）：列表页的第 N 页渲染实例携带该 pager；
+    /// 非列表页/非分页渲染为 null（模板 <c>page.paginator</c> 返回空）
+    /// </summary>
+    public PaginatorView? Paginator { get; init; }
+
+    /// <summary>
+    /// 页面所属一级 section 名（对齐 Hugo <c>.Section</c>）：路径首段；
+    /// 首页为空串。主题常用 <c>where ... "Section" ...</c> 做 section 过滤
+    /// </summary>
+    public string Section { get; init; } = "";
+
+    /// <summary>
     /// taxonomy 列表页的词条集合（对齐 Hugo <c>.Data.Terms</c>）：仅 taxonomy 页
     /// 非 null，供模板 page.terms 枚举词条（默认主题模板 page.pages/page.terms
     /// 依赖此二者，缺省时词条/分类页渲染为空列表）
@@ -275,6 +423,71 @@ public sealed class PageContext
     /// 原始 Markdown 内容
     /// </summary>
     public string? RawContent { get; init; }
+
+    /// <summary>
+    /// 以指定集合派生一个页面实例（列表页装配 <c>.Pages</c> 用）：
+    /// 浅拷贝全部字段，仅替换 Pages
+    /// </summary>
+    public PageContext WithPages(IReadOnlyList<PageContext> pages) =>
+        Clone(Permalink, RelPermalink, pages, Paginator);
+
+    /// <summary>
+    /// 以指定分页器派生一个页面实例（C1 分页多页）：浅拷贝全部字段，
+    /// Paginator 绑定为该 pager，RelPermalink/Permalink/Pages 指向该页
+    /// （第 1 页即列表页自身 URL，与分页前一致）。
+    /// 页面对象在构建内共享，分页实例必须是独立对象——不得原地修改共享实例
+    /// </summary>
+    public PageContext WithPaginator(PaginatorView paginator, string baseUrl)
+    {
+        var rel = paginator.URL;
+        // Hugo 语义：pager 页面的 .Pages 即该页切片
+        return Clone(
+            baseUrl.TrimEnd('/') + rel, rel, paginator.Pages, paginator);
+    }
+
+    /// <summary>共享浅拷贝实现：仅 Permalink/RelPermalink/Pages/Paginator 可变</summary>
+    private PageContext Clone(
+        string permalink,
+        string relPermalink,
+        IReadOnlyList<PageContext>? pages,
+        PaginatorView? paginator)
+    {
+        return new PageContext
+        {
+            Title = Title,
+            OutputFormat = OutputFormat,
+            Content = Content,
+            Permalink = permalink,
+            RelPermalink = relPermalink,
+            Date = Date,
+            LastMod = LastMod,
+            Tags = Tags,
+            Aliases = Aliases,
+            Categories = Categories,
+            WordCount = WordCount,
+            ReadingTime = ReadingTime,
+            Description = Description,
+            Summary = Summary,
+            PrevPage = PrevPage,
+            NextPage = NextPage,
+            Type = Type,
+            Layout = Layout,
+            Outputs = Outputs,
+            SourcePath = SourcePath,
+            Draft = Draft,
+            Weight = Weight,
+            Pages = pages,
+            Terms = Terms,
+            MenuEntries = MenuEntries,
+            Params = Params,
+            Resources = Resources,
+            TableOfContents = TableOfContents,
+            Plain = Plain,
+            RawContent = RawContent,
+            Paginator = paginator,
+            Section = Section
+        };
+    }
 }
 
 /// <summary>
@@ -362,14 +575,16 @@ public sealed class SiteContext
         new Dictionary<string, string>();
 
     /// <summary>
-    /// 分页视图（列表页按 paginate 切片，首版仅首页切片）
+    /// 站点级分页回落值（首页切片）：列表页未逐页绑定分页器时（如非列表页或
+    /// 分页关闭）模板 <c>site.paginator</c> / 全局 <c>paginator</c> 的取值。
+    /// 分页多页产出见 <see cref="PageContext.Paginator"/> 的逐页绑定
     /// </summary>
     public IReadOnlyList<PageContext> PaginatorPages { get; init; } = [];
 
-    /// <summary>分页总页数（首版恒 1，分页 URL 产出属后续能力）</summary>
+    /// <summary>站点级分页总页数（回落值；分页渲染以 PageContext.Paginator 为准）</summary>
     public int PaginatorTotalPages { get; init; } = 1;
 
-    /// <summary>当前分页页码（首版恒 1）</summary>
+    /// <summary>站点级分页页码（回落值，恒 1；分页渲染以 PageContext.Paginator 为准）</summary>
     public int PaginatorPageNumber { get; init; } = 1;
 }
 

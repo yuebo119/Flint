@@ -60,7 +60,13 @@ internal sealed class DependencyTrackingScriptObject : ScriptObject
 {
     public override bool TryGetValue(TemplateContext? context, SourceSpan span, string member, out object? value)
     {
-        RenderDependencyTracker.Track(context!, RenderDependencyTracker.DataPrefix + "site." + member);
+        // context 为 null 是 Scriban 的合法调用形态（ScriptObject 的字符串索引器
+        // 以 null context 走 TryGetValue）——宿主直接读取成员时无依赖作用域，
+        // 跳过记录而不是解引用空引用（此前 context! 会在该路径 NRE）
+        if (context is not null)
+        {
+            RenderDependencyTracker.Track(context, RenderDependencyTracker.DataPrefix + "site." + member);
+        }
         return base.TryGetValue(context, span, member, out value);
     }
 }

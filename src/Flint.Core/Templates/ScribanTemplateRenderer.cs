@@ -262,6 +262,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
     }
 
+    /// <summary>
+    /// 精确相对路径的模板存在性（C4 视图查找用）：只接受逐字相等的相对路径，
+    /// 不做文件名段模糊匹配（Hugo 视图要求目录逐段匹配）
+    /// </summary>
+    internal bool TemplateExistsExact(string relativeName)
+    {
+        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        return lookup.ResolveExact(relativeName) is not null;
+    }
+
     /// <inheritdoc />
     public IReadOnlyList<string> GetDependencies(string templateName)
     {
@@ -642,7 +652,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
     /// <summary>
     /// 内置回退模板（对齐 Hugo embedded templates 的最小集）：
-    /// 最小站点缺 taxonomy/term/list 布局时的极简兜底，避免构建报错
+    /// 最小站点缺 taxonomy/term/list 布局时的极简兜底，避免构建报错；
+    /// pagination 为 Hugo 内置分页导航模板的 Scriban 等价（主题 include "pagination" 时命中）
     /// </summary>
     internal static readonly Dictionary<string, string> BuiltinTemplates =
         new(StringComparer.Ordinal)
@@ -650,8 +661,32 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ["taxonomy"] = "<ul>{{ for p in site.regular_pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>",
             // term 用 pages（词条页面集合，renderer 对未设置 pages 的页面回落全站 regular_pages）
             ["term"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>",
-            ["list"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>"
+            ["list"] = "<ul>{{ for p in pages }}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{{ end }}</ul>",
+            // Hugo 内置 pagination 模板（default 格式）的 Scriban 等价：总分页数 > 1 时
+            // 输出首页/上一页/页码槽/下一页/末页。Pager 字段由 PaginatorView 对象提供
+            ["pagination"] = BuildPaginationTemplate()
         };
+
+    /// <summary>
+    /// Hugo embedded pagination（default 格式）的 Scriban 翻译：
+    /// 5 槽页码窗口居中于当前页，首末页与前后页按条件渲染。
+    /// 原始字符串字面量（内含大量 {{ }} 与引号，逐字可读优于拼接/转义）
+    /// </summary>
+    private static string BuildPaginationTemplate()
+    {
+        return """
+        {{ if paginator && paginator.total_pages > 1 }}
+        <ul class="pagination pagination-default">
+        {{ if paginator.first && paginator.page_number != paginator.first.page_number }}<li class="page-item"><a href="{{ paginator.first.url }}" aria-label="First" class="page-link" role="button"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="First" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ end }}
+        {{ if paginator.prev }}<li class="page-item"><a href="{{ paginator.prev.url }}" aria-label="Previous" class="page-link" role="button"><span aria-hidden="true">&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Previous" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;</span></a></li>{{ end }}
+        {{ slots = 5 }}{{ start = paginator.page_number - 2 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ finish = start + slots - 1 }}{{ if finish > paginator.total_pages }}{{ finish = paginator.total_pages }}{{ end }}{{ if finish - start + 1 < slots }}{{ start = finish - slots + 1 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ end }}
+        {{ for k in start..finish }}{{ if paginator.page_number == k }}<li class="page-item active"><a aria-current="page" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ else }}<li class="page-item"><a href="{{ paginator.pagers[k - 1].url }}" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ end }}{{ end }}
+        {{ if paginator.next }}<li class="page-item"><a href="{{ paginator.next.url }}" aria-label="Next" class="page-link" role="button"><span aria-hidden="true">&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Next" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;</span></a></li>{{ end }}
+        {{ if paginator.last && paginator.page_number != paginator.last.page_number }}<li class="page-item"><a href="{{ paginator.last.url }}" aria-label="Last" class="page-link" role="button"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Last" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ end }}
+        </ul>
+        {{ end }}
+        """;
+    }
     // 加权匹配查找器（方案五接线）：替换原 12 形态文件名直查——
     // 描述符集经快照+一致性测试守护，扫描结果按构建缓存（Invalidate 失效）
     private TemplateLookup? _lookup;
@@ -735,12 +770,19 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ["is_list"] = context.IsList,
             ["is_single"] = context.IsSingle,
 
-            // Hugo 兼容别名
-            [".Page"] = pageObject,
             [".Site"] = siteObject,
             [".Params"] = context.Params,
             [".Data"] = context.Data,
         };
+
+        // C1 分页：pager 渲染实例携带逐页绑定的分页器——page.paginator（Hugo 语义）
+        // 与全局 paginator 同源；非分页渲染（Paginator 为 null）回落站点级旧值
+        var paginatorValue = context.Page.Paginator is not null
+            ? BuildPaginatorObject(context.Page.Paginator)
+            : siteObject["paginator"];
+        globals["paginator"] = paginatorValue;
+        globals["Paginator"] = paginatorValue;
+        globals[".Paginator"] = paginatorValue;
 
         // i18n 翻译函数（主题系统 P3）：按站点 Translations 查键，缺键返回空串（对齐 Hugo）。
         // IScriptCustomFunction 显式实现（不经反射，AOT 安全——PartialCachedFunction 同模式）；
@@ -766,7 +808,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
-    /// 内容视图渲染函数包装：单参数（视图名），模板候选 = content section 目录形态优先
+    /// 内容视图渲染函数包装（C4，对齐 Hugo .Render "view"）：模板候选按页面
+    /// <c>.Path</c> 从最深到最浅逐级加目录前缀（<c>docs/api/summary</c> →
+    /// <c>docs/summary</c> → <c>summary</c>），用精确路径匹配（目录必须逐段相等）；
+    /// 全部未命中返回空串（不是回退到文件名段匹配——那会让任意深度的
+    /// 同名视图互相污染，Hugo 无此行为）
     /// </summary>
     private sealed class RenderViewFunction(
         ScribanTemplateRenderer renderer,
@@ -786,27 +832,19 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 return "";
             }
 
-            var candidates = new List<string>();
-            if (!string.IsNullOrEmpty(page.SourcePath))
-            {
-                var full = page.SourcePath.Replace('\\', '/');
-                var idx = full.LastIndexOf("/content/", StringComparison.OrdinalIgnoreCase);
-                if (idx >= 0)
-                {
-                    var after = full[(idx + "/content/".Length)..].Split('/');
-                    if (after.Length > 1)
-                    {
-                        candidates.Add(after[0] + "/" + view);
-                    }
-                }
-            }
-            candidates.Add(view);
+            // 接收者页面（Hugo .Render 是页面方法）：loop 条目/with 上下文作为
+            // 第二参数传入时以它为渲染上下文——list 模板 range 里 `.Render "summary"`
+            // 的 dot 是当前文章，缺此参数会让每个条目都渲染外层列表页（Ananke 实测：
+            // 三张卡片全显示 section 自身）。缺省回落调用页
+            var receiver = arguments.Count >= 2 && arguments[1] is LazyPageObject receiverObj
+                ? receiverObj.PageContext
+                : page;
 
-            foreach (var candidate in candidates)
+            foreach (var candidate in ViewCandidates(receiver.SourcePath, view))
             {
-                if (renderer.TemplateExists(candidate))
+                if (renderer.TemplateExistsExact(candidate))
                 {
-                    var childCtx = new FlintTemplateContext { Page = page, Site = site };
+                    var childCtx = new FlintTemplateContext { Page = receiver, Site = site };
                     return renderer.RenderAsync(candidate, childCtx).AsTask().GetAwaiter().GetResult();
                 }
             }
@@ -825,18 +863,57 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         public int RequiredParameterCount => 1;
 
-        public int ParameterCount => 1;
+        public int ParameterCount => 2;
 
         public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
             Scriban.Runtime.ScriptVarParamKind.Direct;
 
         public Type ReturnType => typeof(object);
 
-        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
-            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "view");
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) => index switch
+        {
+            0 => new Scriban.Runtime.ScriptParameterInfo(typeof(string), "view"),
+            _ => new Scriban.Runtime.ScriptParameterInfo(typeof(object), "context")
+        };
 
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
+    }
+
+    /// <summary>
+    /// 视图候选路径（深→浅，C4）：页面源路径的 content 相对目录逐级上溯加目录前缀。
+    /// 例：/content/docs/api/leaf.md 的 "summary" → docs/api/summary、docs/summary、summary。
+    /// 显式 slashed 视图（"_views/summary"）是布局根相对路径——同样逐级上溯前缀
+    /// （_views/summary → docs/_views/summary …）
+    /// </summary>
+    internal static IEnumerable<string> ViewCandidates(string? sourcePath, string view)
+    {
+        var normalizedView = view.Replace('\\', '/').TrimStart('/');
+        var dirSegments = new List<string>();
+        if (!string.IsNullOrEmpty(sourcePath))
+        {
+            var full = sourcePath.Replace('\\', '/');
+            var idx = full.LastIndexOf("/content/", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                var after = full[(idx + "/content/".Length)..];
+                var slash = after.LastIndexOf('/');
+                if (slash > 0)
+                {
+                    // 目录段（不含文件名）；页面路径的目录即视图查找的起点
+                    dirSegments = after[..slash]
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries)
+                        .ToList();
+                }
+            }
+        }
+
+        // 深 → 浅：docs/api → docs → 根
+        for (var i = dirSegments.Count; i >= 0; i--)
+        {
+            var prefix = i > 0 ? string.Join('/', dirSegments.Take(i)) + "/" : "";
+            yield return prefix + normalizedView;
+        }
     }
 
     /// <summary>

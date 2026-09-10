@@ -213,16 +213,40 @@ public sealed partial class SiteBuilder
     private async Task<List<RenderedPage>> RenderPagesAsync(
         List<PageContext> pages,
         SiteContext siteContext,
+        SiteConfig config,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
         CancellationToken cancellationToken)
     {
         var results = new ConcurrentBag<RenderedPage>();
 
+        // C1 分页多页产出：列表页（home/section）按站点 paginate 切片，逐页产出
+        // /page/2/、/page/3/…；分页实例替换原列表页实例（第 1 页即列表页 URL）。
+        // paginate <= 0 显式关闭分页（非列表页不受影响）
+        var renderTargets = new List<PageContext>(pages.Count);
+        foreach (var page in pages)
+        {
+            if ((page.Type is "home" or "section") && config.Paginate > 0)
+            {
+                var items = page.Pages ?? [];
+                var totalPages = Math.Max(1,
+                    (int)Math.Ceiling(items.Count / (double)config.Paginate));
+                for (var pageNumber = 1; pageNumber <= totalPages; pageNumber++)
+                {
+                    var pager = PaginatorView.Create(
+                        items, pageNumber, config.Paginate,
+                        page.RelPermalink, config.PaginatePath);
+                    renderTargets.Add(page.WithPaginator(pager, config.BaseURL));
+                }
+                continue;
+            }
+            renderTargets.Add(page);
+        }
+
         // 优化：批量处理以减少并发调度开销
         // 每批处理多个页面，共享模板查找开销
         const int batchSize = 20;
-        var batches = pages.Chunk(batchSize).ToArray();
+        var batches = renderTargets.Chunk(batchSize).ToArray();
 
         await Parallel.ForEachAsync(
             batches,

@@ -280,23 +280,54 @@ public sealed partial class SiteBuilder
         // cascade 索引：携带 cascade 的 branch/synthesized 节点 → 完整级联配置
         //（Data 字段 + _target 的 path/kind 过滤）
         var cascades = CollectCascades(tree);
-        var pages = new List<PageContext>(tree.Count);
+        var entries = new List<(string Key, PageContext Page)>(tree.Count);
         tree.Walk(new PageTreeWalker
         {
             Tree = tree,
-            Handle = (_, node) =>
+            Handle = (key, node) =>
             {
                 var nodeKind = KindOfNode(node);
-                var (cascaded, dataChain) = MergeAncestorCascades(node.Key, nodeKind, cascades);
-                pages.Add(NodeToPageContext(node, config, cascaded, dataChain));
+                var (cascaded, dataChain) = MergeAncestorCascades(key, nodeKind, cascades);
+                entries.Add((key, NodeToPageContext(node, config, cascaded, dataChain)));
                 return false;
             }
         });
 
         // 保持既有输出契约：日期降序
-        return pages
-            .OrderByDescending(p => p.Date)
+        var ordered = entries
+            .OrderByDescending(e => e.Page.Date)
             .ToList();
+
+        // C1 分页输入：列表页装配 page.Pages——home 为全部常规页，
+        // section 为其下全部常规页（descendant，等价 Hugo .RegularPages；
+        // 直接子级为主的站点与 Hugo .Pages 结果一致）
+        var regularByKey = ordered
+            .Where(e => e.Page.Type is not ("home" or "section"))
+            .ToList();
+        var regular = regularByKey.Select(e => e.Page).ToList();
+
+        var result = new List<PageContext>(ordered.Count);
+        foreach (var (key, page) in ordered)
+        {
+            if (page.Type == "home")
+            {
+                result.Add(page.WithPages(regular));
+            }
+            else if (page.Type == "section")
+            {
+                var prefix = key + "/";
+                var sectionPages = regularByKey
+                    .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(e => e.Page)
+                    .ToList();
+                result.Add(page.WithPages(sectionPages));
+            }
+            else
+            {
+                result.Add(page);
+            }
+        }
+        return result;
     }
 
     /// <summary>节点 → Hugo kind 语义字符串（cascade _target 的 kind 过滤依据）</summary>
@@ -626,8 +657,16 @@ public sealed partial class SiteBuilder
             ReadingTime = TimeSpan.Zero,
             Type = kind,
             Draft = draft,
+            Section = SectionOfKind(relPermalink),
             Params = cascadedParams
         };
+    }
+
+    /// <summary>页面相对 URL → Hugo <c>.Section</c>（路径首段；home 为 "/" 时为空串）</summary>
+    private static string SectionOfKind(string relPermalink)
+    {
+        var segments = relPermalink.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length > 0 ? segments[0] : "";
     }
 
     private PageContext CreatePageContext(
@@ -697,6 +736,7 @@ public sealed partial class SiteBuilder
             Resources = LoadBundleResources(content.SourcePath),
             Draft = draft,
             Weight = weight,
+            Section = SectionOfKind(relPermalink),
             MenuEntries = content.Metadata.Menus is { Count: > 0 } menus
                 ? menus.ToDictionary(
                     kvp => kvp.Key,
