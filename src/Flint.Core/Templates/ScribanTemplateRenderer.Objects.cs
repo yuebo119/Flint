@@ -93,6 +93,8 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("table_of_contents", page.TableOfContents, false);
             SetValue("plain", page.Plain, false);
             SetValue("raw_content", page.RawContent, false);
+            // B4：Hugo .File.* 方法族（主题常用 .File.Path / .File.ContentBaseName）
+            SetValue("file", BuildFileObject(page.SourcePath), false);
 
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
@@ -349,6 +351,50 @@ public sealed partial class ScribanTemplateRenderer
 
 
     // CreateTaxonomiesObject 已被 LazyTaxonomies 替代，不再需要
+
+    /// <summary>
+    /// Hugo .File 对象（B4）：从页面源路径派生 path/dirname/basename/content_base_name/
+    /// filename/extension/unique_id/translation_base_name。无源路径（合成页）返回空对象
+    /// </summary>
+    private static ScriptObject BuildFileObject(string? sourcePath)
+    {
+        var file = new ScriptObject();
+        if (string.IsNullOrEmpty(sourcePath))
+        {
+            file["path"] = "";
+            file["Path"] = "";
+            return file;
+        }
+
+        var normalized = sourcePath.Replace('\\', '/');
+        // Hugo .File.Path 相对 content/ 目录（无前导斜杠）
+        var contentIdx = normalized.LastIndexOf("/content/", StringComparison.OrdinalIgnoreCase);
+        var relPath = contentIdx >= 0
+            ? normalized[(contentIdx + "/content/".Length)..]
+            : normalized.TrimStart('/');
+        var baseName = Path.GetFileNameWithoutExtension(sourcePath);
+        // index/_index 的 ContentBaseName 取父目录名（Hugo 语义）
+        var contentBaseName = baseName is "index" or "_index"
+            ? Path.GetFileName(Path.GetDirectoryName(sourcePath) ?? "") ?? ""
+            : baseName;
+
+        var values = new (string Key, object Value)[]
+        {
+            ("path", relPath),
+            ("dirname", relPath.Contains('/') ? relPath[..relPath.LastIndexOf('/')] : ""),
+            ("basename", baseName),
+            ("content_base_name", contentBaseName),
+            ("filename", Path.GetFileName(sourcePath)),
+            ("extension", Path.GetExtension(sourcePath).TrimStart('.')),
+            ("unique_id", relPath)
+        };
+        foreach (var (key, value) in values)
+        {
+            file[key] = value;
+            file[char.ToUpperInvariant(key[0]) + key[1..]] = value; // Hugo 大写别名
+        }
+        return file;
+    }
 
     private static ScriptObject CreateMenusObject(FlintMenuCollection menus)
     {

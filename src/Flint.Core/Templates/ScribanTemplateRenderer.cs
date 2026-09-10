@@ -346,6 +346,103 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
+    /// 以调用者上下文渲染 partial 并返回**类型还原**后的值（B2，对齐 Hugo partial 返回值）：
+    /// Hugo 的 <c>{{ partial "x" . }}</c> 可作函数用（partial 内 <c>{{ return X }}</c> 返回值），
+    /// Ananke 等主题大量使用 <c>{{ $v := partial "func/Foo" . }}</c>。
+    /// Scriban 的 include 只给字符串——此函数把 "true"/"false" 还原为布尔、
+    /// 纯数字还原为数值，使 <c>{{ if (partial "x" .) }}</c> 的布尔判断语义正确
+    /// </summary>
+    internal object RenderPartialWithType(Scriban.TemplateContext callerContext, string name)
+    {
+        var path = _templateLoader.GetPath(callerContext, default, name)
+            ?? throw new InvalidOperationException($"partial 路径解析失败: {name}");
+        var content = _templateLoader.Load(callerContext, default, path)
+            ?? throw new InvalidOperationException($"partial 未找到: {name}");
+        var partialTemplate = Template.Parse(content, path);
+        if (partialTemplate.HasErrors)
+        {
+            throw new TemplateParseException(
+                name,
+                partialTemplate.Messages.Select(m => m.ToString()).ToList());
+        }
+
+        // 复用调用者上下文：partial 内可见 page/site/内置函数（Hugo partial 的
+        // 第二参数语义在 Scriban 中由共享上下文天然满足）
+        var rendered = partialTemplate.Render(callerContext);
+        return RestoreScalarType(rendered);
+    }
+
+    /// <summary>渲染结果标量类型还原：布尔/数值从文本还原（partial 返回值的类型语义）</summary>
+    private static object RestoreScalarType(string rendered)
+    {
+        var trimmed = rendered.Trim();
+        if (trimmed.Equals("true", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+        if (trimmed.Equals("false", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        if (long.TryParse(trimmed, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var l))
+        {
+            return l;
+        }
+        if (double.TryParse(trimmed, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var d))
+        {
+            return d;
+        }
+        return rendered;
+    }
+
+    /// <summary>
+    /// partial 函数（返回值语义）的 Scriban 包装
+    /// </summary>
+    private sealed class PartialFunction(ScribanTemplateRenderer renderer)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count < 1 || arguments[0] is not string name)
+            {
+                throw new InvalidOperationException("partial 需要至少一个字符串参数（partial 名称）");
+            }
+            return renderer.RenderPartialWithType(context, name);
+        }
+
+        public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            return new System.Threading.Tasks.ValueTask<object?>(
+                Invoke(context, callerContext, arguments, blockStatement));
+        }
+
+        public int RequiredParameterCount => 1;
+
+        public int ParameterCount => 1;
+
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+
+        public Type ReturnType => typeof(object);
+
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "name");
+
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
+    }
+
+    /// <summary>
     /// partialCached 的 Scriban 函数包装：实现 IScriptCustomFunction 拿到
     /// 调用者 TemplateContext（不经反射绑定，AOT 安全）
     /// </summary>
@@ -655,6 +752,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 按当前页查找视图模板（{section}/{view} → {view}）并渲染当前页上下文
         globals.TrySetValue(scribanContext, default, "render",
             new RenderViewFunction(this, context.Page, context.Site), readOnly: true);
+
+        // partial 函数（B2）：返回值语义 + 标量类型还原（Hugo partial 可作函数用）；
+        // includeCached（B3）：Hugo v0.146 的 partialCached 新名，指向同一实现
+        globals.TrySetValue(scribanContext, default, "partial",
+            new PartialFunction(this), readOnly: true);
+        globals.TrySetValue(scribanContext, default, "includeCached",
+            new PartialCachedFunction(this), readOnly: true);
+        globals.TrySetValue(scribanContext, default, "include_cached",
+            new PartialCachedFunction(this), readOnly: true);
         scribanContext.PushGlobal(globals);
         return scribanContext;
     }
