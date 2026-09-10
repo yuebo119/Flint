@@ -20,22 +20,30 @@ public sealed partial class SiteBuilder
 {
     private async Task<List<ContentFile>> ScanContentFilesAsync(
         string sourcePath,
+        IReadOnlyList<string>? themeNames,
         CancellationToken cancellationToken)
     {
         var contentPath = Path.Combine(sourcePath, "content");
-        if (!Directory.Exists(contentPath))
+
+        // 内容收集（A2 主题兼容）：站点 content 优先，主题 content 按序补缺——
+        // 键 = content/ 下的相对路径，站点已有的路径不被主题覆盖（对齐 Hugo 主题语义）
+        var filesByRelative = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        CollectContentFiles(contentPath, filesByRelative);
+        if (themeNames is not null)
+        {
+            foreach (var themeName in themeNames)
+            {
+                CollectContentFiles(
+                    Path.Combine(sourcePath, "themes", themeName, "content"), filesByRelative);
+            }
+        }
+
+        if (filesByRelative.Count == 0)
         {
             return [];
         }
 
-        // 优化：先收集所有文件路径，然后并行读取
-        var mdFiles = Directory.EnumerateFiles(contentPath, "*.md", SearchOption.AllDirectories)
-            .ToArray();
-
-        if (mdFiles.Length == 0)
-        {
-            return [];
-        }
+        var mdFiles = filesByRelative.Values.ToArray();
 
         // 预分配数组，避免 List 扩容
         var files = new ContentFile[mdFiles.Length];
@@ -61,6 +69,25 @@ public sealed partial class SiteBuilder
             });
 
         return [.. files];
+    }
+
+    /// <summary>
+    /// 收集 content 目录下的 Markdown 到「相对路径 → 物理路径」字典（A2）；
+    /// TryAdd 先到先得形成站点覆盖主题的优先级链
+    /// </summary>
+    private static void CollectContentFiles(
+        string contentDir, Dictionary<string, string> filesByRelative)
+    {
+        if (!Directory.Exists(contentDir))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(contentDir, "*.md", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(contentDir, file).Replace('\\', '/');
+            filesByRelative.TryAdd(rel, file);
+        }
     }
 
     private async Task<List<ParsedContent>> ParseContentsAsync(

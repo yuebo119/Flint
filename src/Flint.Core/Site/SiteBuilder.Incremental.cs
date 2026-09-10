@@ -81,7 +81,7 @@ public sealed partial class SiteBuilder
                     // 兜底：无先前全量构建（如直接调用增量 API）——先全量装配。
                     // 装配后的树已含本次变更，"更新前旧签名"无从取起（前后同树恒等、
                     // 比较永假），以空哨兵强制 taxonomy 页重产
-                    var allFiles = await ScanContentFilesAsync(options.SourcePath, cancellationToken);
+                    var allFiles = await ScanContentFilesAsync(options.SourcePath, config.ThemeNames, cancellationToken);
                     var allParsed = await ParseContentsAsync(allFiles, options, errors, cancellationToken);
                     tree = AssemblePageTree(FilterContents(allParsed, options), options.SourcePath, config);
                     _currentPageTree = tree;

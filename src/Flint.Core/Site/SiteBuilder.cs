@@ -106,7 +106,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             Phase("1.配置加载+短码");
 
             // 2. 扫描内容文件
-            var contentFiles = await ScanContentFilesAsync(options.SourcePath, cancellationToken);
+            var contentFiles = await ScanContentFilesAsync(options.SourcePath, config.ThemeNames, cancellationToken);
             Phase("2.扫描内容");
 
             // 3. 使用 Channel 并发解析内容

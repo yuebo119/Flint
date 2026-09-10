@@ -419,9 +419,23 @@ public sealed partial class ModuleManager : IDisposable
             Name = GetTomlString(config, "name") ?? Path.GetFileName(modulePath),
             Version = GetTomlString(config, "version") ?? "1.0.0",
             Repository = GetTomlString(config, "repository") ?? "",
-            
+            // A4 元数据：主题自述信息（mod list 展示 + min_version 兼容提示）
+            Description = GetTomlString(config, "description"),
+            License = GetTomlString(config, "license"),
+            MinVersion = GetTomlString(config, "min_version"),
+            Tags = GetTomlStringList(config, "tags"),
+
             LocalPath = modulePath
         };
+    }
+
+    private static IReadOnlyList<string> GetTomlStringList(TomlTable table, string key)
+    {
+        if (!table.TryGetValue(key, out var value) || value is not TomlArray array)
+        {
+            return [];
+        }
+        return array.Select(v => v?.ToString() ?? "").Where(s => s.Length > 0).ToArray();
     }
 
     private async Task UpdateLockFileAsync(string lockKey, ModuleDescriptor descriptor, string installedVersion, string sha256, CancellationToken ct)
