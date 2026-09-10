@@ -82,9 +82,25 @@ internal static class BuildHandler
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Select(t => Path.Combine(sourcePath, "themes", t, "layouts"))
                 .ToArray();
+
+            // 模板资源提供者（Hugo Pipes）：站点 assets/ 优先，主题 assets/ 按序回退——
+            // resources.Get/Match/ByType 由此读取；未提供时 resources.* 注册为空对象
+            var assetRoots = new List<string> { Path.Combine(sourcePath, "assets") };
+            assetRoots.AddRange(siteConfig.Theme
+                .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Select(t => Path.Combine(sourcePath, "themes", t, "assets")));
+            var resourceProvider = new FileSystemResourceProvider(siteConfig.BaseURL, [.. assetRoots]);
+            var environment = new TemplateEnvironmentInfo
+            {
+                Environment = "production",
+                IsMultilingual = siteConfig.Languages.Count > 0,
+                WorkingDir = sourcePath
+            };
             var templateRenderer = new ScribanTemplateRenderer(
                 Path.Combine(sourcePath, "layouts"),
                 siteConfig.BaseURL,
+                environment,
+                resourceProvider,
                 themeLayoutDirs);
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染

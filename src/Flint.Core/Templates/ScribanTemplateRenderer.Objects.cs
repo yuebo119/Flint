@@ -44,7 +44,7 @@ public sealed partial class ScribanTemplateRenderer
         return SharedSiteObjects.GetValue(site, static s => BuildSiteObject(s));
     }
 
-    private static ScriptObject CreatePageObject(FlintPageContext page)
+    internal static ScriptObject CreatePageObject(FlintPageContext page)
     {
         return SharedPageObjects.GetValue(page, static p => new LazyPageObject(p));
     }
@@ -55,7 +55,7 @@ public sealed partial class ScribanTemplateRenderer
     /// 构建），并经 SharedPageObjects 复用。TryGetValue 只读不回写（并发渲染下
     /// ScriptObject 的写入非线程安全），全部可变状态在构造期完成
     /// </summary>
-    private sealed class LazyPageObject : ScriptObject
+    internal sealed class LazyPageObject : ScriptObject
     {
         private readonly FlintPageContext _page;
         private readonly object? _pagesValue;
@@ -91,7 +91,10 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("layout", page.Layout, false);
             SetValue("draft", page.Draft, false);
             SetValue("weight", page.Weight, false);
-            SetValue("params", page.Params, false);
+            // .Params：Hugo 语义是「front matter 全量并入 + 自定义参数」，
+            // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
+            // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
+            SetValue("params", BuildParamsView(page), false);
             SetValue("resources", page.Resources, false);
             SetValue("pages", _pagesValue, false);
             SetValue("terms", _termsValue, false);
@@ -113,6 +116,67 @@ public sealed partial class ScribanTemplateRenderer
                 SetValue("data", pageData, false);
                 SetValue("Data", pageData, false);
             }
+
+            // ---- Hugo Page 派生键投影（D 组）----
+            // kind 判定谓词（主题高频：{{ if .IsPage }} / {{ if .IsHome }}）
+            var kind = page.Kind.ToLowerInvariant();
+            var isHome = kind == "home";
+            var isPage = kind == "page";
+            var isSection = kind == "section";
+            var isNode = isHome || isSection || kind is "taxonomy" or "term";
+            SetValue("is_home", isHome, false);
+            SetValue("IsHome", isHome, false);
+            SetValue("is_page", isPage, false);
+            SetValue("IsPage", isPage, false);
+            SetValue("is_section", isSection, false);
+            SetValue("IsSection", isSection, false);
+            SetValue("is_node", isNode, false);
+            SetValue("IsNode", isNode, false);
+            SetValue("is_branch", isNode, false);
+            SetValue("IsBranch", isNode, false);
+            SetValue("kind", kind, false);
+            SetValue("Kind", kind, false);
+
+            // 元数据投影（缺省回退，避免主题直接取用时 null 报错）
+            SetValue("link_title", page.LinkTitle ?? page.Title, false);
+            SetValue("LinkTitle", page.LinkTitle ?? page.Title, false);
+            SetValue("truncated", page.Truncated, false);
+            SetValue("Truncated", page.Truncated, false);
+            SetValue("path", page.PagePath ?? "/", false);
+            SetValue("Path", page.PagePath ?? "/", false);
+            SetValue("bundle_type", page.BundleType ?? "", false);
+            SetValue("BundleType", page.BundleType ?? "", false);
+            SetValue("keywords", page.Params.TryGetValue("keywords", out var kw) ? kw : new ScriptArray(), false);
+            SetValue("Keywords", page.Params.TryGetValue("keywords", out var kw2) ? kw2 : new ScriptArray(), false);
+            SetValue("publish_date", page.PublishDate ?? page.Date, false);
+            SetValue("PublishDate", page.PublishDate ?? page.Date, false);
+            SetValue("expiry_date", page.ExpiryDate, false);
+            SetValue("ExpiryDate", page.ExpiryDate, false);
+            SetValue("aliases", page.Aliases, false);
+            SetValue("Aliases", page.Aliases, false);
+
+            // .Plain 的派生：词列表与模糊字数
+            var plainWords = page.Plain is null
+                ? new ScriptArray()
+                : new ScriptArray(page.Plain
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(w => (object)w).ToArray());
+            SetValue("plain_words", plainWords, false);
+            SetValue("PlainWords", plainWords, false);
+            SetValue("fuzzy_word_count", page.FuzzyWordCount, false);
+            SetValue("FuzzyWordCount", page.FuzzyWordCount, false);
+
+            // .Len（Hugo Page.Len：节点页为子页数，普通页为 0）
+            var len = page.Pages?.Count ?? 0;
+            SetValue("len", len, false);
+            SetValue("Len", len, false);
+
+            // .Scratch / .Store：页面级可变暂存（Hugo 语义，跨块/跨 partial 状态传递）
+            var store = new PageStoreObject();
+            SetValue("store", store, false);
+            SetValue("Store", store, false);
+            SetValue("scratch", store, false);
+            SetValue("Scratch", store, false);
 
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
@@ -185,6 +249,61 @@ public sealed partial class ScribanTemplateRenderer
         return Uri.TryCreate(permalink, UriKind.Absolute, out var uri)
             ? uri.PathAndQuery
             : permalink;
+    }
+
+    /// <summary>
+    /// 构造 .Params 视图（Hugo 语义）：front matter 顶层字段并入自定义参数，
+    /// 页面自身字段优先于同名自定义参数。键同时提供小写与首字母大写形态
+    /// （主题两种写法都常见：<c>.Params.Title</c> / <c>.Params.title</c>）
+    /// </summary>
+    private static ScriptObject BuildParamsView(FlintPageContext page)
+    {
+        var o = new ScriptObject();
+
+        // 1) 自定义参数（front matter 的 params 段 + 未被识别的顶层键）
+        foreach (var kv in page.Params)
+        {
+            o[kv.Key] = kv.Value;
+        }
+
+        // 2) front matter 顶层字段（页面字段优先）
+        void SetBoth(string name, object? value)
+        {
+            if (value is null)
+            {
+                return;
+            }
+            o[name] = value;
+            o[name.Length > 0 ? char.ToUpperInvariant(name[0]) + name[1..] : name] = value;
+        }
+
+        SetBoth("title", page.Title);
+        SetBoth("description", page.Description);
+        SetBoth("summary", page.Summary);
+        SetBoth("date", page.Date);
+        SetBoth("lastmod", page.LastMod);
+        SetBoth("publishdate", page.PublishDate);
+        SetBoth("expirydate", page.ExpiryDate);
+        SetBoth("type", page.Type);
+        SetBoth("layout", page.Layout);
+        SetBoth("weight", page.Weight);
+        SetBoth("draft", page.Draft);
+        SetBoth("section", page.Section);
+        SetBoth("kind", page.Kind);
+        if (page.Tags.Count > 0)
+        {
+            SetBoth("tags", page.Tags);
+        }
+        if (page.Categories.Count > 0)
+        {
+            SetBoth("categories", page.Categories);
+        }
+        if (page.Aliases.Count > 0)
+        {
+            SetBoth("aliases", page.Aliases);
+        }
+
+        return o;
     }
 
     /// <summary>
@@ -384,6 +503,28 @@ public sealed partial class ScribanTemplateRenderer
         public LazyPageList(IReadOnlyList<FlintPageContext> pages)
         {
             _pages = pages;
+            // 集合方法（Hugo Pages 方法族）：主题在集合上调用，如
+            // {{ range .Pages.ByDate }} / {{ .Site.RegularPages.Related . }} / {{ first 5 .Pages }}
+            // 集合方法（Hugo Pages 方法族）：主题在集合上调用，如
+            // {{ range .Pages.ByDate }} / {{ .Site.RegularPages.Related . }}。
+            // Scriban 成员查找不区分大小写，单一注册即可覆盖 ByDate/by_date 两种写法
+            SetValue("bydate", new PagesByDateFunction(pages), false);
+            SetValue("bytitle", new PagesByTitleFunction(pages), false);
+            SetValue("byweight", new PagesByWeightFunction(pages), false);
+            SetValue("bylength", new PagesByLengthFunction(pages), false);
+            SetValue("bylastmod", new PagesByLastmodFunction(pages), false);
+            SetValue("bypublishdate", new PagesByDateFunction(pages), false);
+            SetValue("byexpirydate", new PagesByDateFunction(pages), false);
+            SetValue("byparam", new PagesByParamFunction(pages), false);
+            SetValue("bylinktitle", new PagesByTitleFunction(pages), false);
+            SetValue("related", new PagesRelatedFunction(pages), false);
+            SetValue("reverse", new PagesReverseFunction(pages), false);
+            SetValue("limit", new PagesLimitFunction(pages), false);
+            SetValue("groupby", new PagesGroupByFunction(pages), false);
+            SetValue("groupbydate", new PagesGroupByDateFunction(pages), false);
+            SetValue("indexof", new PagesIndexOfFunction(pages), false);
+            SetValue("next", new PagesNextPrevFunction(pages, forward: true), false);
+            SetValue("prev", new PagesNextPrevFunction(pages, forward: false), false);
             // 设置 count/length 属性，这些是常用的且不需要转换所有页面
             SetValue("count", pages.Count, false);
             SetValue("length", pages.Count, false);

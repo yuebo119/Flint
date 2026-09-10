@@ -359,6 +359,22 @@ def convert_expr(expr, ctx_stack, file):
     # range：栈式上下文（集合表达式经 convert_expr 统一映射，长模式优先）
     if expr.startswith("range"):
         coll = re.sub(r"^range\s+", "", expr)
+        # 双变量形态 `range $k, $v := obj`（Hugo map 迭代）：
+        # Scriban 不支持 `for k, v in`（实测 PARSE-ERR），且迭代 ScriptObject 产出
+        # {key, value} 对象（实测：x[0] 取不到，须用 x.key / x.value）。
+        # 故转为单变量迭代 + 块首从 pair 解构出 k/v
+        m2 = re.match(r"^\$(\w+)\s*,\s*\$(\w+)\s*:=\s*(.+)$", coll, re.S)
+        if m2:
+            kvar, vvar, src = "$" + m2.group(1), "$" + m2.group(2), m2.group(3)
+            src = convert_expr(src, ctx_stack, file)
+            if "TODO-HUGO" in src:
+                TODO_LIST.append((file, expr))
+                src = "{}"
+            loopvar = f"_pair{len(ctx_stack)}"
+            ctx_stack.append((vvar, vvar))
+            # 注意 f-string 转义：要产出字面 `}}` 须写 `}}}}`，产出 `{{` 须写 `{{{{`
+            return (f"for {loopvar} in {src} }}}}}}{{{{ {kvar} = {loopvar}.key; "
+                    f"{vvar} = {loopvar}.value")
         m3 = re.match(r"^\$(\w+)\s*:=\s*(.+)$", coll, re.S)
         var_name = None
         if m3:

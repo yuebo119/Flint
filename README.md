@@ -216,6 +216,56 @@ Flint **不自动转义**模板输出：Scriban 渲染配置为不启用 HTML �
 内置函数含 Hugo 兼容的 `where`/`sortBy`/`after`/`in`/
 `dict`/`merge`/`urlize`/`markdownify`/`plainify`/`emojify`/`humanize` 等。
 
+### 命名空间函数（Hugo 0.146+ 形态）
+
+Hugo 0.146 起官方文档改用命名空间形式。Flint 提供 **19 个命名空间对象**
+（别名指向同一实现，非重复实现）：
+
+| 命名空间 | 覆盖内容 |
+|---|---|
+| `strings.*` | ToUpper/ToLower/Trim/TrimPrefix/TrimSuffix/HasPrefix/HasSuffix/Split/Substr/Replace/ReplaceRE/Truncate/Chomp/CountWords/FindRE/FindRESubmatch/Diff/ReplacePairs… |
+| `collections.*` | Where/Sort/Delimit/Dict/Slice/First/Last/In/Index/Merge/Union/Uniq/Reverse/Shuffle/Seq/KeyVals/SymDiff/Complement/Group/Apply… |
+| `compare.*` | Default/Conditional/Eq/Ne/Gt/Ge/Lt/Le |
+| `math.*` | Add/Sub/Mul/Div/Mod/ModBool/Max/Min/Pow/Sqrt/Round/Ceil/Floor/Log/Sum/Product/Rand/三角函数/ToDegrees/ToRadians/Pi/Counter/MaxInt64 |
+| `cast.*` | ToInt/ToFloat/ToString |
+| `crypto.*` / `hash.*` | MD5/SHA1/SHA256/HMAC/Hash、FNV32a/XxHash |
+| `encoding.*` | Base64Encode/Decode、HexEncode/Decode、Jsonify |
+| `transform.*` | Markdownify/Plainify/Emojify/HTMLEscape/HTMLUnescape/XMLEscape/Highlight/Unmarshal/Remarshal/HTMLToMarkdown… |
+| `urls.*` / `path.*` | AbsURL/RelURL/Anchorize/URLize/Ref/RelRef/Parse/PathEscape、Base/Dir/Ext/Join/Split/Clean |
+| `inflect.*` / `safe.*` | Humanize/Pluralize/Singularize、HTML/CSS/JS/JSStr/URL/HTMLAttr |
+| `fmt.*` | Errorf/Warnf/Erroridf/Warnidf/Print/Printf/Println |
+| `reflect.*` | IsMap/IsSlice/IsPage/IsResource/IsSite/IsImageResource* |
+| `os.*` / `lang.*` / `debug.*` / `templates.*` | Getenv/ReadFile/FileExists/Stat、Translate/FormatNumber*、Dump/Timer、Exists/Current/Inner/Defer |
+| **`hugo.*`** | Version/Environment/IsProduction/IsDevelopment/IsExtended/IsMultilingual/WorkingDir/Generator/Data/Store |
+| **`resources.*`** | Get/GetMatch/Match/ByType/FromString/Concat/Minify/Fingerprint/Copy/Publish/ExecuteAsTemplate + Resize/Fit/Fill/Crop/Process |
+| **`css.*` / `js.*` / `images.*`** | Build/Sass/PostCSS/TailwindCSS/Quoted/Unquoted、Build/Babel/Batch、Config |
+
+**资源管线**：`resources.*` 从站点 `assets/`（优先）与主题 `assets/` 读取；
+`Concat`/`FromString`/`Fingerprint` 的产物自动写入输出目录（`/assets/...`），
+模板引用的链接不会 404。`Fingerprint` 提供 `Data.Integrity`（sha256 base64）。
+
+### 页面对象扩展（Hugo 语义）
+
+除基础字段外，页面还提供：
+
+- **kind 谓词**：`is_home`/`is_page`/`is_section`/`is_node`/`is_branch`/`kind`
+- **元数据**：`link_title`/`truncated`/`path`/`bundle_type`/`keywords`/
+  `publish_date`/`expiry_date`/`aliases`/`plain_words`/`fuzzy_word_count`/`len`
+- **`.Params` 兼容**：front matter 顶层字段（title/date/tags…）并入 `Params`，
+  故 `.Params.Title` / `.Params.title` 均可用（Ananke 等主题依赖此行为）
+- **`.Scratch` / `.Store`**：页面级暂存，`set`/`get`/`add`/`delete`/
+  `setinmap`/`deleteinmap`/`getsortedmapvalues`/`values`
+- **集合方法族**（Pages）：`ByDate`/`ByTitle`/`ByWeight`/`ByLength`/`ByLastmod`/
+  `ByParam`/`Related`/`Reverse`/`Limit`/`GroupBy`/`GroupByDate`/`IndexOf`/`Next`/`Prev`
+- **`.Related`**：按 Hugo 默认关键词算法打分（keywords 100 / date 100 / tags 80 /
+  categories 80），得分 >0 入选并按分降序
+
+### 内置 partial（Hugo embedded）
+
+主题未提供但 Hugo 内置的 partial 由 Flint 兜底：`opengraph`、`schema`、
+`twitter_cards`（最小等价元信息）、`google_analytics`/`disqus`（空实现）、
+`pagination`。主题可放同名 partial 覆盖。
+
 分页：列表页（home/section）按站点 `paginate`/`paginatePath` 切片，逐页产出
 `{列表页}page/{N}/`（如 `posts/page/2/`）。每页绑定 `page.paginator` 与全局
 `paginator`（`pages`/`page_number`/`total_pages`/`pager_size`/`has_prev`/
