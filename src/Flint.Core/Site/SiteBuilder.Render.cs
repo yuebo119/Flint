@@ -311,7 +311,12 @@ public sealed partial class SiteBuilder
                                 // 随 kind 分派同步置位：首页/列表页模板的 is_home/is_list
                                 // 判断依赖此标志（taxonomy 路径已设 IsList，此处对齐）
                                 IsHome = baseQuery.Kind == "home",
-                                IsList = baseQuery.Kind == "section"
+                                IsList = baseQuery.Kind == "section",
+                                // 模板全局 pages：Hugo 的列表页 .Pages 等价物。
+                                // 此前未设置 → 全局 `pages` 回落空列表，使
+                                // `{{ range .Pages }}`（转换为 pages）渲染空
+                                // （mini fixture 实测）
+                                Pages = page.Pages
                             };
 
                             // 非 html 格式：候选链已带格式后缀，未命中物理模板即跳过
@@ -438,6 +443,59 @@ public sealed partial class SiteBuilder
         }
     }
 
+    /// <summary>
+    /// 词条 → 页面对象（Hugo 的 taxonomy 列表页 .Pages 语义：列出各词条页）。
+    /// 词条本身不是内容页，故用最小 PageContext 投影（title/permalink/date），
+    /// 使主题的 .Pages.ByDate 排序与 .Title/.RelPermalink 访问可用
+    /// </summary>
+    private static IReadOnlyList<PageContext> BuildTermPages(
+        IReadOnlyList<TaxonomyTerm>? terms,
+        SiteConfig config)
+    {
+        if (terms is null || terms.Count == 0)
+        {
+            return [];
+        }
+
+        var list = new List<PageContext>(terms.Count);
+        foreach (var term in terms)
+        {
+            var rel = term.Permalink ?? "/";
+            if (rel.StartsWith(config.BaseURL, StringComparison.OrdinalIgnoreCase))
+            {
+                rel = rel[config.BaseURL.TrimEnd('/').Length..];
+            }
+            if (!rel.StartsWith('/'))
+            {
+                rel = "/" + rel;
+            }
+
+            // 词条页的"日期"取该词条下最新文章（用于 ByDate 排序，对齐 Hugo 的
+            // 词条页 Date = 其页面集合的最近日期）
+            var date = term.Pages.Count > 0
+                ? term.Pages.Max(p => p.Date)
+                : DateTimeOffset.Now;
+
+            list.Add(new PageContext
+            {
+                Title = term.Name,
+                Content = "",
+                Permalink = term.Permalink ?? config.BaseURL,
+                RelPermalink = rel,
+                Date = date,
+                Tags = [],
+                Categories = [],
+                WordCount = 0,
+                ReadingTime = TimeSpan.Zero,
+                Type = "term",
+                Kind = "term",
+                Pages = term.Pages
+            });
+        }
+
+        return list;
+    }
+
     private async Task<List<RenderedPage>> GenerateTaxonomyPagesAsync(
         TaxonomyCollection taxonomies,
         SiteContext siteContext,
@@ -504,11 +562,25 @@ public sealed partial class SiteBuilder
                     TaxonomyName = taxPage.TaxonomyName,
                     TaxonomySingular = taxPage.TaxonomySingular,
                     TaxonomyPlural = taxPage.TaxonomyPlural,
-                    // 模板 page.pages（term 页词条页面集合）与 page.terms（taxonomy
-                    // 页词条列表）的数据源——默认主题模板依赖此二者，缺省时
-                    // 词条/分类页渲染为空列表（端到端冒烟发现的回归）
-                    Pages = taxPage.Pages,
-                    Terms = taxPage.Terms
+                    // 模板 page.pages 与 page.terms 的数据源。
+                    // Hugo 语义：taxonomy 列表页的 .Pages 是**词条页集合**
+                    // （主题用 `{{ range .Pages.ByDate }}` 列出全部标签）——
+                    // 此前只给 term 页设 Pages，taxonomy 页为 null，使
+                    // `page.pages.by_date` 报 null（mini fixture 实测）
+                    Pages = isTaxonomyList
+                        ? BuildTermPages(taxPage.Terms, config)
+                        : taxPage.Pages,
+                    Terms = taxPage.Terms,
+                    // 分页器：Hugo 的 list 类页面（含 taxonomy/term）恒有 .Paginator，
+                    // 主题直接访问 .TotalPages/.Pagers 而不加 with 保护——
+                    // 缺省时模板报 "Cannot get the member $pag.TotalPages for a null object"
+                    // （mini 主题 fixture 实证）。空集合也有一页（对齐 Hugo）
+                    Paginator = PaginatorView.Create(
+                        taxPage.Pages ?? [],
+                        taxPage.PageNumber,
+                        Math.Max(1, config.Paginate),
+                        relPermalink,
+                        config.PaginatePath)
                 };
 
                 var context = new TemplateContext

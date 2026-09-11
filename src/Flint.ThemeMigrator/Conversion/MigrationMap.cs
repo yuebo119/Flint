@@ -63,6 +63,7 @@ internal sealed class MigrationMap
         {
             ("Site.Title", "site.title"), ("Site.BaseURL", "site.base_url"),
             ("Site.Language", "site.language"), ("Site.LanguageCode", "site.language"),
+            ("Site.Language.LanguageCode", "site.language"), ("Site.Language.Lang", "site.language"),
             ("Site.Copyright", "site.copyright"), ("Site.Params", "site.params"),
             ("Site.Data", "site.data"), ("Site.Menus", "site.menus"),
             ("Site.Pages", "site.pages"), ("Site.RegularPages", "site.regular_pages"),
