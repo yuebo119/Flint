@@ -99,8 +99,39 @@ internal sealed class ThemeMigrator
             }
 
             var text = File.ReadAllText(file);
-            var result = ConvertTemplate(rel, text);
+
+            // 内联 partial 提取（Hugo 的 define "_partials/X.html"）：
+            // Scriban 无此机制，必须提取为独立文件使 include 可命中
+            var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text);
+            var result = ConvertTemplate(rel, remainingText);
             File.WriteAllText(targetPath, result.Text);
+
+            // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
+            foreach (var ip in inlinePartials)
+            {
+                // Hugo 的虚拟路径是相对 layouts 的（_partials/X.html），
+                // 须落到产物主题的 layouts/ 下（与源码目录结构一致）
+                var ipRel = ip.RelativePath.StartsWith("layouts/", StringComparison.OrdinalIgnoreCase)
+                    ? ip.RelativePath
+                    : "layouts/" + ip.RelativePath;
+                var ipTarget = Path.Combine(targetRoot, ipRel.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(ipTarget)!);
+
+                // 提取内容仍走转换（保持与其他模板一致的语法）
+                var ipConverted = ConvertTemplate(ipRel, ip.Content);
+                File.WriteAllText(ipTarget, ipConverted.Text);
+                summary.FilesConverted++;
+                summary.TotalActions += ipConverted.Stats.Actions;
+                summary.TotalExpressions += ipConverted.Stats.Expresssions;
+                summary.TotalUnsupported += ipConverted.Stats.Unsupported;
+                summary.TotalDowngraded += ipConverted.Stats.Downgraded;
+
+                summary.Results.Add(new FileMigrationResult(
+                    ipRel, ipTarget, true, null,
+                    ipConverted.Stats.Actions, ipConverted.Stats.Expresssions,
+                    ipConverted.Stats.Unsupported, ipConverted.Stats.Downgraded,
+                    [$"内联 partial 提取为独立文件（原 #{rel}）", .. ipConverted.Stats.Notes]));
+            }
 
             summary.FilesConverted++;
             summary.TotalActions += result.Stats.Actions;

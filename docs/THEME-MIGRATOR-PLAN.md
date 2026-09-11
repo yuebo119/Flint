@@ -575,3 +575,61 @@ Ananke 站点（转换后）:
 | 阶段 2 迁移器主体（API 枚举校验 + 四门禁集成） | 部分完成（预检已集成；构建/diff 未集成） |
 | 阶段 4 主题矩阵扩展 | 未开始（4 主题已就绪） |
 | 阶段 5 AI 残差 | 未开始 |
+
+---
+
+## 十三、阶段 2 延伸与剩余缺口（2026-09-11）
+
+### 本轮新增
+
+| 项 | 内容 |
+|---|---|
+| 内联 partial 提取 | `Migration/InlinePartialExtractor.cs`：把 Hugo 的 `{{ define "_partials/X.html" }}` 提取为独立文件（Scriban 无此机制，不提取则 include 报"找不到文件"）。Ananke 的 `AnankeGetResource.html` 由此解决 |
+| `collections.Slice` 独立实现 | Hugo 是可变参数构造器（零参=空数组），与 Flint 的 `slice`（序列切片）语义不同——同名不同义必须分开 |
+| `collections.IsSet` 独立实现 | Hugo 是 `(MAP, KEY)` 判键存在，与 Flint 的 `isset(value)`（判非空）不同 |
+| `MediaType` 对象化 | Hugo 的 `.MediaType` 是对象（Type/SubType/MainType/Suffixes） |
+| 命名空间三形态键 | resources/css/js 也补小写形态（`resources.get` 与 `resources.Get` 并存） |
+| 内置模板名归一 | `include "pagination.html"`（带扩展名）也能命中内置模板 |
+
+### 剩余架构性缺口（需引擎侧设计，非转换器可解）
+
+**`partials.Include` 的返回值语义**：
+
+```
+Hugo:   {{ $res := partial "GetFeaturedImageResource.html" . }}
+        {{ $res.MediaType.SubType }}      ← $res 是资源对象，有属性/方法
+        {{ $res.Resize "480x" }}
+
+Flint:  {{ include "GetFeaturedImageResource.html" }}   ← Scriban 返回字符串
+```
+
+Scriban 的 `include` 语义是"渲染为文本"，无法返回对象。要支持此形态需：
+- 引擎侧提供"partial 返回对象"的机制（如 `partialValue` 函数，渲染后反序列化），或
+- 转换器把 `partial` 调用内联展开（仅适用于无副作用且可静态分析的 partial）
+
+**这是 Flint 与 Hugo 在 partial 机制上的根本差异**，影响面为所有"partial 返回结构化数据"
+的主题写法（Ananke 的 `GetFeaturedImageResource`/`GetFeaturedImage` 即此类）。
+
+### Ananke 端到端状态
+
+```
+门禁①（AST 完整）      ✅ 通过
+门禁②（Scriban 预检）  ✅ 0 失败（转换率 99.2%）
+门禁③（flint build）   ❌ 阻断于 partial 返回值语义（上述缺口）
+门禁④（产物 diff）     — 未执行（依赖③）
+
+已解决的阻断链（按发现顺序）:
+  css.Build 缺失 → resources.get 大小写 → collections.Slice/IsSet 语义
+  → MediaType 对象化 → 内联 partial 提取 → 【当前】partial 返回值语义
+```
+
+**每一步都是真实的引擎/转换器缺口，不是转换质量问题。** 转换层已达 99.2%
+机械转换率且预检零失败；剩余全部是"引擎能力未覆盖 Hugo 语义"。
+
+### 未实施
+
+| 阶段 | 状态 | 前置 |
+|---|---|---|
+| partial 返回值语义 | 未实施 | 需引擎设计决策（新函数 or 转换器内联） |
+| 阶段 4 主题矩阵扩展 | 未开始 | 4 主题已就绪 |
+| 阶段 5 AI 残差 | 未开始 | — |
