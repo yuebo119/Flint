@@ -87,6 +87,16 @@ internal sealed class ScribanConverter(
         return n;
     }
 
+    /// <summary>
+    /// partial 调用点的**模板路径**：Hugo 的 partial 只在 <c>layouts/_partials/</c>
+    /// 与 <c>layouts/partials/</c> 查找，**不会命中原目录下的同名页面模板**。
+    /// 若只产出裸名，`partial "404.html"` 会解析到 <c>layouts/404.html</c>
+    /// （页面模板自身）→ 自递归至 "Exceeding number of recursive depth limit" 而
+    /// 构建失败（hugo-coder 实测）。故统一产出显式 <c>_partials/</c> 前缀路径，
+    /// 由 FileTemplateLoader 在 partials 目录（含旧目录回退）内解析
+    /// </summary>
+    internal static string PartialPathFor(string raw) => "_partials/" + CanonicalPartialName(raw);
+
     /// <summary>转换一个管道（表达式主体）</summary>
     public ConversionResult ConvertPipeline(Parsing.Pipeline pipeline, IReadOnlyList<string> scope, bool resourceContext = false)
     {
@@ -1079,7 +1089,7 @@ internal sealed class ScribanConverter(
             if (isDotValueCtx)
             {
                 return new ConversionResult(
-                    $"partialValue \"{nameExpr}\"", ConversionKind.Equivalent);
+                    $"partialValue \"{PartialPathFor(nameExpr)}\"", ConversionKind.Equivalent);
             }
             Diagnostics.Add($"返回值型 partial {nameExpr} 的上下文参数非 dot，保持 include（语义可能不等价）");
         }
@@ -1098,10 +1108,11 @@ internal sealed class ScribanConverter(
             if (args.Count > 1 && scope.Count > 0 && !isValueReturning)
             {
                 return new ConversionResult(
-                    $"partial \"{nameExpr}\" {scope[^1]}", ConversionKind.Downgraded,
+                    $"partial \"{PartialPathFor(nameExpr)}\" {scope[^1]}", ConversionKind.Downgraded,
                     "partial 上下文参数以 page 绑定（with/range 块内 dot 语义等价）");
             }
-            return new ConversionResult($"{target} \"{nameExpr}\"", ConversionKind.Equivalent);
+            return new ConversionResult(
+                $"{target} \"{PartialPathFor(nameExpr)}\"", ConversionKind.Equivalent);
         }
 
         // 第二参数是括号表达式（dict/slice 等，Hugo 最常用的上下文形态）：
@@ -1116,7 +1127,7 @@ internal sealed class ScribanConverter(
             if (inner.Kind != ConversionKind.Unsupported)
             {
                 return new ConversionResult(
-                    $"partial \"{nameExpr}\" ({inner.Text})", ConversionKind.Downgraded,
+                    $"partial \"{PartialPathFor(nameExpr)}\" ({inner.Text})", ConversionKind.Downgraded,
                     "partial 上下文参数以 page 绑定（Hugo dot 语义等价）");
             }
         }
@@ -1137,14 +1148,14 @@ internal sealed class ScribanConverter(
                 ctxR.Text != "null")
             {
                 return new ConversionResult(
-                    $"partial \"{nameExpr}\" {ctxR.Text}", ConversionKind.Downgraded,
+                    $"partial \"{PartialPathFor(nameExpr)}\" {ctxR.Text}", ConversionKind.Downgraded,
                     "partial 上下文参数以 page 绑定（Hugo dot 语义等价）");
             }
         }
 
         // 带显式上下文/参数：Scriban 无等价（include 不接收上下文参数）→ 降级
         Diagnostics.Add($"partial 带上下文参数（{nameExpr}）：Scriban include 共享上下文，参数已省略");
-        return new ConversionResult($"{target} \"{nameExpr}\"", ConversionKind.Downgraded,
+        return new ConversionResult($"{target} \"{PartialPathFor(nameExpr)}\"", ConversionKind.Downgraded,
             "partial 上下文参数省略（Scriban include 共享调用者上下文）");
     }
 

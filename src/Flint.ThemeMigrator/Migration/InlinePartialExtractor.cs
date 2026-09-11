@@ -26,7 +26,14 @@ internal static partial class InlinePartialExtractor
     /// 从模板源文本中提取内联 partial 定义。
     /// 返回（剥离内联定义后的文本, 提取出的 partial 列表）。
     /// </summary>
-    public static (string RemainingText, IReadOnlyList<ExtractedInlinePartial> Partials) Extract(string source)
+    /// <param name="namedTemplates">
+    /// 需要提为独立文件的**简单名** define（Hugo 的命名模板：<c>{{ define "integrity" }}</c>
+    /// 配合跨文件 <c>{{ template "integrity" . }}</c>）。不带路径的 define 默认按
+    /// baseof 继承处理（capture blk_X），仅当名字出现在本集合时才提取——
+    /// 该判定由调用方跨文件扫描（block 名 vs 命名模板名）得出
+    /// </param>
+    public static (string RemainingText, IReadOnlyList<ExtractedInlinePartial> Partials) Extract(
+        string source, IReadOnlySet<string>? namedTemplates = null)
     {
         var partials = new List<ExtractedInlinePartial>();
         if (!source.Contains("define \"", StringComparison.Ordinal))
@@ -43,8 +50,17 @@ internal static partial class InlinePartialExtractor
         var i = 0;
         while (i < parts.Count)
         {
-            if (parts[i] is ActionPart { Body: KeywordBody { Name: "define", Names.Count: > 0 } def }
-                && def.Names[0].Contains('/', StringComparison.Ordinal))
+            // 名字必须在**进入块之前**捕获：下面的内层 while 会把 i 前移到 end 之后，
+            // 之后再访问 parts[i] 会越界（实测 ArgumentOutOfRangeException）
+            var defineName = parts[i] is ActionPart
+                { Body: KeywordBody { Name: "define", Names.Count: > 0 } d }
+                ? d.Names[0]
+                : null;
+            var isPathDefine = defineName is not null && defineName.Contains('/', StringComparison.Ordinal);
+            var isNamedDefine = defineName is not null
+                && namedTemplates is not null
+                && namedTemplates.Contains(defineName);
+            if (isPathDefine || isNamedDefine)
             {
                 // 收集到匹配的 end（含嵌套层数）
                 var depth = 1;
@@ -73,8 +89,13 @@ internal static partial class InlinePartialExtractor
                     i++;
                 }
 
-                // 规范化路径：`_partials/AnankeGetResource.html`（Hugo 的虚拟路径）
-                var rel = def.Names[0].Replace('\\', '/').TrimStart('/');
+                // 规范化路径：`_partials/AnankeGetResource.html`（Hugo 的虚拟路径）；
+                // 简单名（命名模板）落到 `_partials/<name>.html`
+                var rel = (defineName ?? "").Replace('\\', '/').TrimStart('/');
+                if (rel.Length > 0 && !rel.Contains('/', StringComparison.Ordinal))
+                {
+                    rel = "_partials/" + rel;
+                }
                 if (!rel.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
                 {
                     rel += ".html";
