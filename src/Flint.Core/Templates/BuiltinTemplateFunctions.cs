@@ -573,19 +573,31 @@ public sealed partial class BuiltinTemplateFunctions
             collection?.Reverse() ?? Enumerable.Empty<object>());
 
         // sort - 排序
-        obj.Import("sort", (IEnumerable<object>? collection, string? key) =>
+        // sort - 单参（Hugo `sort SEQ`）或带键（`sort SEQ KEY` / `sort SEQ KEY ORDER`）。
+        // 此前严格双参形参，Hugo 的单参/三参形态会报参数数错误
+        obj.Import("sort", (params object?[] a) =>
         {
-            if (collection == null)
-                return Enumerable.Empty<object>();
-            if (string.IsNullOrEmpty(key))
-                return collection.OrderBy(x => x);
-
-            return collection.OrderBy(x =>
+            if (a.Length == 0)
             {
-                if (x is ScriptObject so && so.TryGetValue(key, out var value))
-                    return value;
-                return x;
-            });
+                return Enumerable.Empty<object>();
+            }
+            var collection = ToObjectSeq(a[0]);
+            var key = a.Length > 1 ? a[1]?.ToString() : null;
+            var desc = a.Length > 2 &&
+                string.Equals(a[2]?.ToString(), "desc", StringComparison.OrdinalIgnoreCase);
+            // 排序键统一投影为可比较的字符串：ScriptObject 等类型直接 OrderBy
+            // 会抛 "Failed to compare two elements in the array"（hugo-book/hugo-coder 实测）。
+            // 页面对象按 Hugo 默认排序规则投影（Weight → Date → Title → 路径），
+            // 其余按 Ordinal 字符串——不抛异常且顺序稳定
+            if (string.IsNullOrEmpty(key))
+            {
+                var byDefault = collection.OrderBy(SortKeyOf, StringComparer.Ordinal);
+                return (desc ? byDefault.Reverse() : byDefault).Cast<object>().ToList();
+            }
+
+            var sorted = collection.OrderBy(
+                x => SortKeyOf(GetMember(x, key)), StringComparer.Ordinal);
+            return (desc ? sorted.Reverse() : sorted).Cast<object>().ToList();
         });
 
         // group - 分组
@@ -974,16 +986,50 @@ public sealed partial class BuiltinTemplateFunctions
         // not - 逻辑非
         obj.Import("not", (bool value) => !value);
 
-        // default - 默认值
-        obj.Import("default", (object? value, object? defaultValue) =>
-            value ?? defaultValue);
+        // default - 默认值。Hugo 的签名是 variadic：`default DEFAULT [GIVEN...]`，
+        // 只给一个参数时返回它自身（主题实测 `{{ $scope := default nil }}`——
+        // 严格双参形参会报 "Invalid number of arguments 1 passed to `default null`"）。
+        // 两参形态服务于管道：Scriban 的 `|` 把左值注入**首参**，故
+        // `X | default Y` → (X, Y) → 取 X 若非空，否则 Y（与 Hugo 管道语义一致）；
+        // 非管道形态 `default Y X` 的参数顺序由转换器重排（见 ScribanConverter）
+        obj.Import("default", (params object?[] a) => a.Length switch
+        {
+            0 => null,
+            1 => a[0],
+            _ => a[0] ?? a[1]
+        });
 
         // cond - 条件表达式
         obj.Import("cond", (bool condition, object? trueValue, object? falseValue) =>
             condition ? trueValue : falseValue);
 
-        // isset - 检查是否设置
-        obj.Import("isset", (object? value) => value != null);
+        // isset - Hugo 双形态：`isset MAP KEY`（键/索引存在性）与 `isset VALUE`（非空）。
+        // 此前只注册单参形态 → 主题的 `{{ if isset site.Params "twitter" }}` 报
+        // "Argument index must be < 1 (Parameter 'index')"（Scriban 绑定单参函数却收到
+        // 两个实参时在参数表访问越界）。这是 20 主题矩阵最高频的阻断原因（9 个主题命中）
+        obj.Import("isset", (params object?[] a) =>
+        {
+            if (a.Length == 0)
+            {
+                return false;
+            }
+            if (a.Length == 1)
+            {
+                return a[0] is not null;
+            }
+
+            var target = a[0];
+            var key = a[1]?.ToString() ?? "";
+            return target switch
+            {
+                ScriptObject so => so.ContainsKey(key),
+                System.Collections.IDictionary d => d.Contains(key),
+                // 集合按整数下标判定（Hugo：isset $arr 0）
+                System.Collections.IList list => int.TryParse(key, out var idx) &&
+                                                  idx >= 0 && idx < list.Count,
+                _ => false
+            };
+        });
 
         // isempty - 检查是否为空
         obj.Import("isempty", (object? value) =>
@@ -1489,6 +1535,67 @@ public sealed partial class BuiltinTemplateFunctions
         }
         var (seq, count) = SplitSeqCount(args[0], args[1]);
         return ToList(seq).Skip(Math.Max(0, count)).ToList();
+    }
+
+    /// <summary>
+    /// 排序键投影：把任意值映射为可比较的字符串（避免不可比类型抛异常）。
+    /// 页面对象（ScriptObject）按 Hugo 默认排序规则投影为 Weight｜Date｜Title，
+    /// 使 `sort $pages` 得到与 Hugo 一致的顺序
+    /// </summary>
+    private static string SortKeyOf(object? v)
+    {
+        if (v is ScriptObject so)
+        {
+            var weight = ToNumSafeText(GetMember(so, "weight") ?? GetMember(so, "Weight"));
+            var date = (GetMember(so, "date") ?? GetMember(so, "Date"))?.ToString() ?? "";
+            var title = (GetMember(so, "linktitle") ?? GetMember(so, "link_title")
+                        ?? GetMember(so, "title") ?? GetMember(so, "Title"))?.ToString() ?? "";
+            var path = GetMember(so, "path")?.ToString()
+                       ?? GetMember(so, "rel_permalink")?.ToString() ?? "";
+            // 权重补零使字符串排序等价数值排序；Date 为 ISO 串，字典序即时间序
+            return $"{weight,10:0000000000}|{date}|{title}|{path}";
+        }
+
+        return v switch
+        {
+            null => "",
+            IComparable c => PadNumeric(c),
+            _ => v.ToString() ?? ""
+        };
+    }
+
+    /// <summary>数值类型补零（字符串序等价数值序）；非数值原样字符串化</summary>
+    private static string PadNumeric(IComparable c) => c switch
+    {
+        int i => $"{i,10:0000000000}",
+        long l => $"{l,10:0000000000}",
+        double d => $"{d,20:0000000000.0000000}",
+        decimal m => $"{m,20:0000000000.0000000}",
+        _ => c.ToString() ?? ""
+    };
+
+    /// <summary>同 PadNumeric，但接受任意值（null → 全零）</summary>
+    private static string ToNumSafeText(object? v)
+    {
+        if (v is null)
+        {
+            return "0000000000";
+        }
+        if (v is int or long or double or decimal or float or short or byte)
+        {
+            try
+            {
+                return ((int)Convert.ToDouble(v, CultureInfo.InvariantCulture))
+                    .ToString("D10", CultureInfo.InvariantCulture);
+            }
+            catch (OverflowException)
+            {
+                return "0000000000";
+            }
+        }
+        return double.TryParse(v.ToString(), System.Globalization.NumberStyles.Float,
+            CultureInfo.InvariantCulture, out var d) ? ((int)d).ToString("D10", CultureInfo.InvariantCulture)
+            : "0000000000";
     }
 
     /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>

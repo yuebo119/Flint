@@ -256,7 +256,7 @@ internal sealed class ScribanConverter(
         // 中缀运算符（eq/ne/gt/ge/lt/le/and/or/not）需特殊处理
         if (first is Parsing.IdentifierExpr id)
         {
-            return ConvertCall(id, operands.Skip(1).ToList(), scope);
+            return ConvertCall(id, operands.Skip(1).ToList(), scope, isPipeSegment);
         }
 
         // ---- 资源上下文内的裸方法（with .Resources.ByType 块内的 .GetMatch）----
@@ -393,7 +393,9 @@ internal sealed class ScribanConverter(
     }
 
     /// <summary>转换函数调用（含中缀运算符特判）</summary>
-    private ConversionResult ConvertCall(Parsing.IdentifierExpr fn, List<Parsing.Expr> args, IReadOnlyList<string> scope)
+    private ConversionResult ConvertCall(
+        Parsing.IdentifierExpr fn, List<Parsing.Expr> args, IReadOnlyList<string> scope,
+        bool isPipeSegment = false)
     {
         var name = fn.Name;
 
@@ -472,6 +474,22 @@ internal sealed class ScribanConverter(
         }
 
         // ---- arg 语义特判：dict / slice / partial ----
+        // default 的**非管道**形态 `default DEF GIVEN` 需要重排为 Scriban 期望的
+        // 参数顺序 (GIVEN, DEF)：Flint 的 default 按 Scriban 语义取首参（管道注入位），
+        // 而 Hugo 的 default 是 `default DEFAULT GIVEN`（默认值在前）。
+        // 管道形态 `X | default DEF` 已是 (X, DEF)，无需重排
+        if (name is "default" or "compare.Default" && !isPipeSegment && args.Count == 2)
+        {
+            var defR = ConvertExpr(args[0], scope, false);
+            var givenR = ConvertExpr(args[1], scope, false);
+            if (defR.Kind == ConversionKind.Unsupported || givenR.Kind == ConversionKind.Unsupported)
+            {
+                return defR.Kind == ConversionKind.Unsupported ? defR : givenR;
+            }
+            return new ConversionResult(
+                $"default {givenR.Text} {defR.Text}", ConversionKind.Equivalent);
+        }
+
         if (name is "dict" or "collections.Dictionary")
         {
             return ConvertDict(args, scope);

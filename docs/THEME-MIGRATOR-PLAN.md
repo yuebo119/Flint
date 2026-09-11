@@ -856,3 +856,99 @@ Go printf 动词、Store PascalCase 别名、`newScratch` 独立实例、
   非迁移缺陷（对称性判定已如实报告为"仅 Hugo: N / 仅 Flint: N"）。
 - `<meta name="generator">` 等 Hugo 特有标签。
 
+
+---
+
+## 十七、20 个流行主题横向矩阵（2026-09-11 第二轮）
+
+### 名单（GitHub `topic:hugo-theme` 按 stars 排序的前列真实主题）
+
+按 star 顺序取用，排除目录仓库（`gohugoio/hugoThemes`）、starter 模板
+（`zeon-studio/hugoplate`、`HugoBlox/kit`）与依赖外部构建链的主题
+（`docsy` 需 npm+postcss、HugoBlox 系列需 hugo module），以保证测的是
+"主题模板迁移"而非"外部构建集成"：
+
+| 主题 | 仓库 | 主题 | 仓库 |
+|---|---|---|---|
+| hugo-book | alex-shpak/hugo-book | mainroad | Vimux/Mainroad |
+| hugo-coder | luizdepra/hugo-coder | jane | xianmin/hugo-theme-jane |
+| blowfish | nunocoracao/blowfish | xmin | yihui/hugo-xmin |
+| terminal | panr/hugo-theme-terminal | blog-awesome | hugo-sid/hugo-blog-awesome |
+| hugo-paper | nanxiaobei/hugo-paper | console | mrmierzejewski/hugo-theme-console |
+| hextra | imfing/hextra | clarity | chipzoller/hugo-clarity |
+| even | olOwOlo/hugo-theme-even | risotto | joeroe/risotto |
+| congo | jpanther/congo | relearn | McShelby/hugo-theme-relearn |
+| bearblog | janraasch/hugo-bearblog | （另有第一轮 4 个） | ananke / papermod / stack / loveit |
+| archie | athul/archie | hermit | Track3/hermit |
+| fixit | hugo-fixit/FixIt | | |
+
+克隆脚本：`scripts/clone-themes.sh`（浅克隆，20/20 成功）。
+矩阵脚本：`scripts/theme-matrix20.sh`。
+
+### 框架改进（修正第一轮两个门禁盲区）
+
+1. **Hugo 侧检查退出码 + 产出页数**——第一轮忽略退出码，使 LoveIt 的无效基线
+   （配置 `author` 写成字符串导致 Hugo 构建失败）伪装成"不对称"
+2. **Flint 侧检查产出页数 + 最小页尺寸**——第一轮只看退出码，使 Ananke 的空页
+   （2–4 字节）被当成"构建通过"
+3. 每主题最小配置按主题期望的 params 形状生成（`params.Author` 映射 vs
+   `params.author` 字符串等），并记录到脚本内便于复现
+
+### 首轮结果与修复后结果
+
+```
+                 首轮                          批次 A/B 后
+hugo-book        构建失败 0 页                 仍失败（见缺口 1/3）
+hugo-coder       构建失败 0 页                 仍失败（见缺口 1/4）
+blowfish         构建失败 0 页                 仍失败（见缺口 5）
+terminal         构建失败 0 页   → 通过 19 页   61.6% / 88.6%
+hugo-paper       构建失败 0 页   → 通过 19 页   36.8% / 89.6%
+console          构建失败 6 页   → 通过 19 页   67.8% / 96.3%
+bearblog         通过 19 页                    33.4% / 91.7%
+congo            构建失败 0 页                 仍失败（见缺口 5）
+mainroad         构建失败 14 页                仍失败（见缺口 1）
+xmin             构建失败 14 页                仍失败（见缺口 1）
+relearn/blog-awesome/clarity/archie/risotto    仍失败（见缺口 1/2）
+```
+
+15 个主题的 Hugo 基线有效；其余 5 个（hextra/even/hermit/fixit/jane）的
+Hugo 侧本身失败（缺主题要求的 params 或依赖外部资源），基线无效，
+其 Flint 结果不参与判定。
+
+### 本轮修复的引擎缺口（8 项，均有主题实测来源）
+
+| # | 缺口 | 修复 | 来源主题 |
+|---|---|---|---|
+| 1 | `isset` 只注册单参形态 | 改 variadic：`isset MAP KEY` / `isset VALUE` 双形态 | 9 个主题（24 处，最高频） |
+| 2 | 无站点级 `.Site.Store` | site 对象加 store/Store/scratch（与页面级同型，构建内共享） | hugo-book 等 |
+| 3 | 无全局 `fileExists` | 补全局别名（Hugo camelCase 形态） | blog-awesome |
+| 4 | 无 `highlight` / `transform.HighlightCodeBlock` | 补实现（chroma 同构骨架，不实现词法着色） | hugo-book/clarity |
+| 5 | hook 路径缺 `i18n`/`partial`/`partialValue` | hook 上下文补注册；翻译表由 SiteBuilder 装配后回填 | congo/fixit/hextra |
+| 6 | `default` 严格双参 | 改 variadic（单参返回自身，对应 `default nil`）；**转换器重排非管道形态** `default DEF GIVEN` → `default GIVEN DEF` | blowfish/congo |
+| 7 | `sort` 严格双参 + 不可比类型抛异常 | 改 variadic（1/2/3 参）+ 排序键投影（页面按 Weight→Date→Title，避免 ScriptObject 参与比较） | hugo-book/hugo-coder |
+| 8 | `sort` 的 "Failed to compare two elements" | 同上（安全比较器，杜绝不可比类型异常） | hugo-book/hugo-coder |
+
+回归：Core 879 通过；第一轮 4 主题（ananke/papermod/stack/loveit）构建仍全通过。
+
+### 剩余缺口（按影响面排序，下一批目标）
+
+| # | 缺口 | 证据 | 性质 |
+|---|---|---|---|
+| 1 | **partial 名回落命中页面模板 → 自递归** | hugo-coder：`partial "404.html"` 解析到 `layouts/404.html`（页面模板自身）→ "Exceeding number of recursive depth limit 100 for node: include \"404.html\""。Hugo 的 partial **只在 partials/_partials 目录**查找 | 引擎查找顺序 + 转换器产出形态 |
+| 2 | **命名模板机制 `define` + `template "X"`** | 20/20 主题都使用（hugo-book 55 次、hextra 25 次、blowfish 21 次）。当前转换器把简单名 `define` 一律当 baseof 继承处理，跨文件的 `template "X" ctx` 调用无对应实现 | 架构级（需两遍扫描：block 名 vs 命名模板名） |
+| 3 | `partial` 自定义查找位置 | hugo-coder：`include "404.html"` 自递归同因 | 同 #1 |
+| 4 | `Unable to convert type string to Func<Object,Object>` | hugo-coder header.html：某高阶函数（apply/where）收到字符串而非谓词 | 函数签名 |
+| 5 | `Unable to convert type object/int to IEnumerable` | blowfish/mainroad 残留 | 集合函数形参 |
+| 6 | `page.Param` / `page.Get` / `page.HasShortcode` 调用点未转换 | blowfish（`page?.param` 被当函数名）、papermod | 转换器方法映射 |
+| 7 | `page.Data.Pages.GroupByDate` | taxonomy 模板 | 转换器 + 引擎 |
+| 8 | `site.language.Get` | hermit（基线无效，待确认是否普遍） | 待确认 |
+| 9 | `$thumbnail "..."` 被当函数调用 | 2 处 | 转换器变量/函数判定 |
+| 10 | `Unable to convert type DateTimeOffset to int` | console/xmin 残留 | 日期函数签名 |
+
+### 下一步（优先级）
+
+1. **partial 查找语义**（#1/#3/自递归）——修 FileTemplateLoader 候选顺序 +
+   转换器产出显式 `_partials/` 前缀，消除"partial 命中页面模板"这一整类问题
+2. **命名模板机制**（#2）——两遍扫描区分 `block` 名与命名模板名；非 block 的
+   `define "X"` 提取为 `_partials/X.html`，`template "X" ctx` → `partial "X" ctx`
+3. 剩余单点缺口（#4-#10）按频次清理
