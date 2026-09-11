@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Flint.ThemeMigrator</RootNamespace>
+    <AssemblyName>Flint.ThemeMigrator</AssemblyName>
+    <Description>Hugo 主题 → Flint 迁移工具（Go template 解析器 + 确定性转换 + 四门禁验证）</Description>
+
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <OutputType>Exe</OutputType>
+
+    <NoWarn>$(NoWarn);CA1303;CA1515;CA1826;CA1056;CA1055;CA1711;CA1716;CA1308;CA1000;CA1054;CA1032;CA1062;CA2007;CA1031;CA1307;CA1867;CA1869;CA1822;CA1024;CA1305;CA1310;CA1859;CA1848;CA1002;CA1819</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 复用引擎：运行时枚举真实 API 面（消灭能力表漂移）+ Scriban 预检 -->
+    <ProjectReference Include="..\Flint.Core\Flint.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Flint.ThemeMigrator.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -505,3 +505,73 @@ Ananke 站点（转换后）:
 
 **当前可直接推进的**：阶段 0 已使"引擎能跑通主题"成立，阶段 1（解析器）
 不再有前置阻塞。
+
+---
+
+## 十二、阶段 1 实施记录（2026-09-11 已完成）
+
+### 交付清单
+
+| 文件 | 内容 |
+|---|---|
+| `Parsing/GoTemplateLexer.cs` | **新增**：Go template 词法器（移植 Go 标准库 lex.go 的状态机思路）。正确处理引号/反引号/字符常量/注释/括号嵌套/裁剪标记 |
+| `Parsing/GoTemplateParser.cs` | **新增**：递归下降解析器。AST 含 Pipeline/Command/Field/Variable/Dot/Literal/Paren/Chain/Call，支持 if/with/range/define/block/template 关键字与赋值 |
+| `Conversion/MigrationMap.cs` | **新增**：迁移映射表（约 200 条 Hugo→Flint 映射，覆盖字段路径/函数/命名空间） |
+| `Conversion/ScribanConverter.cs` | **新增**：AST → Scriban 转换器 + `StructuralGuard`（静默损坏防线：括号/引号平衡、畸形结构检测） |
+| `Conversion/GoDateFormatConverter.cs` | **新增**：Go 时间布局 → .NET 格式串（21 条确定性映射） |
+| `Migration/TemplateConverter.cs` | **新增**：模板级转换（块结构编排、双变量 range 解构、define/block 继承、资源上下文追踪） |
+| `Migration/ThemeMigrator.cs` | **新增**：目录遍历 + 四门禁前两关（AST 完整性 + Scriban 预检）+ 报告 |
+| `Program.cs` | **新增**：CLI（`migrate <src> <dst> [--report <md>]`），有预检失败时非零退出（门禁语义） |
+| `Templates/PageResourcesObject.cs` | **新增（引擎侧）**：`.Resources` 方法族（bytype/get/match/getmatch），此前是裸列表 |
+| `BuiltinTemplateFunctions.cs` | **扩展**：`where` 支持 Hugo 的 4 参 operator 形态（in/not in/like/比较符） |
+| `ScribanTemplateRenderer.Objects.cs` | **扩展**：`current_section` 投影 |
+| `tests/Flint.ThemeMigrator.Tests/` | **新增**：34 条测试（词法器/解析器/转换器/结构守卫/日期格式） |
+
+### 关键实测发现（阶段 1 中确证）
+
+| 发现 | 证据 | 处置 |
+|---|---|---|
+| **词法器解决静默损坏** | `{{ printf "}}" }}` 正则版切在引号内致残渣泄漏；词法器正确产出 `String:"}}"` | 词法器 + 测试守护 |
+| **嵌套结构必然正确** | `lt (len .Pages) 10` 正则版产出语义垃圾 `(len < page.pages) 10`；AST 版产出 `((len page.pages) < 10)` | 解析器 + 测试守护 |
+| **标识符与字段的区分靠空格** | `strings.ToUpper`（无空格，同一调用目标）vs `eq .Kind`（有空格，函数+参数）；无判断会误并成 `eq.Kind` | 词法器保留 Space token，解析器按相邻性判断 |
+| **Scriban 的 for 不接受裸参数列表** | `for x in split page ","` 报 `Invalid token found '","'` | range 集合表达式加括号 |
+| **Scriban 无法解析空对象字面量** | `{ }` 报 PARSE-ERR | 空 dict 产出 `dict` 函数形态 |
+| **Scriban 注释在动作内会被误判** | 把 partial 参数保留为 `{{# ... #}}` 致 8 个预检失败（被当对象初始化器） | 回退：参数内容记入诊断，不写入产物 |
+| **资源上下文需追踪** | `with .Resources.ByType` 块内的裸 `.GetMatch` 隐式接收者是资源对象 | 块栈标记 + 全栈扫描 |
+| **`$` 语义不同** | Hugo 的 `$` 指页面上下文，Scriban 的 `$` 是函数参数数组 | `$.X` → `page.x`，`$.Site.X` → `site.x` 映射 |
+| **`$.Param` 需特判** | 直接改名产出 `$.param` 致 member-of-null | 映射为 `paramLookup page "x"` |
+| **引擎侧缺口（阶段 0 延伸）** | `page.resources` 是裸列表，无 bytype/getmatch 方法 | 新增 `PageResourcesObject` |
+
+### 验收数据（实跑）
+
+```
+4 主题矩阵（预检失败全部归零）:
+  主题       表达式   不支持   降级   预检失败   机械转换率
+  ananke       507       5      55       0        99.0%
+  papermod     549       7      19       0        98.7%
+  stack        676       6      70       0        99.1%
+  loveit      1247     130      63       0        89.6%
+
+对照原型（阶段 0 前）: 36-65% → 现在 89.6-99.1%（提升约 1.5-2.5 倍）
+对照正则版（Ananke）: 13-15% → 99.0%
+
+迁移器测试: 34/34 全绿
+```
+
+### 已知限制
+
+1. **差分验证未接入迁移器 CLI**：四门禁的③（构建）与④（产物 diff）仍是手工步骤。
+2. **迁移产物在 Ananke 上仍不能完整构建**：剩余为引擎侧长尾（`MediaType.SubType`、
+   `not` 零参、`pagination.html` 路径解析等），属阶段 0 的延伸补齐。
+3. **`unsupported` 未归零**：loveit 130 个（复杂表达式/未知函数），
+   需 AI 残差层处理。
+4. **降级项需人工审阅**：ananke 55 / stack 70 条降级记录在报告中，
+   主要是 partial 上下文参数省略与资源上下文推断。
+
+### 未实施
+
+| 阶段 | 状态 |
+|---|---|
+| 阶段 2 迁移器主体（API 枚举校验 + 四门禁集成） | 部分完成（预检已集成；构建/diff 未集成） |
+| 阶段 4 主题矩阵扩展 | 未开始（4 主题已就绪） |
+| 阶段 5 AI 残差 | 未开始 |
