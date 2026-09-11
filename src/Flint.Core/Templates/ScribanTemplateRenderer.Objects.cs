@@ -95,7 +95,9 @@ public sealed partial class ScribanTemplateRenderer
             // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
             // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
             SetValue("params", BuildParamsView(page), false);
-            SetValue("resources", page.Resources, false);
+            // .Resources：包装为带方法的集合（Hugo 的 .Resources.ByType/GetMatch/Match
+            // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
+            SetValue("resources", new PageResourcesObject(page.Resources), false);
             SetValue("pages", _pagesValue, false);
             SetValue("terms", _termsValue, false);
             SetValue("paginator", _paginatorValue, false);
@@ -143,6 +145,20 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("truncated", page.Truncated, false);
             SetValue("Truncated", page.Truncated, false);
             SetValue("path", page.PagePath ?? "/", false);
+            // .CurrentSection：页面的所属 section（自身即 section 时为自己）。
+            // 仅能拿字符串（父页对象需树导航，见 site.sections），主题多用于取 .Title
+            var currentSectionTitle = string.IsNullOrEmpty(page.Section)
+                ? page.Title
+                : page.Section;
+            var currentSectionObj = new ScriptObject
+            {
+                ["title"] = currentSectionTitle,
+                ["Title"] = currentSectionTitle,
+                ["rel_permalink"] = "/" + (page.Section ?? "").Trim('/') + "/",
+                ["RelPermalink"] = "/" + (page.Section ?? "").Trim('/') + "/"
+            };
+            SetValue("current_section", currentSectionObj, false);
+            SetValue("CurrentSection", currentSectionObj, false);
             SetValue("Path", page.PagePath ?? "/", false);
             SetValue("bundle_type", page.BundleType ?? "", false);
             SetValue("BundleType", page.BundleType ?? "", false);

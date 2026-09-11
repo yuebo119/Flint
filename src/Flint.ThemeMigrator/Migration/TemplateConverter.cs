@@ -1,0 +1,342 @@
+// Flint 主题迁移工具
+// 模板级转换：结构块（if/with/range/define/block）编排
+//
+// 结构性约束（实测得出）：
+// 1. Scriban 不支持 `for k, v in obj`（PARSE-ERR）→ 双变量 range 展开为
+//    单变量迭代 + 块首从 .key/.value 解构
+// 2. Scriban 无 block/extends 语句 → baseof 的 block 声明转 capture + 条件输出，
+//    子模板的 define 转 capture + 文件末尾 include 命名参数
+// 3. with 无 else → 降级为 `$w = expr; if $w`
+
+using System.Text;
+using Flint.ThemeMigrator.Conversion;
+using Flint.ThemeMigrator.Parsing;
+
+namespace Flint.ThemeMigrator.Migration;
+
+/// <summary>模板转换统计</summary>
+internal sealed class TemplateConversionStats
+{
+    public int Actions { get; set; }
+    public int Expresssions { get; set; }
+    public int Unsupported { get; set; }
+    public int Downgraded { get; set; }
+    public List<string> Notes { get; } = [];
+}
+
+/// <summary>
+/// 模板转换器：TemplatePart 列表 → Scriban 文本。
+/// 有状态（块栈、define 收集），每个模板文件用一个实例。
+/// </summary>
+internal sealed class TemplateConverter(MigrationMap map)
+{
+    private readonly ScribanConverter _expr = new(map);
+    private readonly List<(string Kind, string? Var)> _blockStack = [];
+    private readonly List<string> _definedBlocks = [];
+    private int _syntheticIndex;
+
+    public TemplateConversionStats Stats { get; } = new();
+
+    public IReadOnlyList<string> Diagnostics => _expr.Diagnostics;
+
+    /// <summary>转换整个模板</summary>
+    public string Convert(IReadOnlyList<TemplatePart> parts)
+    {
+        var sb = new StringBuilder();
+        var scope = new List<string>(); // range/with 上下文变量栈
+
+        foreach (var part in parts)
+        {
+            switch (part)
+            {
+                case TextPart t:
+                    sb.Append(t.Text);
+                    break;
+
+                case CommentPart:
+                    // Hugo 注释不产出。此前写成 Scriban 注释 {{# ... #}}，
+                    // 但注释内含 `* /`（转义后）与换行时仍会被 Scriban 解析器
+                    // 误判（实测 15 个预检失败）——直接丢弃最安全
+                    break;
+
+                case ActionPart a:
+                    sb.Append(ConvertAction(a, scope));
+                    break;
+            }
+        }
+
+        // 子模板块通过 include 命名参数传给 baseof（若有 define）
+        if (_definedBlocks.Count > 0)
+        {
+            var pairs = string.Join(" ", _definedBlocks.Select(b => $"{b}: {b}"));
+            sb.Append("\n{{ include \"baseof.html\" ").Append(pairs).Append(" }}\n");
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>转换单个动作</summary>
+    private string ConvertAction(ActionPart action, List<string> scope)
+    {
+        Stats.Actions++;
+        var trimL = action.TrimLeft ? "-" : "";
+        var trimR = action.TrimRight ? "-" : "";
+
+        switch (action.Body)
+        {
+            case KeywordBody kb:
+                return ConvertKeyword(kb, scope, trimL, trimR);
+
+            case ExprBody eb:
+                return ConvertExprBody(eb, scope, trimL, trimR);
+
+            default:
+                return Wrap(action.Raw, trimL, trimR);
+        }
+    }
+
+    private string ConvertKeyword(KeywordBody kb, List<string> scope, string trimL, string trimR)
+    {
+        switch (kb.Name)
+        {
+            case "if":
+            {
+                var cond = ConvertPipelineText(kb.Pipeline, scope);
+                _blockStack.Add(("if", null));
+                return Wrap($"if {cond}", trimL, trimR);
+            }
+
+            case "else":
+                // else if 带管道
+                if (kb.Pipeline is { Commands.Count: > 0 })
+                {
+                    var cond = ConvertPipelineText(kb.Pipeline, scope);
+                    return Wrap($"else if {cond}", trimL, trimR);
+                }
+                return Wrap("else", trimL, trimR);
+
+            case "end":
+            {
+                var (kind, extra) = _blockStack.Count > 0
+                    ? (_blockStack[^1].Kind, _blockStack[^1].Var)
+                    : ("unknown", null);
+                if (_blockStack.Count > 0)
+                {
+                    _blockStack.RemoveAt(_blockStack.Count - 1);
+                }
+                if (scope.Count > 0)
+                {
+                    scope.RemoveAt(scope.Count - 1);
+                }
+
+                // baseof 的 block 声明：结束处补条件输出（子模板值优先，默认值兜底）
+                if (kind == "blockdef" && extra is not null)
+                {
+                    return Wrap($"end }}}}{{{{ if $.{extra} }}}}{{{{ $.{extra} }}}}{{{{ else }}}}{{{{ __def_{extra} }}}}{{{{ end", trimL, trimR);
+                }
+                return Wrap("end", trimL, trimR);
+            }
+
+            case "with":
+            {
+                // Scriban 无 with/else → $w = expr; if $w
+                var var = $"$__w{_blockStack.Count}";
+                var arg = ConvertPipelineText(kb.Pipeline, scope);
+
+                // 记录接收者语义：with 的资源上下文内，裸方法（.GetMatch/.ByType）
+                // 的隐式接收者是资源对象，转换期需补 resources 前缀
+                var isResourceCtx = arg.Contains("resources.", StringComparison.Ordinal) ||
+                                    arg.Contains("Resources.", StringComparison.Ordinal);
+                _blockStack.Add(("with", isResourceCtx ? "resources" : null));
+                scope.Add(var);
+                return Wrap($"{var} = {arg}; if {var}", trimL, trimR);
+            }
+
+            case "range":
+                return ConvertRange(kb, scope, trimL, trimR);
+
+            case "define":
+            {
+                var name = kb.Names.Count > 0 ? kb.Names[0] : "unnamed";
+                // 简单名 → capture（block 语义）；路径名 → 内联 partial（降级）
+                if (name.Contains('/', StringComparison.Ordinal))
+                {
+                    Stats.Unsupported++;
+                    Stats.Notes.Add($"内联 partial 定义 {name}（Scriban 无等价）");
+                    _blockStack.Add(("skip", null));
+                    return Wrap($"##TODO-HUGO(内联partial定义): define \"{name}\"## }}}}{{{{ if false", trimL, trimR);
+                }
+                _blockStack.Add(("define", null));
+                _definedBlocks.Add("blk_" + name);
+                return Wrap("capture blk_" + name, trimL, trimR);
+            }
+
+            case "block":
+            {
+                var name = kb.Names.Count > 0 ? kb.Names[0] : "unnamed";
+                _blockStack.Add(("blockdef", "blk_" + name));
+                return Wrap("capture __def_" + name, trimL, trimR);
+            }
+
+            case "template":
+            {
+                var name = kb.Names.Count > 0 ? kb.Names[0] : "";
+                return Wrap($"include \"{name}\"", trimL, trimR);
+            }
+
+            case "break":
+                return Wrap("break", trimL, trimR);
+
+            case "continue":
+                return Wrap("continue", trimL, trimR);
+
+            default:
+                Stats.Unsupported++;
+                return Wrap($"##TODO-HUGO: {kb.Name}##", trimL, trimR);
+        }
+    }
+
+    /// <summary>
+    /// range 转换（含双变量形态）。
+    /// Scriban 限制实测：不支持 `for k, v in`；迭代 ScriptObject 产出
+    /// {key, value} 对象（x[0] 取不到，须 x.key/x.value）
+    /// </summary>
+    private string ConvertRange(KeywordBody kb, List<string> scope, string trimL, string trimR)
+    {
+        var coll = ConvertPipelineText(kb.Pipeline, scope);
+        // Scriban 的 `for x in f a b` 不接受裸参数列表（实测 PARSE-ERR：
+        // "Invalid token found `,`. Expecting <EOL>/end of line"），
+        // 含多参数函数调用时须加括号：`for x in (f a b)`
+        coll = ParenthesizeIfCallWithArgs(coll);
+
+        // 双变量：range $k, $v := X
+        if (kb.Vars.Count >= 2)
+        {
+            var kvar = kb.Vars[0];
+            var vvar = kb.Vars[1];
+            var pair = $"$__pair{_syntheticIndex++}";
+            _blockStack.Add(("range", null));
+            scope.Add(vvar);
+            var body = $"for {pair} in {coll} }}}}}}{{{{ {kvar} = {pair}.key; {vvar} = {pair}.value";
+            return Wrap(body, trimL, trimR);
+        }
+
+        // 单变量：range $x := X 或 range X
+        var loopVar = kb.Vars.Count == 1 ? kb.Vars[0] : $"$__it{_syntheticIndex++}";
+        _blockStack.Add(("range", null));
+        scope.Add(loopVar);
+        return Wrap($"for {loopVar} in {coll}", trimL, trimR);
+    }
+
+    /// <summary>当前是否处于 with .Resources.* 块内（裸方法属资源接收者）</summary>
+    private bool InResourceContext() =>
+        _blockStack.Any(b => b.Var == "resources");
+
+    private string ConvertExprBody(ExprBody eb, List<string> scope, string trimL, string trimR)
+    {
+        Stats.Expresssions++;
+
+        var r = _expr.ConvertPipeline(eb.Pipeline, scope, InResourceContext());
+
+        if (r.Kind == ConversionKind.Unsupported)
+        {
+            Stats.Unsupported++;
+            var note = r.Note ?? "无法转换";
+            Stats.Notes.Add(note);
+            // 赋值形态降级为空值（保持变量存在，避免后续 member-of-null）
+            if (eb.Vars.Count > 0)
+            {
+                // Hugo 的 := / = 在 Scriban 统一为 =；降级值为空串
+                var assign = string.Join("; ", eb.Vars.Select(v => $"{v} = \"\""));
+                return Wrap(assign, trimL, trimR);
+            }
+            return Wrap($"##TODO-HUGO: {Truncate(eb.Pipeline)}##", trimL, trimR);
+        }
+
+        if (r.Kind == ConversionKind.Downgraded)
+        {
+            Stats.Downgraded++;
+            if (r.Note is not null)
+            {
+                Stats.Notes.Add(r.Note);
+            }
+        }
+
+        // 赋值：$x := expr → $x = expr
+        if (eb.Vars.Count > 0)
+        {
+            var assign = string.Join("; ", eb.Vars.Select(v => $"{v} = {r.Text}"));
+            return Wrap(assign, trimL, trimR);
+        }
+
+        return Wrap(r.Text, trimL, trimR);
+    }
+
+    /// <summary>
+    /// 集合表达式含多参数函数调用时加括号（Scriban 的 for 语法要求）。
+    /// 单值/单参数/已括号化的表达式保持不变
+    /// </summary>
+    private static string ParenthesizeIfCallWithArgs(string expr)
+    {
+        var t = expr.Trim();
+        if (t.Length == 0 || t.StartsWith('(') || t.StartsWith('[') || t.StartsWith('{'))
+        {
+            return t;
+        }
+
+        // 判断是否为 "fname a b"（有空白分隔的参数）
+        var sp = t.IndexOf(' ', StringComparison.Ordinal);
+        if (sp < 0)
+        {
+            return t;
+        }
+
+        var head = t[..sp];
+        // 头部标识符（函数名）才需要括号；管道表达式分段处理
+        if (!head.All(c => char.IsLetterOrDigit(c) || c is '_' or '.'))
+        {
+            return t;
+        }
+
+        // 含管道的表达式：只括号化首段
+        var pipeIdx = t.IndexOf(" | ", StringComparison.Ordinal);
+        if (pipeIdx >= 0)
+        {
+            var first = t[..pipeIdx];
+            var rest = t[pipeIdx..];
+            return "(" + first + ")" + rest;
+        }
+
+        return "(" + t + ")";
+    }
+
+    private string ConvertPipelineText(Pipeline? p, List<string> scope)
+    {
+        if (p is null || p.Commands.Count == 0)
+        {
+            return "false";
+        }
+        var r = _expr.ConvertPipeline(p, scope, InResourceContext());
+        if (r.Kind == ConversionKind.Unsupported)
+        {
+            Stats.Unsupported++;
+            Stats.Notes.Add(r.Note ?? "条件无法转换");
+            return "false";
+        }
+        if (r.Kind == ConversionKind.Downgraded && r.Note is not null)
+        {
+            Stats.Downgraded++;
+            Stats.Notes.Add(r.Note);
+        }
+        return r.Text;
+    }
+
+    private static string Wrap(string body, string trimL, string trimR) =>
+        "{{" + trimL + " " + body.Trim() + " " + trimR + "}}";
+
+    private static string Truncate(Pipeline p)
+    {
+        var s = string.Join(" ", p.Commands.Select(c => c.ToString()));
+        return s.Length <= 60 ? s : s[..60];
+    }
+}

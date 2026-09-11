@@ -592,20 +592,13 @@ public sealed partial class BuiltinTemplateFunctions
 
 
         // where - 过滤
-        obj.Import("where", (IEnumerable<object>? collection, string? key, object? value) =>
-        {
-            if (collection == null)
-                return Enumerable.Empty<object>();
-            if (string.IsNullOrEmpty(key))
-                return collection;
-
-            return collection.Where(x =>
-            {
-                if (x is ScriptObject so && so.TryGetValue(key, out var v))
-                    return Equals(v, value);
-                return false;
-            });
-        });
+        // where（3 参基础形态）——4 参 operator 形态由 Hugo 兼容组覆盖注册
+        // Hugo where 支持两种形态：
+        //   where COLLECTION KEY VALUE
+        //   where COLLECTION KEY OPERATOR VALUE（operator: in/not in/==/!=/>=/<=/>/</like）
+        // 用两个重载无法区分（Scriban 按元数匹配），故用 params 收参后内部分派
+        obj.Import("where", (object? seq, object? key, params object?[] rest) =>
+            WhereSeqOp(seq, key?.ToString() ?? "", rest));
 
         // append - 追加元素
         obj.Import("append", (Func<object?, object?, object?>)((collection, item) =>
@@ -1217,6 +1210,86 @@ public sealed partial class BuiltinTemplateFunctions
 
 
     /// <summary>where：按字段等值过滤；value 为 null 时筛选空值（Hugo 语义子集）</summary>
+    /// <summary>where 序列过滤（Hugo 双形态：KEY VALUE 与 KEY OPERATOR VALUE）</summary>
+    private static object WhereSeqOp(object? seq, string key, object?[] rest)
+    {
+        if (rest.Length == 0)
+        {
+            return seq ?? Array.Empty<object>();
+        }
+
+        if (rest.Length == 1)
+        {
+            return WhereSeq(seq, key, rest[0]);
+        }
+
+        // 4 参形态：rest = [operator, value]
+        var op = rest[0]?.ToString() ?? "";
+        var target = rest[1];
+        var items = ToObjectSeq(seq);
+        var filtered = items.Where(item =>
+        {
+            var actual = GetMember(item, key);
+            return CompareByOperator(actual, op, target);
+        });
+        return filtered.ToList();
+    }
+
+    /// <summary>按 Hugo operator 比较</summary>
+    private static bool CompareByOperator(object? actual, string op, object? target)
+    {
+        var a = actual?.ToString() ?? "";
+        switch (op.ToLowerInvariant())
+        {
+            case "in":
+                // actual 是集合时：target 是否在其中；target 是集合时：actual 是否在 target 中
+                if (actual is System.Collections.IEnumerable ae and not string)
+                {
+                    return ae.Cast<object?>().Any(x => Eq(x, target));
+                }
+                if (target is System.Collections.IEnumerable te and not string)
+                {
+                    return te.Cast<object?>().Any(x => Eq(x, actual));
+                }
+                return a.Contains(target?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+            case "not in":
+                return !CompareByOperator(actual, "in", target);
+            case "like":
+                return a.Contains(target?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+            case "==" or "eq":
+                return Eq(actual, target);
+            case "!=" or "ne":
+                return !Eq(actual, target);
+            default:
+                return CompareOrdered(actual, op, target);
+        }
+    }
+
+    private static bool Eq(object? x, object? y) =>
+        string.Equals(x?.ToString(), y?.ToString(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool CompareOrdered(object? actual, string op, object? target)
+    {
+        var x = ToNumSafe(actual);
+        var y = ToNumSafe(target);
+        return op switch
+        {
+            ">" => x > y,
+            ">=" => x >= y,
+            "<" => x < y,
+            "<=" => x <= y,
+            _ => false
+        };
+    }
+
+    private static double ToNumSafe(object? v) =>
+        double.TryParse(v?.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var r) ? r : 0d;
+
+    private static IEnumerable<object?> ToObjectSeq(object? v) =>
+        v is System.Collections.IEnumerable e and not string ? e.Cast<object?>() : [];
+
+    /// <summary>where 序列过滤（3 参基础形态）</summary>
     private static object WhereSeq(object? seq, string key, object? value)
     {
         var result = new List<object?>();
