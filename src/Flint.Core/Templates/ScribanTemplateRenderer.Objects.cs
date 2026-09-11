@@ -874,6 +874,10 @@ public sealed partial class ScribanTemplateRenderer
         var lazyRegularPages = GetSharedPageList(site.RegularPages);
         var lazyTaxonomies = new LazyTaxonomies(site.Taxonomies);
 
+        // 站点级暂存：同一 SiteContext 的所有页面共享（site 对象本身跨渲染复用缓存，
+        // 故该 Store 在整次构建内被所有页面看到——与 Hugo .Site.Store 语义一致）
+        var siteStore = new PageStoreObject();
+
         // 依赖跟踪站点对象：site.* 成员访问被记录为 data:site.* 依赖键（T4.1）
         // site.home：home 页的页面对象（Hugo 语义；主题用 .Site.Home.RelPermalink 等）。
         // 惰构建 + 共享缓存——无 home 页时返回 null（主题通常配合 ?. 或 with 使用）
@@ -906,6 +910,16 @@ public sealed partial class ScribanTemplateRenderer
             ["last_change"] = site.LastChange,
             ["is_multilingual"] = site.IsMultiLingual,
             ["languages"] = site.Languages,
+
+            // 站点级暂存（Hugo 0.113+ 的 .Site.Store / .Site.Scratch）：
+            // 与页面级 Store 同型（Set/Get/Add/SetInMap/DeleteInMap/GetSortedMapValues）。
+            // 此前只有页面有 Store，主题用 `site.Store.SetInMap "pagination" ...` 时
+            // 报 "Cannot get the member site.store.setinmap for a null object"
+            //（hugo-book / relearn / jane 等命中）
+            ["store"] = siteStore,
+            ["Store"] = siteStore,
+            ["scratch"] = siteStore,
+            ["Scratch"] = siteStore,
 
             // Hugo 兼容别名
             ["Title"] = site.Title,

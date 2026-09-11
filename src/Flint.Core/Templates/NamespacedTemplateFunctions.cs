@@ -80,6 +80,7 @@ public sealed partial class BuiltinTemplateFunctions
             ("Markdownify", "markdownify"), ("Plainify", "plainify"),
             ("Remarshal", "remarshal"), ("Unmarshal", "transform_unmarshal"),
             ("XMLEscape", "xml_escape"), ("Highlight", "highlight"),
+            ("HighlightCodeBlock", "highlight_code_block"),
             ("CanHighlight", "can_highlight"), ("HTMLToMarkdown", "html_to_markdown"),
             ("ToMath", "to_math"), ("PortableText", "portable_text"),
         ]),

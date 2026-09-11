@@ -425,6 +425,9 @@ public sealed partial class BuiltinTemplateFunctions
         Add("getenv", (string? name) => Environment.GetEnvironmentVariable(name ?? "") ?? "");
         Add("file_exists", (string? p) =>
             !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p)));
+        // Hugo 的全局 camelCase 形态（主题直接写 fileExists，不经 os. 命名空间）
+        Add("fileExists", (string? p) =>
+            !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p)));
         Add("read_file", (string? p) =>
             !string.IsNullOrEmpty(p) && File.Exists(p) ? File.ReadAllText(p) : "");
         Add("read_dir", (string? p) =>
@@ -472,6 +475,63 @@ public sealed partial class BuiltinTemplateFunctions
         Add("template_current", () => new ScriptObject());
         Add("template_inner", (object? v) => v);
         Add("template_defer", (object? v) => v);
+
+        // ---- 代码高亮（Hugo 的 highlight / transform.Highlight / HighlightCodeBlock）----
+        // 说明：不实现 chroma 的词法着色，只产出与 Hugo 默认输出**同构**的骨架
+        //（highlight div + pre.chroma + code.language-X 与转义后的代码文本），
+        // 使主题的 CSS 能挂上、构建不因缺函数而失败。着色差异是已知限制
+        //（Hugo 用 chroma 主题生成 token span，Flint 侧留待后续实现）
+        Add("highlight", (string? code, string? lang, params object[] opts) =>
+            BuildHighlight(code ?? "", lang ?? "", OptsFlag(opts, "noClasses", false)));
+        Add("can_highlight", (string? lang) => !string.IsNullOrWhiteSpace(lang));
+        Add("highlight_code_block", (object? codeBlock, params object[] opts) =>
+            BuildHighlightCodeBlock(codeBlock, OptsFlag(opts, "noClasses", false)));
+    }
+
+    /// <summary>
+    /// 高亮输出骨架（Hugo chroma 默认 class 形态的近似）：
+    /// <c>&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code …&gt;</c>。
+    /// code 内容按 HTML 转义（Hugo 语义：代码文本不当作 HTML）
+    /// </summary>
+    private static string BuildHighlight(string code, string lang, bool noClasses)
+    {
+        var escaped = System.Net.WebUtility.HtmlEncode(code);
+        var langAttr = string.IsNullOrEmpty(lang)
+            ? ""
+            : $" class=\"language-{lang}\" data-lang=\"{lang}\"";
+        var preClass = noClasses ? "" : " class=\"chroma\"";
+        return $"<div class=\"highlight\"><pre tabindex=\"0\"{preClass}><code{langAttr}>{escaped}</code></pre></div>";
+    }
+
+    /// <summary>
+    /// transform.HighlightCodeBlock：Hugo 0.140+ 的 codeblock hook 用函数，
+    /// 返回 <c>{ Inner, Wrapped }</c>（Inner 为 &lt;pre&gt; 内容，Wrapped 含外层 div）
+    /// </summary>
+    private static ScriptObject BuildHighlightCodeBlock(object? codeBlock, bool noClasses)
+    {
+        var code = codeBlock switch
+        {
+            ScriptObject so => so["inner"]?.ToString() ?? so["code"]?.ToString() ?? "",
+            null => "",
+            _ => codeBlock.ToString() ?? ""
+        };
+        var lang = codeBlock is ScriptObject s2 ? s2["type"]?.ToString() ?? "" : "";
+        var escaped = System.Net.WebUtility.HtmlEncode(code);
+        var langAttr = string.IsNullOrEmpty(lang)
+            ? ""
+            : $" class=\"language-{lang}\" data-lang=\"{lang}\"";
+        var preClass = noClasses ? "" : " class=\"chroma\"";
+        var inner = $"<pre tabindex=\"0\"{preClass}><code{langAttr}>{escaped}</code></pre>";
+        var wrapped = $"<div class=\"highlight\">{inner}</div>";
+        var result = new ScriptObject
+        {
+            ["Inner"] = inner,
+            ["Wrapped"] = wrapped
+        };
+        // snake_case 双形态（迁移产物用小写）
+        result["inner"] = inner;
+        result["wrapped"] = wrapped;
+        return result;
     }
 
     private static IEnumerable<object?> ToObjectList(object? v) =>

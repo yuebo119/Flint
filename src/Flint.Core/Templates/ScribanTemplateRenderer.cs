@@ -491,6 +491,22 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 内置函数（含 safe_html 等 safe* 家族）在钩子路径同样可用——缺失时
         // `{{ .Text | safeHTML }}` 会报 "The function `safe_html` was not found"
         EnsureFunctionObjects(context);
+
+        // partial / partialValue：hook 内 include 的 partial 可能走
+        // `page.store.set` 返回值通道（FixIt 的 _markup/render-heading.html 等），
+        // 故与页面路径同样注册（hookStore 作为通道容器）
+        globals.TrySetValue(context, default, "partial",
+            new PartialFunction(this, pageLike), readOnly: true);
+        globals.TrySetValue(context, default, "partialValue",
+            new PartialValueFunction(this, pageLike), readOnly: true);
+
+        // i18n：hook 渲染发生在内容解析期（可能早于站点上下文装配），
+        // 故用可设置的翻译表快照；未装配时为空表（查不到的键渲染为空串，
+        // 与 Hugo 缺键语义一致）。这是已知限制：hook 内的翻译在首次构建
+        // 的极早期可能为空（congo/hextra/fixit 的 render-heading 用 i18n）
+        globals.TrySetValue(context, default, "i18n",
+            new I18nFunction(Translations ?? EmptyTranslations), readOnly: true);
+
         context.PushGlobal(globals);
 
         try
@@ -1226,6 +1242,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     // 缓存内置函数对象（线程安全，只创建一次）
     private ScriptObject? _cachedBuiltinObject;
     private ScriptObject? _cachedDateObject;
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyTranslations =
+        new Dictionary<string, string>();
+
+    /// <summary>
+    /// 站点翻译表快照（render hook 内的 i18n 用）。站点上下文装配后由
+    /// SiteBuilder 设置一次；hook 渲染早于装配时为空表（查不到返回空串）
+    /// </summary>
+    internal IReadOnlyDictionary<string, string>? Translations { get; set; }
 
     /// <summary>
     /// 把内置函数对象与日期对象压入上下文。页面渲染（CreateScribanContext）与

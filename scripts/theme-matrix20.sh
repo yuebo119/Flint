@@ -1,0 +1,282 @@
+#!/usr/bin/env bash
+# 20 主题横向兼容矩阵（第二轮：流行主题）
+#
+# 与第一轮 theme-matrix.sh 的差别（吸取第一轮两个盲区的教训）：
+#   1. Hugo 侧检查**退出码 + 产出页数**——第一轮忽略退出码，使 loveit 的无效
+#      基线伪装成"不对称"（配置 author 写成字符串导致 Hugo 构建失败却无人发现）
+#   2. Flint 侧检查**产出页数 + 最小页尺寸**——第一轮只看退出码，
+#      使 ananke 的空页（2-4 字节）被当成"构建通过"
+#
+# 用法: bash scripts/theme-matrix20.sh [主题名...]
+# 输出: 每主题一行 TSV 到 stdout，明细到 matrix20/<主题>/report.txt
+
+set -u
+
+# 工作根探测：脚本可能在仓库内（<repo>/scripts）或工作区外层（<ws>/scripts），
+# 二者都要求能定位 tools/themes 与 Flint/ 源码
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SELF_DIR/../tools/themes" ]; then
+  REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"          # 外层工作区形态
+elif [ -d "$SELF_DIR/../../tools/themes" ]; then
+  REPO_ROOT="$(cd "$SELF_DIR/../.." && pwd)"        # 仓库内 <repo>/scripts 形态
+else
+  echo "无法定位 tools/themes（脚本位置: $SELF_DIR）" >&2
+  exit 1
+fi
+FLINT_SRC="$REPO_ROOT/Flint"
+[ -d "$FLINT_SRC/src" ] || FLINT_SRC="$REPO_ROOT"
+THEMES_DIR="$REPO_ROOT/tools/themes"
+HUGO="$REPO_ROOT/tools/hugo-bin/hugo.exe"
+MIGRATOR="$FLINT_SRC/src/Flint.ThemeMigrator/bin/Debug/net10.0/Flint.ThemeMigrator.exe"
+FLINT="$FLINT_SRC/src/Flint.Cli/bin/Release/net10.0/win-x64/Flint.exe"
+WORK="$REPO_ROOT/matrix20"
+
+THEMES=("$@")
+if [ ${#THEMES[@]} -eq 0 ]; then
+  THEMES=(hugo-book hugo-coder blowfish terminal hugo-paper hextra even congo bearblog
+          archie hermit fixit mainroad jane xmin blog-awesome console clarity risotto relearn)
+fi
+
+# ---- 通用内容集（覆盖首页/列表/单页/分类/标签/分页/代码/标题层级/独立页）----
+make_content() {
+  local site="$1"
+  mkdir -p "$site/content/posts" "$site/content/docs/guide"
+  cat > "$site/content/_index.md" <<'EOF'
+---
+title: Home
+---
+Welcome to the matrix site.
+EOF
+  cat > "$site/content/posts/_index.md" <<'EOF'
+---
+title: Posts
+---
+All posts.
+EOF
+  cat > "$site/content/posts/first.md" <<'EOF'
+---
+title: First Post
+date: 2026-01-15
+lastmod: 2026-02-01
+tags: [intro, test]
+categories: [general]
+description: The first post
+summary: Summary of the first post
+---
+First post body with some text.
+
+## A heading
+
+More content here.
+
+```go
+func main() { fmt.Println("hi") }
+```
+
+### Sub heading
+
+Deeper content.
+EOF
+  cat > "$site/content/posts/second.md" <<'EOF'
+---
+title: Second Post
+date: 2026-02-20
+tags: [test]
+categories: [general]
+description: The second post
+---
+Second post body.
+EOF
+  cat > "$site/content/posts/third.md" <<'EOF'
+---
+title: Third Post
+date: 2026-03-10
+tags: [misc]
+---
+Third post body.
+EOF
+  cat > "$site/content/docs/_index.md" <<'EOF'
+---
+title: Docs
+---
+Documentation section.
+EOF
+  cat > "$site/content/docs/guide/getting-started.md" <<'EOF'
+---
+title: Getting Started
+weight: 10
+---
+Guide body.
+EOF
+  cat > "$site/content/about.md" <<'EOF'
+---
+title: About
+---
+About page.
+EOF
+}
+
+# ---- 最小配置（通用形态；主题特有的 params 由各主题分支补充）----
+make_config() {
+  local name="$1" site="$2"
+  {
+    echo "baseURL = \"https://example.com/\""
+    echo "title = \"Matrix Site\""
+    echo "theme = \"$name\""
+    echo "paginate = 2"
+    echo "enableRobotsTXT = true"
+    echo ""
+    echo "[pagination]"
+    echo "pagerSize = 2"
+    echo ""
+    echo "params.description = \"Matrix test site\""
+    echo ""
+    echo "[menus]"
+    echo "[[menus.main]]"
+    echo "name = \"Home\""
+    echo "url = \"/\""
+    echo "weight = 1"
+    echo "[[menus.main]]"
+    echo "name = \"Posts\""
+    echo "url = \"/posts/\""
+    echo "weight = 2"
+  } > "$site/hugo.toml"
+  cp "$site/hugo.toml" "$site/Flint.toml"
+}
+
+# 主题特有 params（依据各主题 exampleSite 的最小必要字段；缺失时主题会渲染降级或报错）
+add_theme_params() {
+  local name="$1" site="$2"
+  case "$name" in
+    hugo-book)
+      cat >> "$site/hugo.toml" <<'EOF'
+params.BookSection = "docs"
+params.BookTheme = "light"
+params.BookDateFormat = "January 2, 2006"
+params.BookComments = false
+params.BookSearch = false
+EOF
+      ;;
+    loveit|fixit)
+      # 这两个主题要求 Author 是映射（字符串会渲染失败——第一轮 loveit 血例）
+      cat >> "$site/hugo.toml" <<'EOF'
+params.Author.name = "Tester"
+params.Author.link = "https://example.com/"
+params.home.profile.enable = true
+EOF
+      ;;
+    papermod)
+      cat >> "$site/hugo.toml" <<'EOF'
+params.author = "Tester"
+params.homeInfoParams.Title = "Matrix Site"
+params.homeInfoParams.Content = "Matrix test"
+EOF
+      ;;
+    stack)
+      cat >> "$site/hugo.toml" <<'EOF'
+params.sidebar.emoji = "cat"
+params.sidebar.subtitle = "Matrix"
+params.widgets.homepage = ["search", "archives"]
+params.widgets.page = ["toc"]
+EOF
+      ;;
+    ananke)
+      cat >> "$site/hugo.toml" <<'EOF'
+params.author = "Tester"
+params.ananke.show_recent_posts = true
+EOF
+      ;;
+    blowfish|congo|clarity|relearn|hextra|jane|mainroad|even|terminal|archie|hermit|xmin|bearblog|blog-awesome|console|risotto|hugo-coder|hugo-paper)
+      cat >> "$site/hugo.toml" <<'EOF'
+params.author = "Tester"
+EOF
+      ;;
+  esac
+}
+
+prepare_site() {
+  local name="$1" site="$2" theme_src="$THEMES_DIR/$name"
+  # junction 必须先 rmdir 卸载（rm -rf 会报 Device or resource busy）
+  [ -d "$site/themes/$name" ] && cmd //c "rmdir $(cygpath -w "$site/themes/$name")" >/dev/null 2>&1
+  rm -rf "$site"
+  mkdir -p "$site/themes"
+  make_content "$site"
+  make_config "$name" "$site"
+  add_theme_params "$name" "$site"
+  # 主题用 junction 挂载（零拷贝；失败则回退复制）
+  cmd //c "mklink /J $(cygpath -w "$site/themes/$name") $(cygpath -w "$theme_src")" >/dev/null 2>&1 ||
+    cp -r "$theme_src" "$site/themes/$name"
+}
+
+count_html() { find "$1" -name "*.html" 2>/dev/null | wc -l; }
+min_html_size() { find "$1" -name "*.html" -exec wc -c {} + 2>/dev/null | sort -n | head -1 | awk '{print $1}'; }
+
+printf "%-14s %-6s %-6s %-11s %-6s %-6s %-9s %-7s\n" \
+  "主题" "hugo" "页数" "flint构建" "页数" "最小页" "对称" "结构/文本"
+printf -- "--------------------------------------------------------------------------------------\n"
+
+for name in "${THEMES[@]}"; do
+  src="$THEMES_DIR/$name"
+  if [ ! -d "$src/layouts" ] && [ ! -d "$src/layout" ]; then
+    printf "%-14s %s\n" "$name" "跳过（主题不存在）"
+    continue
+  fi
+
+  site="$WORK/$name"
+  prepare_site "$name" "$site"
+  report="$WORK/$name-report.txt"
+  : > "$report"
+
+  # ---- Hugo 侧 ----
+  (cd "$site" && timeout 300 "$HUGO" --quiet >"$report.hugo" 2>&1)
+  hugo_exit=$?
+  hugo_pages=$(count_html "$site/public")
+  hugo_ok="失败"
+  [ "$hugo_exit" -eq 0 ] && [ "$hugo_pages" -gt 0 ] && hugo_ok="通过"
+
+  # ---- 迁移 + Flint 侧 ----
+  mig_out=$(timeout 600 "$MIGRATOR" "$src" "$site/themes-migrated/$name" 2>&1)
+  rate=$(echo "$mig_out" | grep -oE "rate=[0-9.]+" | cut -d= -f2)
+  unsup=$(echo "$mig_out" | grep -oE "unsupported=[0-9]+" | cut -d= -f2)
+  mig_ok="OK"
+  if [ -z "$rate" ]; then mig_ok="迁移异常"; fi
+
+  # 用迁移产物替换 Themes 目录下的主题（Flint 从 <site>/themes/<name> 读）
+  if [ "$mig_ok" = "OK" ]; then
+    rm -rf "$site/themes/$name"
+    mkdir -p "$site/themes"
+    cp -r "$site/themes-migrated/$name" "$site/themes/$name"
+  fi
+
+  build_out=$(cd "$site" && timeout 300 "$FLINT" build -s . -o public-flint --clean --missing-layout skip 2>&1)
+  flint_exit=$?
+  flint_pages=$(count_html "$site/public-flint")
+  flint_min=$(min_html_size "$site/public-flint")
+  flint_verdict="通过"
+  [ "$flint_exit" -ne 0 ] && flint_verdict="构建失败"
+  if [ "$flint_exit" -eq 0 ] && [ "${flint_min:-0}" -lt 200 ]; then flint_verdict="空页"; fi
+
+  echo "=== $name ===" >> "$report"
+  echo "hugo exit=$hugo_exit pages=$hugo_pages" >> "$report"
+  echo "$build_out" | grep -oE "[^ \]*\.html\([0-9]+,[0-9]+\) : error : .{0,70}" | sort -u | head -12 >> "$report"
+  echo "--- 无位置信息 ---" >> "$report"
+  echo "$build_out" | grep -oE "error : .{0,80}" | sort -u | head -10 >> "$report"
+
+  # ---- 门禁④（仅基线有效时）----
+  sym="-"; sim="-"
+  if [ "$hugo_ok" = "通过" ] && [ "$flint_pages" -gt 0 ]; then
+    diff_out=$(timeout 600 "$MIGRATOR" "$src" "$site/themes-migrated/$name" \
+      --verify "$site" --site-output "$site/public-flint" --hugo-output "$site/public" 2>&1)
+    sym=$(echo "$diff_out" | grep -oE "symmetric=[01]" | cut -d= -f2)
+    st=$(echo "$diff_out" | grep -oE "struct=[0-9.]+" | cut -d= -f2)
+    tx=$(echo "$diff_out" | grep -oE "text=[0-9.]+" | cut -d= -f2)
+    sim="${st}/${tx}"
+  fi
+
+  printf "%-14s %-6s %-6s %-11s %-6s %-6s %-9s %-7s\n" \
+    "$name" "$hugo_ok" "${hugo_pages:-0}" "$flint_verdict" "${flint_pages:-0}" "${flint_min:-NA}" \
+    "${sym}" "${sim}"
+done
+
+printf -- "--------------------------------------------------------------------------------------\n"
+echo "（hugo/flint构建：通过=exit0 且产出非空；对称=1 表示门禁④通过）"

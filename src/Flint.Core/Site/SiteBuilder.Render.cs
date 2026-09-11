@@ -207,6 +207,14 @@ public sealed partial class SiteBuilder
         }
         menuBuilder.AddFromPages(pages, p => p.MenuEntries);
 
+        // render hook 内的 i18n 需要翻译表，但 hook 渲染发生在内容解析期
+        //（早于本方法），故把翻译表快照回填给渲染器——同一构建内后续的 hook
+        // 渲染（含增量重建）即可用上真实翻译（此前 hook 内 i18n 报函数未找到）
+        if (_templateRenderer is ScribanTemplateRenderer scribanRenderer)
+        {
+            scribanRenderer.Translations = translations ?? new Dictionary<string, string>();
+        }
+
         return new SiteContext
         {
             Title = config.Title,
