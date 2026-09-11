@@ -77,6 +77,13 @@ public sealed class ConfigLoader : IConfigLoader
         string directory,
         CancellationToken cancellationToken = default)
     {
+        // 目录式配置优先（Hugo 0.116+）：config/_default/ 存在时按段合并
+        var dirConfig = TryLoadConfigDirectory(directory);
+        if (dirConfig is not null)
+        {
+            return ThemeParamsMerger.Merge(dirConfig, directory);
+        }
+
         var configPath = FindConfigFile(directory);
         if (configPath is null)
         {
@@ -89,6 +96,89 @@ public sealed class ConfigLoader : IConfigLoader
         // 主题默认参数合并（主题系统 P1-2）：主题 theme.toml 的 [params] 作为默认值，
         // 站点配置深覆盖——AutoLoadAsync 是生产装配唯一入口，stub 测试语义不受影响
         return ThemeParamsMerger.Merge(config, directory);
+    }
+
+    /// <summary>
+    /// 加载 **<c>config/_default/</c> 目录式配置**（Hugo 0.116+ 推荐形式）。
+    /// 合并规则对齐 Hugo：
+    ///   · <c>hugo.toml</c>/<c>config.toml</c> 提供顶层键
+    ///   · 其他文件名（params/menus/languages/outputs/module…）的内容挂在**同名顶层键**下
+    ///   · <c>config/&lt;environment&gt;/</c> 的同名文件后应用（覆盖 _default）
+    /// 目录不存在时返回 null（交回单文件路径）
+    /// 实测来源：blowfish/congo/clarity 等主题只用目录式配置，此前报
+    /// "当前目录不是有效的 Flint 站点" 而完全无法构建
+    /// </summary>
+    public static SiteConfig? TryLoadConfigDirectory(string directory)
+    {
+        var baseDir = Path.Combine(directory, "config", "_default");
+        if (!Directory.Exists(baseDir))
+        {
+            return null;
+        }
+
+        var merged = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+        void MergeFile(string path, bool asTopLevel)
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext is not (".toml" or ".yaml" or ".yml" or ".json"))
+            {
+                return;
+            }
+
+            Dictionary<string, object> table;
+            try
+            {
+                var text = File.ReadAllText(path);
+                table = ext == ".toml"
+                    ? ConfigParser.ParseTomlDict(text)
+                    : ConfigParser.ParseYamlDict(text);
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            var key = Path.GetFileNameWithoutExtension(path);
+            if (asTopLevel || key.Equals("hugo", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("config", StringComparison.OrdinalIgnoreCase))
+            {
+                ConfigMerge.DeepMergeInto(merged, table);
+            }
+            else
+            {
+                // 文件名即顶层键（params.toml → params 段）
+                if (merged.TryGetValue(key, out var existing) &&
+                    existing is Dictionary<string, object> existingDict)
+                {
+                    ConfigMerge.DeepMergeInto(existingDict, table);
+                }
+                else
+                {
+                    merged[key] = table;
+                }
+            }
+        }
+
+        // _default：先顶层文件，再按段文件（顺序稳定，便于复现）
+        foreach (var f in Directory.EnumerateFiles(baseDir, "*.*").OrderBy(
+                     x => Path.GetFileNameWithoutExtension(x) is "hugo" or "config" ? 0 : 1)
+                     .ThenBy(x => x, StringComparer.Ordinal))
+        {
+            MergeFile(f, asTopLevel: false);
+        }
+
+        // 环境覆盖：production（Flint 的构建环境语义）
+        var envDir = Path.Combine(directory, "config", "production");
+        if (Directory.Exists(envDir))
+        {
+            foreach (var f in Directory.EnumerateFiles(envDir, "*.*").OrderBy(x => x, StringComparer.Ordinal))
+            {
+                MergeFile(f, asTopLevel: false);
+            }
+        }
+
+        return merged.Count == 0 ? null : ConfigParser.ParseMergedTomlDict(merged);
     }
 
     /// <inheritdoc />

@@ -49,9 +49,11 @@ internal static class BuildHandler
             return 1;
         }
 
-        // 检查是否是有效的 Flint 站点
+        // 检查是否是有效的 Flint 站点：单文件配置或 config/_default/ 目录式配置
+        //（Hugo 0.116+ 推荐形式；blowfish/congo/clarity 等主题只用目录式）
         var configPath = ConfigLoader.FindConfigFile(sourcePath);
-        if (configPath == null)
+        var hasConfigDir = Directory.Exists(Path.Combine(sourcePath, "config", "_default"));
+        if (configPath == null && !hasConfigDir)
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine("错误: 当前目录不是有效的 Flint 站点");
@@ -75,7 +77,9 @@ internal static class BuildHandler
         {
             // 创建核心组件
             var configLoader = new ConfigLoader();
-            var siteConfig = await configLoader.LoadAsync(configPath, cancellationToken);
+            // AutoLoadAsync：目录式配置优先（按段合并），否则读单文件；
+            // 末段统一做主题默认参数合并
+            var siteConfig = await configLoader.AutoLoadAsync(sourcePath, cancellationToken);
             // 主题布局叠加（对齐 Hugo 主题语义）：站点 layouts 优先，theme 配置的
             // 主题目录按序回退——mod 下载的主题其 layouts 由此生效
             var themeLayoutDirs = siteConfig.Theme

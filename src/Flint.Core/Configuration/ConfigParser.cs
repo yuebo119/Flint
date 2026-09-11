@@ -86,6 +86,45 @@ public static partial class ConfigParser
     }
 
     /// <summary>
+    /// 从**已合并**的 TOML 字典构造站点配置。
+    /// 供 <c>config/_default/</c> 目录式配置（Hugo 0.116+ 推荐形式）使用：
+    /// 各文件先合并为单一字典，再走统一的归一化与模型转换路径
+    /// </summary>
+    public static SiteConfig ParseMergedTomlDict(Dictionary<string, object> merged)
+    {
+        ArgumentNullException.ThrowIfNull(merged);
+        // 已合并字典走 ConvertDictToConfig 直通（NormalizeToml 的入参是 TomlTable，
+        // 此处已是字典形态，无需再归一化）
+        return ConvertDictToConfig(merged);
+    }
+
+    /// <summary>
+    /// 解析单个配置文件为**原始字典**（不做模型转换），供目录式配置按段合并
+    /// </summary>
+    public static Dictionary<string, object> ParseTomlDict(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        return ConfigNormalizer.NormalizeToml(TomlynCompat.ParseTable(content));
+    }
+
+    /// <summary>
+    /// 解析单个 YAML 配置文件为原始字典（供目录式配置按段合并）
+    /// </summary>
+    public static Dictionary<string, object> ParseYamlDict(string content)
+    {
+        ArgumentNullException.ThrowIfNull(content);
+        try
+        {
+            return SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(content)
+                   ?? new Dictionary<string, object>();
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return new Dictionary<string, object>();
+        }
+    }
+
+    /// <summary>
     /// 序列化为 TOML 格式
     /// </summary>
     /// <param name="config">站点配置</param>
