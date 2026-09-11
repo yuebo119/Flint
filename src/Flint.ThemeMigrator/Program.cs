@@ -78,6 +78,11 @@ Console.WriteLine($"  机械转换率: {summary.MechanicalRate * 100:F1}%");
 Console.WriteLine($"  Scriban 预检失败: {summary.ParseFailures}");
 Console.WriteLine($"  耗时: {sw.ElapsedMilliseconds}ms");
 
+foreach (var d in summary.GlobalDiagnostics)
+{
+    Console.WriteLine($"  [诊断] {d}");
+}
+
 if (summary.ParseFailures > 0)
 {
     Console.WriteLine();

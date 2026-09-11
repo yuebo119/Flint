@@ -13,12 +13,48 @@ namespace Flint.ThemeMigrator.Conversion;
 /// 表达式转换器：AST → Scriban 文本。
 /// 无状态（上下文栈按调用传入），可并发使用。
 /// </summary>
-internal sealed class ScribanConverter(MigrationMap map)
+internal sealed class ScribanConverter(
+    MigrationMap map,
+    IReadOnlySet<string>? valueReturningPartials = null,
+    string? selfPartialName = null)
 {
     private readonly MigrationMap _map = map;
 
+    /// <summary>含 {{ return }} 的 partial 规范名集合（Hugo 返回值语义）</summary>
+    private readonly IReadOnlySet<string>? _valueReturning = valueReturningPartials;
+
+    /// <summary>本文件对应的 partial 规范名（null = 非 partial 文件）</summary>
+    public string? SelfPartialName { get; } = selfPartialName;
+
+    /// <summary>partialValue 的 Store 键前缀（与引擎侧 ScribanTemplateRenderer 一致）</summary>
+    internal const string RetKeyPrefix = "__partial_ret_";
+
     /// <summary>转换诊断（降级/不支持项）</summary>
     public List<string> Diagnostics { get; } = [];
+
+    /// <summary>
+    /// partial 名规范化：剥扩展名与路径前缀，使调用名与文件路径可对齐。
+    /// "func/X.html" 与 "layouts/_partials/func/X.html" 都归一到 "func/X"
+    /// </summary>
+    internal static string CanonicalPartialName(string raw)
+    {
+        var n = raw.Replace((char)92, '/').Trim();
+        if (n.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        {
+            n = n[..^5];
+        }
+        foreach (var prefix in new[]
+                 {
+                     "layouts/_partials/", "layouts/partials/", "_partials/", "partials/", "/"
+                 })
+        {
+            if (n.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                n = n[prefix.Length..];
+            }
+        }
+        return n;
+    }
 
     /// <summary>转换一个管道（表达式主体）</summary>
     public ConversionResult ConvertPipeline(Parsing.Pipeline pipeline, IReadOnlyList<string> scope, bool resourceContext = false)
@@ -368,13 +404,31 @@ internal sealed class ScribanConverter(MigrationMap map)
 
         if (name is "return")
         {
-            // Hugo 的 return 在 partial 内返回值；Scriban 用 ret
+            // Hugo 的 return：立即终止 partial 渲染并返回**任意类型**的值
+            // （资源对象/字典等）。Scriban 的 include 只能文本化，故用 Store 作
+            // 对象通道——本文件是 partial 时改写为：
+            //   {{ return X }} → {{ page.store.set "__partial_ret_<self>" X }}{{ ret }}
+            // 调用方的 partialValue 渲染后从 Store 取回真实对象（实测：跨 include 保真）
             if (args.Count == 0)
             {
                 return new ConversionResult("ret", ConversionKind.Equivalent);
             }
+
             var r = ConvertExpr(args[0], scope, false);
-            return r.Kind == ConversionKind.Unsupported ? r : new ConversionResult("ret " + r.Text, ConversionKind.Equivalent);
+            if (r.Kind == ConversionKind.Unsupported)
+            {
+                return r;
+            }
+
+            if (SelfPartialName is not null)
+            {
+                var key = RetKeyPrefix + SelfPartialName;
+                return new ConversionResult(
+                    $"page.store.set \"{key}\" {r.Text} }}}}}}{{{{ ret",
+                    ConversionKind.Equivalent);
+            }
+
+            return new ConversionResult("ret " + r.Text, ConversionKind.Equivalent);
         }
 
         // ---- 链式方法调用（X.Method args）----
@@ -678,6 +732,21 @@ internal sealed class ScribanConverter(MigrationMap map)
 
         var isCached = name is "partialCached" or "partials.IncludeCached";
         var target = isCached ? "partialcached" : "include";
+
+        // 返回值型 partial → partialValue（Hugo 返回对象 vs Scriban 文本化）。
+        // 仅当上下文参数是 dot（共享上下文等价）时改写；传其他对象时保持 include
+        var canonical = CanonicalPartialName(nameExpr);
+        if (!isCached && _valueReturning is not null && _valueReturning.Contains(canonical))
+        {
+            var isDotContext = args.Count <= 1 || args[1] is Parsing.DotExpr
+                or Parsing.FieldExpr { Path: "." };
+            if (isDotContext)
+            {
+                return new ConversionResult(
+                    $"partialValue \"{nameExpr}\"", ConversionKind.Equivalent);
+            }
+            Diagnostics.Add($"返回值型 partial {nameExpr} 的上下文参数非 dot，保持 include（语义可能不等价）");
+        }
 
         // 第二参数是 dot / page：Scriban include 天然共享上下文，省略
         if (args.Count <= 1 || args[1] is Parsing.DotExpr or Parsing.FieldExpr { Path: "." })

@@ -556,7 +556,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 已知取舍：partial 内嵌套 include 的子 partial 变化不改变外层 mtime，
         // 外层缓存条目不失效（精确传递失效需 partial 级依赖图，见记录项）
         var mtimeTicks = GetMtimeUtc(path).Ticks;
-        var cacheKey = name + "\u0001" + string.Join("\u0002", variants.Select(v => v?.ToString() ?? ""))
+        // 缓存键的 variant 签名：页面对象用 permalink 区分（默认 ToString 只给类型名，
+        // 会使所有页面共用一条缓存 → 首个页面的输出被复用，实测缺陷）
+        var cacheKey = name + "\u0001" + string.Join("\u0002", variants.Select(VariantSignature))
             + "\u0003" + mtimeTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return _partialResultCache.GetOrAdd(cacheKey, _ =>
         {
@@ -570,9 +572,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     partialTemplate.Messages.Select(m => m.ToString()).ToList());
             }
 
-            // 隔离 context：仅内置函数（含 partialcached 递归），无页面输出流；
-            // variants 注入为 variants 数组（对齐 Hugo 点参数语义：partial 内
-            // 用 {{ variants.0 }} 访问）
+            // 隔离输出流但**继承调用者全局**：Hugo 的 partialCached 内可访问
+            // site/page/params（缓存正确性由模板作者保证——输出只依赖 name+variants，
+            // Hugo 同此约定）。此前完全剥离上下文，使引用 site.params 的
+            // partialCached 报 "Cannot get the member site.params for a null object"
+            // （Ananke 的 social/follow.html 实证）
             var isolatedContext = new Scriban.TemplateContext
             {
                 TemplateLoader = _templateLoader,
@@ -580,10 +584,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 StrictVariables = false,
                 LoopLimit = 1_000_000
             };
+            isolatedContext.PushGlobal(_cachedBuiltinObject!);
+            if (scribanContext.CurrentGlobal is { } callerGlobals)
+            {
+                isolatedContext.PushGlobal(callerGlobals);
+            }
+
+            // variants 置于栈顶（覆盖同名全局），对齐 Hugo 点参数语义
             var partialGlobals = new ScriptObject();
             partialGlobals["variants"] = new ScriptArray(variants.Select(v => (object)v));
             isolatedContext.PushGlobal(partialGlobals);
-            isolatedContext.PushGlobal(_cachedBuiltinObject!);
             // 同步 Render：隔离 context 的模板加载（FileTemplateLoader）为同步实现，
             // 无需异步——避免 sync-over-async（G17 棘轮）
             return partialTemplate.Render(isolatedContext);
@@ -616,6 +626,20 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         var rendered = partialTemplate.Render(callerContext);
         return RestoreScalarType(rendered);
     }
+
+    /// <summary>
+    /// partialCached 的 variant 签名：页面对象用 permalink 区分（默认 ToString
+    /// 只给类型名，会让所有页面共用一条缓存 → 首个页面的输出被复用）
+    /// </summary>
+    private static string VariantSignature(object? variant) => variant switch
+    {
+        null => "",
+        Scriban.Runtime.ScriptObject o when o.ContainsKey("permalink") =>
+            o["permalink"]?.ToString() ?? "",
+        Scriban.Runtime.ScriptObject o when o.ContainsKey("rel_permalink") =>
+            o["rel_permalink"]?.ToString() ?? "",
+        _ => variant.ToString() ?? ""
+    };
 
     /// <summary>渲染结果标量类型还原：布尔/数值从文本还原（partial 返回值的类型语义）</summary>
     private static object RestoreScalarType(string rendered)
@@ -685,6 +709,106 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
+    }
+
+    /// <summary>
+    /// partialValue 的 Scriban 函数包装：Hugo partial 返回值语义。
+    ///
+    /// 机制（实测验证）：partial 内的 `{{ return X }}` 由转换器改写为
+    /// `{{ page.store.set "__partial_ret_NAME" X }}{{ ret }}`；本函数渲染 partial
+    /// （共享调用者上下文，故 Store 可见）后从 Store 取回 X —— 真实对象，
+    /// 无序列化往返。实测验证：跨 include 传递的对象成员访问与类型均保真。
+    ///
+    /// 兜底：Store 中无对应键时回退到标量还原（兼容无 return 的 partial）。
+    /// </summary>
+    private sealed class PartialValueFunction(ScribanTemplateRenderer renderer, ScriptObject pageObject)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        /// <summary>Store 键前缀（避免与用户键冲突）</summary>
+        internal const string KeyPrefix = "__partial_ret_";
+
+        public object? Invoke(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count < 1 || arguments[0] is not string name)
+            {
+                throw new InvalidOperationException("partialValue 需要至少一个字符串参数（partial 名称）");
+            }
+
+            var store = (pageObject as LazyPageObject)?.Store;
+            if (store is null)
+            {
+                return renderer.RenderPartialWithType(context, name);
+            }
+
+            // 键规范化：转换器用规范名（无扩展名、无路径前缀）写 Store，
+            // 而调用方可能传 "func/X.html" —— 必须同规则归一，否则键不匹配
+            // （实测：CALL 返回空，因写入键为 __partial_ret_func/X 而读取键为
+            //   __partial_ret_func/X.html）
+            var canonical = CanonicalPartialKey(name);
+            var key = KeyPrefix + canonical;
+            // 清除上次残留（同一 partial 多次调用时避免读到旧值）
+            store.Delete(key);
+
+            // 渲染 partial：其副作用（page.store.set）写入共享 Store。
+            // 返回值（文本还原形式）不使用——我们要的是 Store 中的真实对象
+            _ = renderer.RenderPartialWithType(context, name);
+
+            var value = store.Get(key);
+            store.Delete(key);
+
+            // 兜底：partial 无 return（无 store.set）时，回退标量还原结果
+            return value ?? renderer.RenderPartialWithType(context, name);
+        }
+
+        public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
+            Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            return new System.Threading.Tasks.ValueTask<object?>(
+                Invoke(context, callerContext, arguments, blockStatement));
+        }
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 2;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            index == 0
+                ? new Scriban.Runtime.ScriptParameterInfo(typeof(string), "name")
+                : new Scriban.Runtime.ScriptParameterInfo(typeof(object), "context");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "value");
+
+        /// <summary>
+        /// partial 名规范化（与迁移工具 ScribanConverter.CanonicalPartialName 同规则）：
+        /// 剥扩展名与路径前缀，使写入键与读取键一致
+        /// </summary>
+        internal static string CanonicalPartialKey(string raw)
+        {
+            var n = raw.Replace((char)92, '/').Trim();
+            if (n.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+            {
+                n = n[..^5];
+            }
+            foreach (var prefix in new[]
+                     {
+                         "layouts/_partials/", "layouts/partials/", "_partials/", "partials/", "/"
+                     })
+            {
+                if (n.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    n = n[prefix.Length..];
+                }
+            }
+            return n;
+        }
     }
 
     /// <summary>
@@ -1018,7 +1142,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         scribanContext.PushGlobal(_cachedDateObject);
 
         // 创建页面对象
-        var pageObject = CreatePageObject(context.Page);
+        // 注入站点常规页集合（.RegularPages 在任意页面可用）
+        var pageObject = CreatePageObject(context.Page, context.Site.RegularPages);
 
         // 创建站点对象
         var siteObject = CreateSiteObject(context.Site);
@@ -1070,6 +1195,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // includeCached（B3）：Hugo v0.146 的 partialCached 新名，指向同一实现
         globals.TrySetValue(scribanContext, default, "partial",
             new PartialFunction(this), readOnly: true);
+
+        // partialValue（Hugo partial 返回值语义）：渲染 partial 后从页面 Store 取回
+        // **真实对象**（非文本还原）。Hugo 的 `{{ $x := partial "Y" . }}` 返回任意
+        // 类型（资源对象/字典等），Scriban 的 include 只能文本化——故用 Store 作
+        // 对象通道：partial 内 `{{ return X }}` 转换为 `{{ page.store.set K X }}{{ ret }}`，
+        // 本函数渲染后取回。Store 是真实容器，完全保真且零序列化成本（实测验证）
+        globals.TrySetValue(scribanContext, default, "partialValue",
+            new PartialValueFunction(this, pageObject), readOnly: true);
         globals.TrySetValue(scribanContext, default, "includeCached",
             new PartialCachedFunction(this), readOnly: true);
         globals.TrySetValue(scribanContext, default, "include_cached",

@@ -275,3 +275,87 @@ public sealed class DateFormatConverterTests
             StringComparison.Ordinal);
     }
 }
+
+/// <summary>partial 返回值语义（Hugo 返回对象 vs Scriban 文本化）</summary>
+public sealed class PartialReturnValueTests
+{
+    private static string Convert(string template, string? selfPartial = null,
+        IReadOnlySet<string>? valueReturning = null)
+    {
+        var tokens = new GoTemplateLexer(template).Tokenize();
+        var parts = new GoTemplateParser(tokens).Parse();
+        return new TemplateConverter(MigrationMap.CreateDefault(), valueReturning, selfPartial).Convert(parts);
+    }
+
+    [Fact]
+    public void return在partial内改写为store通道()
+    {
+        // Hugo 的 return 返回任意对象；Scriban 的 include 只能文本化，
+        // 故用页面 Store 作对象通道（实测：跨 include 保真且零序列化）
+        var result = Convert("{{ return $x }}", selfPartial: "func/maker");
+        Assert.Contains("page.store.set", result, StringComparison.Ordinal);
+        Assert.Contains("__partial_ret_func/maker", result, StringComparison.Ordinal);
+        Assert.Contains("ret", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void return在非partial内保持ret()
+    {
+        var result = Convert("{{ return $x }}");
+        Assert.Contains("ret $x", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("page.store.set", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 无参return提前退出()
+    {
+        var result = Convert("{{ return }}", selfPartial: "func/maker");
+        Assert.Contains("ret", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("page.store.set", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 返回值型partial的调用点改为partialValue()
+    {
+        var vr = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "func/maker" };
+        var result = Convert("{{ $v := partial \"func/maker.html\" . }}", valueReturning: vr);
+        Assert.Contains("partialValue", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("include", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 非返回值型partial保持include()
+    {
+        var vr = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "func/other" };
+        var result = Convert("{{ partial \"func/maker.html\" . }}", valueReturning: vr);
+        Assert.Contains("include", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("partialValue", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 返回值型partial上下文非dot时保持include()
+    {
+        // 传其他页面对象时语义不等价（partialValue 共享调用者上下文）
+        var vr = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "func/maker" };
+        var result = Convert("{{ partial \"func/maker.html\" $otherPage }}", valueReturning: vr);
+        Assert.Contains("include", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void partial名规范化对齐()
+    {
+        Assert.Equal("func/x", ScribanConverter.CanonicalPartialName("func/x.html"));
+        Assert.Equal("func/x", ScribanConverter.CanonicalPartialName("layouts/_partials/func/x.html"));
+        Assert.Equal("func/x", ScribanConverter.CanonicalPartialName("_partials/func/x.html"));
+        Assert.Equal("x", ScribanConverter.CanonicalPartialName("x.html"));
+    }
+
+    [Fact]
+    public void return被识别为关键字而非标识符()
+    {
+        // 回归防护：return 不在 Go 标准库 key 表中（Hugo 扩展），
+        // 未识别会产出 "IdentifierExpr { Raw = return }" 这类 TODO
+        var result = Convert("{{ return 1 }}");
+        Assert.DoesNotContain("TODO-HUGO", result, StringComparison.Ordinal);
+    }
+}

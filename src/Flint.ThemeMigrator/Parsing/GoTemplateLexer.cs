@@ -76,6 +76,9 @@ internal sealed class GoTemplateLexer
         ["template"] = TokenType.Identifier,
         ["break"] = TokenType.Identifier,
         ["continue"] = TokenType.Identifier,
+        // Hugo 的 return（Go 标准库的 key 表无此项，是 Hugo 模板引擎扩展）：
+        // 不识别会被当普通标识符，产出 "IdentifierExpr { Raw = return }" 这类 TODO
+        ["return"] = TokenType.Identifier,
         ["nil"] = TokenType.Nil,
         ["true"] = TokenType.Bool,
         ["false"] = TokenType.Bool,

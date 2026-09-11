@@ -131,6 +131,15 @@ public sealed partial class BuiltinTemplateFunctions
             return result;
         });
 
+        // strings.Trim：Hugo 签名是 (CUTSET, STRING) —— 与 Flint 的 trim(s) 一元
+        // 语义不同（Ananke 的 `strings.Trim $x "/"` 实测报 "Argument index must be < 1"）
+        Add("strings_trim", (object? cutset, object? s) =>
+        {
+            var text = s?.ToString() ?? "";
+            var chars = cutset?.ToString();
+            return string.IsNullOrEmpty(chars) ? text : text.Trim(chars.ToCharArray());
+        });
+
         // collections.IsSet：Hugo 语义是 (MAP, KEY) 判断键存在，
         // 与 Flint 的 isset(value)（判非空）不同 —— 独立实现
         Add("collections_is_set", (object? map, object? key) =>
