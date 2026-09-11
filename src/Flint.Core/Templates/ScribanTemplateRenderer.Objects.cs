@@ -952,6 +952,27 @@ public sealed partial class ScribanTemplateRenderer
         so["next"] = view.Next is not null ? new PagerObject(view.Next) : null;
         so["pagers"] = new LazyPagers(view.Pagers);
 
+        // Hugo 兼容别名（PascalCase）：Hugo 的 Pager 字段是 Pascal（.TotalPages/
+        // .HasPrev/.Prev.URL），而 Scriban 成员查找大小写敏感——只注册 snake
+        // 会使模板的 `$pag.HasPrev`/`$pag.Prev.URL` 取到 null（实测 mini 主题）
+        foreach (var (snake, pascal) in new (string, string)[]
+                 {
+                     ("pages", "Pages"), ("page_number", "PageNumber"),
+                     ("total_pages", "TotalPages"), ("pager_size", "PagerSize"),
+                     ("number_of_elements", "NumberOfElements"),
+                     ("total_number_of_elements", "TotalNumberOfElements"),
+                     ("has_prev", "HasPrev"), ("has_next", "HasNext"),
+                     ("is_first", "IsFirst"), ("is_last", "IsLast"),
+                     ("url", "URL"), ("first", "First"), ("last", "Last"),
+                     ("prev", "Prev"), ("next", "Next"), ("pagers", "Pagers")
+                 })
+        {
+            if (so.ContainsKey(snake) && !so.ContainsKey(pascal))
+            {
+                so[pascal] = so[snake];
+            }
+        }
+
         // Hugo 兼容大写别名
         so["Pages"] = pages;
         so["PageNumber"] = view.PageNumber;
