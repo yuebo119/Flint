@@ -157,7 +157,12 @@ internal sealed class ScribanConverter(
             var feSnake = ToSnakePath(fe.Path);
             if (feSnake.EndsWith(".format", StringComparison.OrdinalIgnoreCase))
             {
-                var dateRecv = "page" + feSnake[..^".format".Length];
+                // 接收者根同样受作用域影响：range 内的 `.Date.Format` 应为
+                // 循环变量的 date（`$__it0.date`），而非 page.date（实测 bug）
+                var dateTail = feSnake[..^".format".Length];
+                var dateRecv = scope.Count > 0 && !dateTail.StartsWith(".Site", StringComparison.OrdinalIgnoreCase)
+                    ? scope[^1] + dateTail
+                    : "page" + dateTail;
                 var fmtArgsFe = new List<string>();
                 foreach (var a in operands.Skip(1))
                 {
@@ -843,13 +848,18 @@ internal sealed class ScribanConverter(
                 if (raw.StartsWith('.') && raw.Length > 1)
                 {
                     var lowered = ToSnakePath(raw);
-                    if (lowered.StartsWith(".site", StringComparison.Ordinal))
+
+                    // 根切换必须是**完整段**匹配（`.site.` / `.page.`）——
+                    // 用 StartsWith(".page") 会把 `.Pages.Len`（→`.pages.len`）
+                    // 误当 `.Page` 根，产出 `pages.len`（丢失 page 根，实测 bug）。
+                    // 同类陷阱：`.PageNumber`、`.Sitemap`
+                    if (lowered.StartsWith(".site.", StringComparison.Ordinal))
                     {
-                        return new ConversionResult("site" + lowered[".site".Length..], ConversionKind.Equivalent);
+                        return new ConversionResult("site." + lowered[".site.".Length..], ConversionKind.Equivalent);
                     }
-                    if (lowered.StartsWith(".page", StringComparison.Ordinal))
+                    if (lowered.StartsWith(".page.", StringComparison.Ordinal))
                     {
-                        return new ConversionResult("page" + lowered[".page".Length..], ConversionKind.Equivalent);
+                        return new ConversionResult("page." + lowered[".page.".Length..], ConversionKind.Equivalent);
                     }
                     return new ConversionResult("page" + lowered, ConversionKind.Equivalent);
                 }

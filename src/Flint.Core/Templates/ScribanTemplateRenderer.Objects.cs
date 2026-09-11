@@ -698,8 +698,10 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("count", pages.Count, false);
             SetValue("length", pages.Count, false);
             SetValue("size", pages.Count, false);
+            SetValue("len", pages.Count, false);
             SetValue("Count", pages.Count, false);
             SetValue("Length", pages.Count, false);
+            SetValue("Len", pages.Count, false);
         }
 
         // IList<ScriptObject> 实现 - 用于 Scriban 的 len 过滤器

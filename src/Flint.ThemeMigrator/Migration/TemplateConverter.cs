@@ -135,7 +135,11 @@ internal sealed class TemplateConverter(
                 // baseof 的 block 声明：结束处补条件输出（子模板值优先，默认值兜底）
                 if (kind == "blockdef" && extra is not null)
                 {
-                    return Wrap($"end }}}}{{{{ if $.{extra} }}}}{{{{ $.{extra} }}}}{{{{ else }}}}{{{{ __def_{extra} }}}}{{{{ end", trimL, trimR);
+                    // extra = 块名（如 title）→ 子模板键 blk_title / 默认值键 __def_title
+                    var childKey = "blk_" + extra;
+                    return Wrap(
+                        $"end }}}}{{{{ if $.{childKey} }}}}{{{{ $.{childKey} }}}}{{{{ else }}}}{{{{ __def_{extra} }}}}{{{{ end",
+                        trimL, trimR);
                 }
                 return Wrap("end", trimL, trimR);
             }
@@ -177,7 +181,10 @@ internal sealed class TemplateConverter(
             case "block":
             {
                 var name = kb.Names.Count > 0 ? kb.Names[0] : "unnamed";
-                _blockStack.Add(("blockdef", "blk_" + name));
+                // extra 存**块名本身**：end 分支用它拼 `__def_<name>`（默认值变量名）。
+                // 此前存 "blk_"+name，使产出的兜底变量名错为 `__def_blk_title`
+                // （capture 的是 `__def_title`）→ block 默认内容丢失（mini fixture 实测）
+                _blockStack.Add(("blockdef", name));
                 return Wrap("capture __def_" + name, trimL, trimR);
             }
 
