@@ -140,6 +140,48 @@ public sealed partial class BuiltinTemplateFunctions
             return string.IsNullOrEmpty(chars) ? text : text.Trim(chars.ToCharArray());
         });
 
+        // transform.Unmarshal：把 YAML/JSON/TOML 字符串解析为对象/数组
+        // （Hugo 主题用它读内联配置；LoveIt 实测）
+        Add("transform_unmarshal", (string? text) =>
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return new ScriptObject();
+            }
+            var t = text.Trim();
+            try
+            {
+                if (t.StartsWith('{') || t.StartsWith('['))
+                {
+                    var doc = System.Text.Json.JsonDocument.Parse(t);
+                    return JsonToScript(doc.RootElement);
+                }
+                // YAML（含简单 key: value 与列表）
+                var yamlObj = new ScriptObject();
+                foreach (var raw in t.Split('\n'))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith('#'))
+                    {
+                        continue;
+                    }
+                    var colon = line.IndexOf(':');
+                    if (colon <= 0)
+                    {
+                        continue;
+                    }
+                    var k = line[..colon].Trim();
+                    var v = line[(colon + 1)..].Trim().Trim('"', (char)39);
+                    yamlObj[k] = v;
+                }
+                return yamlObj;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return new ScriptObject();
+            }
+        });
+
         // collections.IsSet：Hugo 语义是 (MAP, KEY) 判断键存在，
         // 与 Flint 的 isset(value)（判非空）不同 —— 独立实现
         Add("collections_is_set", (object? map, object? key) =>
@@ -492,6 +534,38 @@ public sealed partial class BuiltinTemplateFunctions
     /// debug.Dump 的等价物：结构化文本化（Scriban 7 的 ScriptObject 无 Dump 扩展，
     /// 此处手写递归，避免引入被裁剪的反射路径）
     /// </summary>
+    /// <summary>JSON 元素 → Scriban 值（transform.Unmarshal 用）</summary>
+    private static object JsonToScript(System.Text.Json.JsonElement el) => el.ValueKind switch
+    {
+        System.Text.Json.JsonValueKind.Object => BuildJsonObj(el),
+        System.Text.Json.JsonValueKind.Array => BuildJsonArr(el),
+        System.Text.Json.JsonValueKind.Number => el.TryGetInt64(out var l) ? l : el.GetDouble(),
+        System.Text.Json.JsonValueKind.True => true,
+        System.Text.Json.JsonValueKind.False => false,
+        System.Text.Json.JsonValueKind.Null => null!,
+        _ => el.GetString() ?? ""
+    };
+
+    private static ScriptObject BuildJsonObj(System.Text.Json.JsonElement el)
+    {
+        var o = new ScriptObject();
+        foreach (var prop in el.EnumerateObject())
+        {
+            o[prop.Name] = JsonToScript(prop.Value);
+        }
+        return o;
+    }
+
+    private static ScriptArray BuildJsonArr(System.Text.Json.JsonElement el)
+    {
+        var a = new ScriptArray();
+        foreach (var item in el.EnumerateArray())
+        {
+            a.Add(JsonToScript(item));
+        }
+        return a;
+    }
+
     private static string DumpValue(object? v)
     {
         var sb = new StringBuilder();

@@ -1117,6 +1117,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             LoopLimit = 1_000_000 // 万页站点的大列表循环（同数据集对比测试实证）
         };
 
+
         // 渲染期依赖收集（T4.1）：按页面初始化依赖快照容器
         RenderDependencyTracker.Initialize(scribanContext, context.Page.SourcePath);
 

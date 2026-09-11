@@ -217,6 +217,35 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
     }
 }
 
+/// <summary>
+/// 通用数组反转（Hugo 的 Pages.Reverse 用于任意 ScriptArray，
+/// 如 .Ancestors.Reverse 做面包屑）
+/// </summary>
+public sealed class ArrayReverseFunction(ScriptArray source) : Scriban.Runtime.IScriptCustomFunction
+{
+    public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+        ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+    {
+        var arr = new ScriptArray();
+        for (var i = source.Count - 1; i >= 0; i--)
+        {
+            arr.Add(source[i]);
+        }
+        return arr;
+    }
+
+    public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+        ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+        new(Invoke(context, callerContext, arguments, blockStatement));
+
+    public int RequiredParameterCount => 0;
+    public int ParameterCount => 0;
+    public ScriptVarParamKind VarParamKind => ScriptVarParamKind.Direct;
+    public Type ReturnType => typeof(object);
+    public ScriptParameterInfo GetParameterInfo(int index) => new(typeof(object), "unused");
+    public ScriptParameterInfo ReturnParameterInfo => new(typeof(object), "result");
+}
+
 /// <summary>反转顺序（Hugo Reverse）</summary>
 public sealed class PagesReverseFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
 {

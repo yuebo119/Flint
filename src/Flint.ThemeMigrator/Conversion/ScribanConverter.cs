@@ -64,13 +64,44 @@ internal sealed class ScribanConverter(
             return new ConversionResult("", ConversionKind.Equivalent);
         }
 
-        var parts = new List<string>();
         var kind = ConversionKind.Equivalent;
         string? note = null;
+        string? acc = null;
 
         for (var i = 0; i < pipeline.Commands.Count; i++)
         {
-            var r = ConvertCommand(pipeline.Commands[i], scope, isPipeSegment: i > 0, resourceContext);
+            var cmd = pipeline.Commands[i];
+
+            // 管道折叠：`x | or y` / `x | and y` / `x | eq y` 这类**逻辑与比较**
+            // 函数必须把左值作为参数合并，不能继续用 | 连接——原因有二：
+            //   1) Scriban 的 | 把左值注入**首参**，Go 注入**末参**
+            //   2) 我的 and/or/eq 转换产出**中缀表达式**（`&&`/`||`/`==`），
+            //      不可作为管道目标
+            // 此前直接拼 `x | y`（函数名丢失）→ 非法 Scriban（PaperMod 的
+            // head.html 实测：`hugo.IsProduction | or (...) | and (...)`）
+            if (acc is not null && cmd.Operands.Count > 0
+                && cmd.Operands[0] is Parsing.IdentifierExpr pid
+                && pid.Name is "and" or "or" or "eq" or "ne" or "gt" or "ge" or "lt" or "le")
+            {
+                // 左值 acc 已是**转换后的 Scriban 文本**，不能再走表达式转换
+                // （否则 `$comment?.enable` 会被当作标识符二次 nil 安全化，
+                //  产出 `$comment??.enable`——LoveIt 实测的语法错误）。
+                // 故此处直接按已转换文本参与 and/or 折叠
+                var folded = FoldWithLeft(pid.Name, cmd.Operands.Skip(1), acc, scope);
+                if (folded.Kind == ConversionKind.Unsupported)
+                {
+                    return folded;
+                }
+                if (folded.Kind != ConversionKind.Equivalent)
+                {
+                    kind = folded.Kind;
+                    note = folded.Note;
+                }
+                acc = folded.Text;
+                continue;
+            }
+
+            var r = ConvertCommand(cmd, scope, isPipeSegment: i > 0, resourceContext);
             if (r.Kind != ConversionKind.Equivalent)
             {
                 kind = r.Kind;
@@ -81,10 +112,10 @@ internal sealed class ScribanConverter(
                 // 任一段不支持 → 整体不支持（避免产出半成品）
                 return r;
             }
-            parts.Add(r.Text);
+            acc = acc is null ? r.Text : acc + " | " + r.Text;
         }
 
-        var text = string.Join(" | ", parts);
+        var text = acc ?? "";
 
         // ---- 静默损坏防线 ----
         var guard = StructuralGuard.Check(text);
@@ -159,10 +190,13 @@ internal sealed class ScribanConverter(
             {
                 // 接收者根同样受作用域影响：range 内的 `.Date.Format` 应为
                 // 循环变量的 date（`$__it0.date`），而非 page.date（实测 bug）
-                var dateTail = feSnake[..^".format".Length];
-                var dateRecv = scope.Count > 0 && !dateTail.StartsWith(".Site", StringComparison.OrdinalIgnoreCase)
-                    ? scope[^1] + dateTail
-                    : "page" + dateTail;
+                // 接收者用**普通点**（非 ?.）：这是 date.to_string 的实参，
+                // 而 `page?.publish_date?.format` 形态会被 Scriban 当作函数名
+                // → "function not found"（LoveIt 实测）
+                var dateTailPlain = ToSnakePath(feSnake[..^".format".Length]);
+                var dateRecv = scope.Count > 0 && !dateTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase)
+                    ? scope[^1] + dateTailPlain
+                    : "page" + dateTailPlain;
                 var fmtArgsFe = new List<string>();
                 foreach (var a in operands.Skip(1))
                 {
@@ -185,7 +219,15 @@ internal sealed class ScribanConverter(
                     ConversionKind.Equivalent);
             }
 
-            var mapped = MapChainMethod("page" + ToSnakePath(fe.Path));
+            // 根切换：`.Site.X` → site.X（其余保持 page + 完整路径）。
+            // 不可剥首段——`.Resources.ByType` 的 `resources` 段是资源上下文语义的
+            // 一部分（剥掉会产出 `page.bytype`，丢失 resources 层，测试实测）
+            var isSiteRoot = fe.Path.StartsWith(".Site", StringComparison.OrdinalIgnoreCase)
+                && (fe.Path.Length == ".Site".Length || fe.Path[".Site".Length] == '.');
+            var feMapped = isSiteRoot
+                ? "site" + ToSnakePath(fe.Path[".Site".Length..])
+                : "page" + ToSnakePath(fe.Path);
+            var mapped = MapChainMethod(feMapped);
             if (mapped is not null)
             {
                 var argTexts = new List<string>();
@@ -504,6 +546,22 @@ internal sealed class ScribanConverter(
         // 此处按点路径规则映射（无参数才走此分支，避免与函数调用混淆）
         if (args.Count == 0 && name.Contains('.', StringComparison.Ordinal))
         {
+            // 局部变量的成员访问（$bc.RelPermalink / $params.subtitle / $pag.Pagers）：
+            // 用 nil 安全 `?.`——Hugo 的 `$x.y` 在 $x 为 nil 时返回 nil（宽容），
+            // Scriban 抛 "Cannot get the member ... for a null object"。
+            // 矩阵验证中多主题受阻于此（PaperMod/LoveIt/Stack 同名模式）
+            if (name.StartsWith('$') && !name.StartsWith("$.", StringComparison.Ordinal))
+            {
+                var segs = name.Split('.');
+                var chain = new System.Text.StringBuilder(segs[0]);
+                for (var si = 1; si < segs.Length; si++)
+                {
+                    var seg = ToSnakePath("." + segs[si]).TrimStart('.');
+                    chain.Append("?.").Append(seg.Length == 0 ? segs[si] : seg);
+                }
+                return new ConversionResult(chain.ToString(), ConversionKind.Equivalent);
+            }
+
             var mappedPath = MapIdentifierPath(name);
             if (mappedPath is not null)
             {
@@ -563,6 +621,11 @@ internal sealed class ScribanConverter(
             "GroupByDate" => "groupbydate",
             "IndexOf" => "indexof",
             "Get" => "get",
+            // Hugo 的页面方法（供"字段+参数"分支产出合法的 `page.get_page "x"`）
+            "GetPage" => "get_page",
+            "Paginate" => "paginate",
+            "RenderString" => "render_string",
+            "RenderShortcodes" => "render_shortcodes",
             "Reverse" => "reverse",
             "Limit" => "limit",
             "Related" => "related",
@@ -607,7 +670,7 @@ internal sealed class ScribanConverter(
     /// 拼接点路径段：末尾段若命中已知方法名，用规范化后的 Flint 名
     /// （GetMatch → getmatch 而非 get_match，须与引擎注册名一致）
     /// </summary>
-    private static string JoinPathSegments(IEnumerable<string> segments)
+    private static string JoinPathSegments(IEnumerable<string> segments, bool nilSafe = false)
     {
         var list = segments.ToList();
         if (list.Count == 0)
@@ -615,13 +678,16 @@ internal sealed class ScribanConverter(
             return "";
         }
 
-        var head = string.Join(".", list.Take(list.Count - 1).Select(Seg));
-        var last = list[^1];
-        var lastMapped = MapChainMethod("x." + last);
-        var lastSeg = lastMapped is not null
-            ? lastMapped["x.".Length..]
-            : Seg(last);
-        return head.Length == 0 ? lastSeg : head + "." + lastSeg;
+        var sep = nilSafe ? "?." : ".";
+        var sb2 = new System.Text.StringBuilder();
+        for (var i = 0; i < list.Count; i++)
+        {
+            var last = list[i];
+            var mapped = MapChainMethod("x." + last);
+            var seg2 = mapped is not null ? mapped["x.".Length..] : Seg(last);
+            sb2.Append(sep).Append(seg2.Length == 0 ? last : seg2);
+        }
+        return sb2.ToString();
     }
 
     /// <summary>表达式转文本的容错版：失败返回 null（供 printf 等参数收集用）</summary>
@@ -629,6 +695,50 @@ internal sealed class ScribanConverter(
     {
         var r = ConvertExpr(expr, scope, false);
         return r.Kind == ConversionKind.Unsupported ? null : r.Text;
+    }
+
+    /// <summary>
+    /// 管道折叠的 and/or/比较：左值是**已转换文本**（不可再转换），
+    /// 右侧参数正常转换，产出中缀表达式
+    /// </summary>
+    private ConversionResult FoldWithLeft(
+        string fn, IEnumerable<Parsing.Expr> rightArgs, string left, IReadOnlyList<string> scope)
+    {
+        var texts = new List<string> { left };
+        foreach (var a in rightArgs)
+        {
+            var r = ConvertExpr(a, scope, false);
+            if (r.Kind == ConversionKind.Unsupported)
+            {
+                return r;
+            }
+            texts.Add(r.Text);
+        }
+
+        var op = fn switch
+        {
+            "and" => "&&", "or" => "||",
+            "eq" => "==", "ne" => "!=", "gt" => ">", "ge" => ">=", "lt" => "<", "le" => "<=",
+            _ => "&&"
+        };
+
+        // Go 语义：`x | or y` 等价 `or y x`（管道值作**末参**）——
+        // 参数序对比较函数无影响，对 and/or 也无影响（可结合）
+        return new ConversionResult("(" + string.Join($" {op} ", texts) + ")", ConversionKind.Equivalent);
+    }
+
+    /// <summary>
+    /// 点路径的 nil 安全化：`.A.B.C` → `?.a?.b?.c`（供拼接根后形成
+    /// `page?.a?.b?.c`）。用于让缺失的中间层返回 null 而非抛异常（对齐 Hugo）
+    /// </summary>
+    private static string NilSafePath(string dotted)
+    {
+        var segs = dotted.TrimStart('.').Split('.', StringSplitOptions.RemoveEmptyEntries);
+        return string.Concat(segs.Select(s2 =>
+        {
+            var snake = ToSnakePath("." + s2).TrimStart('.');
+            return "?." + (snake.Length == 0 ? s2 : snake);
+        }));
     }
 
     /// <summary>
@@ -645,23 +755,25 @@ internal sealed class ScribanConverter(
 
         var root = segs[0];
 
-        // $ 根：Hugo 的 $ 指页面上下文；$.Site.* 指站点
+        // $ 根：Hugo 的 $ 指页面上下文；$.Site.* 指站点。
+        // 段连接用 nil 安全 `?.`：Hugo 对缺失中间层返回 nil（宽容），
+        // Scriban 的普通点链遇 null 抛异常（矩阵验证跨主题高频阻断）
         if (root == "$")
         {
             if (segs.Length >= 2 && (segs[1] == "Site" || segs[1] == "site"))
             {
-                var siteRest = JoinPathSegments(segs.Skip(2));
-                return siteRest.Length == 0 ? "site" : "site." + siteRest;
+                var siteRest = JoinPathSegments(segs.Skip(2), nilSafe: true);
+                return siteRest.Length == 0 ? "site" : "site" + siteRest;
             }
-            var pageRest = JoinPathSegments(segs.Skip(1));
-            return pageRest.Length == 0 ? "page" : "page." + pageRest;
+            var pageRest = JoinPathSegments(segs.Skip(1), nilSafe: true);
+            return pageRest.Length == 0 ? "page" : "page" + pageRest;
         }
 
-        var rest = string.Join(".", segs.Skip(1).Select(Seg));
+        var restSafe = JoinPathSegments(segs.Skip(1), nilSafe: true);
         return root switch
         {
-            "site" or "Site" => "site." + rest,
-            "page" or "Page" => "page." + rest,
+            "site" or "Site" => "site" + restSafe,
+            "page" or "Page" => "page" + restSafe,
             _ => null
         };
     }
@@ -847,6 +959,38 @@ internal sealed class ScribanConverter(
 
                 if (raw.StartsWith('.') && raw.Length > 1)
                 {
+                    // 全部成员链用 nil 安全 `?.`：Hugo 的 `.A.B.C` 任一层为 nil 时
+                    // 返回 nil（宽容），Scriban 的 `.` 链式访问遇 null 抛
+                    // "Cannot get the member ... for a null object"。
+                    // 这是矩阵验证中**跨主题最高频**的阻断原因
+                    // （PaperMod/LoveIt/Stack/Ananke 均命中）
+                    var loweredSafe = NilSafePath(raw);
+                    // 已知方法名不用 nil 安全（它们是**函数调用目标**，`?.` 会使
+                    // Scriban 把 `page?.get_page` 当函数名 → "function not found"，
+                    // Stack/LoveIt 实测）。ConvertCommand 的字段+参数分支本应先行
+                    // 拦截，此处兜底防止漏网
+                    var isMethodTarget = raw.Contains('.', StringComparison.Ordinal) &&
+                        MapChainMethod("page" + ToSnakePath(raw)) is not null;
+                    if (_map.MapPath(raw) is null && !isMethodTarget)
+                    {
+                        // 显式根判定基于**首段**（`.Site` → site 根）：链式段用 `?.` 后，
+                        // 形态是 `?.site?.params`，不能用 StartsWith(".site.") 匹配
+                        var first = raw.TrimStart('.').Split('.', StringSplitOptions.RemoveEmptyEntries)
+                            .FirstOrDefault() ?? "";
+                        // NilSafePath 含首段（`?.site?.params`）——显式根需**替换**首段
+                        // 而非前置拼接（否则 `site?.site?.params`）
+                        // 从索引 2 起找第二个 `?.`（首个在位置 0，属首段，
+                        // 须被替换掉——否则 `site?.site?.params`）
+                        var secondMarker = loweredSafe.IndexOf("?.", 2, StringComparison.Ordinal);
+                        var tail = secondMarker >= 0 ? loweredSafe[secondMarker..] : "";
+                        var body = first.Equals("Site", StringComparison.OrdinalIgnoreCase)
+                            ? "site" + tail
+                            : first.Equals("Page", StringComparison.OrdinalIgnoreCase)
+                                ? "page" + tail
+                                : "page" + loweredSafe;
+                        return new ConversionResult(body, ConversionKind.Equivalent);
+                    }
+
                     var lowered = ToSnakePath(raw);
 
                     // 根切换必须是**完整段**匹配（`.site.` / `.page.`）——
@@ -873,11 +1017,44 @@ internal sealed class ScribanConverter(
             case Parsing.VariableExpr v:
                 return new ConversionResult(v.Name, ConversionKind.Equivalent);
 
+            case Parsing.ChainExpr { Base: Parsing.VariableExpr { Name: not "$" } ve } vc:
+            {
+                // 变量的成员访问用 **nil 安全操作符** `?.`：Hugo 的 `$x.y` 在 $x 为
+                // nil 时返回 nil（宽容），Scriban 的 `$x.y` 抛
+                // "Cannot get the member ... for a null object"。
+                // 实测矩阵验证中多主题受阻于此（$bc.RelPermalink / $value.name /
+                // $params.subtitle / $.Paginate 等）
+                var sb2 = new System.Text.StringBuilder(ve.Name);
+                foreach (var field in vc.Fields)
+                {
+                    var seg = ToSnakePath(field).TrimStart('.');
+                    sb2.Append("?.").Append(seg.Length == 0 ? field.TrimStart('.') : seg);
+                }
+                return new ConversionResult(sb2.ToString(), ConversionKind.Equivalent);
+            }
+
             case Parsing.IdentifierExpr id:
                 // 含点的标识符（$.Site.RegularPages / site.Params.x）走路径映射；
                 // 无参数场景下它是"数据引用"而非"函数调用"
                 if (id.Name.Contains('.', StringComparison.Ordinal))
                 {
+                    // 局部变量的成员访问（$bc.RelPermalink / $params.subtitle）：
+                    // 用 nil 安全操作符 `?.`——Hugo 的 `$x.y` 在 $x 为 nil 时返回 nil
+                    // （宽容），Scriban 抛 "Cannot get the member ... for a null object"。
+                    // 矩阵验证中多主题受阻于此（PaperMod 的 $bc / LoveIt 的 $params /
+                    // Stack 的 $params），故统一 nil 安全化
+                    if (id.Name.StartsWith('$') && !id.Name.StartsWith("$.", StringComparison.Ordinal))
+                    {
+                        var segs = id.Name.Split('.');
+                        var chain = new System.Text.StringBuilder(segs[0]);
+                        for (var si = 1; si < segs.Length; si++)
+                        {
+                            var seg = ToSnakePath("." + segs[si]).TrimStart('.');
+                            chain.Append("?.").Append(seg);
+                        }
+                        return new ConversionResult(chain.ToString(), ConversionKind.Equivalent);
+                    }
+
                     var mappedId = MapIdentifierPath(id.Name);
                     if (mappedId is not null)
                     {

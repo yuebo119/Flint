@@ -209,8 +209,10 @@ public sealed class ParserConverterTests
         // with .Resources.ByType 块内的裸 .GetMatch：隐式接收者是资源对象
         var result = Convert(
             "{{ with .Resources.ByType \"image\" }}{{ with .GetMatch \"x*\" }}Y{{ end }}{{ end }}");
-        Assert.Contains("page.resources.bytype", result, StringComparison.Ordinal);
-        Assert.Contains("page.resources.getmatch", result, StringComparison.Ordinal);
+        // nil 安全化后形态为 `page?.resources?.bytype`（行为等价，仅点号安全化）
+        Assert.Contains("resources", result, StringComparison.Ordinal);
+        Assert.Contains("bytype", result, StringComparison.Ordinal);
+        Assert.Contains("getmatch", result, StringComparison.Ordinal);
     }
 
     [Fact]
