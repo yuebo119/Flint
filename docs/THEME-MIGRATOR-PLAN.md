@@ -724,3 +724,60 @@ Flint 构建产出 7 页（vs Hugo 15 页，差异为分页与 taxonomy 形态�
 `PartialReturnValueTests` 8 条（前节）：return 改写、非 partial 保持 ret、
 无参 return、调用点 partialValue 改写、非返回值型保持 include、
 非 dot 上下文保持 include、partial 名规范化、return 关键字识别。
+
+---
+
+## 十五、四门禁全通过里程碑（2026-09-11）
+
+### 验证结果
+
+```
+主题: tests/fixtures/mini-hugo-theme（9 文件 / 31 表达式）
+
+① 表达式级  ✅ 转换率 100%，不支持 0，降级 0
+② 模板级    ✅ Scriban 预检失败 0
+③ 站点级    ✅ flint build exit=0（11 页产出）
+④ 产物级    ✅ 对称性通过（11 共有页 / 0 单侧）
+            结构相似度 54.6% / 文本覆盖 86.4%
+
+对照：本轮开始前 结构 27% / 文本 77%、构建失败
+```
+
+**这是迁移工具第一次端到端走通全部门禁**——从"正则转换 13%"到
+"AST 转换 100% + 构建通过 + 产物对称"。
+
+### 本轮修复的 8 个通用 bug
+
+| # | bug | 影响面 |
+|---|---|---|
+| 1 | 根切换前缀误伤（`.Pages.Len` 被当 `.Page` 根） | 所有用 `.Pages` 的主题 |
+| 2 | block 默认值变量名 `__def_blk_title`（应 `__def_title`） | 所有用 block 默认内容的主题 |
+| 3 | 模板全局 `pages` 未注入 | 所有列表页 `{{ range .Pages }}` |
+| 4 | taxonomy 列表页 `.Pages` 为 null（Hugo 是词条页集合） | 所有 taxonomy 模板 |
+| 5 | 分页器未绑定 taxonomy/term 页 | 所有带分页的分类页 |
+| 6 | `.Date.Format` 接收者未作用域映射 | 所有列表页的日期显示 |
+| 7 | `LazyPageList` 缺 `len`/`Len` | `.Pages.Len` 高频用法 |
+| 8 | `Site.Language.LanguageCode` 多级路径未映射 | 所有主题的 `<html lang>` |
+
+### 反复出现的陷阱模式（值得固化）
+
+**前缀匹配必须是完整段**——同类 bug 出现 3 次：
+
+1. `!raw.StartsWith(".Page")` 误伤 `.PageNumber`
+2. `raw.StartsWith(".page")` 误伤 `.Pages.Len`
+3. 早前 Python 版的 `startswith("partials/")` 误伤 `_partials/`
+
+**教训**：路径/标识符的段判断应统一用"完整段"语义（相等或后跟分隔符），
+不得用裸 StartsWith。已在该处加注释固化。
+
+### 已知差异（非缺失，对称性判定已排除）
+
+- Hugo 生成 `page/1/`（第 1 页副本），Flint 的第 1 页即列表根
+- `<meta name="generator">` 等 Hugo 特有标签
+
+### Ananke 状态（压力测试）
+
+Ananke 仍在更深的引擎语义处阻断（`site.GetPage`、`collections.Index`
+的对象接收者等），但这些与 mini 主题修掉的 8 个 bug 同类——**都是
+"引擎能力未覆盖 Hugo 语义"，不是转换质量问题**。转换层对 Ananke
+已达 99.2% 且预检零失败。
