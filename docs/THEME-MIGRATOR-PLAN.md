@@ -680,3 +680,47 @@ Scriban 的 `include` 语义是"渲染为文本"，无法返回对象。要支�
 | partial 返回值语义 | 未实施 | 需引擎设计决策（新函数 or 转换器内联） |
 | 阶段 4 主题矩阵扩展 | 未开始 | 4 主题已就绪 |
 | 阶段 5 AI 残差 | 未开始 | — |
+
+---
+
+## 十四、块内作用域映射与端到端基准（2026-09-11 续）
+
+### 修复的真 bug（影响所有含迭代的主题）
+
+**块内裸点未映射到循环变量**：
+
+```hugo
+{{ range .Pages }}{{ .Title }}{{ end }}
+```
+
+曾被转换为 `{{ range ... }}{{ page.title }}{{ end }}` —— **循环变量被忽略**，
+每项都渲染当前页面的标题。这是影响面最广的一类错误（所有列表模板）。
+
+根因：`ConvertExpr` 的 FieldExpr 分支无条件映射 `.Field` → `page.field`，
+未考虑 `scope`（range/with 上下文栈）非空时接收者应是循环变量。
+
+**连带的边界 bug**：`.PageNumber` 以 `.Page` 开头，被"显式根排除条件"
+`!raw.StartsWith(".Page")` 误伤 → 产出裸 `page_number`。修正为**完整段匹配**
+（`.Page` 或 `.Page.` 才算显式根）。
+
+### 端到端回归基准
+
+新增 `tests/fixtures/mini-hugo-theme/`：一个覆盖 Hugo 常见用法的**最小主题**
+（baseof 继承/block define/partial/分页/短码/日期格式化/菜单/URL 函数/
+条件与迭代嵌套/static 资源），用于验证完整四门禁管线。
+
+**与 Ananke 的分工**：
+- mini 主题证明**基本管线可用**（无深度语义依赖）
+- Ananke 是压力测试（暴露引擎语义缺口）
+
+**mini 主题实测**：迁移 31 表达式，机械转换率 100%，预检 0 失败，
+Flint 构建产出 7 页（vs Hugo 15 页，差异为分页与 taxonomy 形态）。
+
+### 本轮新增测试（42 → 48）
+
+`BlockScopeMappingTests` 6 条：range 内裸点映射、`.PageNumber` 前缀误伤回归、
+`.Pages` 前缀误伤回归、显式根不受作用域影响、with 内裸点、无作用域保持原语义。
+
+`PartialReturnValueTests` 8 条（前节）：return 改写、非 partial 保持 ret、
+无参 return、调用点 partialValue 改写、非返回值型保持 include、
+非 dot 上下文保持 include、partial 名规范化、return 关键字识别。

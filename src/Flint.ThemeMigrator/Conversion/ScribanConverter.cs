@@ -796,6 +796,29 @@ internal sealed class ScribanConverter(
             {
                 // .Title → page.title；.Params.a → page.params.a
                 var raw = f.Path;
+
+                // 块内裸点：range/with 作用域下 `.Field` 的接收者是**当前循环/上下文变量**，
+                // 而非 page。此前一律映射为 page.* —— 使 `{{ range .Pages }}{{ .Title }}`
+                // 产出 `page.title`（循环变量被忽略，渲染错误页面的标题）。
+                // 注意：`.Site.*` / `$.*` 是显式根，不受作用域影响
+                // 排除显式根：`.Site`/`.Page` 必须是**完整段**（后跟 . 或结尾），
+                // 否则 `.PageNumber`/`.Pages` 会被 `.Page` 前缀误伤（实测 bug：
+                // range 内的 `.PageNumber` 未映射到循环变量，产出裸 `page_number`）
+                var isExplicitRoot =
+                    raw.Equals(".Site", StringComparison.OrdinalIgnoreCase) ||
+                    raw.StartsWith(".Site.", StringComparison.OrdinalIgnoreCase) ||
+                    raw.Equals(".Page", StringComparison.OrdinalIgnoreCase) ||
+                    raw.StartsWith(".Page.", StringComparison.OrdinalIgnoreCase);
+                if (scope.Count > 0
+                    && raw.StartsWith('.')
+                    && !isExplicitRoot
+                    && raw.Length > 1)
+                {
+                    var root = scope[^1];
+                    var tail = ToSnakePath(raw);
+                    return new ConversionResult(root + tail, ConversionKind.Equivalent);
+                }
+
                 if (_map.MapPath(raw) is { } mapped)
                 {
                     return new ConversionResult(mapped, ConversionKind.Equivalent);

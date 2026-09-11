@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="{{ site.Language.LanguageCode }}">
+<head>
+  <title>{{ block "title" . }}{{ .Title }} | {{ .Site.Title }}{{ end }}</title>
+  <link rel="stylesheet" href="{{ "css/style.css" | relURL }}">
+  {{ partial "head-extra.html" . }}
+</head>
+<body>
+  <nav>{{ range .Site.Menus.main }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}</nav>
+  <main>{{ block "main" . }}{{ end }}</main>
+  <footer>{{ partial "footer.html" . }}</footer>
+</body>
+</html>

@@ -359,3 +359,67 @@ public sealed class PartialReturnValueTests
         Assert.DoesNotContain("TODO-HUGO", result, StringComparison.Ordinal);
     }
 }
+
+/// <summary>块内裸点映射（range/with 作用域）</summary>
+public sealed class BlockScopeMappingTests
+{
+    private static string Convert(string template)
+    {
+        var tokens = new GoTemplateLexer(template).Tokenize();
+        var parts = new GoTemplateParser(tokens).Parse();
+        return new TemplateConverter(MigrationMap.CreateDefault()).Convert(parts);
+    }
+
+    [Fact]
+    public void range内裸点映射到循环变量()
+    {
+        // 回归防护：`{{ range .Pages }}{{ .Title }}` 曾产出 page.title
+        // （循环变量被忽略，渲染错误页面的标题）
+        var result = Convert("{{ range .Pages }}{{ .Title }}{{ end }}");
+        Assert.Contains("for $__it", result, StringComparison.Ordinal);
+        Assert.Contains(".title", result, StringComparison.Ordinal);
+        // 关键：不得出现裸 page.title（应为循环变量.title）
+        Assert.DoesNotContain("{{ page.title }}", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void range内PageNumber不被Page前缀误伤()
+    {
+        // 回归防护：`.PageNumber` 曾因以 `.Page` 开头被排除条件误伤，
+        // 产出裸 page_number（应映射为循环变量的 .page_number）
+        var result = Convert("{{ range .Pagers }}{{ .PageNumber }}{{ end }}");
+        Assert.Contains("$__it", result, StringComparison.Ordinal);
+        Assert.Contains("page_number", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("{{ page_number }}", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void range内Pages不被Page前缀误伤()
+    {
+        var result = Convert("{{ range .Sections }}{{ range .Pages }}{{ .Title }}{{ end }}{{ end }}");
+        Assert.DoesNotContain("{{ page.pages }}", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 显式根不受作用域影响()
+    {
+        // .Site.* / $.* 是显式根，即使在 range 内也不应映射到循环变量
+        var result = Convert("{{ range .Pages }}{{ .Site.Title }}{{ end }}");
+        Assert.Contains("site.title", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void with内裸点映射到上下文变量()
+    {
+        var result = Convert("{{ with .Params.author }}{{ . }}{{ end }}");
+        Assert.Contains("if $__w", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void range外层裸点仍映射到page()
+    {
+        // 无作用域时保持原语义
+        var result = Convert("{{ .Title }}");
+        Assert.Contains("page.title", result, StringComparison.Ordinal);
+    }
+}
