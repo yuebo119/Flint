@@ -77,9 +77,15 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // 内置模板回退（Hugo embedded templates）：include "pagination" 这类
         // 主题内置依赖在文件系统无文件，顶层解析路径有回退但 include 此前没有——
         // 导致 Ananke 的 {{ include "pagination" }} 必然失败
-        if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(templateName))
+        // 内置模板名归一：主题可能写 "pagination.html"（Hugo 的 partial 调用带扩展名）
+        var builtinKey = templateName;
+        if (builtinKey.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
         {
-            return BuiltinPrefix + templateName;
+            builtinKey = builtinKey[..^5];
+        }
+        if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(builtinKey))
+        {
+            return BuiltinPrefix + builtinKey;
         }
 
         // 未命中：返回主根形态，让 Load 抛出带上下文的 FileNotFoundException

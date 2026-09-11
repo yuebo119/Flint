@@ -131,6 +131,30 @@ public sealed partial class BuiltinTemplateFunctions
             return result;
         });
 
+        // collections.IsSet：Hugo 语义是 (MAP, KEY) 判断键存在，
+        // 与 Flint 的 isset(value)（判非空）不同 —— 独立实现
+        Add("collections_is_set", (object? map, object? key) =>
+        {
+            var k = key?.ToString() ?? "";
+            return map switch
+            {
+                ScriptObject so => so.ContainsKey(k),
+                IDictionary<string, object> d => d.ContainsKey(k),
+                _ => false
+            };
+        });
+
+        // collections.Slice：Hugo 的可变参数构造器（与 Flint 的 slice 切片语义不同）
+        Add("collections_slice", (params object?[] items) =>
+        {
+            var arr = new ScriptArray();
+            foreach (var it in items)
+            {
+                arr.Add(it);
+            }
+            return arr;
+        });
+
         // ---- collections 补充 ----
         Add("keyvals", (params object[] args) =>
         {

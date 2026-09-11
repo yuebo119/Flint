@@ -138,6 +138,33 @@ public sealed class TemplateResource
             fingerprint: $"{algorithm.ToLowerInvariant()}-{Convert.ToBase64String(hash)}");
     }
 
+    /// <summary>
+    /// 媒体类型对象（Hugo .MediaType 是对象，含 Type/SubType/MainType/Suffixes）
+    /// ——主题用 .MediaType.SubType 判断（Ananke 实测）
+    /// </summary>
+    private static ScriptObject BuildMediaTypeObject(string mediaType)
+    {
+        var parts = (mediaType ?? "").Split('/', 2);
+        var main = parts.Length > 0 ? parts[0] : "";
+        var sub = parts.Length > 1 ? parts[1] : "";
+        var suffix = sub.Contains('+', StringComparison.Ordinal) ? sub[(sub.IndexOf('+') + 1)..] : sub;
+        var o = new ScriptObject
+        {
+            ["type"] = main, ["Type"] = main,
+            ["sub_type"] = sub, ["SubType"] = sub,
+            ["main_type"] = main, ["MainType"] = main,
+            ["suffix"] = suffix, ["Suffix"] = suffix
+        };
+        var suffixes = new ScriptArray();
+        if (suffix.Length > 0)
+        {
+            suffixes.Add(suffix);
+        }
+        o["suffixes"] = suffixes;
+        o["Suffixes"] = suffixes;
+        return o;
+    }
+
     /// <summary>转 ScriptObject 供模板访问（双命名：snake 与 Pascal，与既有约定一致）</summary>
     public ScriptObject ToScriptObject()
     {
@@ -153,7 +180,7 @@ public sealed class TemplateResource
             ["name"] = Name, ["Name"] = Name,
             ["title"] = Title, ["Title"] = Title,
             ["resource_type"] = ResourceType, ["ResourceType"] = ResourceType,
-            ["media_type"] = MediaType, ["MediaType"] = MediaType,
+            ["media_type"] = BuildMediaTypeObject(MediaType), ["MediaType"] = BuildMediaTypeObject(MediaType),
             ["content"] = Content, ["Content"] = Content,
             ["rel_permalink"] = RelPermalink, ["RelPermalink"] = RelPermalink,
             ["permalink"] = Permalink, ["Permalink"] = Permalink,
