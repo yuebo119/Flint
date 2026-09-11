@@ -227,7 +227,8 @@ internal sealed class GoTemplateParser
         // 关键字分派（传过滤掉空白的剩余列表）
         if (first.Type == TokenType.Identifier && IsKeyword(first.Value))
         {
-            var rest = meaningful.Skip(1).Where(t => t.Type != TokenType.Space).ToList();
+            // 保留 Space（ParseOperands 靠它区分命名空间调用与函数+参数）
+            var rest = meaningful.Skip(1).ToList();
             return ParseKeyword(first.Value, rest, line);
         }
 
@@ -254,6 +255,16 @@ internal sealed class GoTemplateParser
 
     private ActionBody ParseKeyword(string name, List<Token> rest, int line)
     {
+        // 剔除首尾空白（内部空白保留给 ParseOperands）
+        while (rest.Count > 0 && rest[0].Type == TokenType.Space)
+        {
+            rest.RemoveAt(0);
+        }
+        while (rest.Count > 0 && rest[^1].Type == TokenType.Space)
+        {
+            rest.RemoveAt(rest.Count - 1);
+        }
+
         // end / else / break / continue：可能无参数
         if (rest.Count == 0)
         {

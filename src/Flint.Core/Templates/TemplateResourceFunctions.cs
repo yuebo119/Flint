@@ -192,6 +192,53 @@ public sealed partial class BuiltinTemplateFunctions
     public IReadOnlyList<TemplateResource> GeneratedResources => _generated;
 
     /// <summary>
+    /// 为命名空间对象补小写/下划线形态键（Scriban 成员查找大小写敏感）。
+    /// Hugo 官方写法是 PascalCase（resources.Get），但旧模板/惯用写法是小写（resources.get）
+    /// </summary>
+    private static void AddLowercaseAliases(ScriptObject obj)
+    {
+        foreach (var key in obj.Keys.OfType<string>().ToList())
+        {
+            if (key.Length == 0 || !char.IsUpper(key[0]))
+            {
+                continue;
+            }
+            var lowerFirst = char.ToLowerInvariant(key[0]) + key[1..];
+            if (!obj.ContainsKey(lowerFirst))
+            {
+                obj.TrySetValue(null, default, lowerFirst, obj[key], readOnly: true);
+            }
+            var snake = ToSnakeCase(key);
+            if (snake != key && !obj.ContainsKey(snake))
+            {
+                obj.TrySetValue(null, default, snake, obj[key], readOnly: true);
+            }
+        }
+    }
+
+    private static string ToSnakeCase(string name)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < name.Length; i++)
+        {
+            var c = name[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0)
+                {
+                    sb.Append('_');
+                }
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// 注册 resources.* / css.* / js.* / images.* 命名空间。
     /// 无资源提供者时注册为空对象（模板访问得 null 而非崩溃）。
     /// </summary>
@@ -210,6 +257,7 @@ public sealed partial class BuiltinTemplateFunctions
         RegisterCssFunctions(css);
         RegisterJsFunctions(js);
 
+        AddLowercaseAliases(res);
         root.TrySetValue(null, default, "resources", res, readOnly: true);
         root.TrySetValue(null, default, "css", css, readOnly: true);
         root.TrySetValue(null, default, "js", js, readOnly: true);

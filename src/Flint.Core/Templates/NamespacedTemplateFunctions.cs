@@ -42,10 +42,13 @@ public sealed partial class BuiltinTemplateFunctions
             ("After", "after"), ("Append", "append"), ("Apply", "apply"),
             ("Complement", "complement"), ("Delimit", "delimit"), ("Dictionary", "dict"),
             ("First", "first"), ("Group", "group"), ("In", "in"), ("Index", "index"),
-            ("Intersect", "intersect"), ("IsSet", "isset"), ("KeyVals", "keyvals"),
+            ("Intersect", "intersect"),
+            // collections.IsSet 是 (MAP, KEY) 形态，与 isset(value) 不同
+            ("IsSet", "collections_is_set"), ("KeyVals", "keyvals"),
             ("Last", "last"), ("Merge", "merge"), ("Querify", "querify"),
             ("Reverse", "reverse"), ("Seq", "seq"), ("Shuffle", "shuffle"),
-            ("Slice", "slice"), ("Sort", "sort"), ("SymDiff", "symdiff"),
+            // collections.Slice 是 Hugo 的可变参数构造器（非切片），独立实现
+            ("Slice", "collections_slice"), ("Sort", "sort"), ("SymDiff", "symdiff"),
             ("Union", "union"), ("Uniq", "uniq"), ("Where", "where"), ("D", "d"),
         ]),
         ("compare",
