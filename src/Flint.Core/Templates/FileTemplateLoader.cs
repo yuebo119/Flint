@@ -55,9 +55,23 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // Scriban 的 include 会把调用者物理路径放进 callerSpan.FileName（实测），
         // 由此还原调用者的相对目录
         var callerRelativeDir = TryGetRelativeDirectory(callerSpan.FileName);
+        var hasExplicitPartialsPrefix =
+            templateName.StartsWith("_partials/", StringComparison.OrdinalIgnoreCase) ||
+            templateName.StartsWith("partials/", StringComparison.OrdinalIgnoreCase);
         if (callerRelativeDir is not null)
         {
-            var called = new[] { templateName, templateName + ".html" };
+            // 候选：完整名（同名嵌套场景）与"剥掉 partials 前缀后的相对名"
+            //（Hugo 允许 partial 名相对调用者目录解析——PaperMod 的
+            // `_partials/templates/opengraph.html` 调用 `partial "_funcs/x"` 命中
+            // `_partials/templates/_funcs/x.html`。转换器把短名归一化为
+            // `_partials/_funcs/x` 后，必须用"前缀剥离版"才能与调用者目录组合）
+            var called = new List<string> { templateName, templateName + ".html" };
+            if (hasExplicitPartialsPrefix)
+            {
+                var relRest = StripPartialsPrefix(templateName);
+                called.Add(relRest);
+                called.Add(relRest + ".html");
+            }
             foreach (var root in Roots)
             {
                 foreach (var form in called)
@@ -85,6 +99,23 @@ internal sealed class FileTemplateLoader : ITemplateLoader
             relativeForms.Add(Path.Combine("partials", templateName + ".html"));
             relativeForms.Add(Path.Combine("_partials", templateName));
             relativeForms.Add(Path.Combine("_partials", templateName + ".html"));
+        }
+        else
+        {
+            // 名字已带 partials 前缀：补**另一个目录形态**的候选。
+            // `_partials/x`（Hugo v0.146+ 新约定）与 `partials/x`（旧约定）在主题
+            // 生态中并存，转换器统一产出 `_partials/` 前缀，故必须能回退到旧目录；
+            // 反向同理（主题原生模板可能写 `partials/x`）。
+            // **不再尝试原目录裸名**——那会让 `partial "404.html"` 命中
+            // layouts/404.html（页面模板自身）而自递归（hugo-coder 实测）
+            var rest = StripPartialsPrefix(templateName);
+            if (rest.Length > 0 && rest != templateName)
+            {
+                relativeForms.Add(Path.Combine("partials", rest));
+                relativeForms.Add(Path.Combine("partials", rest + ".html"));
+                relativeForms.Add(Path.Combine("_partials", rest));
+                relativeForms.Add(Path.Combine("_partials", rest + ".html"));
+            }
         }
 
         foreach (var root in Roots)
@@ -114,6 +145,11 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         {
             builtinKey = builtinKey["_internal/".Length..];
         }
+        // `_partials/x` / `partials/x`：Hugo embedded template 不在文件系统里，
+        // 转换器产出的显式 partials 前缀须剥除后再查内置表（否则 opengraph /
+        // pagination / google_analytics 这类内置模板会解析失败——ananke/papermod/
+        // loveit 实测 14 处）
+        builtinKey = StripPartialsPrefix(builtinKey);
         if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(builtinKey))
         {
             return BuiltinPrefix + builtinKey;
@@ -121,6 +157,20 @@ internal sealed class FileTemplateLoader : ITemplateLoader
 
         // 未命中：返回主根形态，让 Load 抛出带上下文的 FileNotFoundException
         return Path.Combine(_basePath, templateName);
+    }
+
+    /// <summary>剥除 <c>_partials/</c> 或 <c>partials/</c> 前缀（无前缀时原样返回）</summary>
+    private static string StripPartialsPrefix(string name)
+    {
+        if (name.StartsWith("_partials/", StringComparison.OrdinalIgnoreCase))
+        {
+            return name["_partials/".Length..];
+        }
+        if (name.StartsWith("partials/", StringComparison.OrdinalIgnoreCase))
+        {
+            return name["partials/".Length..];
+        }
+        return name;
     }
 
     private static bool templatePathStartsWithBackslash(string templateName) =>

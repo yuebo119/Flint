@@ -146,7 +146,7 @@ public sealed class ParserConverterTests
         var converter = new TemplateConverter(MigrationMap.CreateDefault());
         var output = converter.Convert(parts);
 
-        Assert.Contains("partial \"x\"", output, StringComparison.Ordinal);
+        Assert.Contains("partial \"_partials/x\"", output, StringComparison.Ordinal);
         Assert.Contains("k: 1", output, StringComparison.Ordinal);
     }
 
@@ -231,7 +231,7 @@ public sealed class ParserConverterTests
     {
         // Scriban 的 include 共享调用者上下文，Hugo 的第二参数无需显式传递
         var result = Convert("{{ partial \"cover\" . }}");
-        Assert.Contains("include \"cover\"", result, StringComparison.Ordinal);
+        Assert.Contains("include \"_partials/cover\"", result, StringComparison.Ordinal);
     }
 }
 
@@ -501,6 +501,46 @@ public sealed class PipeAndParserRegressionTests
     {
         // `$posts.paginate` 在变量为 nil 时 Hugo 返回 nil、Scriban 抛异常
         Assert.Contains("$posts?.paginate", Convert("{{ $posts.paginate }}"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void partial调用点产出带前缀路径()
+    {
+        // Hugo 的 partial 只在 partials/_partials 目录查找，不会命中原目录同名页面模板。
+        // 裸名会让 `partial "404.html"` 解析到 layouts/404.html（自身）→ 自递归
+        //（hugo-coder 实测 "Exceeding number of recursive depth limit"）
+        var result = Convert("{{ partial \"404.html\" . }}");
+        Assert.Contains("_partials/404", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 命名模板的template调用改走partial()
+    {
+        // Go 的 `template "X" CTX` 调用 define 出来的命名模板；
+        // 简单名 → 提取为 _partials/X.html，调用点走 partial 路径
+        var result = Convert("{{ template \"integrity\" $styles }}");
+        Assert.Contains("_partials/integrity", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 内置模板的template调用保持include()
+    {
+        // `_internal/...` 是 Hugo embedded template（无物理文件），走 include 命中引擎内置表
+        var result = Convert("{{ template \"_internal/opengraph.html\" . }}");
+        Assert.Contains("include \"_internal/opengraph.html\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 非管道default重排参数顺序()
+    {
+        // Hugo 的 default 是 `default DEFAULT GIVEN`，而 Flint 侧按 Scriban 语义取首参
+        //（管道注入位），故非管道形态需重排为 (GIVEN, DEFAULT)
+        var nonPiped = Convert("{{ default \"x\" page.title }}");
+        Assert.Contains("default page?.title \"x\"", nonPiped, StringComparison.Ordinal);
+        // 管道形态已是 (左值, 默认值)，不得重排
+        var piped = Convert("{{ page.title | default \"x\" }}");
+        Assert.Contains("default \"x\"", piped, StringComparison.Ordinal);
+        Assert.DoesNotContain("default page.title", piped, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -208,8 +208,17 @@ internal sealed class TemplateConverter(
 
             case "template":
             {
+                // Go/Hugo 的 `template "X" CTX`：X 是 define 出来的**命名模板**
+                // （或 `_internal/...` 内置模板）。命名模板已被提取为
+                // `_partials/X.html`，故调用点走 partial（带上下文语义）；
+                // 内置模板（`_internal/xxx`）仍是 include（命中引擎内置表）
                 var name = kb.Names.Count > 0 ? kb.Names[0] : "";
-                return Wrap($"include \"{name}\"", trimL, trimR);
+                var isBuiltin = name.StartsWith("_internal/", StringComparison.OrdinalIgnoreCase);
+                if (isBuiltin || name.Contains('/', StringComparison.Ordinal))
+                {
+                    return Wrap($"include \"{name}\"", trimL, trimR);
+                }
+                return Wrap($"include \"{ScribanConverter.PartialPathFor(name)}\"", trimL, trimR);
             }
 
             case "return":

@@ -76,6 +76,8 @@ internal sealed class ThemeMigrator
         // 而该判定是跨文件的，故必须先全局扫描
         var valueReturning = ScanValueReturningPartials(sourceRoot);
         summary.GlobalDiagnostics.Add($"返回值型 partial: {valueReturning.Count} 个");
+        var namedTemplates = ScanNamedTemplates(sourceRoot);
+        summary.GlobalDiagnostics.Add($"命名模板（define + template 调用）: {namedTemplates.Count} 个");
 
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
         {
@@ -108,7 +110,7 @@ internal sealed class ThemeMigrator
 
             // 内联 partial 提取（Hugo 的 define "_partials/X.html"）：
             // Scriban 无此机制，必须提取为独立文件使 include 可命中
-            var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text);
+            var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text, namedTemplates);
             var selfPartial = SelfPartialNameOf(rel);
             var result = ConvertTemplate(rel, remainingText, valueReturning, selfPartial);
             File.WriteAllText(targetPath, result.Text);
@@ -215,6 +217,56 @@ internal sealed class ThemeMigrator
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 扫描**命名模板**：Hugo 的 <c>{{ define "X" }}</c> 与 <c>{{ block "X" }}</c> 共用
+    /// define 语法，但语义分两类：
+    ///   1. baseof 继承：<c>block "X"</c> 声明 + 子模板 <c>define "X"</c> 覆盖 → 走 capture blk_X
+    ///   2. 命名模板库：<c>define "X"</c>（无同名 block）+ 任意处的
+    ///      <c>template "X" ctx</c> 调用 → 必须提为独立 partial 文件（Scriban 无此机制）
+    /// 本方法返回第 2 类的名字集合（20/20 流行主题都使用该机制，hugo-book 55 处）
+    /// </summary>
+    internal static HashSet<string> ScanNamedTemplates(string sourceRoot)
+    {
+        var defined = new HashSet<string>(StringComparer.Ordinal);
+        var blocked = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.html", SearchOption.AllDirectories))
+        {
+            string text;
+            try
+            {
+                text = File.ReadAllText(file);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(
+                    text, @"\{\{-?\s*define\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            {
+                var n = m.Groups[1].Value;
+                if (!n.Contains('/', StringComparison.Ordinal))
+                {
+                    defined.Add(n);
+                }
+            }
+
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(
+                    text, @"\{\{-?\s*block\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            {
+                blocked.Add(m.Groups[1].Value);
+            }
+        }
+
+        // 命名模板 = 有 define 但无同名 block 声明
+        defined.ExceptWith(blocked);
+        return defined;
     }
 
     /// <summary>文件相对路径 → partial 规范名（非 partial 返回 null）</summary>

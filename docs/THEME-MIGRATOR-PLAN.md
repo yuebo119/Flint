@@ -945,6 +945,52 @@ Hugo 侧本身失败（缺主题要求的 params 或依赖外部资源），基�
 | 9 | `$thumbnail "..."` 被当函数调用 | 2 处 | 转换器变量/函数判定 |
 | 10 | `Unable to convert type DateTimeOffset to int` | console/xmin 残留 | 日期函数签名 |
 
+
+### 第二轮补充修复（partial 查找语义 + 命名模板机制）
+
+**#1 partial 查找语义（自递归根因）**
+
+Hugo 的 partial **只在 `layouts/_partials/`、`layouts/partials/` 查找**，
+不会命中原目录下的同名页面模板。此前转换器产出裸名，使
+`partial "404.html"` 解析到 `layouts/404.html`（页面模板自身）→
+"Exceeding number of recursive depth limit 100 for node: include \"404.html\""
+（hugo-coder 实测，构建直接失败）。
+
+修复（两侧配合）：
+- 转换器统一产出 `<c>_partials/</c>` 前缀路径（`PartialPathFor`）
+- FileTemplateLoader：
+  - 带 partials 前缀时**只**在 partials 目录族内解析（`_partials/` ↔ `partials/`
+    互换，覆盖新旧目录约定），不再回落到原目录裸名
+  - 仍支持"相对调用者目录"组合（PaperMod 的
+    `_partials/templates/opengraph.html` 调 `partial "_funcs/x"`），
+    对带前缀的名字用"前缀剥离版"与调用者目录组合
+  - 内置模板回退处剥除 partials 前缀后再查内置表
+    （否则 `_partials/opengraph` 这类内置依赖全部解析失败）
+
+**#2 命名模板机制 `define` + `template "X"`**
+
+20/20 主题都使用该机制（hugo-book 55 处、hextra 25 处、blowfish 21 处）。
+Hugo 的 `define` 语法承载两种语义，此前只支持第一种：
+
+| 语义 | 形态 | 处理 |
+|---|---|---|
+| baseof 继承 | `block "X"` 声明 + 子模板 `define "X"` 覆盖 | `capture blk_X`（已有） |
+| 命名模板库 | `define "X"`（无同名 block）+ 任意处 `template "X" ctx` | **新增**：提取为 `_partials/X.html` |
+
+实现：
+- `ThemeMigrator.ScanNamedTemplates` 第一遍跨文件扫描，得到
+  "有 define 但无同名 block" 的名字集合（与既有 `ScanValueReturningPartials`
+  同一模式）；同时用于区分两种 define 语义
+- `InlinePartialExtractor.Extract` 增加 `namedTemplates` 参数：路径名 define
+  （`_partials/X.html`）与命名模板 define 都提取为独立文件
+- `TemplateConverter` 的 `template "X" ctx` 分派：简单名 → `include "_partials/X"`
+  （命中提取出的文件）；`_internal/...` 或含 `/` → 保持 `include`（内置表/路径）
+
+结果：hugo-book 从"构建失败 0 页"变为产出 19 页；hugo-coder 的自递归消失。
+
+**本轮新增回归测试**：partial 调用点前缀、命名模板调用、内置模板保持 include、
+非管道 default 重排（Migrator 56 → 60）。三项旧断言按新产出形态同步更新。
+
 ### 下一步（优先级）
 
 1. **partial 查找语义**（#1/#3/自递归）——修 FileTemplateLoader 候选顺序 +
