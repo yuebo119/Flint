@@ -998,3 +998,56 @@ Hugo 的 `define` 语法承载两种语义，此前只支持第一种：
 2. **命名模板机制**（#2）——两遍扫描区分 `block` 名与命名模板名；非 block 的
    `define "X"` 提取为 `_partials/X.html`，`template "X" ctx` → `partial "X" ctx`
 3. 剩余单点缺口（#4-#10）按频次清理
+
+---
+
+## 十八、主题可用性验证（2026-09-11 第三轮）
+
+### 为什么要先验证"主题在最新 Hugo 上能否使用"
+
+第三轮开工时发现：矩阵里"基线无效"的主题，多数**不是主题的问题，而是验证方法的问题**
+（配置不足、缺外部依赖、跑 Hugo 的时机错误）。因为**"主题能否迁移到 Flint"的前提是
+"主题能在 Hugo 上跑"**——Hugo 自己都跑不了的主题，其迁移失败无从判定（没有可信对照）。
+
+新增 `scripts/verify-themes.sh`：纯 Hugo 侧可用性验证，判定三条件同时满足：
+① Hugo 退出码 0 ② 产出 HTML 页数 > 0 ③ 最大页 ≥ 1000 字节（证明真的渲染出内容）。
+
+验证设计中修正的**五个方法缺陷**（每一个都曾造成误判）：
+
+| # | 缺陷 | 后果 | 修正 |
+|---|---|---|---|
+| 1 | 用自编最小配置替代 exampleSite | even 被冤枉（用作者配置成功 57 页） | 优先用 exampleSite 的配置与内容 |
+| 2 | 未装 Dart Sass | fixit 被冤枉（Hugo v0.153+ 起 LibSass 弃用，`toCSS` 需外部实现） | 安装 dart-sass 并注入 PATH |
+| 3 | `params.author` 字符串与 `params.Author` 映射同时写 | ananke/mainroad 被冤枉（Hugo Params 大小写不敏感冲突 → "unable to cast hmaps.Params to string"） | 按主题期望的 author 形状生成配置 |
+| 4 | 未处理 `enableGitInfo` | hugo-book/loveit 被冤枉（非 git 站点 → "failed to load Git data"） | 剥离该配置键 |
+| 5 | 主题名未按其 config 的 `theme` 值归一 | 6 个主题被冤枉（"module hugo-theme-terminal not found in themes/terminal"） | 按 config 的 theme 值命名目录 |
+
+另修正两处脚本自身的可靠性缺陷：`rm -rf` 遇占用目录静默失败导致内容混叠
+（回退 Windows 原生 `rmdir /s /q`）；`$?` 在复杂子 shell 组合下取值不可靠
+（改经显式标记回传）。
+
+### 验证结果：34 个主题中 20 个可用
+
+**✅ 在 Hugo v0.166.0 extended 上验证可用（20 个，构成有效基线）**
+
+ananke、archie、bearblog、blog-awesome、blowfish、clarity、congo、console、doit、
+even、fixit、github-style、hugo-book、hugo-coder、hugo-paper、loveit、papermod、
+risotto、stack、xmin
+
+其中 4 个（archie/blowfish/doit/risotto）的 exampleSite **内容**过时（用了 v0.156.0 移除的
+`gist`/`twitter` 短代码或失效远程链接），换中性内容后可用——**主题本身没问题**。
+
+**❌ 排除的 14 个及原因分类**
+
+| 原因 | 主题 | 说明 |
+|---|---|---|
+| 用了 Hugo 已移除的 API | hermit、jane、mainroad、zzo | `.Site.Author`（v0.124.0 弃用后移除）、`_internal/google_analytics_async.html`（已不存在）——**在最新 Hugo 下确实不可用**，除非降级 Hugo 或给主题打补丁 |
+| 依赖 Hugo Modules（需 Go 环境） | eureka、fresh、gallery | `failed to download modules: go mod download` |
+| 模板解析与新版严格化冲突 | hextra | `_shortcodes/gallery.html` 注释定界符被换行拆开（`*/` 换行 `-}}`）；改同行即通过 |
+| 配置/模板过时 | learn、meme、relearn、hello-friend、intro、terminal | 短代码语法、TOML 结构、自定义 outputFormat 等 |
+
+### 这对"迁移通过率"统计的意义
+
+此前"15 个基线有效、只 4 个通过"这个数字**不可信**（方法缺陷 + 未排除 Hugo 自身不可用的主题）。
+修正后的口径应是：**在这 20 个"Hugo 上确证可用"的主题上测迁移**，
+未通过的才是转换器的真实缺口。
