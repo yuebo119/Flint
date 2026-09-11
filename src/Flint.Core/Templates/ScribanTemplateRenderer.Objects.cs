@@ -115,7 +115,7 @@ public sealed partial class ScribanTemplateRenderer
             // .Params：Hugo 语义是「front matter 全量并入 + 自定义参数」，
             // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
             // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
-            SetValue("params", new NilSafeObject(BuildParamsDict(page)), false);
+            SetValue("params", BuildParamsDict(page), false);
             // .Resources：包装为带方法的集合（Hugo 的 .Resources.ByType/GetMatch/Match
             // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
             SetValue("resources", new PageResourcesObject(page.Resources), false);
@@ -180,6 +180,35 @@ public sealed partial class ScribanTemplateRenderer
             };
             SetValue("current_section", currentSectionObj, false);
             SetValue("CurrentSection", currentSectionObj, false);
+
+            // ---- 矩阵验证暴露的缺失属性（多主题共性）----
+            // .Level：页面在树中的深度（home=0，/posts/=1，/posts/x/=2）
+            var level = (page.Section ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries).Length
+                        + (isPage ? 1 : 0);
+            SetValue("level", level, false);
+            SetValue("Level", level, false);
+
+            // .Ancestors：祖先链（home → 各层 section → 自身），主题用 `.Ancestors.Reverse`
+            // 做面包屑（PaperMod 实测）。按路径逐级构造最简投影
+            var ancestors = BuildAncestorsObject(page);
+            SetValue("ancestors", ancestors, false);
+            SetValue("Ancestors", ancestors, false);
+
+            // .Language：语言对象（主题用 .Language.LanguageDirection 判断 rtl）
+            var langObj = new ScriptObject
+            {
+                ["lang"] = page.Language ?? "",
+                ["Lang"] = page.Language ?? "",
+                ["language_code"] = page.Language ?? "",
+                ["LanguageCode"] = page.Language ?? "",
+                ["language_name"] = page.Language ?? "",
+                ["LanguageName"] = page.Language ?? "",
+                // RTL 判断：主题读 language_direction；未知时给 ltr（安全默认）
+                ["language_direction"] = "ltr",
+                ["LanguageDirection"] = "ltr"
+            };
+            SetValue("language", langObj, false);
+            SetValue("Language", langObj, false);
             SetValue("Path", page.PagePath ?? "/", false);
             SetValue("bundle_type", page.BundleType ?? "", false);
             SetValue("BundleType", page.BundleType ?? "", false);
@@ -315,6 +344,116 @@ public sealed partial class ScribanTemplateRenderer
         return Uri.TryCreate(permalink, UriKind.Absolute, out var uri)
             ? uri.PathAndQuery
             : permalink;
+    }
+
+    /// <summary>
+    /// .Site.GetPage / .Page.GetPage：按路径或 (kind, 名) 查页。
+    /// 未命中返回 null（Hugo 语义；主题通常用 with 包裹）
+    /// </summary>
+    internal sealed class GetPageFunction(IReadOnlyList<FlintPageContext> pages)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count == 0)
+            {
+                return null;
+            }
+
+            var a0 = arguments[0]?.ToString() ?? "";
+            var a1 = arguments.Count > 1 ? arguments[1]?.ToString() : null;
+
+            FlintPageContext? found = null;
+            if (a1 is not null)
+            {
+                // (kind, 名) 形态：section 按 Section 段匹配，page 按标题/slug 匹配
+                found = a0.ToLowerInvariant() switch
+                {
+                    "section" or "sections" => pages.FirstOrDefault(p =>
+                        p.Kind.Equals("section", StringComparison.OrdinalIgnoreCase) &&
+                        (p.Section.Equals(a1, StringComparison.OrdinalIgnoreCase) ||
+                         p.RelPermalink.Trim('/').Equals(a1, StringComparison.OrdinalIgnoreCase))),
+                    "home" => pages.FirstOrDefault(p => p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)),
+                    "page" => pages.FirstOrDefault(p => p.Title.Equals(a1, StringComparison.OrdinalIgnoreCase)),
+                    _ => null
+                };
+            }
+            else
+            {
+                // 路径形态：归一后比对 RelPermalink
+                var path = a0.Trim('/');
+                found = pages.FirstOrDefault(p =>
+                    p.RelPermalink.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                    p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true ||
+                    (path.Length == 0 && p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)));
+            }
+
+            return found is null ? null : CreatePageObject(found);
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 2;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), index == 0 ? "pathOrKind" : "name");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "page");
+    }
+
+    /// <summary>
+    /// .Ancestors：祖先链对象（含 Reverse 方法，供面包屑）。
+    /// 按相对路径逐级上溯构造（home → /a/ → /a/b/），对齐 Hugo 的祖先语义
+    /// </summary>
+    private static ScriptObject BuildAncestorsObject(FlintPageContext page)
+    {
+        var segs = (page.RelPermalink ?? "/").Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var chain = new ScriptArray();
+        // home
+        chain.Add(new ScriptObject
+        {
+            ["title"] = page.Title,
+            ["Title"] = page.Title,
+            ["rel_permalink"] = "/",
+            ["RelPermalink"] = "/",
+            ["is_home"] = true,
+            ["IsHome"] = true
+        });
+
+        var acc = "";
+        for (var i = 0; i < Math.Max(0, segs.Length - 1); i++)
+        {
+            acc += "/" + segs[i];
+            chain.Add(new ScriptObject
+            {
+                ["title"] = segs[i],
+                ["Title"] = segs[i],
+                ["rel_permalink"] = acc + "/",
+                ["RelPermalink"] = acc + "/",
+                ["is_section"] = true,
+                ["IsSection"] = true
+            });
+        }
+
+        var o = new ScriptObject();
+        foreach (var i in Enumerable.Range(0, chain.Count))
+        {
+            o[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = chain[i];
+        }
+        o["count"] = chain.Count;
+        o["Count"] = chain.Count;
+
+        // .Reverse（Hugo 的 Pages.Reverse）：面包屑常反向输出
+        o["reverse"] = new ArrayReverseFunction(chain);
+        o["Reverse"] = o["reverse"];
+        return o;
     }
 
     /// <summary>
@@ -623,6 +762,12 @@ public sealed partial class ScribanTemplateRenderer
             ["base_url"] = site.BaseURL,
             ["home"] = lazyHome,
             ["Home"] = lazyHome,
+            // .Site.GetPage（Hugo 路径/kind 查询）：主题用它取 section 页做导航
+            // （Ananke/Stack 实测）。签名兼容两种形态：
+            //   GetPage "/posts"            按路径
+            //   GetPage "section" "posts"   按 kind + 名
+            ["get_page"] = new GetPageFunction(site.Pages),
+            ["GetPage"] = new GetPageFunction(site.Pages),
             ["language"] = site.Language,
             ["pages"] = lazyPages,
             ["regular_pages"] = lazyRegularPages,
@@ -631,7 +776,7 @@ public sealed partial class ScribanTemplateRenderer
             ["paginator"] = BuildPaginatorObject(site),
             ["config"] = site.Config,
             ["data"] = site.Data,
-            ["params"] = new NilSafeObject(site.Params),
+            ["params"] = site.Params,
             ["build_date"] = site.BuildDate,
             ["last_change"] = site.LastChange,
             ["is_multilingual"] = site.IsMultiLingual,
@@ -647,7 +792,7 @@ public sealed partial class ScribanTemplateRenderer
             ["Menus"] = CreateMenusObject(site.Menus),
             ["Config"] = site.Config,
             ["Data"] = site.Data,
-            ["Params"] = new NilSafeObject(site.Params),
+            ["Params"] = site.Params,
             ["BuildDate"] = site.BuildDate,
             ["LastChange"] = site.LastChange,
             ["IsMultiLingual"] = site.IsMultiLingual,

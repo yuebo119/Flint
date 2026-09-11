@@ -104,9 +104,12 @@ internal static class Gates
         var avgStructural = perPage.Count == 0 ? 0 : perPage.Average(p => p.Item2);
         var avgText = perPage.Count == 0 ? 0 : perPage.Average(p => p.Item3);
 
-        // 对称：无单侧页面（Hugo 的分页冗余目录除外——page/1/ 是 Hugo 特有的第 1 页副本）
+        // 对称：**必须有共有页面**且无单侧页面。
+        // 空对比（两侧都 0 页，通常因构建失败）不算对称——否则"构建失败"会被
+        // 误报为 symmetric=1（矩阵验证实测：loveit 构建失败却报对称）
+        // Hugo 的 page/1/ 是第 1 页副本，不参与单侧判定
         var effectiveOnlyHugo = onlyHugo.Where(p => !p.Contains("page/1/", StringComparison.Ordinal)).ToList();
-        var symmetric = effectiveOnlyHugo.Count == 0 && onlyFlint.Count == 0;
+        var symmetric = common.Count > 0 && effectiveOnlyHugo.Count == 0 && onlyFlint.Count == 0;
 
         return new DiffGateResult(
             symmetric, onlyHugo, onlyFlint, common.Count, avgStructural, avgText, perPage);

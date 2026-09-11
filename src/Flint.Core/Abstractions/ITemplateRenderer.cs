@@ -405,6 +405,11 @@ public sealed class PageContext
     /// <summary>失效日期（对齐 Hugo .ExpiryDate）</summary>
     public DateTimeOffset? ExpiryDate { get; init; }
 
+    /// <summary>
+    /// 页面语言代码（对齐 Hugo .Page.Language；单语言站点为站点语言）
+    /// </summary>
+    public string? Language { get; init; }
+
     /// <summary>模糊字数（对齐 Hugo .FuzzyWordCount：百位近似）</summary>
     public int FuzzyWordCount => WordCount < 100
         ? WordCount
@@ -557,6 +562,7 @@ public sealed class PageContext
             TaxonomySingular = TaxonomySingular,
             TaxonomyPlural = TaxonomyPlural,
             LinkTitle = LinkTitle,
+            Language = Language,
             Truncated = Truncated,
             PagePath = PagePath,
             BundleType = BundleType,

@@ -110,6 +110,21 @@ internal sealed class TemplateConverter(
             }
 
             case "else":
+            {
+                // Hugo 语义：with 的 else 分支**恢复外层 dot**（不再是 with 的值）。
+                // 此前不处理，使 `{{ with .Description }}...{{ else }}{{ if .IsPage }}`
+                // 的 `.IsPage` 被映射为 with 变量的成员（`$__w0.is_page`）→
+                // 运行期 "Cannot get the member ... for a null object"
+                // （Ananke 的 baseof.html meta description 实证）
+                if (_blockStack.Count > 0 && _blockStack[^1].Kind == "with")
+                {
+                    _blockStack[^1] = ("with-else", null);
+                    if (scope.Count > 0)
+                    {
+                        scope.RemoveAt(scope.Count - 1);
+                    }
+                }
+
                 // else if 带管道
                 if (kb.Pipeline is { Commands.Count: > 0 })
                 {
@@ -117,6 +132,7 @@ internal sealed class TemplateConverter(
                     return Wrap($"else if {cond}", trimL, trimR);
                 }
                 return Wrap("else", trimL, trimR);
+            }
 
             case "end":
             {
@@ -127,7 +143,8 @@ internal sealed class TemplateConverter(
                 {
                     _blockStack.RemoveAt(_blockStack.Count - 1);
                 }
-                if (scope.Count > 0)
+                // with 帧才弹 scope；with-else 已在 else 分支弹过（避免双重弹出）
+                if (scope.Count > 0 && kind is "with" or "range")
                 {
                     scope.RemoveAt(scope.Count - 1);
                 }

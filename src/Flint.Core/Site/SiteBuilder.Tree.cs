@@ -658,6 +658,7 @@ public sealed partial class SiteBuilder
             Type = kind,
             // 合成列表页（section/home）：kind 即节点类型，无显式 type 声明
             Kind = kind,
+            Language = config.LanguageCode,
             Draft = draft,
             Section = SectionOfKind(relPermalink),
             Params = cascadedParams
@@ -737,6 +738,7 @@ public sealed partial class SiteBuilder
             // Ananke 的 type:page 命中 layouts/page/single.html，又不让普通页误命中
             Kind = nodeKind ?? "page",
             DeclaredType = content.Metadata.Type,
+            Language = config.LanguageCode,
             Layout = layout,
             Outputs = content.Metadata.Outputs,
             SourcePath = content.SourcePath,
