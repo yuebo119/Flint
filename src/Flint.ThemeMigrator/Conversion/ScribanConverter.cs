@@ -56,7 +56,7 @@ internal sealed class ScribanConverter(
     /// </summary>
     private static readonly HashSet<string> PipeValueLastFunctions = new(StringComparer.Ordinal)
     {
-        "resources.FromString", "resources.Copy",
+        "resources.FromString", "resources.Copy", "resources.Concat", "resources.ExecuteAsTemplate",
         "printf", "fmt.Printf",
         "errorf", "fmt.Errorf", "warnf", "fmt.Warnf",
         "erroridf", "fmt.Erroridf", "warnidf", "fmt.Warnidf",

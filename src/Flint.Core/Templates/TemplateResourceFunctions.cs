@@ -335,11 +335,28 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // Concat NAME RESOURCES...
-        res.Import("Concat", (string? name, params object[] items) =>
+        // Concat TARGETPATH RESOURCES...：Hugo 的目标路径在前、资源在后，管道形态
+        // `X | resources.Concat "p"` 的左值应作末参。若调用方顺序错位（左值落到首参），
+        // 首参会是资源对象而非字符串——此时按"无显式目标路径"处理并把它当作资源，
+        // 避免产出路径为对象 dump 的非法资源（ananke 实测：rel_permalink 变成
+        // `/assets/{name: "a.css", ...}` 这种超长非法路径）
+        res.Import("Concat", (params object?[] args) =>
         {
-            var target = string.IsNullOrEmpty(name) ? "concat.css" : name;
+            string target;
+            int itemStart;
+            if (args.Length > 0 && args[0] is string s0 && s0.Length > 0)
+            {
+                target = s0;
+                itemStart = 1;
+            }
+            else
+            {
+                target = "concat.css";
+                itemStart = 0;
+            }
+
             var sb = new System.Text.StringBuilder();
-            foreach (var it in items)
+            foreach (var it in args.Skip(itemStart))
             {
                 var r = TemplateResource.FromScriptObject(it);
                 if (r is not null)
