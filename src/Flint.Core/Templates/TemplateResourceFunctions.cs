@@ -213,6 +213,14 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 obj.TrySetValue(null, default, snake, obj[key], readOnly: true);
             }
+            // 全小写（GetMatch → getmatch）：迁移器把 Hugo 的 `resources.GetMatch`
+            // 统一降为无分隔小写（`getmatch`），只注册 getMatch/get_match 会漏
+            //（Stack 的 helper/icon.html 实测 "The function `resources.getmatch` was not found"）
+            var flat = key.ToLowerInvariant();
+            if (flat != key && flat != lowerFirst && flat != snake && !obj.ContainsKey(flat))
+            {
+                obj.TrySetValue(null, default, flat, obj[key], readOnly: true);
+            }
         }
     }
 
@@ -258,6 +266,19 @@ public sealed partial class BuiltinTemplateFunctions
         RegisterJsFunctions(js);
 
         AddLowercaseAliases(res);
+        // 全局 minify / toCSS：Hugo 0.128 之前的顶层形态（`$x | minify`、
+        // `$scss | toCSS`），Stack 主题仍在使用。语义分别等同 resources.Minify
+        // 与 css.Sass（toCSS 只把引用名改为 .css，实际编译由构建期 AssetPipeline
+        // 完成——与 css.Sass 同一策略）
+        if (res.ContainsKey("Minify"))
+        {
+            root.TrySetValue(null, default, "minify", res["Minify"], readOnly: true);
+        }
+        if (css.ContainsKey("Sass"))
+        {
+            root.TrySetValue(null, default, "toCSS", css["Sass"], readOnly: true);
+            root.TrySetValue(null, default, "tocss", css["Sass"], readOnly: true);
+        }
         root.TrySetValue(null, default, "resources", res, readOnly: true);
         root.TrySetValue(null, default, "css", css, readOnly: true);
         root.TrySetValue(null, default, "js", js, readOnly: true);
@@ -300,7 +321,11 @@ public sealed partial class BuiltinTemplateFunctions
         // FromString NAME CONTENT：虚拟资源
         res.Import("FromString", (string? name, string? content) =>
         {
-            if (string.IsNullOrEmpty(name))
+            // 空白名不是合法资源名：管道左值错位时（`" " | FromString "x.css"`）
+            // 会传成 name=" " → RelPermalink "/assets/ " → 输出路径 "assets/ "，
+            // 该路径无文件名 → 写盘必失败。此处按"名无效即不产出资源"处理，
+            // 避免把模板参数错位升级成构建失败
+            if (string.IsNullOrWhiteSpace(name))
             {
                 return null;
             }
@@ -493,7 +518,9 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>记录产物（按 RelPermalink 去重，保留最新）</summary>
     private void Track(TemplateResource r)
     {
-        if (string.IsNullOrEmpty(r.RelPermalink))
+        // RelPermalink 必须指向**具名文件**（"…/" 这类目录形态无文件名，
+        // 落到输出阶段会写盘失败，把模板参数错位升级成构建失败）
+        if (string.IsNullOrEmpty(r.RelPermalink) || Path.GetFileName(r.RelPermalink).Length == 0)
         {
             return;
         }

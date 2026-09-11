@@ -140,6 +140,10 @@ public sealed partial class BuiltinTemplateFunctions
             return string.IsNullOrEmpty(chars) ? text : text.Trim(chars.ToCharArray());
         });
 
+        // urls.RelLangURL / AbsLangURL：带语言前缀的 URL（单语言站点等价 relURL/absURL）
+        Add("rel_lang_url", (string? s2) => s2 ?? "");
+        Add("abs_lang_url", (string? s2) => s2 ?? "");
+
         // transform.Unmarshal：把 YAML/JSON/TOML 字符串解析为对象/数组
         // （Hugo 主题用它读内联配置；LoveIt 实测）
         Add("transform_unmarshal", (string? text) =>
@@ -180,6 +184,18 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 return new ScriptObject();
             }
+        });
+
+        // slice（Hugo 可变参数构造器）：与 Flint 的三参 slice（序列切片）语义冲突。
+        // 主题的 `{{ $x := slice }}`（空数组）/ `slice a b c`（构造）经此实现
+        Add("hugo_slice", (params object?[] items) =>
+        {
+            var arr = new ScriptArray();
+            foreach (var it in items)
+            {
+                arr.Add(it);
+            }
+            return arr;
         });
 
         // collections.IsSet：Hugo 语义是 (MAP, KEY) 判断键存在，

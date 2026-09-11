@@ -781,3 +781,78 @@ Ananke 仍在更深的引擎语义处阻断（`site.GetPage`、`collections.Inde
 的对象接收者等），但这些与 mini 主题修掉的 8 个 bug 同类——**都是
 "引擎能力未覆盖 Hugo 语义"，不是转换质量问题**。转换层对 Ananke
 已达 99.2% 且预检零失败。
+
+---
+
+## 十六、四主题构建全绿里程碑（2026-09-11 收敛轮）
+
+四个真实主题（Ananke / PaperMod / Stack / LoveIt）全部达到**构建零错误**，
+PaperMod 额外达成**产物对称**（四门禁全通过）。
+
+```
+主题     表达式 不支持 降级 预检失败 转换率   构建 对称性
+ananke      500     3    59      0   99.4%     通过  不对称（分页页集差异）
+papermod    548     6    20      0   98.9%     通过  对称 ✅
+stack       668     5    78      0   99.3%     通过  不对称（分页页集差异）
+loveit     1236   123    55      0   90.0%     通过  不对称（分页页集差异）
+```
+
+### 本轮修复的 19 个引擎/转换缺陷
+
+按错误聚类归并（括号内为实测命中主题）：
+
+**引擎能力（Flint.Core）**
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 1 | 严格形参阻断 Hugo 多形态调用 | Scriban 绑定**首个注册重载**且类型不符即抛异常（不做重载回退）。`first/last/index/slice/after/in/eq/truncate/trim` 全部改 `params object?[]` + 形态分派 |
+| 2 | 页面集合被当字典 | `LazyPageList : ScriptObject` 实现 `IDictionary`，被 `IsCollection` 判为字典 → 新增数值位判定 `SplitSeqCount`/`IsNumericLike`，`ToList` 优先按 `IList<ScriptObject>` 展开 |
+| 3 | `hugo.Data` 取不到值 | 数据文件键由作者定义（`[PhotoSwipe]`/`Style` 驼峰），不能 snake 化——新增 `TryMapDataPath`（段名原样 + nil 安全），`hugo.Data` → `site.data` |
+| 4 | Go printf 动词未支持 | 新增 `GoFormatToDotNet`：`%s/%v/%d/%q/%x/%%` 与宽度精度修饰转 .NET 复合格式 |
+| 5 | `safe_html` 在 render hook 不可用 | 内置函数/日期对象注册抽为 `EnsureFunctionObjects`，hook 路径（`_markup/render-*.html`）同样装配；hook 的 `page` 补 `store` 通道 |
+| 6 | partialCached 缺日期对象 | 隔离上下文只装了内置函数 → `date.to_string` 落到 Scriban 内置版（要 `DateTime`），而页面日期是 `DateTimeOffset` |
+| 7 | `.GetPage`/`.Paginate`/`.GetTerms` 页面方法缺失 | 新增三个 `IScriptCustomFunction` 页面方法；`GetTerms` 按当前页过滤分类词条 |
+| 8 | 资源集合链式调用丢方法 | `PageResourcesObject` 由 `ScriptObject` 改 `ScriptArray` 派生（经变量中转仍保留方法），`ByType` 等筛选结果返回**同类型**集合 |
+| 9 | 相对 partial 解析 | Hugo 的 partial 名先相对**调用者目录**再回落根——`FileTemplateLoader` 借 Scriban 的 `callerSpan.FileName` 还原调用者目录 |
+| 10 | `_internal/` 内置模板 | Hugo embedded template 命名空间前缀剥除（`template "_internal/google_analytics.html"`） |
+| 11 | 菜单函数缺失 | `is_menu_current`/`has_menu_current`（按菜单项 `is_active` 判定，`has_*` 递归子项） |
+| 12 | 全局 `minify`/`toCSS` 缺失 | Hugo 0.128 前顶层形态，等同 `resources.Minify`/`css.Sass` |
+| 13 | `resources.FromString` 空白名 | 空白名产出 `RelPermalink "/assets/ "` → 输出路径无文件名 → 写盘必失败；`Track` 与输出阶段双重过滤 |
+
+**转换层（Flint.ThemeMigrator）**
+
+| # | 缺陷 | 修复要点 |
+|---|---|---|
+| 14 | 管道内 `\|` 越界切分 | `ParsePipeline` 未跟踪括号深度，`slice "a" (X \| default "y") $z` 从内层 `\|` 断开，数组提前闭合语义错乱 |
+| 15 | 管道左值位置 | Go/Hugo 的 `X \| f A B` == `f A B X`（末参），Scriban 注入**首参**。新增 `PipeValueLastFunctions` 表（`FromString`/`Copy`/`printf`/`errorf`/`i18n` 等）+ `NeedsParens` 包裹多 token 左值 |
+| 16 | 双变量 range 解构 | Scriban 迭代映射产出 `{Key, Value}`（PascalCase），`x.key` 取不到；改用 `pair.Key ?? for.index` / `pair.Value ?? pair` 统一映射与序列两种形态 |
+| 17 | 局部变量接收者被换根 | `$scratch.Add` 的 head 是局部变量本身，被 `_ when head.StartsWith('$')` 改写成 `pagescratch.add`；裸 `$`/`$.` 不属此列，须换根 |
+| 18 | 块名含非法标识符 | Hugo 允许 `block "body-class"`，Scriban 变量名不接受连字符 → `SanitizeIdent` 归一 |
+| 19 | `.Format` 接收者根 | `.Site.Lastmod.Format` 缺 site 换根（产出 `page.site.lastmod`）；管道末段的 `.Receiver.Format` 未被识别为函数目标 |
+
+### 反复出现的陷阱模式（本轮新增固化）
+
+- **ScriptObject 是 IDictionary**：任何用 `IsCollection` 区分序列/字典的地方，
+  对 `LazyPageList`/`PageResourcesObject` 这类"既是列表又是对象"的类型都会误判。
+  **教训**：按**用途**判定（数值位、`IList<T>` 优先），不按接口类型判定。
+- **首参不是管道值**：Scriban 与 Go 的管道注入位置相反。对"输入在末位"的函数
+  （Hugo 为可管道化如此声明）必须改写为显式调用，且多 token 左值要加括号。
+- **同名方法 vs 数据字段**：`paginate`/`format`/`lastmod` 既可能是方法也可能是
+  普通字段，转换期需按路径形态（是否穿过 `.Params`）区分。
+
+### 本轮新增回归测试（Core 866 → 879 / Migrator 48 → 56）
+
+新增 `ThemeConvergenceRegressionTests`（13 条，Core）与
+`PipeAndParserRegressionTests`（8 条，Migrator），逐条对应上表的失败形态：
+集合函数形态分派、`in`/`eq` 多形态、`index` 越界宽容、`trim`/`truncate` 多参、
+Go printf 动词、Store PascalCase 别名、`newScratch` 独立实例、
+`FromString` 空名守卫、管道左值末参 + 括号、括号内管道切分、
+块名归一、局部变量接收者、数据路径段名保持。
+
+### 已知差异（非缺失）
+
+- Hugo 为每个分页列表额外产出 `page/1/`（第 1 页副本），Flint 第 1 页即列表根；
+  Flint 的首页分页在 Hugo 未分页时也会产出 `/page/2/`。这是**分页产物集合差异**，
+  非迁移缺陷（对称性判定已如实报告为"仅 Hugo: N / 仅 Flint: N"）。
+- `<meta name="generator">` 等 Hugo 特有标签。
+

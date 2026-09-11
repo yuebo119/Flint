@@ -323,15 +323,31 @@ internal sealed class GoTemplateParser
         return new KeywordBody(name, ParsePipeline(rest, line), [], [], null);
     }
 
-    /// <summary>解析管道：命令以 | 分隔</summary>
+    /// <summary>
+    /// 解析管道：命令以 | 分隔。
+    /// **仅在括号深度 0 处切分**——括号内的 | 属于内层管道，须交给
+    /// ParenExpr 内部递归解析。此前不跟踪深度，`slice "a" (X | default "y") $z`
+    /// 会从内层 | 处断开，产出 `["a", (X)] | default "y" $z`（数组提前闭合，
+    /// 语义完全错乱——Ananke baseof 的 body_classes 实测）
+    /// </summary>
     private Pipeline ParsePipeline(List<Token> tokens, int line)
     {
         var commands = new List<Command>();
         var current = new List<Token>();
+        var depth = 0;
 
         foreach (var t in tokens)
         {
-            if (t.Type == TokenType.Pipe)
+            if (t.Type == TokenType.LeftParen)
+            {
+                depth++;
+            }
+            else if (t.Type == TokenType.RightParen && depth > 0)
+            {
+                depth--;
+            }
+
+            if (t.Type == TokenType.Pipe && depth == 0)
             {
                 if (current.Count > 0)
                 {

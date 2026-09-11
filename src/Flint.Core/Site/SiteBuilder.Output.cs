@@ -300,6 +300,11 @@ public sealed partial class SiteBuilder
         var uniqueAssets = assets
             .GroupBy(a => ResolveAssetOutputPath(a.OutputPath, options.OutputPath))
             .Select(g => g.First())
+            // 目录形态输出路径（无文件名，如模板产物名仅空白产生的 "assets/"）不可作为
+            // 文件写入——写盘会抛 DirectoryNotFoundException 并中断整次构建。此类条目
+            // 无有效载荷，直接排除（上游 TemplateResourceFunctions.Track 已挡一层，
+            // 此处是不依赖调用链的第二道防线）
+            .Where(a => Path.GetFileName(a.OutputPath).Length > 0)
             .ToArray();
 
         await Parallel.ForEachAsync(

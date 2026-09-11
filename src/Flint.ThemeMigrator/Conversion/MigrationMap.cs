@@ -86,6 +86,8 @@ internal sealed class MigrationMap
             ("repeat", "repeat"), ("countwords", "count_words"), ("countrunes", "count_runes"),
             ("anchorize", "anchorize"), ("urlize", "urlize"), ("plainify", "plainify"),
             ("emojify", "emojify"), ("markdownify", "markdownify"),
+            ("findRE", "find_re"), ("findRESubmatch", "find_re_submatch"),
+            ("minify", "minify"), ("resources.Minify", "minify"),
             // 集合
             ("where", "where"), ("sort", "sort"), ("first", "first"), ("last", "last"),
             ("after", "after"), ("uniq", "uniq"), ("shuffle", "shuffle"), ("union", "union"),
@@ -190,6 +192,8 @@ internal sealed class MigrationMap
             ("resources.Copy", "resources.Copy"), ("resources.Publish", "resources.Publish"),
             ("resources.ExecuteAsTemplate", "resources.ExecuteAsTemplate"),
             ("css.Build", "css.Build"), ("css.Sass", "css.Sass"), ("css.PostCSS", "css.PostCSS"),
+            // Hugo 0.128 之前的顶层 SCSS 编译（`$scss | toCSS`），引擎注册为顶层函数
+            ("toCSS", "toCSS"), ("to_css", "toCSS"),
             ("js.Build", "js.Build"), ("js.Babel", "js.Babel"),
             ("lang.Translate", "i18n"),
             ("path.Join", "path.Join"), ("path.Base", "path.Base"), ("path.Dir", "path.Dir"),

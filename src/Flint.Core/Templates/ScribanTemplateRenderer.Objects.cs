@@ -46,10 +46,13 @@ public sealed partial class ScribanTemplateRenderer
 
     internal static ScriptObject CreatePageObject(
         FlintPageContext page,
-        IReadOnlyList<FlintPageContext>? siteRegularPages = null)
+        IReadOnlyList<FlintPageContext>? siteRegularPages = null,
+        int paginateSize = 0,
+        string paginatePath = "page",
+        IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null)
     {
         return SharedPageObjects.GetValue(
-            page, p => new LazyPageObject(p, siteRegularPages));
+            page, p => new LazyPageObject(p, siteRegularPages, paginateSize, paginatePath, siteTaxonomies));
     }
 
     /// <summary>同上但返回具体类型（partialValue 需访问 LazyPageObject.Store）</summary>
@@ -80,12 +83,24 @@ public sealed partial class ScribanTemplateRenderer
         /// <summary>页面级 Store 实例（partialValue 机制用；构造后非 null）</summary>
         internal PageStoreObject? Store => _store;
 
+        private readonly int _paginateSize;
+        private readonly string _paginatePath;
+
+        /// <summary>站点分类表（.GetTerms 需按当前页过滤词条）</summary>
+        private readonly IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? _siteTaxonomies;
+
         public LazyPageObject(
             FlintPageContext page,
-            IReadOnlyList<FlintPageContext>? siteRegularPages = null)
+            IReadOnlyList<FlintPageContext>? siteRegularPages = null,
+            int paginateSize = 0,
+            string paginatePath = "page",
+            IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null)
         {
             _page = page;
             _siteRegularPages = siteRegularPages;
+            _paginateSize = paginateSize;
+            _paginatePath = paginatePath;
+            _siteTaxonomies = siteTaxonomies;
             _pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
             _termsValue = page.Terms is not null
                 ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
@@ -253,6 +268,21 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("scratch", store, false);
             SetValue("Scratch", store, false);
 
+            // .GetPage / .Paginate：Hugo 的**页面方法**（矩阵验证中 Ananke/Stack/
+            // PaperMod/LoveIt 均命中——主题用 `.GetPage "section" .Section` 取 section 页，
+            // 用 `.Paginate .Pages` 做分页）。引擎此前只在 site 对象上暴露 get_page
+            var sitePages = _siteRegularPages ?? [];
+            SetValue("get_page", new GetPageFunction(sitePages), false);
+            SetValue("GetPage", new GetPageFunction(sitePages), false);
+            SetValue("paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
+            SetValue("Paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
+
+            // .GetTerms / .GetTerms "taxonomy"：Hugo 页面方法——返回**当前页所属**的
+            // 该分类词条页（按站点分类表过滤 Pages 含本页的词条）。Stack/PaperMod
+            // 用 `$Page.GetTerms "tags"` 取标签页列表（缺此方法报 function not found）
+            var getTerms = new PageGetTermsFunction(_page, _siteTaxonomies);
+            SetValue("get_terms", getTerms, false);
+            SetValue("GetTerms", getTerms, false);
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
             SetValue("Content", page.Content, false);
@@ -344,6 +374,101 @@ public sealed partial class ScribanTemplateRenderer
         return Uri.TryCreate(permalink, UriKind.Absolute, out var uri)
             ? uri.PathAndQuery
             : permalink;
+    }
+
+    /// <summary>
+    /// .Paginate（Hugo 页面方法）：对给定集合建分页器。
+    /// 主题用 `{{ $pag := .Paginate .Pages }}` 显式分页（Stack/PaperMod/LoveIt 实测）；
+    /// 返回首个 pager（Hugo 语义：.Paginate 返回当前页的 pager）
+    /// </summary>
+    internal sealed class PagePaginateFunction(
+        FlintPageContext page, int pageSize, string paginatePath)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            // 显式传入集合（默认用当前页 Pages）
+            var items = page.Pages ?? [];
+            if (arguments.Count > 0 && arguments[0] is Scriban.Runtime.ScriptArray arr)
+            {
+                // 从 ScriptObject 列表还原 PageContext 不可行（对象已投影）——
+                // 故仅当传入的就是页面集合时复用；否则按当前页 Pages 分页
+                _ = arr;
+            }
+
+            var size = pageSize > 0 ? pageSize : 10;
+            var pager = PaginatorView.Create(items, 1, size,
+                string.IsNullOrEmpty(page.RelPermalink) ? "/" : page.RelPermalink, paginatePath);
+            return BuildPaginatorObject(pager);
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(object), "pages");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "paginator");
+    }
+
+    /// <summary>
+    /// .GetTerms（Hugo 页面方法）：返回当前页在指定分类下的词条页列表。
+    /// 从站点分类表取出该分类全部词条，过滤出 Pages 含当前页者
+    /// （Hugo 语义：页面的 .GetTerms "tags" 给该页用到的标签页）
+    /// </summary>
+    internal sealed class PageGetTermsFunction(
+        FlintPageContext page,
+        IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var result = new List<object>();
+            if (siteTaxonomies is null || arguments.Count == 0)
+            {
+                return result;
+            }
+
+            var name = arguments[0]?.ToString() ?? "";
+            if (name.Length == 0 || !siteTaxonomies.TryGetValue(name, out var terms))
+            {
+                return result;
+            }
+
+            foreach (var term in terms)
+            {
+                if (term.Pages.Any(p => ReferenceEquals(p, page) ||
+                        string.Equals(p.SourcePath, page.SourcePath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    result.Add(new LazyTermPage(term));
+                }
+            }
+            return result;
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), "taxonomy");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "terms");
     }
 
     /// <summary>

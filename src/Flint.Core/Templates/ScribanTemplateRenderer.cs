@@ -455,10 +455,29 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
 
         var globals = new ScriptObject();
+        // 钩子变量同时挂在顶层（Hugo 的 `.Level`/`.Text` 直取）与 `page` 之下
+        // （迁移器把钩子内裸 `.X` 统一转成 `page?.x`，与页面模板同规则）——
+        // 两者并存使原生 Flint 模板与迁移产物都能解析
+        var pageLike = new ScriptObject();
+        // 页面级 Store 必须一并提供：hook 内 `include` 的 partial 若走
+        // `page.store.set` 返回值通道（Stack helper/image.html 实测），
+        // 缺 store 会报 "Cannot get the member page.store.set for a null object"
+        var hookStore = new PageStoreObject();
+        pageLike["store"] = hookStore;
+        pageLike["Store"] = hookStore;
+        pageLike["scratch"] = hookStore;
+        pageLike["Scratch"] = hookStore;
         foreach (var kv in vars)
         {
             globals[kv.Key] = kv.Value;
+            pageLike[kv.Key] = kv.Value;
+            // 迁移产物用 snake_case 键（如 plain_text/anchor），补一份
+            pageLike[ToSnakeKey(kv.Key)] = kv.Value;
         }
+        globals["store"] = hookStore;
+        globals["scratch"] = hookStore;
+        globals["page"] = pageLike;
+        globals["Page"] = pageLike;
 
         var context = new Scriban.TemplateContext
         {
@@ -469,6 +488,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // taxonomy 页单循环即超默认值（同数据集对比测试实证）
             LoopLimit = 1_000_000
         };
+        // 内置函数（含 safe_html 等 safe* 家族）在钩子路径同样可用——缺失时
+        // `{{ .Text | safeHTML }}` 会报 "The function `safe_html` was not found"
+        EnsureFunctionObjects(context);
         context.PushGlobal(globals);
 
         try
@@ -481,6 +503,29 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 hookTemplateName, ex.Message,
                 ex.Span.Start.Line + 1, ex.Span.Start.Column + 1, ex);
         }
+    }
+
+    /// <summary>camelCase/PascalCase → snake_case（`plainText`/`PlainText` → `plain_text`）</summary>
+    private static string ToSnakeKey(string key)
+    {
+        var sb = new System.Text.StringBuilder(key.Length + 4);
+        for (var i = 0; i < key.Length; i++)
+        {
+            var c = key[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0 && (char.IsLower(key[i - 1]) || (i + 1 < key.Length && char.IsLower(key[i + 1]))))
+                {
+                    sb.Append('_');
+                }
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     /// <inheritdoc />
@@ -584,7 +629,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 StrictVariables = false,
                 LoopLimit = 1_000_000
             };
-            isolatedContext.PushGlobal(_cachedBuiltinObject!);
+            // 内置函数 + 日期对象都要装：只装前者时 `date.to_string` 会落到
+            // Scriban **内置**的 date 对象（要求 DateTime），而 Flint 页面日期是
+            // DateTimeOffset → "Unable to convert type `DateTimeOffset` to `DateTime`"
+            //（Ananke site-footer.html 经 partialcached 渲染时实测 14 处）
+            EnsureFunctionObjects(isolatedContext);
             if (scribanContext.CurrentGlobal is { } callerGlobals)
             {
                 isolatedContext.PushGlobal(callerGlobals);
@@ -628,6 +677,72 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
+    /// 以**显式上下文**渲染 partial（Hugo 的 <c>partial "x" CONTEXT</c>）：
+    /// CONTEXT 成为 partial 内的 <c>.</c>（点）。迁移产物的裸 <c>.X</c> 被转成
+    /// <c>page.x</c>，故把 CONTEXT 覆盖到调用者上下文的 <c>page</c> 全局——
+    /// 用 <see cref="Scriban.TemplateContext.PushGlobal"/> 上一层同名对象遮蔽，
+    /// 渲染后 <c>PopGlobal</c> 恢复（作用域严格限于本次调用）。
+    /// 实测动机：Stack 的 <c>partial "helper/icon" "search"</c> 原先丢弃 "search"，
+    /// 使 partial 内 <c>.</c> 取不到值（报 "icon '%s.svg' is not found"）
+    /// </summary>
+    internal object RenderPartialWithContext(
+        Scriban.TemplateContext callerContext, string name, object? context, ScriptObject pageObject)
+    {
+        // 目标 partial 若读写页面 Store（partial 返回值通道 / 显式暂存），
+        // **不能**用裸 context 覆盖 page——Store 挂在原 page 对象上，覆盖即切断通道
+        //（Ananke/Stack 实测 "page.store.set / page.Store.get for a null object"）。
+        // 该判定按 partial 源文本做确定性检查（含其 include 链上的名字）；
+        // 命中时退回共享上下文（dot 偏差换取通道完整）
+        var path = _templateLoader.GetPath(callerContext, default, name) ?? "";
+        var source = path.Length > 0 ? _templateLoader.Load(callerContext, default, path) : null;
+        if (source is null || UsesPageStore(source))
+        {
+            return RenderPartialWithType(callerContext, name);
+        }
+
+        // 上下文为字典时，把调用者的 store/scratch 合并进去：既让 partial 内的
+        // `.X` 指向传入上下文（Hugo dot 语义），又保留 page.store 通道可用
+        var callerPage = pageObject is { } pg && pg.ContainsKey("store") ? pg["store"] : null;
+        object? store = callerPage;
+        object? effective = context;
+        if (context is ScriptObject ctxObj && store is not null)
+        {
+            var merged = new ScriptObject();
+            foreach (var key in ctxObj.Keys)
+            {
+                merged[key] = ctxObj[key];
+            }
+            merged["store"] = store;
+            merged["Store"] = store;
+            merged["scratch"] = store;
+            merged["Scratch"] = store;
+            effective = merged;
+        }
+
+        var overlay = new ScriptObject
+        {
+            ["page"] = effective,
+            ["Page"] = effective
+        };
+        callerContext.PushGlobal(overlay);
+        try
+        {
+            return RenderPartialWithType(callerContext, name);
+        }
+        finally
+        {
+            callerContext.PopGlobal();
+        }
+    }
+
+    /// <summary>partial 是否依赖页面 Store（返回值通道 / .Scratch 暂存）</summary>
+    private static bool UsesPageStore(string source) =>
+        source.Contains("page.store", StringComparison.Ordinal) ||
+        source.Contains("page.Store", StringComparison.Ordinal) ||
+        source.Contains("page.scratch", StringComparison.Ordinal) ||
+        source.Contains("page.Scratch", StringComparison.Ordinal);
+
+    /// <summary>
     /// partialCached 的 variant 签名：页面对象用 permalink 区分（默认 ToString
     /// 只给类型名，会让所有页面共用一条缓存 → 首个页面的输出被复用）
     /// </summary>
@@ -669,7 +784,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>
     /// partial 函数（返回值语义）的 Scriban 包装
     /// </summary>
-    private sealed class PartialFunction(ScribanTemplateRenderer renderer)
+    private sealed class PartialFunction(ScribanTemplateRenderer renderer, ScriptObject pageObject)
         : Scriban.Runtime.IScriptCustomFunction
     {
         public object? Invoke(
@@ -681,6 +796,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             if (arguments.Count < 1 || arguments[0] is not string name)
             {
                 throw new InvalidOperationException("partial 需要至少一个字符串参数（partial 名称）");
+            }
+            // Hugo 的 `partial "x" CONTEXT`：第二参数成为 partial 内的 `.`。
+            // 迁移产物的裸 `.X` 被转成 `page.x`，故把 context 临时压成 `page` 全局
+            if (arguments.Count > 1)
+            {
+                return renderer.RenderPartialWithContext(context, name, arguments[1], pageObject);
             }
             return renderer.RenderPartialWithType(context, name);
         }
@@ -697,7 +818,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         public int RequiredParameterCount => 1;
 
-        public int ParameterCount => 1;
+        public int ParameterCount => 2;
 
         public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
             Scriban.Runtime.ScriptVarParamKind.Direct;
@@ -705,7 +826,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         public Type ReturnType => typeof(object);
 
         public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
-            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "name");
+            index == 0
+                ? new Scriban.Runtime.ScriptParameterInfo(typeof(string), "name")
+                : new Scriban.Runtime.ScriptParameterInfo(typeof(object), "context");
 
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
@@ -1104,23 +1227,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     private ScriptObject? _cachedBuiltinObject;
     private ScriptObject? _cachedDateObject;
 
-    private Scriban.TemplateContext CreateScribanContext(FlintTemplateContext context)
+    /// <summary>
+    /// 把内置函数对象与日期对象压入上下文。页面渲染（CreateScribanContext）与
+    /// render hook 渲染（RenderHookTemplate）共用——hook 模板同样需要 safe_html、
+    /// date.to_string 等函数，早期只在页面路径注册导致 `_markup/render-*.html`
+    /// 报 "The function `safe_html` was not found"（stack 主题实测）。
+    /// </summary>
+    private void EnsureFunctionObjects(Scriban.TemplateContext scribanContext)
     {
-        // 安全契约决策（见 README「HTML 转义契约」）：Scriban 默认不启用
-        // HTML 自动转义——Flint 保持该默认，模板输出不做上下文转义矩阵，
-        // 内容可信性由内容管线与模板作者负责（对齐 Hugo safe* 恒等语义）
-        var scribanContext = new Scriban.TemplateContext
-        {
-            TemplateLoader = _templateLoader,
-            MemberRenamer = member => member.Name, // 保持原始属性名
-            StrictVariables = false, // 允许访问未定义的变量
-            LoopLimit = 1_000_000 // 万页站点的大列表循环（同数据集对比测试实证）
-        };
-
-
-        // 渲染期依赖收集（T4.1）：按页面初始化依赖快照容器
-        RenderDependencyTracker.Initialize(scribanContext, context.Page.SourcePath);
-
         // 优化：复用内置函数对象（只创建一次）
         if (_cachedBuiltinObject == null)
         {
@@ -1141,10 +1255,36 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             _cachedDateObject = new ScriptObject { ["date"] = dateObject };
         }
         scribanContext.PushGlobal(_cachedDateObject);
+    }
+
+    private Scriban.TemplateContext CreateScribanContext(FlintTemplateContext context)
+    {
+        // 安全契约决策（见 README「HTML 转义契约」）：Scriban 默认不启用
+        // HTML 自动转义——Flint 保持该默认，模板输出不做上下文转义矩阵，
+        // 内容可信性由内容管线与模板作者负责（对齐 Hugo safe* 恒等语义）
+        var scribanContext = new Scriban.TemplateContext
+        {
+            TemplateLoader = _templateLoader,
+            MemberRenamer = member => member.Name, // 保持原始属性名
+            StrictVariables = false, // 允许访问未定义的变量
+            LoopLimit = 1_000_000 // 万页站点的大列表循环（同数据集对比测试实证）
+        };
+
+
+        // 渲染期依赖收集（T4.1）：按页面初始化依赖快照容器
+        RenderDependencyTracker.Initialize(scribanContext, context.Page.SourcePath);
+
+        EnsureFunctionObjects(scribanContext);
 
         // 创建页面对象
-        // 注入站点常规页集合（.RegularPages 在任意页面可用）
-        var pageObject = CreatePageObject(context.Page, context.Site.RegularPages);
+        // 注入站点常规页集合（.RegularPages 在任意页面可用）+ 分页配置
+        // （.Paginate 页面方法需要 pageSize/paginatePath）
+        var pageObject = CreatePageObject(
+            context.Page,
+            context.Site.RegularPages,
+            context.Site.Config.Paginate,
+            context.Site.Config.PaginatePath,
+            context.Site.Taxonomies.Taxonomies);
 
         // 创建站点对象
         var siteObject = CreateSiteObject(context.Site);
@@ -1195,7 +1335,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // partial 函数（B2）：返回值语义 + 标量类型还原（Hugo partial 可作函数用）；
         // includeCached（B3）：Hugo v0.146 的 partialCached 新名，指向同一实现
         globals.TrySetValue(scribanContext, default, "partial",
-            new PartialFunction(this), readOnly: true);
+            new PartialFunction(this, pageObject), readOnly: true);
 
         // partialValue（Hugo partial 返回值语义）：渲染 partial 后从页面 Store 取回
         // **真实对象**（非文本还原）。Hugo 的 `{{ $x := partial "Y" . }}` 返回任意
