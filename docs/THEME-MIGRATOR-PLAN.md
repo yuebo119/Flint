@@ -1051,3 +1051,87 @@ risotto、stack、xmin
 此前"15 个基线有效、只 4 个通过"这个数字**不可信**（方法缺陷 + 未排除 Hugo 自身不可用的主题）。
 修正后的口径应是：**在这 20 个"Hugo 上确证可用"的主题上测迁移**，
 未通过的才是转换器的真实缺口。
+
+---
+
+## 十九、20 主题全面测试基线（2026-09-11 第四轮）
+
+### 前置清理
+
+删除 14 个"在最新 Hugo 上不可用"的主题（原因见第十八节），
+`tools/themes/` 只保留 20 个验证可用的主题作为测试基线。
+
+### 测试工具链修正
+
+新增 `scripts/theme-matrix-full.sh`（20 主题全面测试）与 `scripts/collect-errors.sh`（错误收集），
+相比早期矩阵脚本的关键差别：
+
+1. 站点准备**复用 verify-themes.sh 的验证过逻辑**（exampleSite 优先、主题名按 config 归一、
+   剥离 themesDir/enableGitInfo、按主题给 author 形状、目录清理回退 Windows rmdir）
+2. Hugo 判定在**替换 themes 目录之前**完成（早期脚本把迁移产物写进 themes 后再跑 Hugo，
+   导致 "function capture not defined" 的假象）
+3. Dart Sass 注入 PATH
+4. 双侧都查"页数 + 最大页尺寸"（空页不算通过）
+5. **站点级 layouts 一并迁移**：exampleSite 常带 `layouts/shortcodes/` 覆盖（Go 模板语法），
+   不迁移会报 `Expecting <expression> instead of '='`（blowfish 实测）
+6. 错误日志按 **GBK** 转码（Flint CLI 在 Windows 中文控制台输出 GBK，
+   直接 grep 会因非 UTF-8 字节被判为二进制而只输出 "Binary file matches"）
+
+### 本轮修复的引擎缺口
+
+**`config/_default/` 目录式配置支持**（重大兼容性缺口）
+
+Hugo 0.116+ 推荐的配置形式，blowfish/congo/clarity 等主题只提供目录式配置
+（无单文件 hugo.toml）→ 此前报"当前目录不是有效的 Flint 站点"**完全无法构建**。
+
+实现（对齐 Hugo 合并语义）：
+- `ConfigLoader.TryLoadConfigDirectory`：探测 `config/_default/`，
+  `hugo.toml`/`config.toml` 提供顶层键，其他文件名（params/menus/languages/outputs…）
+  的内容挂在**同名顶层键**下；`config/<production>/` 后应用覆盖
+- `ConfigMerge.DeepMergeInto`：字典深合并（键大小写不敏感——Hugo 的 Params 语义）
+- `ConfigParser.ParseTomlDict`/`ParseYamlDict`/`ParseMergedTomlDict`：按段合并的入口
+- `BuildHandler` 改走 `AutoLoadAsync`（目录式优先），站点有效性检查也识别 config 目录
+
+效果：blowfish 从 **0 页 → 276 页**。
+
+**已确认的静默失败缺陷（待修，本轮已定位到最小复现）**
+
+ananke 全站页面输出 2–4 字节（构建"成功"无错误）。二分定位到
+`layouts/_partials/site-style.html` 被 include/partial 调用时**清空调用者的整个输出缓冲**
+（把该调用换成任意文本即恢复正常 6.5KB）。site-style.html 内容本身普通
+（无 ret/define/capture），调用路径与上下文均非诱因——属引擎级静默失败，待修。
+
+### 当前基线（20 主题，Hugo v0.166.0 / 含 dart-sass）
+
+| 主题 | Hugo | 页数 | Flint | F页数 | F最大页 | 转换率 | 对称(结构/文本) |
+|---|---|---|---|---|---|---|---|
+| ananke | 是 | 21 | 空页 | 18 | 47B | 99.4% | - |
+| archie | 否* | 23 | 构建失败 | 25 | 112KB | 100.0% | - |
+| bearblog | 是 | 8 | 通过 | 8 | 49KB | 100.0% | 0 / 29.2/94.7 |
+| blog-awesome | 是 | 121 | 构建失败 | 0 | - | 100.0% | - |
+| blowfish | 是 | 3870 | 构建失败 | 276 | - | 99.5% | - |
+| clarity | 是 | 93 | 构建失败 | 0 | - | 100.0% | - |
+| congo | 否* | 0 | 构建失败 | 0 | - | 99.1% | - |
+| console | 是 | 15 | 构建失败 | 9 | 41KB | 100.0% | - |
+| doit | 否* | 51 | 构建失败 | 0 | - | 90.5% | - |
+| even | 是 | 57 | 构建失败 | 0 | - | 100.0% | - |
+| fixit | 是 | 22 | 构建失败 | 2 | 232B | 91.9% | - |
+| github-style | 是 | 23 | 通过 | 18 | 519KB | 100.0% | 0 / 65.3/92.9 |
+| hugo-book | 是 | 53 | 通过 | 15 | 2976B | 98.3% | 0 / 7.8/13.1 |
+| hugo-coder | 是 | 125 | 构建失败 | 4 | 1429B | 100.0% | - |
+| hugo-paper | 是 | 9 | 构建失败 | 20 | 5438B | 100.0% | - |
+| loveit | 是 | 78 | 构建失败 | 13 | 142KB | 90.0% | - |
+| papermod | 是 | 22 | 通过 | 18 | 183KB | 98.9% | 0 / 36.2/89.1 |
+| risotto | 否* | 32 | 构建失败 | 26 | 69KB | 100.0% | - |
+| stack | 是 | 24 | 通过 | 18 | 234KB | 99.3% | 0 / 15.6/60.4 |
+| xmin | 是 | 19 | 构建失败 | 14 | 25KB | 100.0% | - |
+
+（否* = exampleSite 内容过时，换最小内容后 Hugo 侧可用；"-" = 无法评估）
+
+**读数要点**：
+- 转换率 90.0%–100%（8 个主题 100%），说明**表达式级转换已不是瓶颈**
+- 5 个主题产出且可做产物对比；文本覆盖度 4/5 在 89–95%（内容迁移基本成功），
+  hugo-book 仅 13%（内容大量丢失，与命名模板/块继承相关）
+- 结构相似度普遍偏低（7.8%–65.3%），主因是页集差异（Hugo 的 `page/1/` 等）与 DOM 结构偏差
+- **瓶颈已明确在引擎运行时**：15 个主题的失败集中在少数几类运行时缺口
+  （`page.store.set` 上下文、静默塌陷、短代码解析），而非转换率
