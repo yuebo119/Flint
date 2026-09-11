@@ -153,9 +153,10 @@ internal sealed class TemplateConverter(
                 if (kind == "blockdef" && extra is not null)
                 {
                     // extra = 块名（如 title）→ 子模板键 blk_title / 默认值键 __def_title
-                    var childKey = "blk_" + extra;
+                    var key = SanitizeIdent(extra);
+                    var childKey = "blk_" + key;
                     return Wrap(
-                        $"end }}}}{{{{ if $.{childKey} }}}}{{{{ $.{childKey} }}}}{{{{ else }}}}{{{{ __def_{extra} }}}}{{{{ end",
+                        $"end }}}}{{{{ if $.{childKey} }}}}{{{{ $.{childKey} }}}}{{{{ else }}}}{{{{ __def_{key} }}}}{{{{ end",
                         trimL, trimR);
                 }
                 return Wrap("end", trimL, trimR);
@@ -191,8 +192,8 @@ internal sealed class TemplateConverter(
                     return Wrap($"##TODO-HUGO(内联partial定义): define \"{name}\"## }}}}{{{{ if false", trimL, trimR);
                 }
                 _blockStack.Add(("define", null));
-                _definedBlocks.Add("blk_" + name);
-                return Wrap("capture blk_" + name, trimL, trimR);
+                _definedBlocks.Add("blk_" + SanitizeIdent(name));
+                return Wrap("capture blk_" + SanitizeIdent(name), trimL, trimR);
             }
 
             case "block":
@@ -202,7 +203,7 @@ internal sealed class TemplateConverter(
                 // 此前存 "blk_"+name，使产出的兜底变量名错为 `__def_blk_title`
                 // （capture 的是 `__def_title`）→ block 默认内容丢失（mini fixture 实测）
                 _blockStack.Add(("blockdef", name));
-                return Wrap("capture __def_" + name, trimL, trimR);
+                return Wrap("capture __def_" + SanitizeIdent(name), trimL, trimR);
             }
 
             case "template":
@@ -221,6 +222,11 @@ internal sealed class TemplateConverter(
                 }
 
                 var retVal = ConvertPipelineText(kb.Pipeline, scope);
+                // 括号包裹**仅在多参调用时**需要：store.set/ret 是函数调用形态，
+                // 裸 `replace $c $a $b` 会被 Scriban 误解析（`store.set "k" replace $c $a $b`
+                // → replace 收到 0 参，LoveIt function/checkbox.html 实测）。
+                // ParenthesizeIfCallWithArgs 对单值（`$x`）原样返回，故不引入多余括号
+                retVal = ParenthesizeIfCallWithArgs(retVal);
                 var selfName = _expr.SelfPartialName;
                 if (selfName is not null)
                 {
@@ -265,7 +271,14 @@ internal sealed class TemplateConverter(
             var pair = $"$__pair{_syntheticIndex++}";
             _blockStack.Add(("range", null));
             scope.Add(vvar);
-            var body = $"for {pair} in {coll} }}}}}}{{{{ {kvar} = {pair}.key; {vvar} = {pair}.value";
+            // Scriban 迭代**映射**产出 `{Key, Value}` 对象（PascalCase——`x.key`
+            // 取不到，实测），迭代**序列**产出元素本身。Hugo 的双变量 range
+            // 在映射上给 (key,value)、在序列上给 (index,value)，故用
+            // `pair.Key ?? for.index` / `pair.Value ?? pair` 统一两种形态
+            //（PaperMod 的 `range $index, $page := $paginator.Pages` 此前
+            // 产出 `$page = pair.value` = null → "$page.title for a null object"）
+            var body = $"for {pair} in {coll} }}}}}}{{{{ {kvar} = {pair}.Key ?? for.index; " +
+                       $"{vvar} = {pair}.Value ?? {pair}";
             return Wrap(body, trimL, trimR);
         }
 
@@ -381,6 +394,22 @@ internal sealed class TemplateConverter(
 
     private static string Wrap(string body, string trimL, string trimR) =>
         "{{" + trimL + " " + body.Trim() + " " + trimR + "}}";
+
+    /// <summary>
+    /// 块名 → 合法 Scriban 标识符。Hugo 允许块名含连字符（Stack 的
+    /// <c>block "body-class"</c>），而 Scriban 的变量名不接受连字符——
+    /// 直接拼接会产出 `__def_body-class`（`-` 被解析为减法）→
+    /// "Unsupported target expression for assignment"（Stack 实测 3 处）
+    /// </summary>
+    private static string SanitizeIdent(string name)
+    {
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (var ch in name)
+        {
+            sb.Append(char.IsLetterOrDigit(ch) || ch == '_' ? ch : '_');
+        }
+        return sb.ToString();
+    }
 
     private static string Truncate(Pipeline p)
     {

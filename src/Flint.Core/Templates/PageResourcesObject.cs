@@ -15,32 +15,55 @@ using Scriban.Runtime;
 namespace Flint.Core.Templates;
 
 /// <summary>
-/// 页面资源集合（Hugo .Resources）：派生自 ScriptObject 以便模板直接迭代，
-/// 同时暴露 ByType/Get/Match/GetMatch 方法。
+/// 页面资源集合（Hugo .Resources）：派生自 <see cref="ScriptArray"/> 以便模板
+/// 直接迭代/计数，同时暴露 ByType/Get/Match/GetMatch 方法。
 /// 元素可能是 bundle 资源对象（ScriptObject）或路径字符串，此处统一按名称查询。
+///
+/// **必须派生自 ScriptArray 而非 ScriptObject**：Hugo 的资源方法可链式调用
+/// （`(.Resources.ByType "image").GetMatch "x*"`），即筛选结果仍是带方法的集合。
+/// 派生自 ScriptObject 时经变量中转会丢失方法（实测 PaperMod
+/// get-page-images.html 报 "The function `$resources.getmatch` was not found"）；
+/// ScriptArray 子类经变量中转仍保留注册成员（实测验证）
 /// </summary>
-public sealed class PageResourcesObject : ScriptObject
+public sealed class PageResourcesObject : ScriptArray
 {
-    private readonly List<object> _items;
+    // 方法族（ScriptArray 无 SetValue，改用 TryGetValue 覆盖暴露成员）
+    private readonly Dictionary<string, object> _methods;
 
     public PageResourcesObject(IReadOnlyList<object>? items)
     {
-        _items = items is null ? [] : [.. items];
+        if (items is not null)
+        {
+            foreach (var item in items)
+            {
+                Add(item);
+            }
+        }
 
-        // 集合自身属性
-        SetValue("length", _items.Count, false);
-        SetValue("count", _items.Count, false);
-        SetValue("size", _items.Count, false);
+        // length/count/size 由 ScriptArray 原生提供
+        _methods = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["bytype"] = new ResourcesFilterFunction(this, ResourcesOp.ByType),
+            ["get"] = new ResourcesFilterFunction(this, ResourcesOp.Get),
+            ["match"] = new ResourcesFilterFunction(this, ResourcesOp.Match),
+            ["getmatch"] = new ResourcesFilterFunction(this, ResourcesOp.GetMatch),
+        };
+    }
 
-        // 方法族（Scriban 只调用注册成员）
-        SetValue("bytype", new ResourcesFilterFunction(this, ResourcesOp.ByType), false);
-        SetValue("get", new ResourcesFilterFunction(this, ResourcesOp.Get), false);
-        SetValue("match", new ResourcesFilterFunction(this, ResourcesOp.Match), false);
-        SetValue("getmatch", new ResourcesFilterFunction(this, ResourcesOp.GetMatch), false);
+    /// <summary>方法成员查找（大小写不敏感：Hugo 写 .GetMatch，转换器产出 .getmatch）</summary>
+    public override bool TryGetValue(Scriban.TemplateContext? context, Scriban.Parsing.SourceSpan span,
+        string member, out object? value)
+    {
+        if (_methods.TryGetValue(member, out var fn))
+        {
+            value = fn;
+            return true;
+        }
+        return base.TryGetValue(context, span, member, out value);
     }
 
     /// <summary>原始项列表</summary>
-    internal IReadOnlyList<object> Items => _items;
+    internal IReadOnlyList<object> Items => [.. this.Cast<object>()];
 
     /// <summary>取资源名（支持字符串路径与资源对象）</summary>
     internal static string? NameOf(object? item) =>
@@ -106,12 +129,8 @@ public sealed class ResourcesFilterFunction(PageResourcesObject owner, Resources
 
     private ScriptArray Collect(Func<object, bool> predicate)
     {
-        var arr = new ScriptArray();
-        foreach (var item in owner.Items.Where(predicate))
-        {
-            arr.Add(item);
-        }
-        return arr;
+        // 返回**同类型**集合：Hugo 的资源方法可链式调用（ByType 结果仍可 GetMatch）
+        return new PageResourcesObject([.. owner.Items.Where(predicate)]);
     }
 
     private object? SelectOne(Func<object, bool> predicate) => owner.Items.FirstOrDefault(predicate);

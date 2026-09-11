@@ -46,6 +46,31 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     /// </summary>
     public string GetPath(Scriban.TemplateContext context, SourceSpan callerSpan, string templateName)
     {
+        // Hugo 的部分模板名解析**先相对于调用者所在目录**，再回落到根——
+        // 例如 `_partials/templates/opengraph.html` 内调用
+        // `partial "_funcs/get-page-images"` 命中
+        // `_partials/templates/_funcs/get-page-images.html`（PaperMod 实测：
+        // 只探根级候选会报 "Unexpected exception while creating template from
+        // path .../layouts/_funcs/get-page-images"）。
+        // Scriban 的 include 会把调用者物理路径放进 callerSpan.FileName（实测），
+        // 由此还原调用者的相对目录
+        var callerRelativeDir = TryGetRelativeDirectory(callerSpan.FileName);
+        if (callerRelativeDir is not null)
+        {
+            var called = new[] { templateName, templateName + ".html" };
+            foreach (var root in Roots)
+            {
+                foreach (var form in called)
+                {
+                    var candidate = Path.Combine(root, callerRelativeDir, form);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+        }
+
         var relativeForms = new List<string> { templateName, templateName + ".html" };
         // _default/ 形态（对齐 ResolveTemplatePath 的搜索序）
         relativeForms.Add(Path.Combine("_default", templateName));
@@ -77,11 +102,17 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // 内置模板回退（Hugo embedded templates）：include "pagination" 这类
         // 主题内置依赖在文件系统无文件，顶层解析路径有回退但 include 此前没有——
         // 导致 Ananke 的 {{ include "pagination" }} 必然失败
-        // 内置模板名归一：主题可能写 "pagination.html"（Hugo 的 partial 调用带扩展名）
+        // 内置模板名归一：主题可能写 "pagination.html"（Hugo 的 partial 调用带扩展名），
+        // 也可能写 Hugo 的 `template "_internal/google_analytics.html"` 形态
+        //（`_internal/` 前缀是 Hugo embedded template 的命名空间，须剥除——Stack 实测）
         var builtinKey = templateName;
         if (builtinKey.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
         {
             builtinKey = builtinKey[..^5];
+        }
+        if (builtinKey.StartsWith("_internal/", StringComparison.OrdinalIgnoreCase))
+        {
+            builtinKey = builtinKey["_internal/".Length..];
         }
         if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(builtinKey))
         {
@@ -94,6 +125,37 @@ internal sealed class FileTemplateLoader : ITemplateLoader
 
     private static bool templatePathStartsWithBackslash(string templateName) =>
         templateName.StartsWith("partials\\", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 调用者物理路径 → 相对某个模板根的目录（如
+    /// <c>C:\site\layouts\_partials\templates\opengraph.html</c> →
+    /// <c>_partials/templates</c>）。不在任何根下时返回 null（如内置模板哨兵）。
+    /// </summary>
+    private string? TryGetRelativeDirectory(string? callerFileName)
+    {
+        if (string.IsNullOrEmpty(callerFileName) ||
+            callerFileName.StartsWith(BuiltinPrefix, StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        foreach (var root in Roots)
+        {
+            var fullRoot = Path.GetFullPath(root);
+            var fullCaller = Path.GetFullPath(callerFileName);
+            var prefix = fullRoot.EndsWith(Path.DirectorySeparatorChar)
+                ? fullRoot
+                : fullRoot + Path.DirectorySeparatorChar;
+            if (!fullCaller.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            var rel = fullCaller[prefix.Length..];
+            var dir = Path.GetDirectoryName(rel);
+            return string.IsNullOrEmpty(dir) ? "" : dir.Replace('\\', '/');
+        }
+        return null;
+    }
 
     public string Load(Scriban.TemplateContext context, SourceSpan callerSpan, string templatePath)
     {

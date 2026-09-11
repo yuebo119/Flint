@@ -315,3 +315,222 @@ internal static class PageContextTestExtensions
     public static Scriban.Runtime.ScriptObject ToScriptObjectForTest(this PageContext page) =>
         ScribanTemplateRenderer.CreatePageObject(page);
 }
+
+/// <summary>
+/// 四主题收敛轮（2026-09-11）回归防护：这些缺陷都曾让真实主题构建失败，
+/// 且**编译器与既有测试都放行**——只有真实主题跑四门禁才暴露。
+/// 每个测试对应一个已确证的失败形态
+/// </summary>
+public sealed class ThemeConvergenceRegressionTests
+{
+    /// <summary>经模板渲染一个表达式（拿到真实引擎语义，含 Scriban 绑定规则）</summary>
+    private static string Eval(
+        string template,
+        Action<Scriban.Runtime.ScriptObject>? setup = null,
+        string? assetRoot = null)
+    {
+        var globals = new Scriban.Runtime.ScriptObject();
+        var resources = assetRoot is null ? null : new FileSystemResourceProvider("https://e.com", assetRoot);
+        new BuiltinTemplateFunctions("https://e.com", resources).RegisterFunctions(globals);
+        globals["newScratch"] = new Func<PageStoreObject>(() => new PageStoreObject());
+        globals["page"] = new Scriban.Runtime.ScriptObject
+        {
+            ["store"] = new PageStoreObject()
+        };
+        setup?.Invoke(globals);
+        var ctx = new Scriban.TemplateContext
+        {
+            MemberRenamer = m => m.Name,
+            StrictVariables = false
+        };
+        ctx.PushGlobal(globals);
+        return Scriban.Template.Parse(template).Render(ctx);
+    }
+
+    /// <summary>页面集合形态（ScriptObject + IList&lt;ScriptObject&gt; + IDictionary 三合一）</summary>
+    private sealed class PageListLike : Scriban.Runtime.ScriptObject, IList<Scriban.Runtime.ScriptObject>
+    {
+        private readonly List<Scriban.Runtime.ScriptObject> _items;
+
+        public PageListLike(params string[] titles)
+        {
+            _items = [.. titles.Select(t => new Scriban.Runtime.ScriptObject { ["title"] = t })];
+        }
+
+        public Scriban.Runtime.ScriptObject this[int index]
+        {
+            get => _items[index];
+            set => _items[index] = value;
+        }
+
+        public new int Count => _items.Count;
+        public new bool IsReadOnly => false;
+        void ICollection<Scriban.Runtime.ScriptObject>.Add(Scriban.Runtime.ScriptObject item) => _items.Add(item);
+        public new void Clear() => _items.Clear();
+        public bool Contains(Scriban.Runtime.ScriptObject item) => _items.Contains(item);
+        public void CopyTo(Scriban.Runtime.ScriptObject[] array, int arrayIndex) => _items.CopyTo(array, arrayIndex);
+        public new IEnumerator<Scriban.Runtime.ScriptObject> GetEnumerator() => _items.GetEnumerator();
+        public int IndexOf(Scriban.Runtime.ScriptObject item) => _items.IndexOf(item);
+        public void Insert(int index, Scriban.Runtime.ScriptObject item) => _items.Insert(index, item);
+        public bool Remove(Scriban.Runtime.ScriptObject item) => _items.Remove(item);
+        public void RemoveAt(int index) => _items.RemoveAt(index);
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => _items.GetEnumerator();
+    }
+
+    // ---- 集合函数：页面集合是 ScriptObject（实现 IDictionary），
+    //      按接口类型判定会把序列误判为字典（四主题均命中）----
+
+    [Fact]
+    public void slice对页面集合取前N项()
+    {
+        // 曾是 `site.pages | slice 0 2` 产出 3 元素数组（走构造器分支）
+        var r = Eval("{{ site.pages | slice 0 2 | array.size }}",
+            g => g["site"] = new Scriban.Runtime.ScriptObject
+            {
+                ["pages"] = new PageListLike("a", "b", "c", "d", "e")
+            });
+        Assert.Equal("2", r);
+    }
+
+    [Fact]
+    public void first对页面集合前缀形态与管道形态一致()
+    {
+        // 曾报 "Unable to convert type `int` to `IEnumerable<Object>`"
+        var prefix = Eval("{{ first 2 site.pages | array.size }}",
+            g => g["site"] = new Scriban.Runtime.ScriptObject
+            {
+                ["pages"] = new PageListLike("a", "b", "c", "d")
+            });
+        var piped = Eval("{{ site.pages | first 2 | array.size }}",
+            g => g["site"] = new Scriban.Runtime.ScriptObject
+            {
+                ["pages"] = new PageListLike("a", "b", "c", "d")
+            });
+        Assert.Equal("2", prefix);
+        Assert.Equal("2", piped);
+    }
+
+    [Fact]
+    public void last对页面集合取末项()
+    {
+        var r = Eval("{{ (site.pages | last).title }}",
+            g => g["site"] = new Scriban.Runtime.ScriptObject
+            {
+                ["pages"] = new PageListLike("a", "b", "c")
+            });
+        Assert.Equal("c", r);
+    }
+
+    [Fact]
+    public void slice零参构造空序列()
+    {
+        // Hugo 可变参数构造器形态（LoveIt 用 `slice` 造空序列）
+        Assert.Equal("0", Eval("{{ slice | array.size }}"));
+        Assert.Equal("2", Eval("{{ slice \"a\" \"b\" | array.size }}"));
+    }
+
+    [Fact]
+    public void in接受字符串haystack()
+    {
+        // 曾报 "Unable to convert type `string` to `IEnumerable<Object>`"（Stack）
+        Assert.Equal("true", Eval("{{ in page.kind \"term\" }}", g =>
+            g["page"] = new Scriban.Runtime.ScriptObject { ["kind"] = "term" }));
+        Assert.Equal("false", Eval("{{ in page.kind \"home\" }}", g =>
+            g["page"] = new Scriban.Runtime.ScriptObject { ["kind"] = "term" }));
+    }
+
+    [Fact]
+    public void eq可变参数命中任一即真()
+    {
+        // Ananke：`compare.Eq $page.Language "de" "en" ...`（曾报 "Argument index must be < 2"）
+        Assert.Equal("true", Eval("{{ eq page.lang \"de\" \"en\" \"zh\" }}",
+            g => g["page"] = new Scriban.Runtime.ScriptObject { ["lang"] = "zh" }));
+        Assert.Equal("false", Eval("{{ eq page.lang \"de\" \"en\" }}",
+            g => g["page"] = new Scriban.Runtime.ScriptObject { ["lang"] = "zh" }));
+    }
+
+    [Fact]
+    public void index越界返回空而非抛异常()
+    {
+        // PaperMod：`index (findRE ...) 0` 在无匹配时越界（曾报 "Argument index must be < 1"）。
+        // 空序列用 slice 零参构造（内置 array 函数是构造器，不收 0 参）
+        Assert.Equal("", Eval("{{ index slice 0 }}"));
+        Assert.Equal("b", Eval("{{ index (slice \"a\" \"b\") 1 }}"));
+        Assert.Equal("", Eval("{{ index (slice \"a\") 5 }}"));
+    }
+
+    // ---- 字符串函数：Hugo 的多参形态 ----
+
+    [Fact]
+    public void trim按cutset裁剪()
+    {
+        // PaperMod：`trim $x "\n\r\t "`（曾报 "Argument index must be < 1"）
+        Assert.Equal("x", Eval("{{ trim \"\n\r\t x \n\" \"\\n\\r\\t \" }}".Replace("\\n", "\n").Replace("\\r", "\r").Replace("\\t", "\t")));
+        Assert.Equal("a", Eval("{{ trim \"xxaxx\" \"x\" }}"));
+    }
+
+    [Fact]
+    public void truncate省略号可省()
+    {
+        // PaperMod schema_json：`| truncate 180`（曾报 "Invalid number of arguments 2 ... expecting 3"）
+        var r = Eval("{{ \"abcdefghij\" | truncate 5 }}");
+        Assert.Equal(5, r.Length);
+    }
+
+    // ---- printf：Go 动词 ----
+
+    [Fact]
+    public void printf支持Go动词()
+    {
+        // Stack：`printf "icons/%s.svg" .`（曾原样输出字面量 "icons/%s.svg"）
+        Assert.Equal("icons/date.svg",
+            Eval("{{ printf \"icons/%s.svg\" page.name }}",
+                g => g["page"] = new Scriban.Runtime.ScriptObject { ["name"] = "date" }));
+        Assert.Equal("042", Eval("{{ printf \"%03d\" 42 }}"));
+        Assert.Equal("100%", Eval("{{ printf \"100%%\" }}"));
+    }
+
+    // ---- Store：大小写与独立实例 ----
+
+    [Fact]
+    public void store注册PascalCase别名()
+    {
+        // PaperMod：`$scratch.Add "meta" ...`（曾报 "Cannot get the member $scratch.Add"）
+        var store = new PageStoreObject();
+        Assert.True(store.TryGetValue(null, default, "Add", out var addFn) && addFn is not null);
+        Assert.True(store.TryGetValue(null, default, "Set", out var setFn) && setFn is not null);
+        Assert.True(store.TryGetValue(null, default, "Get", out var getFn) && getFn is not null);
+    }
+
+    [Fact]
+    public void newScratch每次返回独立实例()
+    {
+        // 两个变量各自暂存，互不污染（PaperMod post_meta 用法）
+        Assert.Equal("ab",
+            Eval("{{ $a = newScratch }}{{ $b = newScratch }}{{ $a.set \"k\" \"a\" }}{{ $b.set \"k\" \"b\" }}{{ $a.get \"k\" }}{{ $b.get \"k\" }}"));
+    }
+
+    // ---- 资源：名无效时不产出（防写盘失败）----
+
+    [Fact]
+    public void FromString空名不产出资源()
+    {
+        // 管道左值错位时 name 会是空白（曾产出 RelPermalink "/assets/ " →
+        // 输出路径无文件名 → 写盘抛异常并中断整次构建）
+        var dir = Path.Combine(Path.GetTempPath(), $"flint-empty-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // 空白名 → 不产出资源（渲染为空）
+            Assert.Equal("", Eval("{{ resources.FromString \" \" \"x\" }}", assetRoot: dir));
+            // 合法名仍正常产出（守卫不误伤正常路径）
+            Assert.Equal("/assets/a.css",
+                Eval("{{ (resources.FromString \"a.css\" \"body{}\").rel_permalink }}", assetRoot: dir));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); }
+            catch (IOException) { }
+        }
+    }
+}

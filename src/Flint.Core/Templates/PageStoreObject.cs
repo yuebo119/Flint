@@ -26,15 +26,24 @@ public sealed class PageStoreObject : ScriptObject
     public PageStoreObject()
     {
         // Scriban 只解析注册成员，不调用 C# 公开方法——把 Store API 注册为函数
-        // （IScriptCustomFunction 形式，AOT 安全，不经反射绑定）
-        SetValue("set", new StoreFunction(this, StoreOp.Set), false);
-        SetValue("get", new StoreFunction(this, StoreOp.Get), false);
-        SetValue("add", new StoreFunction(this, StoreOp.Add), false);
-        SetValue("delete", new StoreFunction(this, StoreOp.Delete), false);
-        SetValue("setinmap", new StoreFunction(this, StoreOp.SetInMap), false);
-        SetValue("deleteinmap", new StoreFunction(this, StoreOp.DeleteInMap), false);
-        SetValue("getsortedmapvalues", new StoreFunction(this, StoreOp.GetSortedMapValues), false);
-        SetValue("values", new StoreFunction(this, StoreOp.Values), false);
+        // （IScriptCustomFunction 形式，AOT 安全，不经反射绑定）。
+        // 同时注册 PascalCase 别名：Hugo 文档写 .Scratch.Set/.Add，主题照抄大小写
+        //（PaperMod 用 `$scratch.Add`，缺别名时报 "Cannot get the member Add for a null object"）
+        Register("set", "Set", StoreOp.Set);
+        Register("get", "Get", StoreOp.Get);
+        Register("add", "Add", StoreOp.Add);
+        Register("delete", "Delete", StoreOp.Delete);
+        Register("setinmap", "SetInMap", StoreOp.SetInMap);
+        Register("deleteinmap", "DeleteInMap", StoreOp.DeleteInMap);
+        Register("getsortedmapvalues", "GetSortedMapValues", StoreOp.GetSortedMapValues);
+        Register("values", "Values", StoreOp.Values);
+    }
+
+    private void Register(string lower, string pascal, StoreOp op)
+    {
+        var fn = new StoreFunction(this, op);
+        SetValue(lower, fn, false);
+        SetValue(pascal, fn, false);
     }
 
     /// <summary>Set KEY VALUE：覆盖写入</summary>

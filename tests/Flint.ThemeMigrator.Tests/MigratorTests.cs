@@ -119,8 +119,10 @@ public sealed class ParserConverterTests
         // Scriban 不支持 for k, v in（实测 PARSE-ERR）
         var result = Convert("{{ range $k, $v := .Params }}{{ $k }}{{ end }}");
         Assert.Contains("for ", result, StringComparison.Ordinal);
-        Assert.Contains(".key", result, StringComparison.Ordinal);
-        Assert.Contains(".value", result, StringComparison.Ordinal);
+        // Scriban 迭代**映射**产出 {Key, Value}（PascalCase——`x.key` 取不到，实测）；
+        // 迭代**序列**产出元素本身，故用 `?? for.index` / `?? pair` 统一两种形态
+        Assert.Contains(".Key", result, StringComparison.Ordinal);
+        Assert.Contains(".Value", result, StringComparison.Ordinal);
         Assert.DoesNotContain("for $k, $v", result, StringComparison.Ordinal);
     }
 
@@ -134,17 +136,18 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
-    public void partial参数内容记入诊断()
+    public void partial上下文参数写入产物()
     {
-        // Scriban 的 include 不接收上下文参数：内容记入降级说明（不写入产物——
-        // Scriban 注释在动作内会被误判为对象初始化器，实测致预检失败）
+        // Hugo 的 `partial "x" CONTEXT` 把 CONTEXT 作为 partial 内的 `.`；
+        // Flint 的 partial 函数接收第二参数并临时绑成 page（Hugo dot 语义等价），
+        // 故内容**写入产物**而非仅记诊断（旧行为丢弃参数，致 partial 内 `.` 取不到值）
         var tokens = new GoTemplateLexer("{{ partial \"x\" (dict \"k\" 1) }}").Tokenize();
         var parts = new GoTemplateParser(tokens).Parse();
         var converter = new TemplateConverter(MigrationMap.CreateDefault());
         var output = converter.Convert(parts);
 
-        Assert.Contains("include \"x\"", output, StringComparison.Ordinal);
-        Assert.Contains(converter.Stats.Notes, n => n.Contains("k: 1", StringComparison.Ordinal));
+        Assert.Contains("partial \"x\"", output, StringComparison.Ordinal);
+        Assert.Contains("k: 1", output, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -423,5 +426,88 @@ public sealed class BlockScopeMappingTests
         // 无作用域时保持原语义
         var result = Convert("{{ .Title }}");
         Assert.Contains("page.title", result, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// 四主题收敛轮（2026-09-11）转换层回归：以下形态都曾让真实主题构建失败
+/// </summary>
+public sealed class PipeAndParserRegressionTests
+{
+    private static string Convert(string template)
+    {
+        var tokens = new GoTemplateLexer(template).Tokenize();
+        var parts = new GoTemplateParser(tokens).Parse();
+        return new TemplateConverter(MigrationMap.CreateDefault()).Convert(parts);
+    }
+
+    [Fact]
+    public void 管道左值作末参改写为显式调用()
+    {
+        // Go/Hugo：`X | f A` == `f A X`；Scriban 注入**首参**。
+        // PaperMod 实测：`" " | resources.FromString "a.css"` 曾产出名为 " " 的资源
+        var result = Convert("{{ \"\" | resources.FromString \"a.css\" }}");
+        Assert.Contains("resources.FromString \"a.css\" \"\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 管道左值为多token表达式时加括号()
+    {
+        // 不加括号会与前参连成一串（FromString 收到 4 个实参）
+        var result = Convert("{{ delimit .Params.x \", \" | resources.FromString \"a.css\" }}");
+        Assert.Contains("resources.FromString \"a.css\" (", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void printf管道形态参数顺序正确()
+    {
+        // PaperMod：`X | printf "content=%q"` → printf "content=%q" X
+        var result = Convert("{{ .Title | printf \"%s\" }}");
+        Assert.Contains("printf \"%s\" page.title", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 括号内管道不被外层切分()
+    {
+        // ParsePipeline 曾不跟踪括号深度，`slice "a" (X | default "y") $z`
+        // 会从内层 | 断开 → 数组提前闭合（Ananke baseof 的 body_classes 实测）
+        var result = Convert("{{ slice \"ma0\" (.Param \"cls\" | default \"d\") .Kind }}");
+        Assert.Contains("[\"ma0\"", result, StringComparison.Ordinal);
+        Assert.Contains("default", result, StringComparison.Ordinal);
+        Assert.Contains("page.kind", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 块名含连字符归一为合法标识符()
+    {
+        // Stack：`block "body-class"` → Scriban 变量名不接受连字符
+        //（曾产出 `__def_body-class` → "Unsupported target expression for assignment"）
+        var result = Convert("{{ block \"body-class\" }}x{{ end }}");
+        Assert.Contains("__def_body_class", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("__def_body-class", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 局部变量接收者不被换根()
+    {
+        // `$scratch.Add` 的 head 是局部变量本身（曾产出 `pagescratch.add`）；
+        // 裸 `$.GetTerms` 仍需换到 page 根
+        Assert.Contains("$scratch.add", Convert("{{ $scratch.Add \"k\" 1 }}"), StringComparison.Ordinal);
+        Assert.Contains("page.get_terms", Convert("{{ $.GetTerms \"tags\" }}"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 局部变量成员访问用nil安全()
+    {
+        // `$posts.paginate` 在变量为 nil 时 Hugo 返回 nil、Scriban 抛异常
+        Assert.Contains("$posts?.paginate", Convert("{{ $posts.paginate }}"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 数据路径段名不被snake化()
+    {
+        // Stack：`hugo.Data.external.PhotoSwipe.Style` 的键是作者定义的驼峰
+        var result = Convert("{{ hugo.Data.external.PhotoSwipe.Style }}");
+        Assert.Contains("site?.data?.external?.PhotoSwipe?.Style", result, StringComparison.Ordinal);
     }
 }

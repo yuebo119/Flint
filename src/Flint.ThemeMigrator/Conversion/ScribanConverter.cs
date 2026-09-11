@@ -33,6 +33,37 @@ internal sealed class ScribanConverter(
     public List<string> Diagnostics { get; } = [];
 
     /// <summary>
+    /// 表达式文本是否需要括号包裹才能作为函数实参：含空白（多 token）且未自带
+    /// 括号/方括号/花括号包裹时需要
+    /// </summary>
+    private static bool NeedsParens(string text)
+    {
+        var t = text.Trim();
+        if (t.Length == 0 || t.StartsWith('(') || t.StartsWith('[') || t.StartsWith('{'))
+        {
+            return false;
+        }
+        return t.Contains(' ', StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 管道左值应作为**末参**的函数（Go/Hugo 语义：`X | f A B` == `f A B X`）。
+    /// 这些函数的输入参数在末位（Hugo 为可管道化如此声明）：
+    /// <c>resources.FromString(name, content)</c>、<c>resources.Copy(target, resource)</c>、
+    /// <c>printf(format, args…)</c>、<c>errorf/warnf(format, args…)</c>、
+    /// <c>i18n(key, args…)</c>。其余函数多为"输入在首"（Scriban 风格），
+    /// 管道语义与 Scriban 一致，无需改写
+    /// </summary>
+    private static readonly HashSet<string> PipeValueLastFunctions = new(StringComparer.Ordinal)
+    {
+        "resources.FromString", "resources.Copy",
+        "printf", "fmt.Printf",
+        "errorf", "fmt.Errorf", "warnf", "fmt.Warnf",
+        "erroridf", "fmt.Erroridf", "warnidf", "fmt.Warnidf",
+        "i18n", "lang.Translate"
+    };
+
+    /// <summary>
     /// partial 名规范化：剥扩展名与路径前缀，使调用名与文件路径可对齐。
     /// "func/X.html" 与 "layouts/_partials/func/X.html" 都归一到 "func/X"
     /// </summary>
@@ -98,6 +129,88 @@ internal sealed class ScribanConverter(
                     note = folded.Note;
                 }
                 acc = folded.Text;
+                continue;
+            }
+
+            // ---- 管道左值应作**末参**的 Hugo 函数 ----
+            // Go/Hugo 的 `X | f A B` 等价 `f A B X`（管道值追加为末参），而 Scriban 的
+            // `|` 注入**首参**。对"输入在末位"的函数（Hugo 为了可管道化而把输入声明在
+            // 最后一个参数，如 FromString(name, content)、printf(format, args...)），
+            // 直接沿用 | 语义会完全错位——实测：PaperMod 的
+            // `" " | resources.FromString "assets/css/includes-blank.css"` 产出名为
+            // " " 的资源（RelPermalink "/assets/ " → 输出路径 "assets/ " → 构建必失败）。
+            // 故对这类函数改写为显式调用形态，把左值放回末位
+            if (acc is not null && cmd.Operands.Count > 0
+                && cmd.Operands[0] is Parsing.IdentifierExpr pipeLastId
+                && PipeValueLastFunctions.Contains(pipeLastId.Name))
+            {
+                var lastName = _map.MapFunction(pipeLastId.Name);
+                var lastArgs = new List<string> { lastName };
+                var lastOk = true;
+                foreach (var a in cmd.Operands.Skip(1))
+                {
+                    var rl = ConvertExpr(a, scope, false);
+                    if (rl.Kind == ConversionKind.Unsupported)
+                    {
+                        return rl;
+                    }
+                    lastArgs.Add(rl.Text);
+                }
+                if (lastOk)
+                {
+                    // 左值是多 token 表达式（如已转换的调用文本
+                    // `collections.Delimit $x ", "`）时必须加括号，否则与
+                    // 前面参数连成一串被 Scriban 当作同一函数的多余实参
+                    //（实测：`resources.FromString "a.css" collections.Delimit $x ", "`
+                    // → FromString 收到 4 个实参，产出错误资源）
+                    lastArgs.Add(NeedsParens(acc) ? "(" + acc + ")" : acc);
+                    acc = string.Join(" ", lastArgs);
+                    continue;
+                }
+            }
+
+            // ---- 管道末段是时间格式化方法 `.Receiver.Format`（无显式参数）----
+            // Hugo 写法 `EXPR | .PublishDate.Format`：格式串由管道左值提供
+            //（`.PublishDate.Format EXPR`）。它在 AST 里是**单个 FieldExpr 操作数**，
+            // 不走"字段+参数"分支，裸转字段路径会产出 `page?.publish_date?.format`，
+            // Scriban 把管道目标当函数名 → "The function `...?.format` was not found"
+            //（LoveIt 实测 3 处）
+            if (acc is not null && cmd.Operands.Count == 1
+                && cmd.Operands[0] is Parsing.FieldExpr pipeFmt
+                && ToSnakePath(pipeFmt.Path).EndsWith(".format", StringComparison.OrdinalIgnoreCase))
+            {
+                var pipeTailPlain = ToSnakePath(ToSnakePath(pipeFmt.Path)[..^".format".Length]);
+                var pipeRecv = scope.Count > 0 &&
+                    !pipeTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase)
+                    ? scope[^1] + pipeTailPlain
+                    : "page" + pipeTailPlain;
+                acc = $"date.to_string {pipeRecv} {acc}";
+                continue;
+            }
+
+            // 管道注入 partial/include：Hugo 的 `X | partial "name"` 等价于
+            // `partial "name" X`（管道值**追加为末参**），而 Scriban 的 | 把左值注入
+            // **首参**——直接沿用会变成 partial(X, "name")，模板名拿到一个字典
+            //（LoveIt home.html 实测："文件名、目录名或卷标语法不正确:
+            //  '...\layouts\{Content: "", Ruby: null, ...}'"）。
+            // 故此处显式改写为函数调用形态，把左值放回末位
+            if (acc is not null && cmd.Operands.Count > 0
+                && cmd.Operands[0] is Parsing.IdentifierExpr pid2
+                && pid2.Name is "partial" or "partialCached" or "include" or "includeCached")
+            {
+                var callRes = ConvertCommand(cmd, scope, isPipeSegment: false, resourceContext);
+                if (callRes.Kind == ConversionKind.Unsupported)
+                {
+                    return callRes;
+                }
+                if (callRes.Kind != ConversionKind.Equivalent)
+                {
+                    kind = callRes.Kind;
+                    note = callRes.Note;
+                }
+                // partialValue 改写仅对 dot 上下文生效（见 ConvertCall）；
+                // 此处左值非 dot 时保持 include，行为差异已在 Note 标注
+                acc = callRes.Text + " " + acc;
                 continue;
             }
 
@@ -189,14 +302,18 @@ internal sealed class ScribanConverter(
             if (feSnake.EndsWith(".format", StringComparison.OrdinalIgnoreCase))
             {
                 // 接收者根同样受作用域影响：range 内的 `.Date.Format` 应为
-                // 循环变量的 date（`$__it0.date`），而非 page.date（实测 bug）
+                // 循环变量的 date（`$__it0.date`），而非 page.date（实测 bug）。
+                // **`.Site.X.Format` 必须换到 site 根**（Stack 的 `.Site.Lastmod.Format`
+                // 此前产出 `page.site.lastmod`——链上 page 无 site 成员 → 空对象）
                 // 接收者用**普通点**（非 ?.）：这是 date.to_string 的实参，
                 // 而 `page?.publish_date?.format` 形态会被 Scriban 当作函数名
                 // → "function not found"（LoveIt 实测）
                 var dateTailPlain = ToSnakePath(feSnake[..^".format".Length]);
-                var dateRecv = scope.Count > 0 && !dateTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase)
-                    ? scope[^1] + dateTailPlain
-                    : "page" + dateTailPlain;
+                var dateRecv = dateTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase)
+                    ? "site" + dateTailPlain[".site".Length..]
+                    : scope.Count > 0
+                        ? scope[^1] + dateTailPlain
+                        : "page" + dateTailPlain;
                 var fmtArgsFe = new List<string>();
                 foreach (var a in operands.Skip(1))
                 {
@@ -467,6 +584,8 @@ internal sealed class ScribanConverter(
                 return r;
             }
 
+            // 多参调用的括号包裹在 TemplateConverter 的 return 分支完成
+            //（此处保持原文本，避免与之重复）
             if (SelfPartialName is not null)
             {
                 var key = RetKeyPrefix + SelfPartialName;
@@ -478,6 +597,34 @@ internal sealed class ScribanConverter(
             return new ConversionResult("ret " + r.Text, ConversionKind.Equivalent);
         }
 
+        // ---- 菜单归属判断（Hugo 页面方法）----
+        // `$.IsMenuCurrent "main" ENTRY` / `$.HasMenuCurrent "main" ENTRY`：
+        // 也可写成局部变量接收者（`$currentPage.HasMenuCurrent "main" .`，Stack 实测）。
+        // Flint 注册为全局函数 is_menu_current/has_menu_current（引擎按菜单项的
+        // is_active 判定，该标志在菜单构建期已按当前页路径计算）。不加此映射时
+        // 函数名原样输出 → "The function `$.IsMenuCurrent` was not found"
+        if (name is "$.IsMenuCurrent" or "$.HasMenuCurrent" or ".IsMenuCurrent" or ".HasMenuCurrent"
+            or "IsMenuCurrent" or "HasMenuCurrent"
+            || name.EndsWith(".IsMenuCurrent", StringComparison.Ordinal)
+            || name.EndsWith(".HasMenuCurrent", StringComparison.Ordinal))
+        {
+            var menuFn = name.EndsWith("HasMenuCurrent", StringComparison.Ordinal)
+                ? "has_menu_current" : "is_menu_current";
+            var menuArgs = new List<string>();
+            foreach (var a in args)
+            {
+                var r = ConvertExpr(a, scope, false);
+                if (r.Kind == ConversionKind.Unsupported)
+                {
+                    return r;
+                }
+                menuArgs.Add(r.Text);
+            }
+            return new ConversionResult(
+                menuArgs.Count == 0 ? menuFn : menuFn + " " + string.Join(" ", menuArgs),
+                ConversionKind.Equivalent);
+        }
+
         // ---- 链式方法调用（X.Method args）----
         // Hugo 的 .Resources.ByType / .Resources.GetMatch 等是 method 调用，
         // Flint 侧注册为 bytype/getmatch（Scriban 成员名不区分大小写，但
@@ -487,6 +634,26 @@ internal sealed class ScribanConverter(
             var mapped = MapChainMethod(name);
             if (mapped is not null)
             {
+                // 无参的链式形态本质是**字段访问**（`$posts.paginate`），不是方法调用：
+                // 变量为 nil 时 Hugo 返回 nil，Scriban 抛 "Cannot get the member"。
+                // 改用 nil 安全分隔符（`$posts?.paginate`）；有参时才是方法调用，
+                // 必须用普通点（`page?.get_terms` 会被 Scriban 当函数名）
+                if (args.Count == 0)
+                {
+                    var lastDotIdx = mapped.LastIndexOf('.');
+                    if (lastDotIdx > 0)
+                    {
+                        var recvPart = mapped[..lastDotIdx];
+                        var isVarRecv = recvPart.Length > 1 && recvPart[0] == '$' && recvPart[1] != '.';
+                        if (isVarRecv || recvPart == "$" || recvPart.StartsWith('('))
+                        {
+                            return new ConversionResult(
+                                recvPart + "?." + mapped[(lastDotIdx + 1)..], ConversionKind.Equivalent);
+                        }
+                    }
+                    return new ConversionResult(mapped, ConversionKind.Equivalent);
+                }
+
                 var argTexts0 = new List<string>();
                 foreach (var a in args)
                 {
@@ -623,6 +790,7 @@ internal sealed class ScribanConverter(
             "Get" => "get",
             // Hugo 的页面方法（供"字段+参数"分支产出合法的 `page.get_page "x"`）
             "GetPage" => "get_page",
+            "GetTerms" => "get_terms",
             "Paginate" => "paginate",
             "RenderString" => "render_string",
             "RenderShortcodes" => "render_shortcodes",
@@ -635,6 +803,19 @@ internal sealed class ScribanConverter(
             "Uniq" => "uniq",
             "Sort" => "sort",
             "Where" => "where",
+            // .Scratch/.Store 方法（Hugo 文档写 PascalCase，主题照抄：
+            // `$.Scratch.Set "x" false`）。引擎已注册 Pascal/snake 双别名，
+            // 但 `$.Scratch.Set` 作为函数名须先映射到 `page.store.set`，
+            // 否则原样输出 → "Cannot get the member $.Scratch.Set for a null object"
+            //（LoveIt paginator.html、PaperMod post_meta.html 实测）
+            "Set" => "set",
+            "Add" => "add",
+            "Delete" => "delete",
+            "SetInMap" => "setinmap",
+            "DeleteInMap" => "deleteinmap",
+            "GetSortedMapValues" => "getsortedmapvalues",
+            // .Scratch.Values / .Scratch.Get（Get 已在上面）
+            "Values" => "values",
             _ => (string?)null
         };
 
@@ -644,23 +825,36 @@ internal sealed class ScribanConverter(
         }
 
         // head 归一：Hugo 的 $ 指页面上下文（Scriban 的 $ 是函数参数数组，
-        // 语义完全不同），故 $.X → page.x，$.Site.X → site.x
+        // 语义完全不同），故 $.X → page.x，$.Site.X → site.x。
+        // **例外**：`$name`（非 `$.`）是局部变量，是函数的接收者本身——
+        // 若也按"页面根"改写，`$scratch.Add` 会变成 `pagescratch.add`
+        //（凭空多出 page 前缀，变量丢失 → 空对象）
         var headText = head switch
         {
+            // `$.Page` 与裸 `$` 都指当前页；`$.Site` 指站点
             "$.Site" or "site" => "site",
             "$.Page" or "$" or "." or "page" => "page",
             "$.Site.RegularPages" => "site.regular_pages",
             "$.Site.Pages" => "site.pages",
             _ when head.StartsWith("$.Site.", StringComparison.Ordinal) =>
                 "site" + ToSnakePath(head[".Site".Length..]),
-            _ when head.StartsWith('$') =>
-                "page" + ToSnakePath(head[1..]),
+            // `$.Page.GetTerms` / `$.GetTerms`：`$.X` 的 X 是页面成员，须剥掉
+            // `$.` 前缀再映射（此前 head[1..] 产出 `.GetTerms` → page.get_terms 正常，
+            // 但 `$.Page.X` 形态会产出 `page.page.x`——此处统一走 Page 剥除）
+            _ when head.StartsWith("$.Page.", StringComparison.Ordinal) =>
+                "page" + ToSnakePath(head[".Page".Length..]),
+            _ when head.StartsWith("$.", StringComparison.Ordinal) ||
+                   head.StartsWith('.') =>
+                "page" + ToSnakePath(head.StartsWith('.') ? head : head[1..]),
             _ => head
         };
 
-        if (headText.StartsWith('.'))
+        // 局部变量接收者（`$scratch.Add` / `$pag.Pagers`）：head 就是变量名本身，
+        // 不能再加 page 前缀。**裸 `$` 与 `$.` 除外**——那是 Hugo 的页面上下文
+        // （`$.GetTerms` → page.get_terms，正是 head 分支已给出的结果）
+        if (head.Length > 1 && head[0] == '$' && head[1] != '.')
         {
-            headText = "page" + ToSnakePath(headText);
+            headText = head;
         }
 
         return headText + "." + flintMethod;
@@ -747,6 +941,12 @@ internal sealed class ScribanConverter(
     /// </summary>
     private static string? MapIdentifierPath(string name)
     {
+        // 数据路径（hugo.Data.x / Site.Data.x）：段名不 snake 化，见 TryMapDataPath
+        if (TryMapDataPath(name) is { } dataPath)
+        {
+            return dataPath;
+        }
+
         var segs = name.Split('.');
         if (segs.Length < 2)
         {
@@ -853,11 +1053,12 @@ internal sealed class ScribanConverter(
         // 返回值型 partial → partialValue（Hugo 返回对象 vs Scriban 文本化）。
         // 仅当上下文参数是 dot（共享上下文等价）时改写；传其他对象时保持 include
         var canonical = CanonicalPartialName(nameExpr);
-        if (!isCached && _valueReturning is not null && _valueReturning.Contains(canonical))
+        var isValueReturning = _valueReturning is not null && _valueReturning.Contains(canonical);
+        if (!isCached && isValueReturning)
         {
-            var isDotContext = args.Count <= 1 || args[1] is Parsing.DotExpr
+            var isDotValueCtx = args.Count <= 1 || args[1] is Parsing.DotExpr
                 or Parsing.FieldExpr { Path: "." };
-            if (isDotContext)
+            if (isDotValueCtx)
             {
                 return new ConversionResult(
                     $"partialValue \"{nameExpr}\"", ConversionKind.Equivalent);
@@ -865,26 +1066,61 @@ internal sealed class ScribanConverter(
             Diagnostics.Add($"返回值型 partial {nameExpr} 的上下文参数非 dot，保持 include（语义可能不等价）");
         }
 
-        // 第二参数是 dot / page：Scriban include 天然共享上下文，省略
-        if (args.Count <= 1 || args[1] is Parsing.DotExpr or Parsing.FieldExpr { Path: "." })
+        // 第二参数是 dot：**with/range 块内 dot 不等于 page**（它是块上下文变量），
+        // 须显式传出，否则 partial 内的 `.` 会错指外层 page
+        //（Stack 的 `{{ with $icon }}{{ partial "helper/icon" . }}{{ end }}` 实测：
+        // 不传时 icon.html 把整个 page 对象当图标名 → "icon '%s.svg' is not found"）。
+        // 块外 dot 就是 page，保持 include（Scriban 共享上下文天然满足）。
+        // 引擎侧对含 page.store 的 partial 有兜底：覆盖 page 时自动合并/退回共享上下文，
+        // 故此处可以放心传出块变量
+        var isDotCtx = args.Count <= 1 || args[1] is Parsing.DotExpr
+            or Parsing.FieldExpr { Path: "." };
+        if (isDotCtx)
         {
+            if (args.Count > 1 && scope.Count > 0 && !isValueReturning)
+            {
+                return new ConversionResult(
+                    $"partial \"{nameExpr}\" {scope[^1]}", ConversionKind.Downgraded,
+                    "partial 上下文参数以 page 绑定（with/range 块内 dot 语义等价）");
+            }
             return new ConversionResult($"{target} \"{nameExpr}\"", ConversionKind.Equivalent);
         }
 
-        // 第二参数是括号表达式（dict/slice 等）：Scriban 的 include 不接收上下文参数，
-        // 但参数内容仍可转换——产出为注释化提示（内容不丢失，行为差异已标注）
-        if (args[1] is Parsing.ParenExpr paren)
+        // 第二参数是括号表达式（dict/slice 等，Hugo 最常用的上下文形态）：
+        // 同样交给 `partial NAME CONTEXT` —— 上下文内容成为 partial 内的 `.`。
+        // 此前直接丢弃，使被调 partial 的 `.X` 全部落到**外层** page
+        //（Stack 的 `partial "widget/taxonomy" (dict "Context" . "Params" ...)`
+        // → 内层 `default .Params.taxonomy .Params.icon` 取空 → 图标名缺失）。
+        // 值返回型 partial 在上方已跳过（保护 page.store 通道）
+        if (args[1] is Parsing.ParenExpr parenCtx && !isValueReturning)
         {
-            var inner = ConvertPipeline(paren.Inner, scope);
+            var inner = ConvertPipeline(parenCtx.Inner, scope);
             if (inner.Kind != ConversionKind.Unsupported)
             {
-                Diagnostics.Add($"partial 上下文参数（{nameExpr}）：Scriban include 共享上下文，参数已省略");
-                // 参数内容记入 Note（不写入产物——Scriban 注释在动作内会被
-                // 解析器当作对象初始化器，实测致 8 个预检失败）
                 return new ConversionResult(
-                    $"{target} \"{nameExpr}\"",
-                    ConversionKind.Downgraded,
-                    $"partial 上下文参数省略（原参数: {inner.Text}）");
+                    $"partial \"{nameExpr}\" ({inner.Text})", ConversionKind.Downgraded,
+                    "partial 上下文参数以 page 绑定（Hugo dot 语义等价）");
+            }
+        }
+
+        // 第二参数是**标量/变量/字段**：Hugo 的 `partial "x" VALUE` 把该值作为
+        // partial 内的 `.`。Scriban 内置的 `include` 不接收上下文参数，故改用 Flint
+        // 自定义的 `partial` 函数（签名 partial NAME CONTEXT，内部把 CONTEXT 临时绑成
+        // page——Hugo dot 语义等价）。此前丢弃参数，使 partial 内 `.` 取不到值
+        //（Stack 的 `partial "helper/icon" "search"` / `... $icon` 报
+        //  "icon '%s.svg' is not found"）。
+        // 值返回型 partial 跳过：其 `return` 已改写为 page.store.set，覆盖 page 会
+        // 使写入落到临时对象上（引擎侧另有 UsesPageStore 兜底，双层防护）
+        if (!isValueReturning)
+        {
+            var ctxR = ConvertExpr(args[1], scope, false);
+            if (ctxR.Kind != ConversionKind.Unsupported &&
+                ctxR.Text.Length > 0 &&
+                ctxR.Text != "null")
+            {
+                return new ConversionResult(
+                    $"partial \"{nameExpr}\" {ctxR.Text}", ConversionKind.Downgraded,
+                    "partial 上下文参数以 page 绑定（Hugo dot 语义等价）");
             }
         }
 
@@ -931,9 +1167,23 @@ internal sealed class ScribanConverter(
                     && !isExplicitRoot
                     && raw.Length > 1)
                 {
+                    // 循环/上下文变量为 nil 时 Hugo 对成员访问返回 nil（宽容），
+                    // Scriban 抛 "Cannot get the member $x.params.new_tab for a null
+                    // object"（Stack sidebar 的 range 内 `.Params.new_tab` 实测）——
+                    // 故链式段一律 nil 安全；末段若命中方法名用规范化名
                     var root = scope[^1];
-                    var tail = ToSnakePath(raw);
-                    return new ConversionResult(root + tail, ConversionKind.Equivalent);
+                    var segsScope = raw.TrimStart('.')
+                        .Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    var sbScope = new StringBuilder(root);
+                    foreach (var segS in segsScope)
+                    {
+                        var mappedSegS = MapChainMethod("x." + segS);
+                        var normalizedS = mappedSegS is not null
+                            ? mappedSegS["x.".Length..]
+                            : ToSnakePath(segS);
+                        sbScope.Append("?.").Append(normalizedS);
+                    }
+                    return new ConversionResult(sbScope.ToString(), ConversionKind.Equivalent);
                 }
 
                 if (_map.MapPath(raw) is { } mapped)
@@ -941,7 +1191,7 @@ internal sealed class ScribanConverter(
                     return new ConversionResult(mapped, ConversionKind.Equivalent);
                 }
 
-                // 未命中：按 .A.B → page.a.b 规则映射。
+                    // 未命中：按 .A.B → page.a.b 规则映射。
                 // 但 .Site.* / .Page.* 前缀须换根（Hugo 的 .Site.Params.x → site.params.x）
                 // 前导 $ 的字段路径（$.Site.RegularPages / $.Resources.GetMatch）：
                 // Hugo 的 $ 指页面上下文，须换根
@@ -957,8 +1207,32 @@ internal sealed class ScribanConverter(
                         "page" + loweredDollar, ConversionKind.Equivalent);
                 }
 
+                // 局部变量的成员访问（`$posts.paginate` / `$config.disable_messages`）：
+                // 变量在数据缺失时为 nil，须用 nil 安全 `?.`（Hugo 返回 nil，Scriban 抛
+                // "Cannot get the member $posts.paginate for a null object"——
+                // LoveIt home.html 在未配置 params.home.posts 时实测）
+                if (raw.StartsWith('$') && raw.Contains('.', StringComparison.Ordinal))
+                {
+                    var varName = raw[..raw.IndexOf('.', StringComparison.Ordinal)];
+                    var restSegs = raw[(varName.Length + 1)..]
+                        .Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    var sbVar = new StringBuilder(varName);
+                    foreach (var segV in restSegs)
+                    {
+                        var mappedSegV = MapChainMethod("x." + segV);
+                        var normalized = mappedSegV is not null ? mappedSegV["x.".Length..] : ToSnakePath(segV);
+                        sbVar.Append("?.").Append(normalized);
+                    }
+                    return new ConversionResult(sbVar.ToString(), ConversionKind.Equivalent);
+                }
+
                 if (raw.StartsWith('.') && raw.Length > 1)
                 {
+                    // `.Site.Data.x` / `.Data.x`：数据段名保持原样（见 TryMapDataPath）
+                    if (TryMapDataPath(raw) is { } dataPathFe)
+                    {
+                        return new ConversionResult(dataPathFe, ConversionKind.Equivalent);
+                    }
                     // 全部成员链用 nil 安全 `?.`：Hugo 的 `.A.B.C` 任一层为 nil 时
                     // 返回 nil（宽容），Scriban 的 `.` 链式访问遇 null 抛
                     // "Cannot get the member ... for a null object"。
@@ -968,9 +1242,15 @@ internal sealed class ScribanConverter(
                     // 已知方法名不用 nil 安全（它们是**函数调用目标**，`?.` 会使
                     // Scriban 把 `page?.get_page` 当函数名 → "function not found"，
                     // Stack/LoveIt 实测）。ConvertCommand 的字段+参数分支本应先行
-                    // 拦截，此处兜底防止漏网
-                    var isMethodTarget = raw.Contains('.', StringComparison.Ordinal) &&
-                        MapChainMethod("page" + ToSnakePath(raw)) is not null;
+                    // 拦截，此处兜底防止漏网。
+                    // 例外：路径穿过 `.Params` 的是**数据袋**，同名末段（如
+                    // `.Site.Params.list.paginate` 的 paginate）是普通字段不是方法——
+                    // 若误判为方法就走非 nil 安全路径，链上中间层为 null 时抛
+                    // "Cannot get the member ... for a null object"（LoveIt 实测）
+                    var isMethodTarget = raw.Contains('.', StringComparison.Ordinal)
+                        && !raw.Contains(".Params.", StringComparison.OrdinalIgnoreCase)
+                        && !raw.EndsWith(".Params", StringComparison.OrdinalIgnoreCase)
+                        && MapChainMethod("page" + ToSnakePath(raw)) is not null;
                     if (_map.MapPath(raw) is null && !isMethodTarget)
                     {
                         // 显式根判定基于**首段**（`.Site` → site 根）：链式段用 `?.` 后，
@@ -1038,6 +1318,15 @@ internal sealed class ScribanConverter(
                 // 无参数场景下它是"数据引用"而非"函数调用"
                 if (id.Name.Contains('.', StringComparison.Ordinal))
                 {
+                    // 站点数据路径（hugo.Data.x / site.Data.x）：**段名保持原样**，
+                    // 仅首段归一 + 全部 nil 安全。数据文件的键是作者定义的
+                    // （Stack 的 data/external.toml 用 `[PhotoSwipe]`/`Style` 驼峰），
+                    // 若按 ToSnakePath 转成 `photo_swipe`/`style` 会取不到值
+                    if (TryMapDataPath(id.Name) is { } dataPath)
+                    {
+                        return new ConversionResult(dataPath, ConversionKind.Equivalent);
+                    }
+
                     // 局部变量的成员访问（$bc.RelPermalink / $params.subtitle）：
                     // 用 nil 安全操作符 `?.`——Hugo 的 `$x.y` 在 $x 为 nil 时返回 nil
                     // （宽容），Scriban 抛 "Cannot get the member ... for a null object"。
@@ -1092,20 +1381,33 @@ internal sealed class ScribanConverter(
                 {
                     return baseR;
                 }
+                // 基表达式是**调用结果或局部变量**时用 nil 安全 `?.`：
+                // Hugo 对 nil 结果的链式成员访问返回 nil（宽容），Scriban 抛
+                // "Cannot get the member ... for a null object"。典型形态
+                // `(.Scratch.Get "params").share` / `$posts.paginate` /
+                // `(site.GetPage X).Layout`（LoveIt/PaperMod 实测）。
+                // ParenExpr 转换后自带括号（`(f a b)`），故索引为 `?.` 而非 `.?`
+                var nilSafeBase = c.Base is Parsing.ParenExpr or Parsing.VariableExpr
+                    or Parsing.CallExpr;
                 var sb = new StringBuilder(baseR.Text);
                 for (var fi = 0; fi < c.Fields.Count; fi++)
                 {
-                    // 末段若是已知方法名，用规范化名（getmatch 而非 get_match）
-                    var field = c.Fields[fi];
+                    // 末段若是已知方法名，用规范化名（getmatch 而非 get_match）。
+                    // 段文本可能带**前导点**（解析器把 `.share` 存成带点形态）——
+                    // 拼接前必须剥掉，否则与分隔符叠加成 `?..layout`（非法 token，
+                    // PaperMod/LoveIt 实测大面积解析失败）
+                    var field = c.Fields[fi].TrimStart('.');
+                    string seg;
                     if (fi == c.Fields.Count - 1)
                     {
                         var m2 = MapChainMethod("x." + field);
-                        sb.Append(m2 is not null ? m2["x.".Length..] : ToSnakePath(field));
+                        seg = m2 is not null ? m2["x.".Length..] : ToSnakePath(field);
                     }
                     else
                     {
-                        sb.Append(ToSnakePath(field));
+                        seg = ToSnakePath(field);
                     }
+                    sb.Append(nilSafeBase ? "?." : ".").Append(seg);
                 }
                 return new ConversionResult(sb.ToString(), ConversionKind.Equivalent);
             }
@@ -1151,6 +1453,50 @@ internal sealed class ScribanConverter(
             }
             var seg = path[start..i];
             sb.Append(Seg(seg));
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 站点数据路径映射（Hugo 的 <c>hugo.Data.x</c> / <c>.Site.Data.x</c> / <c>.Data.x</c>）：
+    /// 首段归一为 <c>hugo.data</c> / <c>site.data</c> / <c>page.data</c>，
+    /// **其余段原样保留**（数据文件键由作者定义，不能 snake 化），
+    /// 段间统一 nil 安全（缺数据时 Hugo 返回 nil，Scriban 普通点链抛异常）。
+    /// 非数据路径返回 null
+    /// </summary>
+    private static string? TryMapDataPath(string raw)
+    {
+        var s = raw.StartsWith('.') ? raw[1..] : raw;
+        var segs = s.Split('.', StringSplitOptions.RemoveEmptyEntries);
+        if (segs.Length < 2)
+        {
+            return null;
+        }
+
+        // 仅处理第二段是 Data 的路径（hugo.Data.x / Site.Data.x / Data.x）
+        if (!segs[1].Equals("Data", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var root = segs[0].ToLowerInvariant() switch
+        {
+            // Hugo 的 hugo.Data 就是站点数据（data/ 目录），映射到 site.data——
+            // 那里才有实际内容（hugo 对象的 data 字段未由构建入口填充，实测为空）
+            "hugo" => "site",
+            "site" => "site",
+            "page" or "$" => "page",
+            _ => null
+        };
+        if (root is null)
+        {
+            return null;
+        }
+
+        var sb = new StringBuilder(root).Append("?.data");
+        for (var i = 2; i < segs.Length; i++)
+        {
+            sb.Append("?.").Append(segs[i]);
         }
         return sb.ToString();
     }

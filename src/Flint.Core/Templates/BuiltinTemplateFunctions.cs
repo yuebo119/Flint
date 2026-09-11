@@ -149,8 +149,21 @@ public sealed partial class BuiltinTemplateFunctions
         obj.Import("title", (string? s) =>
             CultureInfo.InvariantCulture.TextInfo.ToTitleCase(s?.ToLowerInvariant() ?? ""));
 
-        // trim - 去除首尾空白
-        obj.Import("trim", (string? s) => s?.Trim() ?? "");
+        // trim - 去首尾空白；带第二参时按 cutset 字符集裁剪
+        //（Hugo `trim STRING CUTSET` / `strings.Trim STRING CUTSET`；
+        // 严格单参形参导致 PaperMod 的 `trim $x "\n\r\t "` 报
+        // "Argument index must be < 1"——Scriban 拒绝多余实参而非忽略）
+        obj.Import("trim", (params object?[] a) =>
+        {
+            var s = a.Length > 0 ? a[0]?.ToString() ?? "" : "";
+            if (a.Length < 2 || a[1] is not { } cutsetArg)
+            {
+                return s.Trim();
+            }
+            // Hugo 按 Unicode 码点集合裁剪（非子串），与 strings.Trim 一致
+            var set = (cutsetArg.ToString() ?? "").ToHashSet();
+            return s.Trim([.. set]);
+        });
 
         // trim_left - 去除左侧空白
         obj.Import("trim_left", (string? s) => s?.TrimStart() ?? "");
@@ -160,13 +173,20 @@ public sealed partial class BuiltinTemplateFunctions
         obj.Import("trim_right", (string? s) => s?.TrimEnd() ?? "");
         obj.Import("trimright", (string? s) => s?.TrimEnd() ?? "");
 
-        // truncate - 截断字符串
-        obj.Import("truncate", (string? s, int length, string ellipsis) =>
+        // truncate - 截断字符串（省略号可省，默认 "…"；Hugo `truncate LEN STRING` 经
+        // 管道形态 `X | truncate LEN` 只给两参——严格三参形参报
+        // "Invalid number of arguments 2 passed to `truncate`"，PaperMod schema_json 实测）
+        obj.Import("truncate", (params object?[] a) =>
         {
+            if (a.Length < 2)
+            {
+                return a.Length > 0 ? a[0]?.ToString() ?? "" : "";
+            }
+            var s = a[0]?.ToString();
+            var length = ToInt(a[1]);
+            var ellipsis = a.Length > 2 ? a[2]?.ToString() ?? "…" : "…";
             if (string.IsNullOrEmpty(s) || s.Length <= length)
                 return s ?? "";
-            ellipsis ??= "...";
-            // 目标长度容不下省略号时，返回截断到目标长度的省略号（Hugo 语义）
             if (length <= ellipsis.Length)
                 return ellipsis[..length];
             return s[..(length - ellipsis.Length)] + ellipsis;
@@ -478,35 +498,27 @@ public sealed partial class BuiltinTemplateFunctions
             };
         });
 
-        // first - 获取第一个元素
-        obj.Import("first", (IEnumerable<object>? collection) =>
-            collection?.FirstOrDefault());
+        // first/last/index/slice/after：统一接收 `object?` 而非 `IEnumerable<object>`。
+        // 原因（实测确认）：Scriban 绑定**第一个**注册的重载且类型不符时直接抛异常，
+        // 不做重载回退——严格形参把 Hugo 的 `first N SEQ`（首参是 int）、
+        // `in page.kind "term"`（首参是 string）全打成
+        // "Unable to convert type `int` to `IEnumerable<Object>`"（Ananke 17 处、
+        // Stack 12 处命中）。改为宽松形参后在函数体内做形态判定。
 
-        // last - 获取最后一个元素
-        obj.Import("last", (IEnumerable<object>? collection) =>
-            collection?.LastOrDefault());
+        // first/last：单参取首/末元素（Scriban `SEQ | first`），双参取前/后 N 项
+        // 子序列（Hugo 前缀 `first N SEQ` 与 Scriban 管道 `SEQ | first N` 皆可）
+        obj.Import("first", (params object?[] a) => SeqFirstLast(a, fromEnd: false));
+        obj.Import("last", (params object?[] a) => SeqFirstLast(a, fromEnd: true));
 
-        // index - 获取指定索引的元素
-        obj.Import("index", (IEnumerable<object>? collection, int idx) =>
-            collection?.ElementAtOrDefault(idx));
+        // index：SEQ INDEX 与 MAP KEY（Hugo index 双语义）
+        obj.Import("index", (params object?[] a) => SeqIndex(a));
 
-        // slice - 切片
-        obj.Import("slice", (IEnumerable<object>? collection, int start, int? length) =>
-        {
-            if (collection == null)
-                return Enumerable.Empty<object>();
-            var list = collection.ToList();
-            if (start < 0)
-                start = 0;
-            if (start >= list.Count)
-                return Enumerable.Empty<object>();
-            var len = length ?? (list.Count - start);
-            return list.Skip(start).Take(len);
-        });
+        // slice：Flint 序列切片（slice SEQ START [LEN]）与 Hugo 可变参数构造器
+        //（slice / slice A / slice A B），按首参是否为集合区分
+        obj.Import("slice", (params object?[] a) => SeqSlice(a));
 
-        // after - 跳过前 N 个元素
-        obj.Import("after", (IEnumerable<object>? collection, int n) =>
-            collection?.Skip(n) ?? Enumerable.Empty<object>());
+        // after：SEQ N / N SEQ 双形态
+        obj.Import("after", (params object?[] a) => SeqAfter(a));
 
         // complement - 补集
         obj.Import("complement", (IEnumerable<object>? a, IEnumerable<object>? b) =>
@@ -649,9 +661,11 @@ public sealed partial class BuiltinTemplateFunctions
         // range - 生成范围
         obj.Import("range", (int count) => Enumerable.Range(0, count));
 
-        // in - 检查是否在集合中
-        obj.Import("in", (object? item, IEnumerable<object>? collection) =>
-            collection?.Contains(item) ?? false);
+        // in - 检查是否在集合中（Hugo 语义：haystack 是字符串时按子串，
+        // 是序列时按元素）。形参用 object? 不用 IEnumerable——严格形参会被
+        // Scriban 首个重载绑定，把 `in page.kind "term"`（haystack 为字符串）
+        // 打成 "Unable to convert type `string` to `IEnumerable<Object>`"（Stack 实测）
+        obj.Import("in", (object? item, object? collection) => InSeq(item, collection));
 
         // apply - 应用函数到每个元素
         obj.Import("apply", (IEnumerable<object>? collection, Func<object, object>? func) =>
@@ -913,10 +927,26 @@ public sealed partial class BuiltinTemplateFunctions
 
     private static void RegisterComparisonFunctions(ScriptObject obj)
     {
-        // eq - 相等
-        obj.Import("eq", (object? a, object? b) => Equals(a, b));
+        // eq - 相等。Hugo 的 eq 是**可变参数**：`eq X a b c` 表示 X 等于
+        // 其中任一（Ananke single.html 用 `compare.Eq $page.Language "de" "en" ...`
+        // 列出语言集，严格双参形参报 "Argument index must be < 2"）
+        obj.Import("eq", (params object?[] a) =>
+        {
+            if (a.Length < 2)
+            {
+                return a.Length == 0;
+            }
+            for (var i = 1; i < a.Length; i++)
+            {
+                if (Equals(a[0], a[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        });
 
-        // ne - 不相等
+        // ne - 不相等（Hugo 双参语义；可变参数形态 Hugo 未定义，取首两个）
         obj.Import("ne", (object? a, object? b) => !Equals(a, b));
 
         // lt - 小于
@@ -975,16 +1005,26 @@ public sealed partial class BuiltinTemplateFunctions
 
     private static void RegisterDebugFunctions(ScriptObject obj)
     {
-        // printf - 格式化输出
+        // printf - 格式化输出。**同时接受 Go 与 .NET 两种占位符**：
+        // Hugo 模板写 Go 动词（`%s`/`%d`/`%v`/`%q`…，Hugo 全生态通用），
+        // 而 Flint 早期只支持 .NET 的 `{0}`——混用时 Go 格式串不被替换，
+        // 直接原样输出（Stack 的 `printf "icons/%s.svg" .` 产出字面量
+        // "icons/%s.svg" → 图标查找失败，实测 9 处）。
+        // 含 `%` 动词时按 Go 语义转换，否则走 .NET 原路径
         obj.Import("printf", (string? format, params object[] args) =>
         {
+            var f = format ?? "";
             try
             {
-                return string.Format(CultureInfo.InvariantCulture, format ?? "", args);
+                if (f.Contains('%', StringComparison.Ordinal))
+                {
+                    return string.Format(CultureInfo.InvariantCulture, GoFormatToDotNet(f), args);
+                }
+                return string.Format(CultureInfo.InvariantCulture, f, args);
             }
             catch
             {
-                return format ?? "";
+                return f;
             }
         });
 
@@ -1014,6 +1054,92 @@ public sealed partial class BuiltinTemplateFunctions
         // typeof - 获取类型
         obj.Import("typeof", (object? value) =>
             value?.GetType().Name ?? "null");
+    }
+
+    /// <summary>
+    /// Go printf 动词 → .NET 复合格式转换。Go 模板生态通用动词：
+    /// <c>%s/%v/%d/%t/%f</c>→<c>{n}</c>、<c>%q</c>→<c>"{n}"</c>、
+    /// <c>%x</c>→<c>{n:x}</c>、<c>%%</c>→<c>%</c>；宽度/精度修饰透传为
+    /// .NET 形式（<c>%02d</c>→<c>{n:D2}</c>、<c>%.2f</c>→<c>{n:F2}</c>）。
+    /// 未知动词按 <c>{n}</c> 兜底
+    /// </summary>
+    private static string GoFormatToDotNet(string format)
+    {
+        var sb = new StringBuilder(format.Length + 8);
+        var argIndex = 0;
+        for (var i = 0; i < format.Length; i++)
+        {
+            if (format[i] != '%' || i + 1 >= format.Length)
+            {
+                sb.Append(format[i]);
+                continue;
+            }
+
+            i++;
+            if (format[i] == '%')
+            {
+                sb.Append('%');
+                continue;
+            }
+
+            var modStart = i;
+            while (i < format.Length &&
+                   (char.IsDigit(format[i]) || format[i] is '-' or '+' or '#' or ' ' or '.' or '*'))
+            {
+                i++;
+            }
+            if (i >= format.Length)
+            {
+                break;
+            }
+
+            var verb = format[i];
+            var mod = format[modStart..i];
+            var n = argIndex++;
+            switch (verb)
+            {
+                case 's' or 'v' or 'd' or 'i' or 't' or 'f' or 'g' or 'e' or 'b' or 'o':
+                    sb.Append('{').Append(n);
+                    AppendGoWidth(sb, mod);
+                    sb.Append('}');
+                    break;
+                case 'q':
+                    sb.Append("\"{").Append(n);
+                    AppendGoWidth(sb, mod);
+                    sb.Append("}\"");
+                    break;
+                case 'x':
+                    sb.Append('{').Append(n).Append(":x}");
+                    break;
+                case 'X':
+                    sb.Append('{').Append(n).Append(":X}");
+                    break;
+                default:
+                    sb.Append('{').Append(n).Append('}');
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Go 宽度/精度修饰 → .NET 格式后缀（%02d → :D2；%.2f → :F2）</summary>
+    private static void AppendGoWidth(StringBuilder sb, string mod)
+    {
+        if (mod.Length == 0)
+        {
+            return;
+        }
+        var dot = mod.IndexOf('.');
+        if (dot >= 0 && int.TryParse(mod[(dot + 1)..], out var precision))
+        {
+            sb.Append(":F").Append(precision);
+            return;
+        }
+        if (mod.Contains('0', StringComparison.Ordinal) &&
+            int.TryParse(mod.Replace("-", ""), out var width))
+        {
+            sb.Append(":D").Append(width);
+        }
     }
 
     #endregion
@@ -1082,23 +1208,33 @@ public sealed partial class BuiltinTemplateFunctions
         obj.Import("singularize", (string? text) => Singularize(text ?? ""));
 
         // ---- B7 集合操作 ----
-        // 注意：first/last/uniq/shuffle/index 已有 Scriban 风格注册（单元素/单参数语义），
-        // 此处**不重复注册**（重复会覆盖既有语义致类型转换失败——实测 first 2 SEQ 报
-        // "Unable to convert int to IEnumerable"）。Hugo 的前缀形态 first N SEQ 由
-        // 转换器映射为 Scriban 管道形态（SEQ | array.limit N）。
+        // 注意：first/last/uniq/shuffle/index/slice/after/in 已在上面注册
+        // （宽松形参 + 形态分派，Hugo 前缀形态与 Scriban 管道形态皆可用），
+        // 此处**不重复注册**（Scriban 绑定首个注册的重载，重复注册是死代码）。
         // 真正新增的集合函数（Hugo 独有）：
-        obj.Import("after", (object? seq, object? count) =>
-            SliceSeq(seq, int.TryParse(count?.ToString(), out var n) ? n : 0, int.MaxValue));
         obj.Import("where", (object? seq, object? key, object? value) =>
             WhereSeq(seq, key?.ToString() ?? "", value));
         obj.Import("sortBy", (object? seq, object? key) => SortSeq(seq, key?.ToString()));
-        obj.Import("in", (object? needle, object? haystack) => InSeq(needle, haystack));
 
         // ---- B8 构造与合并 ----
         // 注意：slice/index/sort 已有 Scriban 风格注册（含区间切片与字段排序），不重复注册。
         // 真正新增（Hugo 独有）：
         obj.Import("dict", (params object?[] args) => BuildDict(args));
         obj.Import("merge", (params object?[] args) => MergeDicts(args));
+
+        // newScratch / newScratch 别名：Hugo 的独立暂存构造器（区别于页面级 .Scratch）。
+        // Scriban 对零参函数自动求值，故模板里的 `{{ $s = newScratch }}` 会即时
+        // 得到**全新** PageStoreObject（每次访问新建，不共享——PaperMod 实测用法）
+        obj.Import("newScratch", () => new PageStoreObject());
+        obj.Import("new_scratch", () => new PageStoreObject());
+
+        // is_menu_current / has_menu_current：Hugo 页面方法 IsMenuCurrent/HasMenuCurrent
+        // 的全局形态。二者都问"当前页是否这个菜单项（或其后代）指向的页"——
+        // 菜单项的 is_active 在构建期已按当前页路径算出，故此处直接读该标志，
+        // 无需回传菜单集合（Hugo 首参 MENUNAME 仅为对称性保留）。
+        // has_menu_current 额外向下递归子项（Hugo 语义：菜单项是高亮页的祖先时亦为真）
+        obj.Import("is_menu_current", (object? menu, object? entry) => MenuEntryActive(entry, false));
+        obj.Import("has_menu_current", (object? menu, object? entry) => MenuEntryActive(entry, true));
 
         // ---- B12 参数点路径查询 ----
         obj.Import("paramLookup", (object? ctx, string path) => ParamLookup(ctx, path));
@@ -1169,7 +1305,11 @@ public sealed partial class BuiltinTemplateFunctions
     {
         null => [],
         string => [seq],
-        System.Collections.IDictionary => [seq],   // 字典视作单元素（Hugo range 语义不同，此处保守）
+        // 列表型 ScriptObject（LazyPageList 等）优先按**序列**展开：
+        // 它实现 IList<ScriptObject> 也实现 IDictionary，字典分支会把它当单元素
+        IList<ScriptObject> objList => objList.Cast<object?>().ToList(),
+        // 其余字典仍视作单元素（Hugo range 对 map 语义特殊，此处保守）
+        System.Collections.IDictionary => [seq],
         System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
         _ => [seq]
     };
@@ -1177,6 +1317,33 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>是否为集合形态（非字符串/非字典的 IEnumerable）</summary>
     private static bool IsCollection(object? value) =>
         value is System.Collections.IEnumerable and not string and not System.Collections.IDictionary;
+
+    /// <summary>是否为数值形态（数值或数字字符串）——用于把"计数"参数与"序列"参数分开</summary>
+    private static bool IsNumericLike(object? value)
+    {
+        if (value is null || value is bool || value is string and not { Length: > 0 })
+        {
+            return false;
+        }
+        if (value is int or long or double or float or decimal or short or byte)
+        {
+            return true;
+        }
+        return value is string s &&
+               double.TryParse(s, System.Globalization.NumberStyles.Float,
+                   System.Globalization.CultureInfo.InvariantCulture, out _);
+    }
+
+    /// <summary>
+    /// 从两个参数中分出（序列, 计数）。**用"哪个不是数值"判定序列**，而非
+    /// <c>IsCollection</c>——页面集合是 <c>LazyPageList : ScriptObject</c>，
+    /// 而 <c>ScriptObject</c> 实现 <c>IDictionary</c>，会被 <c>IsCollection</c>
+    /// 判为字典（实测：`site.pages | slice 0 2` 误走构造器分支，产出 3 元素数组）
+    /// </summary>
+    private static (object? Seq, int Count) SplitSeqCount(object? a, object? b) =>
+        IsNumericLike(a) && !IsNumericLike(b)
+            ? (b, ToInt(a))
+            : (a, ToInt(b));
 
     /// <summary>in：needle 是否在 haystack 中（Hugo in 语义，字符串按子串、集合按元素）</summary>
     private static bool InSeq(object? needle, object? haystack)
@@ -1205,6 +1372,143 @@ public sealed partial class BuiltinTemplateFunctions
         var begin = start < 0 ? Math.Max(0, list.Count + start) : Math.Min(start, list.Count);
         var take = Math.Min(Math.Max(0, count), list.Count - begin);
         return list.Skip(begin).Take(take).ToList();
+    }
+
+    /// <summary>
+    /// first/last：单参取首/末元素，双参取前/后 N 项子序列。
+    /// 参数顺序自适应——Hugo 前缀形态是 <c>first N SEQ</c>（int 在前），
+    /// Scriban 管道形态是 <c>SEQ | first N</c>（集合在前）
+    /// </summary>
+    private static object? SeqFirstLast(object?[] args, bool fromEnd)
+    {
+        if (args.Length == 0)
+        {
+            return null;
+        }
+        if (args.Length == 1)
+        {
+            var one = ToList(args[0]);
+            if (one.Count == 0)
+            {
+                return null;
+            }
+            return fromEnd ? one[^1] : one[0];
+        }
+
+        // 双参：分出集合与计数（用数值位判定，兼容 LazyPageList 等对象型集合）
+        var (seq, count) = SplitSeqCount(args[0], args[1]);
+        var list = ToList(seq);
+        if (count <= 0)
+        {
+            return new List<object?>();
+        }
+        return fromEnd ? list.Skip(Math.Max(0, list.Count - count)).ToList()
+                       : list.Take(count).ToList();
+    }
+
+    /// <summary>
+    /// index：Hugo 双语义——集合按整数下标取值，映射按字符串键取值。
+    /// 越界/缺键返回 null（Hugo 宽容语义），不再抛 ArgumentOutOfRange
+    /// </summary>
+    private static object? SeqIndex(object?[] args)
+    {
+        if (args.Length < 2)
+        {
+            return null;
+        }
+        var target = args[0];
+        var key = args[1];
+
+        if (target is string text)
+        {
+            var idx = ToInt(key);
+            return idx >= 0 && idx < text.Length ? text[idx].ToString() : null;
+        }
+
+        if (target is System.Collections.IDictionary dict)
+        {
+            return dict.Contains(key?.ToString() ?? "") ? dict[key?.ToString() ?? ""] : null;
+        }
+
+        if (target is ScriptObject so)
+        {
+            return so.TryGetValue(null, default, key?.ToString() ?? "", out var v) ? v : null;
+        }
+
+        if (target is System.Collections.IEnumerable e and not string)
+        {
+            var list = e.Cast<object?>().ToList();
+            var idx = ToInt(key);
+            return idx >= 0 && idx < list.Count ? list[idx] : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// slice：Flint 序列切片（<c>slice SEQ START [LEN]</c>）与 Hugo 可变参数
+    /// 构造器（<c>slice</c>/<c>slice A</c>/<c>slice A B</c>）。
+    /// 首参是集合时按切片处理，否则按构造器（Hugo 语义，LoveIt 用零参 slice 造空序列）
+    /// </summary>
+    private static object SeqSlice(object?[] args)
+    {
+        // 切片形态判定：第二参是**数值**则为 `slice SEQ START [LEN]`；否则按 Hugo
+        // 可变参数构造器（`slice` / `slice A` / `slice A B`，如 LoveIt 的
+        // `slice "a" "b"` 或零参造空序列）。用数值位判定而非 IsCollection——
+        // 页面集合是 LazyPageList : ScriptObject（实现 IDictionary），
+        // 会被 IsCollection 误判为字典
+        if (args.Length >= 2 && IsNumericLike(args[1]))
+        {
+            var list = ToList(args[0]);
+            var start = ToInt(args[1]);
+            if (start < 0)
+            {
+                start = Math.Max(0, list.Count + start);
+            }
+            var len = args.Length >= 3 && args[2] is not null
+                ? ToInt(args[2])
+                : list.Count - start;
+            return SliceSeq(list, start, len);
+        }
+
+        // 构造器形态（含零参 → 空序列）
+        var arr = new ScriptArray();
+        foreach (var a in args)
+        {
+            arr.Add(a);
+        }
+        return arr;
+    }
+
+    /// <summary>after：<c>after SEQ N</c> 与 <c>N SEQ</c> 双形态</summary>
+    private static object SeqAfter(object?[] args)
+    {
+        if (args.Length < 2)
+        {
+            return args.Length == 1 ? args[0] ?? new List<object?>() : new List<object?>();
+        }
+        var (seq, count) = SplitSeqCount(args[0], args[1]);
+        return ToList(seq).Skip(Math.Max(0, count)).ToList();
+    }
+
+    /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>
+    private static int ToInt(object? v)
+    {
+        if (v is null)
+        {
+            return 0;
+        }
+        return v switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            float f => (int)f,
+            decimal m => (int)m,
+            _ => int.TryParse(v.ToString(), System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+                ? parsed : 0
+        };
     }
 
 
@@ -1306,6 +1610,40 @@ public sealed partial class BuiltinTemplateFunctions
             }
         }
         return result;
+    }
+
+    /// <summary>
+    /// 菜单归属判断（Hugo IsMenuCurrent/HasMenuCurrent 的全局形态）。
+    /// 菜单项的 is_active 在构建期已按当前页路径计算，故直接读该标志；
+    /// recursive=true 时向下递归子项（Hugo 的 HasMenuCurrent 语义：
+    /// 菜单项是当前高亮页的祖先时同样为真）
+    /// </summary>
+    private static bool MenuEntryActive(object? entry, bool recursive)
+    {
+        if (entry is null)
+        {
+            return false;
+        }
+        if (GetMember(entry, "is_active") is bool active && active)
+        {
+            return true;
+        }
+        if (!recursive)
+        {
+            return false;
+        }
+        var children = GetMember(entry, "children");
+        if (children is System.Collections.IEnumerable e and not string)
+        {
+            foreach (var child in e)
+            {
+                if (MenuEntryActive(child, true))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>成员访问（Hugo 的 where/sort 键路径）：支持点路径与命名变体（下划线/PascalCase）</summary>

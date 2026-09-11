@@ -105,6 +105,9 @@ public sealed class HookedHeadingRenderer : MarkdownObjectRenderer<HtmlRenderer,
         {
             ["level"] = heading.Level,
             ["id"] = heading.GetAttributes()?.Id ?? "",
+            // Hugo render-heading 上下文字段名是 .Anchor（.ID 为旧别名）——
+            // 主题按 Hugo 文档写 `page?.anchor`，缺此别名胜者拿不到锚点名
+            ["anchor"] = heading.GetAttributes()?.Id ?? "",
             ["text"] = HookedRendererHelpers.RenderInlineHtml(heading.Inline),
             ["plain_text"] = HookedRendererHelpers.GetPlainText(heading.Inline)
         };
