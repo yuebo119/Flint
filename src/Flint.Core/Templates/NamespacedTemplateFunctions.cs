@@ -25,7 +25,8 @@ public sealed partial class BuiltinTemplateFunctions
         ("strings",
         [
             ("ToUpper", "upper"), ("ToLower", "lower"), ("Title", "title"),
-            ("Trim", "trim"), ("TrimLeft", "trim_left"), ("TrimRight", "trim_right"),
+            // strings.Trim 是 (CUTSET, STRING)，与全局 trim(s) 不同
+            ("Trim", "strings_trim"), ("TrimLeft", "trim_left"), ("TrimRight", "trim_right"),
             ("TrimPrefix", "trim_prefix"), ("TrimSuffix", "trim_suffix"), ("TrimSpace", "trim_space"),
             ("HasPrefix", "has_prefix"), ("HasSuffix", "has_suffix"),
             ("Contains", "contains"), ("ContainsAny", "contains_any"),

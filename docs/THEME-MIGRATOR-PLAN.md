@@ -591,9 +591,56 @@ Ananke 站点（转换后）:
 | 命名空间三形态键 | resources/css/js 也补小写形态（`resources.get` 与 `resources.Get` 并存） |
 | 内置模板名归一 | `include "pagination.html"`（带扩展名）也能命中内置模板 |
 
-### 剩余架构性缺口（需引擎侧设计，非转换器可解）
+### ✅ 已解决：`partials.Include` 的返回值语义（2026-09-11）
 
-**`partials.Include` 的返回值语义**：
+**方案：Store 对象通道 + `partialValue` 函数**（实测验证，零序列化成本）
+
+设计依据来自一个实测发现：`RenderPartialWithType` 复用**调用者上下文**，
+因此页面 Store 在 partial 与调用方之间**天然共享**——这是一条现成的对象传递通道。
+
+机制：
+
+```
+转换期（双向改写，键名两侧规范化为同一形态）:
+  partial 内:  {{ return X }}
+            →  {{ page.store.set "__partial_ret_<self>" X }}{{ ret }}
+  调用点:      {{ $v := partial "Y.html" . }}
+            →  {{ $v := partialValue "Y.html" }}
+
+运行期（引擎侧 PartialValueFunction）:
+  1. 清除残留键
+  2. 渲染 partial（共享上下文 → store.set 副作用生效）
+  3. 从 Store 取回 X —— 真实对象，非文本还原
+  4. 无 return 的 partial 回退标量还原（保持原有兼容性）
+```
+
+**实测验证**（对象保真）：
+```
+输入:  partial 返回 {{ dict "name" "cover.png" "width" 480 }}
+输出:  NAME=cover.png   WIDTH=480   TYPED=BIG（数值比较可用）
+       数值类型未退化为字符串 → 类型保真 ✓
+```
+
+**为什么优于其他方案**：
+
+| 方案 | 问题 |
+|---|---|
+| 文本序列化往返（JSON） | 类型丢失（480 变 "480"）、性能开销、循环引用风险 |
+| 转换器内联展开 partial | 仅适用可静态分析的 partial；有状态/递归 partial 无法展开 |
+| **Store 对象通道（采纳）** | **零序列化、类型保真、机制简单**；且复用既有 Store 基础设施 |
+
+**边界（已诚实标注）**：
+- 仅当调用点上下文参数是 dot 时改写（partialValue 共享调用者上下文，
+  传其他页面对象时语义不等价）——非 dot 时保持 include 并记入诊断
+- `partialCached` 不适用（缓存语义与返回对象冲突），保持原样
+
+**关键实现陷阱（实测）**：写入键与读取键必须**同规则规范化**。
+转换器用规范名（`func/X`），而调用方可能传 `func/X.html`——
+不一致时 `partialValue` 读到空值（实测踩坑）。
+
+### 其余架构性缺口
+
+**深层 null 访问**：
 
 ```
 Hugo:   {{ $res := partial "GetFeaturedImageResource.html" . }}

@@ -71,6 +71,12 @@ internal sealed class ThemeMigrator
         }
         Directory.CreateDirectory(targetRoot);
 
+        // 第一遍：扫描含 {{ return }} 的 partial（Hugo 返回值语义）——
+        // 调用点需改用 partialValue（Scriban 的 include 只能文本化），
+        // 而该判定是跨文件的，故必须先全局扫描
+        var valueReturning = ScanValueReturningPartials(sourceRoot);
+        summary.GlobalDiagnostics.Add($"返回值型 partial: {valueReturning.Count} 个");
+
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(sourceRoot, file);
@@ -103,7 +109,8 @@ internal sealed class ThemeMigrator
             // 内联 partial 提取（Hugo 的 define "_partials/X.html"）：
             // Scriban 无此机制，必须提取为独立文件使 include 可命中
             var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text);
-            var result = ConvertTemplate(rel, remainingText);
+            var selfPartial = SelfPartialNameOf(rel);
+            var result = ConvertTemplate(rel, remainingText, valueReturning, selfPartial);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -157,7 +164,10 @@ internal sealed class ThemeMigrator
 
     /// <summary>转换单个模板文本</summary>
     internal (string Text, TemplateConversionStats Stats, IReadOnlyList<string> Diagnostics) ConvertTemplate(
-        string relPath, string text)
+        string relPath,
+        string text,
+        IReadOnlySet<string>? valueReturning = null,
+        string? selfPartialName = null)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -165,10 +175,57 @@ internal sealed class ThemeMigrator
         var parser = new GoTemplateParser(tokens);
         var parts = parser.Parse();
 
-        var converter = new TemplateConverter(_map);
+        var converter = new TemplateConverter(_map, valueReturning, selfPartialName);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);
+    }
+
+    /// <summary>
+    /// 扫描含 {{ return }} 的 partial（返回任意类型者需走 partialValue 机制）。
+    /// 返回规范化名集合（与 ScribanConverter.CanonicalPartialName 同规则）
+    /// </summary>
+    internal static HashSet<string> ScanValueReturningPartials(string sourceRoot)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.html", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(sourceRoot, file).Replace((char)92, '/');
+            // 仅 layouts/ 下的模板可能是 partial
+            if (!rel.Contains("partials/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                var text = File.ReadAllText(file);
+                // 检测 partial 级的 return（{{ return ... }} 或 {{- return ... -}}）
+                if (System.Text.RegularExpressions.Regex.IsMatch(
+                        text, @"\{\{-?\s*return\b",
+                        System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                {
+                    result.Add(ScribanConverter.CanonicalPartialName(rel));
+                }
+            }
+            catch (IOException)
+            {
+                // 跳过不可读文件
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>文件相对路径 → partial 规范名（非 partial 返回 null）</summary>
+    internal static string? SelfPartialNameOf(string relPath)
+    {
+        var rel = relPath.Replace((char)92, '/');
+        if (!rel.Contains("partials/", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return ScribanConverter.CanonicalPartialName(rel);
     }
 
     /// <summary>

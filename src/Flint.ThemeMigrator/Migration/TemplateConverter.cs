@@ -28,9 +28,12 @@ internal sealed class TemplateConversionStats
 /// 模板转换器：TemplatePart 列表 → Scriban 文本。
 /// 有状态（块栈、define 收集），每个模板文件用一个实例。
 /// </summary>
-internal sealed class TemplateConverter(MigrationMap map)
+internal sealed class TemplateConverter(
+    MigrationMap map,
+    IReadOnlySet<string>? valueReturningPartials = null,
+    string? selfPartialName = null)
 {
-    private readonly ScribanConverter _expr = new(map);
+    private readonly ScribanConverter _expr = new(map, valueReturningPartials, selfPartialName);
     private readonly List<(string Kind, string? Var)> _blockStack = [];
     private readonly List<string> _definedBlocks = [];
     private int _syntheticIndex;
@@ -182,6 +185,27 @@ internal sealed class TemplateConverter(MigrationMap map)
             {
                 var name = kb.Names.Count > 0 ? kb.Names[0] : "";
                 return Wrap($"include \"{name}\"", trimL, trimR);
+            }
+
+            case "return":
+            {
+                // Hugo 的 return：终止 partial 并返回值（任意类型）。
+                // 本文件是 partial 时改写为 store 通道（partialValue 机制）
+                if (kb.Pipeline is null || kb.Pipeline.Commands.Count == 0)
+                {
+                    return Wrap("ret", trimL, trimR);
+                }
+
+                var retVal = ConvertPipelineText(kb.Pipeline, scope);
+                var selfName = _expr.SelfPartialName;
+                if (selfName is not null)
+                {
+                    var key = ScribanConverter.RetKeyPrefix + selfName;
+                    return Wrap(
+                        $"page.store.set \"{key}\" {retVal} }}}}}}{{{{ ret",
+                        trimL, trimR);
+                }
+                return Wrap($"ret {retVal}", trimL, trimR);
             }
 
             case "break":

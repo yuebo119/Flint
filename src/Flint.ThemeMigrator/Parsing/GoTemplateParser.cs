@@ -251,7 +251,7 @@ internal sealed class GoTemplateParser
 
     private static bool IsKeyword(string word) =>
         word is "if" or "else" or "end" or "range" or "with" or "define" or "block" or "template"
-            or "break" or "continue";
+            or "break" or "continue" or "return";
 
     private ActionBody ParseKeyword(string name, List<Token> rest, int line)
     {
@@ -311,6 +311,12 @@ internal sealed class GoTemplateParser
                 var pipeline = ParsePipeline(rest.Skip(opIdx + 1).ToList(), line);
                 return new KeywordBody(name, pipeline, [], vars, op);
             }
+        }
+
+        // return [pipeline]：Hugo 的返回值语句（可无参 = 提前退出）
+        if (name == "return")
+        {
+            return new KeywordBody(name, ParsePipeline(rest, line), [], [], null);
         }
 
         // if / with / range（无变量）

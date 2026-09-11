@@ -44,7 +44,16 @@ public sealed partial class ScribanTemplateRenderer
         return SharedSiteObjects.GetValue(site, static s => BuildSiteObject(s));
     }
 
-    internal static ScriptObject CreatePageObject(FlintPageContext page)
+    internal static ScriptObject CreatePageObject(
+        FlintPageContext page,
+        IReadOnlyList<FlintPageContext>? siteRegularPages = null)
+    {
+        return SharedPageObjects.GetValue(
+            page, p => new LazyPageObject(p, siteRegularPages));
+    }
+
+    /// <summary>同上但返回具体类型（partialValue 需访问 LazyPageObject.Store）</summary>
+    internal static LazyPageObject CreatePageObjectTyped(FlintPageContext page)
     {
         return SharedPageObjects.GetValue(page, static p => new LazyPageObject(p));
     }
@@ -58,13 +67,25 @@ public sealed partial class ScribanTemplateRenderer
     internal sealed class LazyPageObject : ScriptObject
     {
         private readonly FlintPageContext _page;
+
+        /// <summary>站点常规页集合（Hugo 的 .RegularPages 在任何页面都可用）</summary>
+        private readonly IReadOnlyList<FlintPageContext>? _siteRegularPages;
         private readonly object? _pagesValue;
         private readonly object? _termsValue;
         private readonly object? _paginatorValue;
 
-        public LazyPageObject(FlintPageContext page)
+        /// <summary>页面级 Store（partial 返回值的传递通道，供 partialValue 读取）</summary>
+        private PageStoreObject? _store;
+
+        /// <summary>页面级 Store 实例（partialValue 机制用；构造后非 null）</summary>
+        internal PageStoreObject? Store => _store;
+
+        public LazyPageObject(
+            FlintPageContext page,
+            IReadOnlyList<FlintPageContext>? siteRegularPages = null)
         {
             _page = page;
+            _siteRegularPages = siteRegularPages;
             _pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
             _termsValue = page.Terms is not null
                 ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
@@ -94,7 +115,7 @@ public sealed partial class ScribanTemplateRenderer
             // .Params：Hugo 语义是「front matter 全量并入 + 自定义参数」，
             // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
             // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
-            SetValue("params", BuildParamsView(page), false);
+            SetValue("params", new NilSafeObject(BuildParamsDict(page)), false);
             // .Resources：包装为带方法的集合（Hugo 的 .Resources.ByType/GetMatch/Match
             // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
             SetValue("resources", new PageResourcesObject(page.Resources), false);
@@ -112,12 +133,12 @@ public sealed partial class ScribanTemplateRenderer
             // Ananke 的 terms.html 迭代 page.Data.pages 枚举词条（词条对象含
             // title/rel_permalink/pages），taxonomy.html 用 page.pages 枚举内容页——
             // 缺此对象时 terms.html 报 "Cannot get the member page.Data.pages for a null object"
-            var pageData = BuildPageDataObject(page);
-            if (pageData is not null)
-            {
-                SetValue("data", pageData, false);
-                SetValue("Data", pageData, false);
-            }
+            // Hugo 语义：.Data 在任何页面都存在（普通页为空 map，taxonomy/term 页含
+            // Singular/Plural/Terms/Pages）。此前非分类页不注册，导致主题的
+            // `.Data.Integrity` 等链式访问报 "Cannot get the member ... for a null object"
+            var pageData = BuildPageDataObject(page) ?? new ScriptObject();
+            SetValue("data", pageData, false);
+            SetValue("Data", pageData, false);
 
             // ---- Hugo Page 派生键投影（D 组）----
             // kind 判定谓词（主题高频：{{ if .IsPage }} / {{ if .IsHome }}）
@@ -171,6 +192,12 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("aliases", page.Aliases, false);
             SetValue("Aliases", page.Aliases, false);
 
+            // .OutputFormats：输出格式集合 + Get(NAME) 方法（Hugo 语义；
+            // 主题用 `{{ with .OutputFormats.Get "RSS" }}` 判断/取链接）
+            var outputFormats = BuildOutputFormatsObject(page);
+            SetValue("output_formats", outputFormats, false);
+            SetValue("OutputFormats", outputFormats, false);
+
             // .Plain 的派生：词列表与模糊字数
             var plainWords = page.Plain is null
                 ? new ScriptArray()
@@ -187,8 +214,11 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("len", len, false);
             SetValue("Len", len, false);
 
-            // .Scratch / .Store：页面级可变暂存（Hugo 语义，跨块/跨 partial 状态传递）
+            // .Scratch / .Store：页面级可变暂存（Hugo 语义，跨块/跨 partial 状态传递）。
+            // 同时作为 partial 返回值的传递通道（partialValue 机制）——Store 是
+            // 真实对象容器，跨 include 保真（无需序列化往返）
             var store = new PageStoreObject();
+            _store = store;
             SetValue("store", store, false);
             SetValue("Store", store, false);
             SetValue("scratch", store, false);
@@ -235,6 +265,26 @@ public sealed partial class ScribanTemplateRenderer
                 value = _page.NextPage is not null ? CreatePageObject(_page.NextPage) : null;
                 return true;
             }
+
+            // .RegularPages：Hugo 在任何页面都提供（single 页为站点级常规页集合，
+            // 主题用 `{{ .RegularPages.Related . }}` 做相关推荐——Ananke 实证）
+            if (member is "regular_pages" or "RegularPages")
+            {
+                if (_page.Pages is not null)
+                {
+                    // 节点页：自身子页集合（Hugo 语义优先）
+                    value = GetSharedPageList(_page.Pages);
+                    return true;
+                }
+                if (_siteRegularPages is not null)
+                {
+                    value = GetSharedPageList(_siteRegularPages);
+                    return true;
+                }
+                value = new LazyPageList(Array.Empty<FlintPageContext>());
+                return true;
+            }
+
             return base.TryGetValue(context, span, member, out value);
         }
 
@@ -268,13 +318,108 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
+    /// .OutputFormats 对象：格式列表 + Get(NAME) 方法。
+    /// Hugo 的 `.OutputFormats.Get "RSS"` 返回格式对象（含 RelPermalink），
+    /// 未命中返回 null（主题用 with 包裹）
+    /// </summary>
+    private static ScriptObject BuildOutputFormatsObject(FlintPageContext page)
+    {
+        var formats = page.Outputs.Count > 0 ? page.Outputs : (IReadOnlyList<string>)["html"];
+        var arr = new ScriptArray();
+        foreach (var name in formats)
+        {
+            arr.Add(BuildFormatObject(page, name));
+        }
+
+        var o = new ScriptObject();
+        foreach (var item in arr)
+        {
+            o[(string)((ScriptObject)item!)["name"]!] = item;
+        }
+
+        o["get"] = new OutputFormatsGetFunction(arr);
+        o["Get"] = o["get"];
+        o["count"] = arr.Count;
+        o["Count"] = arr.Count;
+
+        // 使对象可迭代（for fmt in page.output_formats）
+        foreach (var i in Enumerable.Range(0, arr.Count))
+        {
+            o[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = arr[i];
+        }
+
+        return o;
+    }
+
+    private static ScriptObject BuildFormatObject(FlintPageContext page, string name)
+    {
+        var suffix = name.ToLowerInvariant() switch
+        {
+            "rss" => "xml",
+            "json" => "json",
+            _ => "html"
+        };
+        var rel = name.Equals("html", StringComparison.OrdinalIgnoreCase)
+            ? page.RelPermalink
+            : page.RelPermalink.TrimEnd('/') + "/index." + suffix;
+        return new ScriptObject
+        {
+            ["name"] = name, ["Name"] = name,
+            ["media_type"] = name.ToLowerInvariant() switch
+            {
+                "rss" => "application/rss+xml",
+                "json" => "application/json",
+                _ => "text/html"
+            },
+            ["rel_permalink"] = rel, ["RelPermalink"] = rel,
+            ["permalink"] = page.Permalink, ["Permalink"] = page.Permalink,
+            ["rel"] = "alternate", ["Rel"] = "alternate"
+        };
+    }
+
+    /// <summary>OutputFormats.Get(NAME)：按名取格式（未命中返回 null）</summary>
+    private sealed class OutputFormatsGetFunction(ScriptArray formats)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var want = arguments.Count > 0 ? arguments[0]?.ToString() ?? "" : "";
+            foreach (var item in formats)
+            {
+                if (item is ScriptObject o &&
+                    string.Equals(o["name"]?.ToString(), want, StringComparison.OrdinalIgnoreCase))
+                {
+                    return o;
+                }
+            }
+            return null;
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), "name");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "format");
+    }
+
+    /// <summary>
     /// 构造 .Params 视图（Hugo 语义）：front matter 顶层字段并入自定义参数，
     /// 页面自身字段优先于同名自定义参数。键同时提供小写与首字母大写形态
     /// （主题两种写法都常见：<c>.Params.Title</c> / <c>.Params.title</c>）
     /// </summary>
-    private static ScriptObject BuildParamsView(FlintPageContext page)
+    private static Dictionary<string, object> BuildParamsDict(FlintPageContext page)
     {
-        var o = new ScriptObject();
+        var o = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
         // 1) 自定义参数（front matter 的 params 段 + 未被识别的顶层键）
         foreach (var kv in page.Params)
@@ -466,10 +611,18 @@ public sealed partial class ScribanTemplateRenderer
         var lazyTaxonomies = new LazyTaxonomies(site.Taxonomies);
 
         // 依赖跟踪站点对象：site.* 成员访问被记录为 data:site.* 依赖键（T4.1）
+        // site.home：home 页的页面对象（Hugo 语义；主题用 .Site.Home.RelPermalink 等）。
+        // 惰构建 + 共享缓存——无 home 页时返回 null（主题通常配合 ?. 或 with 使用）
+        var homePage = site.Pages.FirstOrDefault(p =>
+            string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase));
+        var lazyHome = homePage is null ? null : (object)CreatePageObject(homePage);
+
         return new DependencyTrackingScriptObject
         {
             ["title"] = site.Title,
             ["base_url"] = site.BaseURL,
+            ["home"] = lazyHome,
+            ["Home"] = lazyHome,
             ["language"] = site.Language,
             ["pages"] = lazyPages,
             ["regular_pages"] = lazyRegularPages,
@@ -478,7 +631,7 @@ public sealed partial class ScribanTemplateRenderer
             ["paginator"] = BuildPaginatorObject(site),
             ["config"] = site.Config,
             ["data"] = site.Data,
-            ["params"] = site.Params,
+            ["params"] = new NilSafeObject(site.Params),
             ["build_date"] = site.BuildDate,
             ["last_change"] = site.LastChange,
             ["is_multilingual"] = site.IsMultiLingual,
@@ -494,7 +647,7 @@ public sealed partial class ScribanTemplateRenderer
             ["Menus"] = CreateMenusObject(site.Menus),
             ["Config"] = site.Config,
             ["Data"] = site.Data,
-            ["Params"] = site.Params,
+            ["Params"] = new NilSafeObject(site.Params),
             ["BuildDate"] = site.BuildDate,
             ["LastChange"] = site.LastChange,
             ["IsMultiLingual"] = site.IsMultiLingual,
@@ -580,7 +733,7 @@ public sealed partial class ScribanTemplateRenderer
 
             lock (_conversionLock)
             {
-                return _convertedPages ??= _pages.Select(CreatePageObject).ToList();
+                return _convertedPages ??= _pages.Select(p => CreatePageObject(p)).ToList();
             }
         }
 
