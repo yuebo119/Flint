@@ -48,8 +48,11 @@ internal sealed class MigrationSummary
 /// </summary>
 internal sealed class ThemeMigrator
 {
+    // .svg 也算模板：主题常把含 `{{ .width }}` 之类占位符的 SVG 放进 _partials 供
+    // partial 调用（Hugo 会渲染它）。不入表则被整体复制、Hugo 语法残留，
+    // 运行时 Scriban 解析报 "Unexpected token ."（blog-awesome 63 处实测）
     private static readonly HashSet<string> TemplateExtensions =
-        new(StringComparer.OrdinalIgnoreCase) { ".html", ".xml", ".json", ".txt", ".gotmpl" };
+        new(StringComparer.OrdinalIgnoreCase) { ".html", ".xml", ".json", ".txt", ".gotmpl", ".svg" };
 
     private readonly MigrationMap _map = MigrationMap.CreateDefault();
 

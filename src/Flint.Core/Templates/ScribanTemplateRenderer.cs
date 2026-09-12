@@ -484,6 +484,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         pageLike["Store"] = hookStore;
         pageLike["scratch"] = hookStore;
         pageLike["Scratch"] = hookStore;
+        // .GetPage / .GetTerms 等页面方法在 hook 上下文无站点索引可用：
+        // 注册**宽松 stub**（返回 null，不抛异常），让主题的 with/if 守卫安全跳过
+        //（Congo 的 _markup/render-link.html 用 `page.get_page`，70 处实测）
+        var hookGetPage = new StubPageMethodFunction();
+        pageLike["get_page"] = hookGetPage;
+        pageLike["GetPage"] = hookGetPage;
+        pageLike["get_terms"] = hookGetPage;
+        pageLike["GetTerms"] = hookGetPage;
         foreach (var kv in vars)
         {
             globals[kv.Key] = kv.Value;
@@ -882,6 +890,31 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     ///
     /// 兜底：Store 中无对应键时回退到标量还原（兼容无 return 的 partial）。
     /// </summary>
+    /// <summary>
+    /// hook 上下文的页面方法占位：返回 null（Hugo 的 render hook 里 .Page 只有
+    /// 最小字段集，主题调用站点级方法时应得到空值并走 with 兜底，而非构建失败）
+    /// </summary>
+    private sealed class StubPageMethodFunction : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement) => null;
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 3;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(object), "arg" + index);
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "value");
+    }
+
     /// <summary>
     /// templates.Exists（Hugo）：模板是否可解析。此前实现是 `!string.IsNullOrEmpty(name)`
     /// ——**恒真**，使主题的 `{{ if templates.Exists "partials/favicons.html" }}` 守卫失效，

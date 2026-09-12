@@ -1135,3 +1135,77 @@ ananke 全站页面输出 2–4 字节（构建"成功"无错误）。二分定�
 - 结构相似度普遍偏低（7.8%–65.3%），主因是页集差异（Hugo 的 `page/1/` 等）与 DOM 结构偏差
 - **瓶颈已明确在引擎运行时**：15 个主题的失败集中在少数几类运行时缺口
   （`page.store.set` 上下文、静默塌陷、短代码解析），而非转换率
+
+---
+
+## 二十、按缺口聚类批量修复（2026-09-11 第五轮）
+
+### 结果：Flint 通过 20 主题中的 16 个（起点 6 个）
+
+| 主题 | Hugo | 页数 | Flint | F页数 | F最大页 |
+|---|---|---|---|---|---|
+| blowfish | ✅ | 3870 | **通过** | 1733 | 94KB |
+| congo | ✅* | 63 | **通过** | 63 | 163KB |
+| blog-awesome | ✅ | 121 | **通过** | 26 | 3KB |
+| even | ✅ | 57 | **通过** | 37 | 70KB |
+| hugo-coder | ✅ | 125 | **通过** | 38 | 18KB |
+| loveit | ✅ | 78 | **通过** | 34 | 17KB |
+| archie / risotto | ✅ | 32/23 | **通过** | 27/26 | 22/10KB |
+| ananke / bearblog / console / github-style / hugo-book / papermod / stack / xmin | ✅ | 8–53 | **通过** | 8–18 | 2–37KB |
+| clarity / doit / fixit / hugo-paper | ✅ | 9–93 | 空页 | 2–20 | <1KB |
+
+### 本轮修复的缺口（9 项，每项都有实测来源）
+
+**引擎 —— 返回值通道脱离 page**（Blowfish 1571 处 `page.store.set for a null object`）
+
+返回值通道原本挂在 <c>page.Store</c> 上，但短代码/hook/被覆盖 page 的 partial 里
+`page` 可能为 null。改为挂在**渲染上下文**（globals 的 `__flint_ret_store`，每页独立）：
+引擎加 `__partial_ret_set` + `ResolveStore`，转换器 `{{ return X }}` 改写改用新函数，
+`partialValue` 优先读渲染期 store 并回退 page.Store（旧产物兼容）。
+
+**引擎 —— reading_time 类型**（Blowfish 1571 处 `TimeSpan to int`）
+
+Hugo 的 `.ReadingTime` 是**分钟数整数**，内部 `TimeSpan` 直接暴露使
+`reading_time != 0` / `add reading_time 1` 全部报类型错 → 投影为 `int`。
+
+**引擎 —— templates.Exists 恒真**（Blowfish 1574 处 FileNotFound）
+
+旧实现 `!string.IsNullOrEmpty(name)` 使 `{{ if templates.Exists "x" }}` 守卫失效 →
+径直调用不存在的 partial。命名空间对象**固定引用**注册时的实现，故改为可注入的
+`TemplateExistsProbe`（渲染器构造后注入 loader 探测）。
+
+**引擎 —— range 集合语义**（Blowfish 1574 处 `Boolean for iterator`）
+
+Hugo 的 `or A B` 皆空返回 nil（`range nil` 不迭代），Scriban 的 `||` 返回 false →
+`for x in false` 抛异常。引擎加 `as_list`（nil/false→空、标量→单元素、集合→原样），
+转换器对 range 的集合表达式统一包装。
+
+**引擎 —— 函数形参宽容**：`add/sub/mul/div` 改 variadic（even 37 处）、
+`slicestr` 第二参可省（even 37 处）、`date.to_string` 格式串可省（doit 21 处）、
+`urls.Parse` 零参宽容（doit 3 处）。
+
+**引擎 —— 补齐页面方法**：`.HasShortcode`（hugo-coder 42 处）、`.RenderString`（archie）、
+`.Param`（fixit）；hook 上下文为站点级方法提供**宽松 stub**（Congo 的
+`_markup/render-link.html` 70 处 `page.get_page`——hook 里得到 null 走 with 兜底，
+而非构建失败）。
+
+**引擎 —— 线程安全**：`FileSystemResourceProvider` 惰性索引加双重检查锁
+（并行渲染首次访问 `resources.get` 时并发写 Dictionary，DoIt 22 处
+"Operations that change non-concurrent collections"）；
+`TemplateResourceFunctions._generated` 的 Track 加锁。
+
+**转换器 —— `.Page` 根前缀重复**：`.Page.Scratch.Get` 被无条件加 page 前缀 →
+`page.page.scratch.get`（LoveIt 22 处、Console 同因）。补 `isPageRoot` 判断
+（与既有 `isSiteRoot` 对称），字段+参数分支与纯字段分支都处理；
+`MapIdentifierPath` 同样剥 `$.Page.` 段。
+
+**转换器 —— `.svg` 未入模板扩展名表**：含 `{{ .width }}` 的 SVG 是模板
+（Hugo 会渲染），不入表则被整体复制、Hugo 语法残留 → 运行时 Scriban 报
+`Unexpected token .`（blog-awesome 63 处）。
+
+### 剩余 4 个空页主题的已定位原因
+
+- **clarity**（29 处 `partial` 未找到）：短代码路径缺 partial 函数
+- **doit**（22 处 Fontawesome errorf）：主题在缺配置时报错（exampleSite 未提供图标参数）
+- **fixit**（2 页/143B）：站点级 layouts 与主题交互待查
+- **hugo-paper**（20 页/628B）：静默空页，待定位
