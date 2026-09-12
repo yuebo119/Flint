@@ -1321,6 +1321,16 @@ public sealed partial class BuiltinTemplateFunctions
             _ => new List<object?> { v }
         });
 
+        // num_gt / num_ge / num_lt / num_le：**宽容数值比较**（Hugo 的比较语义）。
+        // Hugo 的 gt/lt 对字符串数字与数值做类型强制，而 Scriban 的 `>` 运算符与
+        // 严格 gt（IComparable.CompareTo）在类型不一致时抛
+        // "Unable to convert type `object` to int"（Clarity 的 `$value > 0`，
+        // map 值为字符串时实测 29 处）。转换器把比较运算符改产出这些函数
+        obj.Import("num_gt", (object? a, object? b) => CompareNumeric(a, b) > 0);
+        obj.Import("num_ge", (object? a, object? b) => CompareNumeric(a, b) >= 0);
+        obj.Import("num_lt", (object? a, object? b) => CompareNumeric(a, b) < 0);
+        obj.Import("num_le", (object? a, object? b) => CompareNumeric(a, b) <= 0);
+
         // ---- B12 参数点路径查询 ----
         obj.Import("paramLookup", (object? ctx, string path) => ParamLookup(ctx, path));
     }
@@ -1635,6 +1645,38 @@ public sealed partial class BuiltinTemplateFunctions
         return double.TryParse(v.ToString(), System.Globalization.NumberStyles.Float,
             CultureInfo.InvariantCulture, out var d) ? ((int)d).ToString("D10", CultureInfo.InvariantCulture)
             : "0000000000";
+    }
+
+    /// <summary>
+    /// 宽容比较（Hugo 语义）：两侧都能解析为数值时按数值比较，
+    /// 否则按 Ordinal 字符串比较——不抛类型异常
+    /// </summary>
+    private static int CompareNumeric(object? a, object? b)
+    {
+        if (TryNum(a, out var na) && TryNum(b, out var nb))
+        {
+            return na.CompareTo(nb);
+        }
+        return string.CompareOrdinal(a?.ToString() ?? "", b?.ToString() ?? "");
+    }
+
+    private static bool TryNum(object? v, out double num)
+    {
+        switch (v)
+        {
+            case null:
+                num = 0;
+                return true;
+            case bool bo:
+                num = bo ? 1 : 0;
+                return true;
+            case int or long or double or float or decimal or short or byte:
+                num = Convert.ToDouble(v, CultureInfo.InvariantCulture);
+                return true;
+            default:
+                return double.TryParse(v.ToString(), System.Globalization.NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out num);
+        }
     }
 
     /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>

@@ -29,6 +29,12 @@ public sealed class TemplateShortcode : IShortcodeProcessor
     /// <param name="name">短代码名（文件名去除扩展名）</param>
     /// <param name="templateContent">模板内容（Scriban 语法）</param>
     /// <exception cref="FormatException">模板语法错误</exception>
+    /// <summary>
+    /// 上下文补装委托：由渲染器构造时注入（注册内置函数与 partial 等全局）。
+    /// 短代码在内容解析期渲染，此时尚无页面上下文，故只补装与页面无关的全局
+    /// </summary>
+    internal static Action<Scriban.TemplateContext>? EnrichContext { get; set; }
+
     public TemplateShortcode(string name, string templateContent)
     {
         Name = name;
@@ -111,6 +117,12 @@ public sealed class TemplateShortcode : IShortcodeProcessor
 
         var templateContext = new Scriban.TemplateContext();
         templateContext.PushGlobal(globals);
+        // 短代码此前用**全新空上下文**渲染：`partial`/`safe_html`/`as_list` 等
+        // 全局函数全部不可用（Clarity 的 `partial "sprite"` 报 "function partial
+        // was not found"，29 处）。渲染器构造时注入补装委托，使短代码与页面共享
+        // 同一套全局函数；`page`/`site` 在解析期尚无值，但 partial 的上下文参数
+        //（如 `partial "sprite" (dict "icon" "x")`）可正常传递
+        EnrichContext?.Invoke(templateContext);
         cancellationToken.ThrowIfCancellationRequested();
         return await _template.RenderAsync(templateContext);
     }

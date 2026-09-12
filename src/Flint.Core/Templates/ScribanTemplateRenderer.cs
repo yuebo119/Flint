@@ -44,6 +44,26 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+        InstallShortcodeContext();
+    }
+
+    /// <summary>
+    /// 装配短代码渲染上下文：注册内置函数、日期对象与 partial 函数。
+    /// 短代码在内容解析期用独立上下文渲染（无页面上下文），此前连 `partial` 都没有
+    /// （Clarity 的 `partial "sprite"` 29 处 "function not found"）
+    /// </summary>
+    private void InstallShortcodeContext()
+    {
+        Content.Shortcodes.TemplateShortcode.EnrichContext = context =>
+        {
+            EnsureFunctionObjects(context);
+            var pageLike = new ScriptObject { ["store"] = new PageStoreObject() };
+            pageLike["Store"] = pageLike["store"];
+            pageLike["scratch"] = pageLike["store"];
+            pageLike["Scratch"] = pageLike["store"];
+            context.PushGlobal(new ScriptObject { ["page"] = pageLike, ["Page"] = pageLike });
+            context.PushGlobal(BuildPartialGlobals(pageLike));
+        };
     }
 
     /// <summary>
@@ -63,6 +83,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+        InstallShortcodeContext();
     }
 
     /// <summary>
@@ -80,6 +101,26 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = timeProvider;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+        InstallShortcodeContext();
+    }
+
+    /// <summary>
+    /// 构造含 partial 家族的 globals（供短代码等"无页面上下文"的渲染路径使用）。
+    /// 注意 partial 的上下文参数（dict 等）由此正常传递；partial 内访问 page 时
+    /// 得到空对象（解析期无页面），但不会抛异常
+    /// </summary>
+    private ScriptObject BuildPartialGlobals(ScriptObject pageLike)
+    {
+        var g = new ScriptObject();
+        g.TrySetValue(null, default, "partial", new PartialFunction(this, pageLike), readOnly: true);
+        g.TrySetValue(null, default, "partialValue", new PartialValueFunction(this, pageLike), readOnly: true);
+        g.TrySetValue(null, default, "partialcached", new PartialCachedFunction(this), readOnly: true);
+        g.TrySetValue(null, default, "includeCached", new PartialCachedFunction(this), readOnly: true);
+        g.TrySetValue(null, default, "template_exists",
+            new TemplateExistsFunction((FileTemplateLoader)_templateLoader), readOnly: true);
+        g[RetStoreKey] = new PageStoreObject();
+        g.TrySetValue(null, default, "__partial_ret_set", new PartialRetSetFunction(), readOnly: true);
+        return g;
     }
 
     /// <summary>templates.Exists 的探测实现：用与 include 相同的解析规则查文件</summary>
@@ -680,10 +721,22 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // DateTimeOffset → "Unable to convert type `DateTimeOffset` to `DateTime`"
             //（Ananke site-footer.html 经 partialcached 渲染时实测 14 处）
             EnsureFunctionObjects(isolatedContext);
-            if (scribanContext.CurrentGlobal is { } callerGlobals)
+            ScriptObject? callerGlobals = null;
+            if (scribanContext.CurrentGlobal is { } cg && cg is ScriptObject cgObj)
             {
-                isolatedContext.PushGlobal(callerGlobals);
+                callerGlobals = cgObj;
+                isolatedContext.PushGlobal(cgObj);
             }
+
+            // partial 家族必须在隔离上下文里显式注册：CurrentGlobal 只是**最顶层**
+            // 的 global 对象，而 partial/partialValue 挂在被它覆盖的下层 → 隔离上下文
+            // 里没有 partial（Clarity 的 `partialcached "top"` 内再调
+            // `partial "sprite"` 报 "The function `partial` was not found"，29 处）
+            var cachedPage = callerGlobals is not null &&
+                callerGlobals.ContainsKey("page") && callerGlobals["page"] is ScriptObject pg
+                ? pg
+                : new ScriptObject { ["store"] = new PageStoreObject() };
+            isolatedContext.PushGlobal(BuildPartialGlobals(cachedPage));
 
             // variants 置于栈顶（覆盖同名全局），对齐 Hugo 点参数语义
             var partialGlobals = new ScriptObject();
