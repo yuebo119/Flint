@@ -761,7 +761,15 @@ public sealed partial class SiteBuilder
                 : null,
             Params = effectiveParams,
             Plain = content.PlainText,
-            RawContent = content.RawMarkdown
+            RawContent = content.RawMarkdown,
+            // 目录 HTML（Hugo .TableOfContents 语义）+ 标题列表（.Fragments 数据源）：
+            // 层级区间取 markup.tableOfContents 配置（默认 2..3），主题按字符串消费
+            TableOfContents = Content.TocRenderer.Render(
+                content.Headings,
+                config.Markup.TableOfContents.StartLevel,
+                config.Markup.TableOfContents.EndLevel,
+                config.Markup.TableOfContents.Ordered),
+            Headings = content.Headings
         };
     }
 

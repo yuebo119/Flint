@@ -61,7 +61,8 @@ internal static class ServeHandler
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染
             var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), templateRenderer, themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
-            var contentParser = new ContentParser(new FrontMatterParser(), markdownParser, new ShortcodeProcessor());
+            var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,
+                new ShortcodeProcessor { EnableInlineShortcodes = config.EnableInlineShortcodes });
             ContentParserDateSetup.Apply(contentParser, config,
                 Path.Combine(sourcePath, config.ContentDir));
             // CA2000 抑制：管线所有权转移至长驻 SiteBuilder，生命周期与 serve

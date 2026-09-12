@@ -48,5 +48,11 @@ public sealed class ParsedContent
     /// 内容摘要（自动生成或从 Front Matter 获取）
     /// </summary>
     public required string Summary { get; init; }
+
+    /// <summary>
+    /// 文档标题列表（按出现顺序）：目录 HTML 与模板 <c>.Fragments</c> 的数据源。
+    /// 复用 Markdown 解析的既有产出（<c>MarkdownAnalysis.Headings</c>），不二次解析
+    /// </summary>
+    public IReadOnlyList<Abstractions.MarkdownHeading> Headings { get; init; } = [];
 }
 

@@ -36,7 +36,11 @@ public sealed class NamespaceLayerTests
     [InlineData("strings", "HasPrefix", "xyz", "xy", "true")]
     [InlineData("compare", "Default", "d", "", "d")]
     [InlineData("compare", "Eq", "a", "a", "true")]
-    [InlineData("math", "Add", "1", "2", "3")]
+    // Hugo 的 add/math.Add 是**多态**的（v0.166 实测）：操作数皆为字符串时拼接
+    // （`add "1" "2"` → "12"、`add "a" "b"` → "ab"），皆为数值时求和
+    // （`add 1 2 3` → 6），混用则报 "can't apply the operator to the values"。
+    // Flint 对混用取宽容（按数值求和），字符串形态与 Hugo 一致
+    [InlineData("math", "Add", "1", "2", "12")]
     [InlineData("math", "ModBool", "4", "2", "true")]
     [InlineData("path", "Base", "a/b/c.txt", "c.txt")]
     [InlineData("inflect", "Humanize", "my_title", "My Title")]
@@ -532,5 +536,64 @@ public sealed class ThemeConvergenceRegressionTests
             try { Directory.Delete(dir, true); }
             catch (IOException) { }
         }
+    }
+
+    // ---- add 的多态语义（字符串拼接 / 数值求和）----
+    // Hugo v0.166 实测：add 与 math.Add 同一实现——操作数皆为字符串时拼接
+    // （`add "1" "2"` → "12"、`add "a" "b"` → "ab"），皆为数值时求和
+    // （`add 1 2 3` → 6），混用报 "can't apply the operator to the values"。
+    // 主题靠字符串形态拼 URL/类名：clarity `add $relpath .`（$relpath 默认 ""）、
+    // fixit `add $icon " me-1"`——早期一律 ToNum 求和把 "" + "x" 算成 0
+
+    [Fact]
+    public void add全字符串做拼接()
+    {
+        Assert.Equal("/img/x.png", Eval("{{ add \"\" \"/img/x.png\" }}"));
+        Assert.Equal("fa-solid fa-tag me-1", Eval("{{ add \"fa-solid fa-tag\" \" me-1\" }}"));
+        Assert.Equal("12", Eval("{{ add \"1\" \"2\" }}"));
+        Assert.Equal("", Eval("{{ add \"\" \"\" }}"));
+    }
+
+    [Fact]
+    public void add全数值做求和()
+    {
+        Assert.Equal("3", Eval("{{ add 1 2 }}"));
+        Assert.Equal("6", Eval("{{ add 1 2 3 }}"));
+        Assert.Equal("0", Eval("{{ add }}"));
+    }
+
+    // ---- errorf 不中断渲染 ----
+    // Hugo 实测：`HOME {{ errorf "boom: %s" "detail" }} END` 产出 "HOME  END"
+    // 并以 exit=1 收尾（构建结束按错误计数判失败）。Flint 早期直接抛异常
+    // 中止整页渲染——主题里一处 errorf 就让整站塌成空页（fixit 的 icon.html
+    // 4 处 errorf → 仅剩 2 页 / 232B）
+
+    [Fact]
+    public void errorf记录后继续渲染()
+    {
+        var reported = new List<string>();
+        var globals = new Scriban.Runtime.ScriptObject();
+        var fns = new BuiltinTemplateFunctions("https://e.com") { ErrorReporter = reported.Add };
+        fns.RegisterFunctions(globals);
+        var ctx = new Scriban.TemplateContext { MemberRenamer = m => m.Name, StrictVariables = false };
+        ctx.PushGlobal(globals);
+        var output = Scriban.Template.Parse("HOME {{ errorf \"boom: %s\" \"detail\" }} END").Render(ctx);
+        Assert.Equal("HOME  END", output);
+        Assert.Equal(["boom: detail"], reported);
+    }
+
+    [Fact]
+    public void errorf按Go动词格式化()
+    {
+        // 早期 FormatMessage 只走 .NET string.Format：Go 的 %s/%v 不是占位符 →
+        // FormatException → 原样返回格式串（fixit 日志里出现字面 "Icon src is missing: %s"）
+        var reported = new List<string>();
+        var globals = new Scriban.Runtime.ScriptObject();
+        var fns = new BuiltinTemplateFunctions("https://e.com") { ErrorReporter = reported.Add };
+        fns.RegisterFunctions(globals);
+        var ctx = new Scriban.TemplateContext { MemberRenamer = m => m.Name, StrictVariables = false };
+        ctx.PushGlobal(globals);
+        Scriban.Template.Parse("{{ errorf \"Icon does not exist %v\" \"a.svg\" }}").Render(ctx);
+        Assert.Equal(["Icon does not exist a.svg"], reported);
     }
 }

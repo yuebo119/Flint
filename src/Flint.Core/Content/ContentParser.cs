@@ -122,7 +122,8 @@ public sealed class ContentParser : IContentParser
             ReadingTime = readingTime,
             WordCount = wordCount,
             PlainText = plainText,
-            Summary = summary
+            Summary = summary,
+            Headings = analysis.Headings
         };
     }
 

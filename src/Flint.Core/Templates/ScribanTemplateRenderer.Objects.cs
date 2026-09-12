@@ -298,6 +298,11 @@ public sealed partial class ScribanTemplateRenderer
             var pageParam = new PageParamFunction(_page);
             SetValue("param", pageParam, false);
             SetValue("Param", pageParam, false);
+
+            var fragments = new PageFragmentsObject(page.Headings);
+            fragments.Populate();
+            SetValue("fragments", fragments, false);
+            SetValue("Fragments", fragments, false);
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
             SetValue("Content", page.Content, false);
@@ -543,6 +548,82 @@ public sealed partial class ScribanTemplateRenderer
         public Type ReturnType => typeof(string);
         public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
             new(index == 0 ? typeof(string) : typeof(object), index == 0 ? "text" : "options");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(string), "html");
+    }
+
+    /// <summary>
+    /// .Fragments（Hugo v0.111+ 页面方法族）：文档标题的目录视图。
+    /// 暴露 <c>ToHTML start end ordered</c> / <c>Identifiers</c> / <c>Headings</c>。
+    /// FixIt 用 <c>.Fragments.ToHTML $start $end $ordered</c> 生成文章目录
+    /// （实测 "The function `page?.fragments?.to_h_t_m_l` was not found" 使整页渲染失败）。
+    /// 成员**即时注册**而非懒查找 override：ScriptObject 的成员查找有多条路径，
+    /// 只 override TryGetValue 会让函数调用路径查不到成员而报 function not found
+    /// </summary>
+    internal sealed class PageFragmentsObject(IReadOnlyList<MarkdownHeading> headings)
+        : ScriptObject
+    {
+        public IReadOnlyList<MarkdownHeading> HeadingsSource { get; } = headings;
+
+        /// <summary>注册全部成员（构造后由调用方显式调用，避免构造期虚调用）</summary>
+        public void Populate()
+        {
+            var toHtml = new FragmentsToHtmlFunction(HeadingsSource);
+            SetValue("to_html", toHtml, false);
+            SetValue("toHTML", toHtml, false);
+            SetValue("ToHTML", toHtml, false);
+            // 转换器的 snake 归一化把 ToHTML 写成 to_h_t_m_l（每个大写都当词边界，
+            // 见 fixit 的 `page?.fragments?.to_h_t_m_l`）——缺失时整页报 function not found
+            SetValue("to_h_t_m_l", toHtml, false);
+
+            var ids = new ScriptArray(HeadingsSource.Select(h => (object)h.Id));
+            SetValue("identifiers", ids, false);
+            SetValue("Identifiers", ids, false);
+
+            var items = new ScriptArray(HeadingsSource.Select(h => (object)new ScriptObject
+            {
+                ["id"] = h.Id,
+                ["Id"] = h.Id,
+                ["level"] = h.Level,
+                ["Level"] = h.Level,
+                ["title"] = h.Text,
+                ["Title"] = h.Text
+            }));
+            SetValue("headings", items, false);
+            SetValue("Headings", items, false);
+        }
+    }
+
+    /// <summary>
+    /// .Fragments.ToHTML start end ordered：按层级区间渲染目录 HTML
+    /// （Hugo 实测：区间外标题被裁掉、缺失层级补空 li 包裹；见 TocRenderer）
+    /// </summary>
+    internal sealed class FragmentsToHtmlFunction(IReadOnlyList<MarkdownHeading> headings)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var start = arguments.Count > 0 ? BuiltinTemplateFunctions.ToInt(arguments[0]) : 2;
+            var end = arguments.Count > 1 ? BuiltinTemplateFunctions.ToInt(arguments[1]) : 3;
+            var ordered = arguments.Count > 2 && BuiltinTemplateFunctions.IsTruthy(arguments[2]);
+            return Flint.Core.Content.TocRenderer.Render(headings, start, end, ordered);
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 3;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(string);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            index == 2
+                ? new Scriban.Runtime.ScriptParameterInfo(typeof(bool), "ordered")
+                : new Scriban.Runtime.ScriptParameterInfo(typeof(int), index == 0 ? "start" : "end");
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new(typeof(string), "html");
     }

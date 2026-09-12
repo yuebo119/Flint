@@ -338,8 +338,18 @@ public sealed partial class BuiltinTemplateFunctions
 
         // ---- fmt 补充 ----
         Add("println", (params object[] args) => string.Join(" ", args.Select(a => a?.ToString() ?? "")) + "\n");
-        Add("error_idf", (string? id, string? message) => $"[{id}] {message}");
-        Add("warn_idf", (string? id, string? message) => $"[{id}] {message}");
+        // erroridf / warnidf：Hugo v0.146+ 的**简洁顶层别名**（主题直接写
+        // `warnidf "id" "msg"`，FixIt 的 _partials/init/detection-encryption.html
+        // 实测 7 处报 "The function `warnidf` was not found"）。
+        // erroridf 与 errorf 同语义：记录后继续渲染（不中止整页）
+        // 与 warnf/errorf 同形参：Hugo 的 warnidf/erroridf 是
+        // `warnidf ID FORMAT ARGS...`（格式串 + 可变参数），
+        // 两参严格形参在 3+ 实参时抛 "Argument index must be < 2"
+        //（FixIt 的 _partials/init/detection-encryption.html 实测 7 处）
+        Add("error_idf", (string? id, string? format, params object?[] args) => ErrorIdf(id, format, args));
+        Add("erroridf", (string? id, string? format, params object?[] args) => ErrorIdf(id, format, args));
+        Add("warn_idf", (string? id, string? format, params object?[] args) => WarnIdf(id, format, args));
+        Add("warnidf", (string? id, string? format, params object?[] args) => WarnIdf(id, format, args));
 
         // ---- path 补充 ----
         Add("path_split", (string? p) =>
@@ -412,7 +422,21 @@ public sealed partial class BuiltinTemplateFunctions
         // ---- reflect ----
         // 页面/站点判定用键特征（渲染器里页面对象是 ScriptObject 派生，
         // 无公开标记接口；键组合是稳定特征：页面有 rel_permalink，站点有 base_url）
-        Add("reflect_is_map", (object? v) => v is ScriptObject or IDictionary<string, object>);
+        // Hugo 的 reflect.IsMap 对 Page/Site 返回 **false**（它们不是映射），
+        // 只有 dict / Params / maps.Params 之类的映射才为 true。Flint 的页面
+        // 对象同样是 ScriptObject，按类型判定会把页面认成映射——主题里
+        // "递归转换 map 键"的辅助函数（FixIt 的 camel-case-keys.html）遍历
+        // 页面成员时经 site→pages→page 的对象环无限递归，最终打到 Scriban 的
+        // 函数递归上限："Exceeding number of recursive depth limit `100`"
+        Add("reflect_is_map", (object? v) => v switch
+        {
+            null => false,
+            ScriptObject page when page.ContainsKey("rel_permalink") && page.ContainsKey("title") => false,
+            ScriptObject site when site.ContainsKey("base_url") && !site.ContainsKey("rel_permalink") => false,
+            ScriptObject => true,
+            IDictionary<string, object> => true,
+            _ => false
+        });
         Add("reflect_is_slice", (object? v) => v is System.Collections.IEnumerable and not string);
         Add("reflect_is_page", (object? v) =>
             v is ScriptObject o && o.ContainsKey("rel_permalink") && o.ContainsKey("title"));
@@ -501,6 +525,30 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>
+    /// <summary>
+    /// erroridf / error_idf（Hugo v0.146+ 带 ID 的错误日志）：与 errorf 同语义——
+    /// 记录错误后**继续渲染**，构建收尾按错误计数判失败。
+    /// FixIt 的 _partials/init/detection-encryption.html 用 warnidf 报缺少
+    /// 加密参数（7 处），早期注册表只有 warn_idf 而无简洁别名 → function not found
+    /// </summary>
+    /// <summary>warnidf/erroridf 的 ID 前缀包装（Hugo 日志形态：`[ID] 消息`）</summary>
+    private static string Prefixed(string? id, string? format, object?[] args) =>
+        args.Length > 0
+            ? "[" + id + "] " + FormatMessage(format, args)
+            : "[" + id + "] " + (format ?? "");
+
+    private static string WarnIdf(string? id, string? format, object?[] args)
+    {
+        Console.Error.WriteLine(Prefixed(id, format, args));
+        return "";
+    }
+
+    private string ErrorIdf(string? id, string? format, object?[] args)
+    {
+        ReportTemplateError(Prefixed(id, format, args));
+        return "";
+    }
+
     /// 高亮输出骨架（Hugo chroma 默认 class 形态的近似）：
     /// <c>&lt;div class="highlight"&gt;&lt;pre tabindex="0" class="chroma"&gt;&lt;code …&gt;</c>。
     /// code 内容按 HTML 转义（Hugo 语义：代码文本不当作 HTML）

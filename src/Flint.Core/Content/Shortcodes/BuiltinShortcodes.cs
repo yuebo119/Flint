@@ -474,6 +474,23 @@ public sealed class YoutubeShortcode : ShortcodeProcessorBase
 }
 
 /// <summary>
+/// 短代码别名：把同一实现注册到第二个名字（Hugo 的内置短代码有官方别名，
+/// 如 <c>twitter</c> 与 <c>x</c>）。行为完全委托给目标实现
+/// </summary>
+internal sealed class ShortcodeAlias(string alias, IShortcodeProcessor target) : IShortcodeProcessor
+{
+    /// <inheritdoc />
+    public string Name { get; } = alias;
+
+    /// <inheritdoc />
+    public string Description => $"内置短代码别名（同 {target.Name}）";
+
+    /// <inheritdoc />
+    public ValueTask<string> ProcessAsync(ShortcodeContext context, CancellationToken cancellationToken = default) =>
+        target.ProcessAsync(context, cancellationToken);
+}
+
+/// <summary>
 /// tweet 短代码 - Twitter 推文嵌入
 /// 用法: {{&lt; tweet user="username" id="tweet_id" &gt;}}
 /// </summary>

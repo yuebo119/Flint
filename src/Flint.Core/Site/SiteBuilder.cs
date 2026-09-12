@@ -199,6 +199,23 @@ public sealed partial class SiteBuilder : ISiteBuilder
                 pageContexts, siteContext, config, options, cancellationToken);
             Phase("12.sitemap/feed");
 
+            // 12.5 汇聚模板 errorf 记录的错误：Hugo 的 errorf 不中断渲染
+            //（页面照常产出），但构建结束按错误计数判失败——Flint 早期抛异常
+            // 中止整页渲染，主题里一处 errorf 就把整站打成空页
+            foreach (var message in _templateRenderer.DrainTemplateErrors())
+            {
+                errors.Add(new BuildError
+                {
+                    ErrorCode = "TEMPLATE001",
+                    Message = message,
+                    FilePath = options.SourcePath,
+                    Line = 0,
+                    Column = 0,
+                    Severity = ErrorSeverity.Error
+                });
+            }
+            Phase("12.5模板错误汇聚");
+
             stopwatch.Stop();
 
             if (tracePhases)

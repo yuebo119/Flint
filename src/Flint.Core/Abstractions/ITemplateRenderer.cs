@@ -80,6 +80,14 @@ public interface ITemplateRenderer
     /// 非资源类渲染器实现可返回空列表
     /// </summary>
     IReadOnlyList<Templates.TemplateResource> GeneratedResources => [];
+
+    /// <summary>
+    /// 取走渲染期由模板 <c>errorf</c> 记录的错误（取走后清空）。
+    /// 对齐 Hugo 语义：<c>errorf</c> 只记录错误并继续渲染（页面照常产出），
+    /// 构建收尾按错误计数判定失败——见 <see cref="BuiltinTemplateFunctions"/> 的 errorf。
+    /// 不汇聚模板错误的实现可返回空列表
+    /// </summary>
+    IReadOnlyList<string> DrainTemplateErrors() => [];
 }
 
 /// <summary>
@@ -495,9 +503,17 @@ public sealed class PageContext
     public IReadOnlyList<object> Resources { get; init; } = [];
 
     /// <summary>
-    /// 目录（标题列表）
+    /// 目录 HTML（对齐 Hugo <c>.TableOfContents</c>：<c>&lt;nav id="TableOfContents"&gt;</c>
+    /// + 层级嵌套的 <c>&lt;ul&gt;</c>；层级区间由 <c>markup.tableOfContents</c> 配置决定，
+    /// 无标题时为空串）。注意是**字符串**不是列表——主题用 <c>replace</c>/<c>in</c>
+    /// 做字符串判定（Blowfish/Congo 实测）
     /// </summary>
-    public IReadOnlyList<object> TableOfContents { get; init; } = [];
+    public string TableOfContents { get; init; } = "";
+
+    /// <summary>
+    /// 文档标题列表（模板 <c>.Fragments</c> 的数据源：Identifiers / Headings / ToHTML）
+    /// </summary>
+    public IReadOnlyList<MarkdownHeading> Headings { get; init; } = [];
 
     /// <summary>
     /// 纯文本内容
@@ -579,6 +595,7 @@ public sealed class PageContext
             Params = Params,
             Resources = Resources,
             TableOfContents = TableOfContents,
+            Headings = Headings,
             Plain = Plain,
             RawContent = RawContent,
             Paginator = paginator,

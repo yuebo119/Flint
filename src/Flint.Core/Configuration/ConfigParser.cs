@@ -228,6 +228,8 @@ public static partial class ConfigParser
             Paginate = GetDictInt(dict, "paginate") ?? 10,
             PaginatePath = GetDictString(dict, "paginatePath") ?? GetDictString(dict, "paginatepath") ?? "page",
             EnableGitInfo = GetDictBool(dict, "enableGitInfo") ?? GetDictBool(dict, "enablegitinfo") ?? false,
+            EnableInlineShortcodes = GetDictBool(dict, "enableInlineShortcodes")
+                ?? GetDictBool(dict, "enableinlineshortcodes") ?? false,
             TimeZone = GetDictString(dict, "timeZone") ?? GetDictString(dict, "timezone") ?? "",
             SummaryLength = GetDictInt(dict, "summaryLength") ?? GetDictInt(dict, "summarylength") ?? 70,
             Copyright = GetDictString(dict, "copyright"),
