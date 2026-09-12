@@ -51,6 +51,12 @@ public sealed partial class BuiltinTemplateFunctions
     private readonly TemplateEnvironmentInfo _environment;
 
     /// <summary>
+    /// 模板存在性探测（templates.Exists 用）：由渲染器注入（需 loader 才能判断）。
+    /// 未注入时退回"名字非空即存在"的宽松语义
+    /// </summary>
+    internal Func<string, bool>? TemplateExistsProbe { get; set; }
+
+    /// <summary>
     /// 注册所有内置函数到 ScriptObject
     /// </summary>
     public void RegisterFunctions(ScriptObject scriptObject)
@@ -1300,6 +1306,20 @@ public sealed partial class BuiltinTemplateFunctions
         // has_menu_current 额外向下递归子项（Hugo 语义：菜单项是高亮页的祖先时亦为真）
         obj.Import("is_menu_current", (object? menu, object? entry) => MenuEntryActive(entry, false));
         obj.Import("has_menu_current", (object? menu, object? entry) => MenuEntryActive(entry, true));
+
+        // as_list - range 语义的集合归一（Hugo 的 range 对 nil/false 不迭代、
+        // 对标量迭代一次、对集合逐项迭代）。Scriban 的 `for x in false` 会抛
+        // "Unexpected type `System.Boolean` for iterator"——转换器对 range 的集合
+        // 表达式统一包本函数（Blowfish 的 `range (or .social .links)` 两值为空时实测）
+        obj.Import("as_list", (object? v) => v switch
+        {
+            null => new List<object?>(),
+            bool b => b ? new List<object?> { true } : new List<object?>(),
+            string str => new List<object?> { str },
+            System.Collections.IDictionary => new List<object?> { v },
+            System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
+            _ => new List<object?> { v }
+        });
 
         // ---- B12 参数点路径查询 ----
         obj.Import("paramLookup", (object? ctx, string path) => ParamLookup(ctx, path));

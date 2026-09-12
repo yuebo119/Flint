@@ -120,7 +120,7 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("tags", page.Tags, false);
             SetValue("categories", page.Categories, false);
             SetValue("word_count", page.WordCount, false);
-            SetValue("reading_time", page.ReadingTime, false);
+            SetValue("reading_time", ReadingMinutes(page.ReadingTime), false);
             SetValue("description", page.Description, false);
             SetValue("summary", page.Summary, false);
             SetValue("type", page.Type, false);
@@ -308,7 +308,7 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("Tags", page.Tags, false);
             SetValue("Categories", page.Categories, false);
             SetValue("WordCount", page.WordCount, false);
-            SetValue("ReadingTime", page.ReadingTime, false);
+            SetValue("ReadingTime", ReadingMinutes(page.ReadingTime), false);
             SetValue("Description", page.Description, false);
             SetValue("Summary", page.Summary, false);
             SetValue("Type", page.Type, false);
@@ -368,6 +368,15 @@ public sealed partial class ScribanTemplateRenderer
         /// </summary>
         internal FlintPageContext PageContext => _page;
     }
+
+    /// <summary>
+    /// 阅读时间投影：Hugo 的 <c>.ReadingTime</c> 是**分钟数整数**（向上取整），
+    /// 而内部类型是 <see cref="TimeSpan"/>——主题会做算术与比较
+    /// （`reading_time != 0`、`add reading_time 1`），直接暴露 TimeSpan 会报
+    /// "Unable to convert type `TimeSpan` to int"（Blowfish 实测 1571 处）
+    /// </summary>
+    private static int ReadingMinutes(TimeSpan readingTime) =>
+        (int)Math.Ceiling(readingTime.TotalMinutes);
 
     /// <summary>
     /// 绝对 URL（或已是相对路径）→ 相对路径（对齐 Hugo <c>.RelPermalink</c>）。

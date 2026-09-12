@@ -23,7 +23,8 @@ public sealed partial class BuiltinTemplateFunctions
     /// 注册命名空间层引用的补充函数。仅注册尚不存在的名字
     /// （已由其他 Register* 提供的跳过，避免覆盖既有实现）。
     /// </summary>
-    internal static void RegisterMissingFunctions(ScriptObject obj)
+    // 实例方法（非 static）：template_exists 需读实例上的 TemplateExistsProbe
+    internal void RegisterMissingFunctions(ScriptObject obj)
     {
         void Add(string name, Delegate fn)
         {
@@ -477,7 +478,12 @@ public sealed partial class BuiltinTemplateFunctions
         Add("lang_merge", (object? a, object? b) => MergeScriptObjects(a, b));
 
         // ---- templates ----
-        Add("template_exists", (string? name) => !string.IsNullOrEmpty(name));
+        // templates.Exists：真实模板存在性。命名空间对象在注册时**固定引用**本委托，
+        // 故用可注入 probe 而非每次重注册——渲染器构造后注入 loader 探测
+        // （之前恒真实现使 `{{ if templates.Exists "x" }}` 守卫失效，
+        //  Blowfish 的 favicons 守卫径直调用不存在的 partial，1574 处 FileNotFound）
+        Add("template_exists", (string? name) =>
+            !string.IsNullOrEmpty(name) && (TemplateExistsProbe?.Invoke(name) ?? true));
         Add("template_current", () => new ScriptObject());
         Add("template_inner", (object? v) => v);
         Add("template_defer", (object? v) => v);

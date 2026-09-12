@@ -625,7 +625,7 @@ internal sealed class ScribanConverter(
             {
                 var key = RetKeyPrefix + SelfPartialName;
                 return new ConversionResult(
-                    $"page.store.set \"{key}\" {r.Text} }}}}}}{{{{ ret",
+                    $"__partial_ret_set \"{key}\" {r.Text} }}}}}}{{{{ ret",
                     ConversionKind.Equivalent);
             }
 
@@ -826,6 +826,9 @@ internal sealed class ScribanConverter(
             // Hugo 的页面方法（供"字段+参数"分支产出合法的 `page.get_page "x"`）
             "GetPage" => "get_page",
             "GetTerms" => "get_terms",
+            // Blowfish 等主题用 `$.Page.HasShortcode "x"` / `.Page.Param` 形态
+            "HasShortcode" => "has_shortcode",
+            "Param" => "param",
             "Paginate" => "paginate",
             "RenderString" => "render_string",
             "RenderShortcodes" => "render_shortcodes",
@@ -999,6 +1002,13 @@ internal sealed class ScribanConverter(
             {
                 var siteRest = JoinPathSegments(segs.Skip(2), nilSafe: true);
                 return siteRest.Length == 0 ? "site" : "site" + siteRest;
+            }
+            // `$.Page.X`：Page 段即"当前页"，剥掉后补 page 根
+            //（否则产出 `page?.Page?.X`；Blowfish 的 `$.Page.HasShortcode` 1574 处实测）
+            if (segs.Length >= 2 && (segs[1] == "Page" || segs[1] == "page"))
+            {
+                var afterPage = JoinPathSegments(segs.Skip(2), nilSafe: true);
+                return afterPage.Length == 0 ? "page" : "page" + afterPage;
             }
             var pageRest = JoinPathSegments(segs.Skip(1), nilSafe: true);
             return pageRest.Length == 0 ? "page" : "page" + pageRest;
