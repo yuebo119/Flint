@@ -32,6 +32,13 @@ internal sealed class ScribanConverter(
     /// <summary>转换诊断（降级/不支持项）</summary>
     public List<string> Diagnostics { get; } = [];
 
+    /// <summary>裸函数调用的实参：多 token 表达式需括号（避免被当作连续实参）</summary>
+    private static string ParenthesizeIfNeeded(string text)
+    {
+        var t = text.Trim();
+        return NeedsParens(t) ? "(" + t + ")" : t;
+    }
+
     /// <summary>
     /// 表达式文本是否需要括号包裹才能作为函数实参：含空白（多 token）且未自带
     /// 括号/方括号/花括号包裹时需要
@@ -428,6 +435,13 @@ internal sealed class ScribanConverter(
             {
                 "eq" => "==", "ne" => "!=", "gt" => ">", "ge" => ">=", "lt" => "<", _ => "<="
             };
+            // `>`/`>=`/`<`/`<=` 改产出**宽容比较函数**：Scriban 的运算符在两侧类型
+            // 不一致时抛 "Unable to convert type object to int"（map 值为字符串时，
+            // Clarity 实测 29 处）；Hugo 的比较会做类型强制
+            var cmpFn = name switch
+            {
+                "gt" => "num_gt", "ge" => "num_ge", "lt" => "num_lt", "le" => "num_le", _ => null
+            };
             // Go 的 eq/lt 等支持多参（eq a b c → a==b || a==c），Hugo 模板常用两参
             if ((name is "eq" or "ne") && args.Count > 2)
             {
@@ -456,7 +470,12 @@ internal sealed class ScribanConverter(
             {
                 return left.Kind == ConversionKind.Unsupported ? left : right;
             }
-            return new ConversionResult($"({left.Text} {op} {right.Text})", ConversionKind.Equivalent);
+            return cmpFn is null
+                ? new ConversionResult($"({left.Text} {op} {right.Text})", ConversionKind.Equivalent)
+                : new ConversionResult(
+                    $"{cmpFn} {ParenthesizeIfNeeded(left.Text)} {ParenthesizeIfNeeded(right.Text)}"
+                        .Trim(),
+                    ConversionKind.Equivalent);
         }
 
         if (name is "and" or "or")

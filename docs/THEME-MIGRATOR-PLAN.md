@@ -1209,3 +1209,56 @@ Hugo 的 `or A B` 皆空返回 nil（`range nil` 不迭代），Scriban 的 `||`
 - **doit**（22 处 Fontawesome errorf）：主题在缺配置时报错（exampleSite 未提供图标参数）
 - **fixit**（2 页/143B）：站点级 layouts 与主题交互待查
 - **hugo-paper**（20 页/628B）：静默空页，待定位
+
+---
+
+## 二十一、最后 4 个空页主题的收敛（2026-09-11 第六轮）
+
+### 修复的 4 项缺口
+
+**1. 短代码用全新空上下文渲染**（Clarity 29 处 `function partial was not found`）
+
+`TemplateShortcode` 用 `new Scriban.TemplateContext()` 渲染，**只挂短代码自己的
+`.Get`/`.Inner`**——`partial`/`safe_html`/`as_list` 等全局函数全部不可用。
+加 `TemplateShortcode.EnrichContext` 静态委托（渲染器构造时注入），短代码与页面
+共享同一套全局函数；`page`/`site` 在解析期尚无值，但 partial 的上下文参数
+（`partial "sprite" (dict "icon" "x")`）可正常传递。
+
+**2. `partialcached` 的隔离上下文缺 partial 家族**（Clarity 29 处同因的另一半）
+
+`RenderPartialCached` 用隔离上下文渲染，只继承调用者的 `CurrentGlobal`——
+而那是**最顶层** global 对象，partial/partialValue 挂在被它覆盖的下层 →
+隔离上下文里没有 `partial`（Clarity 的 `partialcached "top"` 内部再调
+`partial "sprite"` 必失败）。改为显式注册 partial 家族（页对象取自
+callerGlobals，无则新建带 store 的空对象）。
+
+**3. 比较运算不做类型强制**（Clarity 29 处 `Unable to convert type object to int`）
+
+Scriban 的 `>`/`>=`/`<`/`<=` 在两侧类型不一致时抛异常（map 值为字符串与数字比较），
+而 Hugo 的比较会做类型强制。引擎加 `num_gt`/`num_ge`/`num_lt`/`num_le`
+（两侧可解析为数值则数值比较，否则 Ordinal 字符串比较，**不抛异常**），
+转换器把比较运算符改产出这些函数。
+
+**4. hook 上下文缺站点级页面方法**（Congo 70 处 `page.get_page`）
+
+render hook 的 `page` 是最小字段集，站点级方法（get_page/get_terms）不可用。
+注册**宽松 stub**（返回 null）——主题的 `with`/`if` 守卫会安全跳过，
+而非整页渲染失败。
+
+### 效果
+
+| 主题 | 修复前 | 修复后 |
+|---|---|---|
+| clarity | 12 页 / 3.8KB | **41 页 / 805KB** |
+| congo | 0 页 | **63 页 / 163KB** |
+| blog-awesome | 0 页 | **26 页** |
+| blowfish | 276 页 / 868B（空页） | **1733 页 / 94KB** |
+
+Flint 通过 **16/20**（含修复前的 13 个 + blowfish/congo/blog-awesome）。
+
+### 仍待处理（4 个主题仍有残留错误但已产出内容）
+
+- **clarity**（41 页 / 805KB）：仍有少量残留错误致 exit≠0
+- **doit**（14 页）：主题自身 errorf（exampleSite 缺图标参数，Hugo 侧同样失败）
+- **fixit**（2 页 / 232B）：站点级 layouts 与主题交互待查
+- **hugo-paper**（20 页 / 5.4KB）：静默空页，待定位
