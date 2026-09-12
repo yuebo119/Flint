@@ -57,6 +57,24 @@ public sealed partial class BuiltinTemplateFunctions
     internal Func<string, bool>? TemplateExistsProbe { get; set; }
 
     /// <summary>
+    /// 模板 errorf 的错误接收器：由渲染器注入，汇聚到构建结果的 Errors。
+    /// 未注入时退化为写标准错误（独立使用 BuiltinTemplateFunctions 的场景）
+    /// </summary>
+    internal Action<string>? ErrorReporter { get; set; }
+
+    private void ReportTemplateError(string message)
+    {
+        if (ErrorReporter is not null)
+        {
+            ErrorReporter(message);
+        }
+        else
+        {
+            Console.Error.WriteLine(message);
+        }
+    }
+
+    /// <summary>
     /// 注册所有内置函数到 ScriptObject
     /// </summary>
     public void RegisterFunctions(ScriptObject scriptObject)
@@ -217,8 +235,15 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // split - 分割字符串
-        obj.Import("split", (string? s, string? sep) =>
-            s?.Split(sep ?? " ", StringSplitOptions.RemoveEmptyEntries) ?? []);
+        // split - 分隔字符串。首参宽容为 object：Scriban 把复杂对象隐式转 string 时
+        // 会遍历成员（脚本对象可达递归深度上限并报 "Exceeding number of recursive
+        // depth limit 100"，FixIt 的 camel-case.html 实测整页渲染失败）。
+        // 此处只接受标量形态，集合/对象按空串处理（Hugo 侧同样要求字符串）
+        obj.Import("split", (object? s, string? sep) =>
+        {
+            var text = ToFlatString(s);
+            return text.Length == 0 ? [] : text.Split(sep ?? " ", StringSplitOptions.RemoveEmptyEntries);
+        });
 
         // join - 连接字符串
         obj.Import("join", (IEnumerable<object>? items, string? sep) =>
@@ -244,7 +269,10 @@ public sealed partial class BuiltinTemplateFunctions
             s?.Contains(substr ?? "", StringComparison.Ordinal) ?? false);
 
         // substr - 子字符串
-        obj.Import("substr", (string? s, int start, int length) =>
+        // substr - 子串。Hugo 的 length 可省略（省略即取到末尾）——FixIt 的
+        // camel-case.html 写 `substr $part 1`，三参严格形参报
+        // "Invalid number of arguments 2 ... expecting 3"（整页渲染失败）
+        obj.Import("substr", (string? s, int start, params int[] rest) =>
         {
             if (string.IsNullOrEmpty(s))
                 return "";
@@ -252,6 +280,7 @@ public sealed partial class BuiltinTemplateFunctions
                 start = 0;
             if (start >= s.Length)
                 return "";
+            var length = rest.Length > 0 ? rest[0] : s.Length - start;
             if (length < 0 || start + length > s.Length)
                 length = s.Length - start;
             return s.Substring(start, length);
@@ -796,12 +825,25 @@ public sealed partial class BuiltinTemplateFunctions
 
     private static void RegisterMathFunctions(ScriptObject obj)
     {
-        // add - 加法
-        // add - 求和。Hugo 的 add 是 **variadic**（`add 1 2 3` = 6，单参返回自身），
-        // 严格双参形参会把单参调用打成 "Invalid number of arguments 1 ... expecting 2"
-        //（even 主题 37 处实测）
-        obj.Import("add", (params object?[] a) =>
-            a.Aggregate(0d, (acc, v) => acc + ToNum(v)));
+        // add - 求和 / 字符串拼接。Hugo 的 add 是 **variadic**（`add 1 2 3` = 6，
+        // 单参返回自身），严格双参形参会把单参调用打成
+        // "Invalid number of arguments 1 ... expecting 2"（even 主题 37 处实测）。
+        // 且 Hugo 的 add **多态**（实测 v0.166：全字符串→拼接 `add "fa-solid fa-tag" " me-1"`
+        // ⇒ "fa-solid fa-tag me-1"、全数值→求和、混合同现→报错）。
+        // 主题大量用 add 拼 URL/类名（clarity `add $relpath .`、fixit `add $icon " me-1"`），
+        // 一律 ToNum 求和会把 "" + "x" 算成 0
+        obj.Import("add", (Func<object?[], object>)(a =>
+        {
+            if (a.Length == 0)
+            {
+                return 0d;
+            }
+            if (a.All(v => v is string))
+            {
+                return string.Concat(a.Select(v => (string)v!));
+            }
+            return a.Aggregate(0d, (acc, v) => acc + ToNum(v));
+        }));
 
         // sub - 减法
         // sub - 差。同样 variadic：`sub 10 2 3` = 5（首参减其余），单参返回自身
@@ -1074,7 +1116,7 @@ public sealed partial class BuiltinTemplateFunctions
 
     #region 调试函数 (5+)
 
-    private static void RegisterDebugFunctions(ScriptObject obj)
+    private void RegisterDebugFunctions(ScriptObject obj)
     {
         // printf - 格式化输出。**同时接受 Go 与 .NET 两种占位符**：
         // Hugo 模板写 Go 动词（`%s`/`%d`/`%v`/`%q`…，Hugo 全生态通用），
@@ -1110,12 +1152,15 @@ public sealed partial class BuiltinTemplateFunctions
             return "";
         });
 
-        // errorf - 中止渲染（对齐 Hugo：errorf 使构建失败）；
-        // 异常经 ScribanTemplateRenderer 包装为 TemplateRenderException → BuildError。
+        // errorf - 记录错误后**继续渲染**（对齐 Hugo 实测语义 v0.166：errorf 只记录
+        // 错误日志，页面照常产出，构建结束按错误数判失败——`HOME {{ errorf … }} END`
+        // 实测产出 "HOME  END" + exit=1）。早期实现直接抛异常中止整页渲染，
+        // 主题里一处 errorf 就让整站塌成空页（fixit 的 icon.html 实测 4 处 → 仅剩 2 页）。
         // params 与 printf/warnf 对齐：裸 object[] 时 Scriban 按严格绑定处理，带参调用报参数错误
         obj.Import("errorf", (string? format, params object[] args) =>
         {
-            throw new InvalidOperationException(FormatMessage(format, args));
+            ReportTemplateError(FormatMessage(format, args));
+            return "";
         });
 
         // debug - 调试输出
@@ -1679,8 +1724,47 @@ public sealed partial class BuiltinTemplateFunctions
         }
     }
 
+    /// <summary>
+    /// 扁平化字符串（字符串模板函数的宽容入参）：标量走不变文化 ToString，
+    /// 集合/对象等复合值返回空串——**不**走隐式转换，避免 Scriban 遍历成员
+    /// 触发递归深度上限（见 split 的注释）
+    /// </summary>
+    internal static string ToFlatString(object? v) => v switch
+    {
+        null => "",
+        string s => s,
+        bool b => b ? "true" : "false",
+        char c => c.ToString(),
+        DateTime dt => dt.ToString("o", CultureInfo.InvariantCulture),
+        DateTimeOffset dto => dto.ToString("o", CultureInfo.InvariantCulture),
+        // 复合对象提前拦截：ScriptObject 的 ToString 会遍历成员（可达 Scriban 的
+        // 递归深度上限），故不落到下面的 IFormattable 分支
+        ScriptObject => "",
+        System.Collections.IEnumerable => "",
+        IFormattable f => f.ToString(null, CultureInfo.InvariantCulture),
+        _ => ""
+    };
+
+    /// <summary>
+    /// Hugo 模板真值语义（供同程序集的页面方法函数复用）：
+    /// null/false/0/空串/空集合为假，其余为真
+    /// </summary>
+    internal static bool IsTruthy(object? v) => v switch
+    {
+        null => false,
+        bool b => b,
+        string s => s.Length > 0,
+        sbyte or byte or short or ushort or int or uint or long or ulong => ToNum(v) != 0,
+        float f => f != 0,
+        double d => d != 0,
+        decimal m => m != 0,
+        System.Collections.ICollection c => c.Count > 0,
+        System.Collections.IEnumerable e => e.GetEnumerator().MoveNext(),
+        _ => true
+    };
+
     /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>
-    private static int ToInt(object? v)
+    internal static int ToInt(object? v)
     {
         if (v is null)
         {
@@ -1960,6 +2044,17 @@ public sealed partial class BuiltinTemplateFunctions
             return string.Empty;
         try
         {
+            // Go 动词（%s/%v/%T/%q…）不是 .NET 占位符：直接交给 string.Format 会抛
+            // FormatException 并被下面的 catch 吞成"原样返回格式串"——主题日志里的
+            // errorf "Icon src is missing: %s" 因此输出字面 %s（fixit 实测）
+            if (format.Contains('%', StringComparison.Ordinal))
+            {
+                // 无参调用保持原样：Go 的 Sprintf 在缺参时输出 %!v(MISSING)，
+                // 主题里的 "100% 完成" 这类文本不该被动词转换改写
+                return args.Length > 0
+                    ? string.Format(CultureInfo.InvariantCulture, GoFormatToDotNet(format), args)
+                    : format;
+            }
             return args.Length > 0
                 ? string.Format(CultureInfo.InvariantCulture, format, args)
                 : format;

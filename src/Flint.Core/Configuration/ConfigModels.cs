@@ -140,6 +140,13 @@ public sealed class SiteConfig
     public bool EnableGitInfo { get; init; }
 
     /// <summary>
+    /// 是否启用内联短代码（Hugo <c>enableInlineShortcodes</c>）：启用后内容里
+    /// <c>{{&lt; name.inline &gt;}}…{{&lt; /name.inline &gt;}}</c> 的成对标签作为
+    /// "内容内定义的模板"原位渲染（主题示例内容常用；见 <c>InlineShortcode</c>）
+    /// </summary>
+    public bool EnableInlineShortcodes { get; init; }
+
+    /// <summary>
     /// 站点时区（IANA 名称，Hugo <c>timeZone</c>）：
     /// 无偏移的日期值按此时区解释；空串时沿用本机时区
     /// </summary>

@@ -577,9 +577,12 @@ internal sealed class ScribanConverter(
         if (name.EndsWith(".Format", StringComparison.OrdinalIgnoreCase))
         {
             var recv = name[..^".Format".Length];
+            // 接收者也要过页面根映射：`$.PublishDate.Format` 的接收者是 $.PublishDate，
+            // 原样输出会让 Scriban 把 `$` 当未定义符号（报 "Cannot get the member
+            // $.PublishDate for a null object"，FixIt 的 posts/single.html 实测 3 处）
             var recvText = recv.Length == 0 || recv == "$" || recv == "."
                 ? "page"
-                : recv;
+                : MapIdentifierPath(recv) ?? recv;
             var fmtArgs = new List<string>();
             foreach (var a in args)
             {
@@ -911,7 +914,12 @@ internal sealed class ScribanConverter(
         // （`$.GetTerms` → page.get_terms，正是 head 分支已给出的结果）
         if (head.Length > 1 && head[0] == '$' && head[1] != '.')
         {
-            headText = head;
+            // 变量之后的字段段同样要映射：`$page.Resources.GetMatch` 若原样保留
+            // 接收者，产出 `$page.Resources.getmatch`，而页面对象上的键是小写
+            // `resources` → "Cannot get the member $page.Resources.getmatch for a
+            // null object"（FixIt get-cover.html 实测）
+            var dot = head.IndexOf('.');
+            headText = dot < 0 ? head : head[..dot] + ToSnakePath(head[dot..]);
         }
 
         return headText + "." + flintMethod;
@@ -1115,7 +1123,9 @@ internal sealed class ScribanConverter(
         var target = isCached ? "partialcached" : "include";
 
         // 返回值型 partial → partialValue（Hugo 返回对象 vs Scriban 文本化）。
-        // 仅当上下文参数是 dot（共享上下文等价）时改写；传其他对象时保持 include
+        // 上下文参数一并传出：partialValue 支持 context 参数（引擎侧同签名），
+        // 不传会让 partial 内的 `.` 落到外层 page——FixIt 的
+        // `partial "function/camel-case-keys.html" $value` 因此把页面对象当输入
         var canonical = CanonicalPartialName(nameExpr);
         var isValueReturning = _valueReturning is not null && _valueReturning.Contains(canonical);
         if (!isCached && isValueReturning)
@@ -1127,7 +1137,16 @@ internal sealed class ScribanConverter(
                 return new ConversionResult(
                     $"partialValue \"{PartialPathFor(nameExpr)}\"", ConversionKind.Equivalent);
             }
-            Diagnostics.Add($"返回值型 partial {nameExpr} 的上下文参数非 dot，保持 include（语义可能不等价）");
+            var ctxValue = ConvertExpr(args[1], scope, false);
+            if (ctxValue.Kind != ConversionKind.Unsupported &&
+                ctxValue.Text.Length > 0 && ctxValue.Text != "null")
+            {
+                return new ConversionResult(
+                    $"partialValue \"{PartialPathFor(nameExpr)}\" {ctxValue.Text}",
+                    ConversionKind.Downgraded,
+                    "返回值型 partial 的上下文参数以 page 绑定（Hugo dot 语义等价）");
+            }
+            Diagnostics.Add($"返回值型 partial {nameExpr} 的上下文参数无法转换，保持 include（语义可能不等价）");
         }
 
         // 第二参数是 dot：**with/range 块内 dot 不等于 page**（它是块上下文变量），

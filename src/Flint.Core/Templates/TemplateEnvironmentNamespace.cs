@@ -45,6 +45,13 @@ public sealed record TemplateEnvironmentInfo
 public sealed partial class BuiltinTemplateFunctions
 {
     /// <summary>
+    /// hugo.Store 的实例（Hugo 语义：全构建共享的 Scratch）。
+    /// 每个 BuiltinTemplateFunctions 一个（构建器每次构建新建），
+    /// 因此构建之间互不串味，构建内所有模板共用
+    /// </summary>
+    private readonly PageStoreObject _hugoStore = new();
+
+    /// <summary>
     /// 注册 hugo.* 与 time.* 命名空间。
     /// hugo.* 的值取自 <see cref="TemplateEnvironmentInfo"/>（构建入口注入）。
     /// </summary>
@@ -84,8 +91,20 @@ public sealed partial class BuiltinTemplateFunctions
             ["go_version"] = "",
             ["Data"] = env.Data,
             ["data"] = env.Data,
-            ["Store"] = new ScriptObject(),
-            ["store"] = new ScriptObject(),
+            // hugo.Store（Hugo 的全局 Scratch：Set/Get/Add/SetInMap/…）——
+            // 空 ScriptObject 曾让 `hugo.Store.Set "k" v` 报 "function not found"，
+            // 模板渲染随之整体失败（FixIt 的 _partials/init/index.html 实测 6 处）。
+            // 每次注册共用同一实例，语义与 Hugo 的"构建内全局暂存"一致
+            ["Store"] = _hugoStore,
+            ["store"] = _hugoStore,
+            // hugo.Context：Hugo v0.146+ 的标记渲染上下文全局，render hook 用它做
+            // 作用域判定（FixIt 各 render-*.html 的 `ne hugo.Context.MarkupScope "home"`）。
+            // 缺它时报 "Cannot get the member hugo.Context.MarkupScope for a null object"
+            ["Context"] = new ScriptObject
+            {
+                ["MarkupScope"] = "page",
+                ["markup_scope"] = "page"
+            },
             ["Sites"] = new ScriptArray()
         };
         root.TrySetValue(null, default, "hugo", hugo, readOnly: true);

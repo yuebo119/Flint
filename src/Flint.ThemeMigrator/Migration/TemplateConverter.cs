@@ -156,7 +156,10 @@ internal sealed class TemplateConverter(
                     var key = SanitizeIdent(extra);
                     var childKey = "blk_" + key;
                     return Wrap(
-                        $"end }}}}{{{{ if $.{childKey} }}}}{{{{ $.{childKey} }}}}{{{{ else }}}}{{{{ __def_{key} }}}}{{{{ end",
+                        // `$.blk_x` 曾按页面根映射输出——Scriban 里 `$` 是未定义符号，
+                        // 报 "Cannot get the member $.blk_x for a null object" 让整页失败。
+                        // 块值由 `capture blk_x` 落在**全局变量**上，直接按名引用即可
+                        $"end }}}}{{{{ if {childKey} }}}}{{{{ {childKey} }}}}{{{{ else }}}}{{{{ __def_{key} }}}}{{{{ end",
                         trimL, trimR);
                 }
                 return Wrap("end", trimL, trimR);
@@ -291,8 +294,12 @@ internal sealed class TemplateConverter(
             // `pair.Key ?? for.index` / `pair.Value ?? pair` 统一两种形态
             //（PaperMod 的 `range $index, $page := $paginator.Pages` 此前
             // 产出 `$page = pair.value` = null → "$page.title for a null object"）
-            var body = $"for {pair} in {coll} }}}}}}{{{{ {kvar} = {pair}.Key ?? for.index; " +
-                       $"{vvar} = {pair}.Value ?? {pair}";
+            // 显式拼接而非插值：`}}`/`{{` 在插值串里要写成 4 个花括号，
+            // 极易多写一个（历史 bug：写成 6 个 → 产出 3 个 `}`，
+            // 使**每个**双变量 range 都向页面注入一个字面 `}`）
+            var body = "for " + pair + " in " + coll + " }}{{ " +
+                       kvar + " = " + pair + ".Key ?? for.index; " +
+                       vvar + " = " + pair + ".Value ?? " + pair;
             return Wrap(body, trimL, trimR);
         }
 

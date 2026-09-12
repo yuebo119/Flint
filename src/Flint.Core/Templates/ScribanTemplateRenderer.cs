@@ -44,6 +44,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+        _builtinFunctions.ErrorReporter = _templateErrors.Enqueue;
         InstallShortcodeContext();
     }
 
@@ -83,6 +84,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+        _builtinFunctions.ErrorReporter = _templateErrors.Enqueue;
         InstallShortcodeContext();
     }
 
@@ -91,6 +93,22 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// 由 SiteBuilder 输出阶段写盘——否则模板引用的 RelPermalink 会 404
     /// </summary>
     public IReadOnlyList<TemplateResource> GeneratedResources => _builtinFunctions.GeneratedResources;
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _templateErrors = new();
+
+    /// <summary>
+    /// 模板 <c>errorf</c> 记录的错误（Hugo 语义：记录后继续渲染，页面照常产出，
+    /// 构建结束按错误计数判失败）。SiteBuilder 在构建收尾时取走并计入 BuildResult.Errors
+    /// </summary>
+    public IReadOnlyList<string> DrainTemplateErrors()
+    {
+        var list = new List<string>();
+        while (_templateErrors.TryDequeue(out var message))
+        {
+            list.Add(message);
+        }
+        return list;
+    }
 
     /// <summary>测试专用构造：时间源可注入</summary>
     public ScribanTemplateRenderer(string templatesPath, string baseUrl, TimeProvider timeProvider, params string[] themeTemplatePaths)
@@ -533,6 +551,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         pageLike["GetPage"] = hookGetPage;
         pageLike["get_terms"] = hookGetPage;
         pageLike["GetTerms"] = hookGetPage;
+        // .Param / .HasShortcode 同族：hook 里也常按页面方法调用
+        //（FixIt 的 _markup/render-heading.html → _partials/function/param.html
+        //  内 `.Page.Param`，实测 "The function `page.param` was not found" 使
+        //  整篇内容解析失败）。param 返回 null 让主题的默认值链继续走，
+        //  render_string 返回空串（字符串运算不因 null 抛错）
+        pageLike["param"] = hookGetPage;
+        pageLike["Param"] = hookGetPage;
+        pageLike["has_shortcode"] = hookGetPage;
+        pageLike["HasShortcode"] = hookGetPage;
+        var hookRenderString = new StubPageMethodFunction("");
+        pageLike["render_string"] = hookRenderString;
+        pageLike["RenderString"] = hookRenderString;
         foreach (var kv in vars)
         {
             globals[kv.Key] = kv.Value;
@@ -815,7 +845,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             merged["Store"] = store;
             merged["scratch"] = store;
             merged["Scratch"] = store;
+            AddPageMethodFamily(merged, pageObject);
             effective = merged;
+        }
+        else if (context is ScriptObject plainCtx)
+        {
+            // 无 store 通道的 dict 上下文：同样补页面方法族——dict 里装页面再调
+            // 页面方法的写法很常见（FixIt `dict "Page" . "Key" "toc" | partial
+            // "function/param.html"` → partial 内 `.Page.Param`，实测 function not found）
+            AddPageMethodFamily(plainCtx, pageObject);
         }
 
         var overlay = new ScriptObject
@@ -823,6 +861,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ["page"] = effective,
             ["Page"] = effective
         };
+        // 返回值通道的 store 必须随 overlay 一起可见：ResolveStore 读的是
+        // CurrentGlobal（最顶层），overlay 一压就把下层 globals 里的
+        // `__flint_ret_store` 挡住 → partial 里的 `__partial_ret_set` 写到 null、
+        // 调用方 partialValue 读回空（FixIt 所有值返回型 partial 实测）
+        if (ResolveStore(callerContext) is { } retStore)
+        {
+            overlay[RetStoreKey] = retStore;
+        }
         callerContext.PushGlobal(overlay);
         try
         {
@@ -840,6 +886,40 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         source.Contains("page.Store", StringComparison.Ordinal) ||
         source.Contains("page.scratch", StringComparison.Ordinal) ||
         source.Contains("page.Scratch", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 页面**方法族**键名（函数值成员）：把调用者页面的这些成员补给 partial 的
+    /// dict 上下文（仅补 dict 未定义的键，dict 自己的键优先）。
+    ///
+    /// 场景：Hugo 惯用 `dict "Page" . "Key" "x" | partial "helper.html"`，
+    /// partial 内写 `.Page.Param .Key`——迁移后是 `page.param page?.key`，
+    /// 而 partial 的 `page` 是那个 dict（无 param 方法）→ function not found
+    ///（FixIt `_partials/function/param.html` 实测）。补上方法族后该调用
+    /// 落到调用者页面的 param 上，与 Hugo 语义一致（dict 的 Page 就是调用者页面）
+    /// </summary>
+    private static readonly string[] PageMethodKeys =
+    [
+        "param", "Param", "get_page", "GetPage", "get_terms", "GetTerms",
+        "has_shortcode", "HasShortcode", "render_string", "RenderString",
+        "paginate", "Paginate", "fragments", "Fragments"
+    ];
+
+    /// <summary>把调用者页面的方法族补给 dict 上下文（缺则补，dict 已有键不覆盖）</summary>
+    private static void AddPageMethodFamily(ScriptObject target, ScriptObject? source)
+    {
+        if (source is null)
+        {
+            return;
+        }
+        foreach (var key in PageMethodKeys)
+        {
+            if (target.ContainsKey(key) || !source.ContainsKey(key))
+            {
+                continue;
+            }
+            target[key] = source[key];
+        }
+    }
 
     /// <summary>
     /// partialCached 的 variant 签名：页面对象用 permalink 区分（默认 ToString
@@ -947,10 +1027,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// hook 上下文的页面方法占位：返回 null（Hugo 的 render hook 里 .Page 只有
     /// 最小字段集，主题调用站点级方法时应得到空值并走 with 兜底，而非构建失败）
     /// </summary>
-    private sealed class StubPageMethodFunction : Scriban.Runtime.IScriptCustomFunction
+    private sealed class StubPageMethodFunction(object? returnValue = null) : Scriban.Runtime.IScriptCustomFunction
     {
         public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
-            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement) => null;
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement) => returnValue;
 
         public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
             Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
@@ -1041,7 +1121,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             var name = arguments[0]?.ToString() ?? "";
             var value = arguments.Count > 1 ? arguments[1] : null;
             var store = ResolveStore(context);
-            store?.Set(PartialValueFunction.KeyPrefix + name, value);
+            // 与读取端同规则归一（含剥掉可能已带的前缀）——见 CanonicalPartialKey
+            store?.Set(
+                PartialValueFunction.KeyPrefix + PartialValueFunction.CanonicalPartialKey(name), value);
             return "";
         }
 
@@ -1107,15 +1189,33 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 清除上次残留（同一 partial 多次调用时避免读到旧值）
             store.Delete(key);
 
-            // 渲染 partial：其副作用（page.store.set）写入共享 Store。
-            // 返回值（文本还原形式）不使用——我们要的是 Store 中的真实对象
-            _ = renderer.RenderPartialWithType(context, name);
+            // 渲染 partial：其副作用（返回值通道写入渲染上下文 Store）被下方读取。
+            // 输出缓冲隔离（关键）：`$x := partial "y"` 在 Hugo 里**只取值不输出文本**，
+            // 而 Scriban 的嵌套渲染会把 partial 文本追加/回卷到调用者的输出流——
+            // 实测不隔离时调用者已累积的文本丢失、返回值退化为整段渲染文本
+            //（FixIt 的 `partialValue "function/camel-case" $key` 取到 "}}}" 之类的碎文本）。
+            // 第二参数为 partial 内的 `.`（Hugo dot 语义）——返回值型 partial 同样要传：
+            // `partial "function/camel-case-keys.html" $value` 不传会把外层 page 当成 `.`
+            object? rendered;
+            context.PushOutput();
+            try
+            {
+                rendered = RenderValue();
+            }
+            finally
+            {
+                context.PopOutput();
+            }
 
             var value = store.Get(key);
             store.Delete(key);
 
-            // 兜底：partial 无 return（无 store.set）时，回退标量还原结果
-            return value ?? renderer.RenderPartialWithType(context, name);
+            // 兜底：partial 无 return（无 store.set）时，回退隔离缓冲里的渲染文本
+            return value ?? rendered;
+
+            object? RenderValue() => arguments.Count > 1
+                ? renderer.RenderPartialWithContext(context, name, arguments[1], pageObject)
+                : renderer.RenderPartialWithType(context, name);
         }
 
         public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
@@ -1150,6 +1250,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             if (n.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
             {
                 n = n[..^5];
+            }
+            // 写入端（转换器产出）传的是**已带前缀**的键
+            //（`__partial_ret_set "__partial_ret_func/x"`），读取端传 partial 名
+            //（`partialValue "_partials/func/x"`）——两端都先剥掉前缀再统一加回，
+            // 否则写入为双前缀而读取为单前缀，返回值通道恒读不到值
+            //（FixIt 的 camel-case 等所有值返回型 partial 实测）
+            if (n.StartsWith(KeyPrefix, StringComparison.Ordinal))
+            {
+                n = n[KeyPrefix.Length..];
             }
             foreach (var prefix in new[]
                      {

@@ -30,6 +30,13 @@ public sealed partial class ShortcodeProcessor
     public bool ThrowOnUnregistered { get; init; } = true;
 
     /// <summary>
+    /// 是否启用内联短代码（Hugo <c>enableInlineShortcodes</c>）：启用后
+    /// 内容里 <c>{{&lt; name.inline &gt;}}…{{&lt; /name.inline &gt;}}</c> 的成对标签
+    /// 被视为"内容内定义的模板"并原位渲染。默认 false（对齐 Hugo 的默认关闭）
+    /// </summary>
+    public bool EnableInlineShortcodes { get; init; }
+
+    /// <summary>
     /// 创建短代码处理器实例
     /// </summary>
     /// <param name="registry">短代码注册表</param>
@@ -173,6 +180,13 @@ public sealed partial class ShortcodeProcessor
     {
         // 获取处理器
         var processor = _registry.Get(shortcode.Name);
+
+        // 内联短代码（Hugo enableInlineShortcodes）：内容内定义，注册表里查不到，
+        // 由成对标签的 innerContent 作为模板源现场构造
+        if (processor is null && EnableInlineShortcodes && InlineShortcode.IsInlineName(shortcode.Name))
+        {
+            processor = InlineShortcode.TryCreate(shortcode.Name, shortcode.InnerContent);
+        }
 
         if (processor == null)
         {

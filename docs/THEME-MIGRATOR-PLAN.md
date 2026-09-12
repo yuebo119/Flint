@@ -1262,3 +1262,123 @@ Flint 通过 **16/20**（含修复前的 13 个 + blowfish/congo/blog-awesome）
 - **doit**（14 页）：主题自身 errorf（exampleSite 缺图标参数，Hugo 侧同样失败）
 - **fixit**（2 页 / 232B）：站点级 layouts 与主题交互待查
 - **hugo-paper**（20 页 / 5.4KB）：静默空页，待定位
+
+---
+
+## 二十二、引擎与转换器的语义对齐（2026-09-12 第七轮）
+
+本轮全部结论都来自**对 Hugo v0.166 的实测**（用一个最小站点逐个验证语义），
+而不是从文档或记忆推断。下面每条都注明实测证据。
+
+### A. 引擎：Hugo 语义缺口（7 项）
+
+**A1. `add` 是字符串拼接的多态函数**（实测）
+
+```
+add "fa-solid fa-tag" " me-1"  ⇒ "fa-solid fa-tag me-1"   （拼接）
+add "1" "2"                    ⇒ "12"                      （拼接！）
+add 1 2 3                      ⇒ 6                         （求和）
+add "3" 1                      ⇒ 报错 can't apply the operator to the values
+math.Add 与 add 同一实现
+```
+
+Flint 的 `add` 一律 `ToNum` 求和 → `"" + "/img.png"` 算成 0。主题大量用它拼
+URL/类名（clarity `add $relpath .`、fixit `add $icon " me-1"`）。修为：
+操作数全为字符串 → 拼接，否则数值求和（混用取宽容）。
+
+**A2. `errorf` 不中断渲染**（实测）
+
+```
+HOME {{ errorf "boom: %s" "detail" }} END  ⇒ 产出 "HOME  END"，构建 exit=1
+```
+
+Hugo 的 `errorf` 只记录错误日志、**继续渲染**，构建收尾按错误计数判失败。
+Flint 原实现直接抛异常中止整页渲染——主题里一处 `errorf` 就让整站塌成空页
+（fixit 的 `icon.html` 4 处 → 仅剩 2 页 / 232B）。修为：格式化后交
+`ErrorReporter` 汇聚（`ScribanTemplateRenderer` 线程安全队列），
+`SiteBuilder` 收尾取走并计入 `BuildResult.Errors`（错误码 `TEMPLATE001`）。
+
+同时修 `FormatMessage`：Go 动词（`%s`/`%v`/`%T`）此前落进 .NET `string.Format`
+抛 `FormatException` 被吞成"原样返回格式串"，主题日志里出现字面 `%s`。
+
+**A3. 内联短代码**（`enableInlineShortcodes`）
+
+```
+{{< css.inline >}} … 模板源码 … {{< /css.inline >}}
+```
+
+Hugo 的"内容内定义短代码"：成对标签之间是**模板源码**，原位渲染。
+Flint 查不到名字即报 `PARSE001 未注册的短代码`（hugo-paper 3 处、
+clarity 4 处整篇内容解析失败）。新增 `InlineShortcode`（`.inline` 后缀 +
+成对标签 → 以 innerContent 为模板源渲染），由 `SiteConfig.EnableInlineShortcodes`
+开关控制（对齐 Hugo 默认关闭）。
+
+**A4. `.TableOfContents` 是 HTML 字符串，不是列表**
+
+主题按字符串消费它：Blowfish `replace (.TableOfContents | emojify) 'id="TableOfContents"'`、
+Congo `in page.table_of_contents "<ul"`（判定"本页有无目录"）。Flint 原先暴露
+标题**列表**且恒为空 → 15 个主题的目录相关判定静默失效。新增 `TocRenderer`，
+逐字节对齐 Hugo 实测形状（`<nav id="TableOfContents">` + 层级嵌套 `<ul>`、
+缺失层级补空 `<li>` 包裹），并新增 `.Fragments`（`ToHTML start end ordered`
+/ `Identifiers` / `Headings`，Hugo v0.111+）。
+
+**A5. 返回值通道三处缺陷**（`partialValue` 恒读不到值）
+
+1. **键名双前缀**：写入端 `PartialRetSetFunction` 给已是 `__partial_ret_x` 的名字
+   再加前缀 → 写入键 `__partial_ret___partial_ret_x`，读取键 `__partial_ret_x`。
+2. **输出缓冲未隔离**：Scriban 的嵌套渲染会污染调用者输出流（调用者已累积的
+   文本丢失、返回值退化成渲染文本）。改为 `PushOutput`/`PopOutput` 隔离。
+3. **overlay 挡住 store**：`ResolveStore` 只读 `CurrentGlobal`，而
+   `RenderPartialWithContext` 压入的 overlay 不含 `__flint_ret_store`
+   → partial 内的 `__partial_ret_set` 写到 null。
+
+修后实测：`partialValue "function/camel-case" "capitalize_titles"` ⇒
+`capitalizeTitles`（与 Hugo 一致）。
+
+**A6. `reflect.IsMap` 对 Page/Site 应为 false**（Hugo 语义）
+
+Flint 按类型判定（页面也是 `ScriptObject`）→ 返回 true。主题里"递归转换 map 键"
+的辅助函数（FixIt 的 `camel-case-keys.html`）据此遍历页面成员，经
+site→pages→page 的对象环无限递归，打到 Scriban 的函数递归上限
+（`Exceeding number of recursive depth limit 100`）。
+
+**A7. 零散缺口**
+
+- `warnidf`/`erroridf`：Hugo v0.146+ 的简洁别名 + **可变格式参数**
+  （`warnidf ID FORMAT ARGS…`；两参严格形参在 3+ 实参时抛 `Argument index must be < 2`）
+- `substr` 的 length 可省略（`substr $part 1` 取到末尾）
+- `hugo.Store` 需 Scratch 语义（`Set`/`Get`/`Add`…），空 ScriptObject 报 function not found
+- `hugo.Context.MarkupScope`（render hook 的作用域判定）
+- 内置短代码别名：`x`/`twitter`（Hugo v0.132+ 改名）、`vimeo_simple`
+- partial 的 dict 上下文补**页面方法族**（`param`/`get_page`/`get_terms`/
+  `has_shortcode`/`render_string`），修 `dict "Page" . "Key" "x" | partial …`
+  内部 `.Page.Param` 的 function not found
+- render hook 的 `page` 补 `param`/`has_shortcode`/`render_string` 宽松 stub
+
+### B. 转换器缺陷（4 项）
+
+**B1. 双变量 `range` 多输出一个 `}`**（影响面最大）
+
+产出串写成 6 个 `}`（C# 插值转义后是 3 个），正确应为 4 个（转义后 2 个）：
+每个 `range $k, $v :=` 都向页面注入一个字面 `}`。改为**显式字符串拼接**，
+从此不必在插值串里数花括号。
+
+**B2. 块默认值引用 `$.blk_x`** → Scriban 里 `$` 是未定义符号，报
+`Cannot get the member $.blk_x for a null object` 让整页失败。块值由
+`capture blk_x` 落在全局变量上，直接按名引用。
+
+**B3. 值返回型 partial 的上下文参数被丢弃**：`partial "x" $value` 走
+`!isValueReturning` 守卫被跳过 → partial 内的 `.` 落到外层 page
+（`split page "_"` 拿页面对象）。改为产出 `partialValue "x" CONTEXT`
+（引擎侧 `PartialValueFunction` 同步支持第二参数）。
+
+**B4. 变量接收者的字段段未映射**：`$page.Resources.GetMatch` 原样保留接收者
+→ `$page.Resources.getmatch`（页面对象上的键是小写 `resources`）→ null object。
+改为对变量名之后的段同样走 `ToSnakePath`。
+
+### C. 配置与加载
+
+**C1. `config/_default/` 未知文件名应按根级合并**：clarity 的
+`configTaxo.toml` 装的是根级键（`enableInlineShortcodes`/`timeout`/`privacy`），
+原先被塞进 `configTaxo` 子表 → 开关读不到。改为白名单段名
+（params/menus/languages/…）挂同名键，其余按根级深合并（Hugo 语义）。

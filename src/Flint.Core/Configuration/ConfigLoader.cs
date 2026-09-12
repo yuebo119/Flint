@@ -108,6 +108,18 @@ public sealed class ConfigLoader : IConfigLoader
     /// 实测来源：blowfish/congo/clarity 等主题只用目录式配置，此前报
     /// "当前目录不是有效的 Flint 站点" 而完全无法构建
     /// </summary>
+    /// <summary>
+    /// config/_default/ 里"文件名即配置段名"的已知段：内容挂到同名顶层键下。
+    /// 其余文件名按根级合并（Hugo 语义）
+    /// </summary>
+    private static readonly HashSet<string> KnownSectionNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "params", "menus", "languages", "outputs", "outputFormats", "module", "markup",
+        "security", "taxonomies", "imaging", "frontmatter", "server", "build", "caches",
+        "permalinks", "mediaTypes", "minify", "privacy", "services", "related",
+        "sitemap", "pagination", "author", "deployment", "navigation", "httpcache"
+    };
+
     public static SiteConfig? TryLoadConfigDirectory(string directory)
     {
         var baseDir = Path.Combine(directory, "config", "_default");
@@ -140,8 +152,12 @@ public sealed class ConfigLoader : IConfigLoader
             }
 
             var key = Path.GetFileNameWithoutExtension(path);
-            if (asTopLevel || key.Equals("hugo", StringComparison.OrdinalIgnoreCase) ||
-                key.Equals("config", StringComparison.OrdinalIgnoreCase))
+            // 已知段名（params.toml → params 段等）与 hugo/config 之外的**任意文件名**
+            // 一律按根级合并——对齐 Hugo 语义：目录式配置里文件名只是组织手段，
+            // 内容统一并入根映射。clarity 的 configTaxo.toml 装的正是根级键
+            //（enableInlineShortcodes / timeout / privacy），此前被塞进 "configTaxo"
+            // 子表 → enableInlineShortcodes 读不到 → 内容里的内联短代码报"未注册"
+            if (asTopLevel || !KnownSectionNames.Contains(key))
             {
                 ConfigMerge.DeepMergeInto(merged, table);
             }

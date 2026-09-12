@@ -88,7 +88,15 @@ public sealed class ShortcodeRegistry : IShortcodeRegistry
         Register(new GistShortcode());
         Register(new YoutubeShortcode());
         Register(new TweetShortcode());
+        // Hugo 内置短代码名是 twitter（v0.132+ 起 x 为别名）——主题示例内容写
+        // `{{< x user="…" id="…" >}}`（clarity 的 rich-content.md 实测），
+        // 只注册 tweet 会报"未注册的短代码"使整篇内容解析失败
+        Register(new ShortcodeAlias("twitter", new TweetShortcode()));
+        Register(new ShortcodeAlias("x", new TweetShortcode()));
         Register(new VimeoShortcode());
+        // Hugo 内置也有 vimeo_simple（简单嵌入形态）：clarity 的
+        // rich-content.md 用 `{{< vimeo_simple 48912912 >}}` 实测
+        Register(new ShortcodeAlias("vimeo_simple", new VimeoShortcode()));
         Register(new InstagramShortcode());
         Register(new ParamShortcode());
     }
