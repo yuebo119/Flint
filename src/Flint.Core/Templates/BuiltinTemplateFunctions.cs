@@ -962,15 +962,51 @@ public sealed partial class BuiltinTemplateFunctions
         // jsonify - JSON 序列化
         // jsonify 序列化的是运行时任意对象（模板变量），类型无法静态已知，
         // source-gen 不适用；NativeAOT 下仅此函数受限（异常时返回 "null"）
-        obj.Import("jsonify", (object? value) =>
+        // Hugo 的 jsonify 签名是 `jsonify [OPTIONS] VALUE`（选项在前）：
+        // 管道形态 `$scratch.Get "x" | jsonify (dict "indent" "  ")` 里模板侧
+        // 把管道值注入**首参**，于是实到参数是 (值, 选项) 两个——单参严格形参
+        // 会抛 "Argument index must be < 1"（Congo 的 schema.html 实测 86 处）。
+        // 故收 params 并按字典形态识别选项（含 indent/prefix 键者）
+        obj.Import("jsonify", (params object?[] args) =>
         {
+            var options = new JsonSerializerOptions
+            {
+                WriteIndented = false,
+                Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+            object? payload = args.Length > 0 ? args[0] : null;
+            foreach (var arg in args)
+            {
+                if (arg is not ScriptObject opt)
+                {
+                    continue;
+                }
+                var indent = GetMember(opt, "indent") ?? GetMember(opt, "Indent");
+                if (indent is null && GetMember(opt, "prefix") is null && GetMember(opt, "Prefix") is null)
+                {
+                    continue;
+                }
+                if (indent is not null && indent.ToString()!.Length > 0)
+                {
+                    options = new JsonSerializerOptions
+                    {
+                        WriteIndented = true,
+                        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                    };
+                }
+                // 选项对象在前时（Go 的 `jsonify OPTIONS VALUE`），载荷是下一个参数
+                if (ReferenceEquals(arg, payload))
+                {
+                    payload = args.Length > 1 ? args[1] : null;
+                }
+                break;
+            }
             try
             {
-                return JsonSerializer.Serialize(value, new JsonSerializerOptions
-                {
-                    WriteIndented = false,
-                    Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-                });
+                // 手写遍历而非 JsonSerializer：模板对象（ScriptObject/ScriptArray）
+                // 的反射序列化在 NativeAOT 下被禁用，此前一律抛异常回退成字面 "null"
+                // （Congo 的 schema.html / 搜索索引实测）
+                return SerializeToJson(payload, options.WriteIndented);
             }
             catch
             {
@@ -1590,14 +1626,33 @@ public sealed partial class BuiltinTemplateFunctions
     /// 构造器（<c>slice</c>/<c>slice A</c>/<c>slice A B</c>）。
     /// 首参是集合时按切片处理，否则按构造器（Hugo 语义，LoveIt 用零参 slice 造空序列）
     /// </summary>
+    /// <summary>
+    /// 序列形态判定（slice 的两义消歧用）：字符串/布尔/数值/页面与字典都**不是**
+    /// 序列——页面是 ScriptObject（非 IEnumerable）、字典同此，故
+    /// `slice PAGE 0 2` 走 Hugo 的构造器语义。页面集合只实现泛型
+    /// <c>IList&lt;ScriptObject&gt;</c>（如 LazyPageList），非泛型 IList 判定会漏
+    /// </summary>
+    private static bool IsSequenceLike(object? v) => v switch
+    {
+        null or string or bool => false,
+        ScriptArray => true,
+        System.Collections.IList => true,
+        IList<ScriptObject> => true,
+        IReadOnlyList<ScriptObject> => true,
+        System.Collections.IEnumerable => true,
+        _ => false
+    };
+
     private static object SeqSlice(object?[] args)
     {
-        // 切片形态判定：第二参是**数值**则为 `slice SEQ START [LEN]`；否则按 Hugo
-        // 可变参数构造器（`slice` / `slice A` / `slice A B`，如 LoveIt 的
-        // `slice "a" "b"` 或零参造空序列）。用数值位判定而非 IsCollection——
-        // 页面集合是 LazyPageList : ScriptObject（实现 IDictionary），
-        // 会被 IsCollection 误判为字典
-        if (args.Length >= 2 && IsNumericLike(args[1]))
+        // 两义消歧（首参是否为**列表**）：
+        //  · 首参是列表 + 第二参为数值 → `slice SEQ START [LEN]` 子序列（Flint 的
+        //    宽松形态，`site.pages | slice 0 2` 取前两项；页面集合是
+        //    LazyPageList（IList<ScriptObject>）故按 IList 判定而非 IsCollection）
+        //  · 否则 → Hugo 的构造器语义：`slice 1 2` ⇒ 长度 2（v0.166 实测）。
+        //    早期实现无此分支，把 `slice 1 2` 解成 SEQ=1/START=2 → 空数组
+        //（Congo 的 jsonify 参数实测）
+        if (args.Length >= 2 && IsNumericLike(args[1]) && IsSequenceLike(args[0]))
         {
             var list = ToList(args[0]);
             var start = ToInt(args[1]);
@@ -1611,7 +1666,6 @@ public sealed partial class BuiltinTemplateFunctions
             return SliceSeq(list, start, len);
         }
 
-        // 构造器形态（含零参 → 空序列）
         var arr = new ScriptArray();
         foreach (var a in args)
         {
@@ -1919,6 +1973,78 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>成员访问（Hugo 的 where/sort 键路径）：支持点路径与命名变体（下划线/PascalCase）</summary>
+    /// <summary>
+    /// 手写 JSON 序列化（NativeAOT 安全）：模板对象是 ScriptObject/ScriptArray，
+    /// 反射序列化在 AOT 下不可用。覆盖 null/布尔/数值/时间/字符串/映射/序列，
+    /// 其余按字符串兜底
+    /// </summary>
+    private static string SerializeToJson(object? value, bool indented)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = indented }))
+        {
+            WriteJson(writer, value);
+        }
+        return Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    private static void WriteJson(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNullValue();
+                return;
+            case bool b:
+                writer.WriteBooleanValue(b);
+                return;
+            case string s:
+                writer.WriteStringValue(s);
+                return;
+            case DateTimeOffset dto:
+                writer.WriteStringValue(dto);
+                return;
+            case DateTime dt:
+                writer.WriteStringValue(dt);
+                return;
+            case sbyte or byte or short or ushort or int or uint or long or ulong:
+                writer.WriteNumberValue(Convert.ToInt64(value, CultureInfo.InvariantCulture));
+                return;
+            case float or double or decimal:
+                writer.WriteNumberValue(Convert.ToDouble(value, CultureInfo.InvariantCulture));
+                return;
+            case IDictionary<string, object?> map:
+                writer.WriteStartObject();
+                foreach (var (k, v) in map)
+                {
+                    writer.WritePropertyName(k);
+                    WriteJson(writer, v);
+                }
+                writer.WriteEndObject();
+                return;
+            case System.Collections.IDictionary dict:
+                writer.WriteStartObject();
+                foreach (System.Collections.DictionaryEntry entry in dict)
+                {
+                    writer.WritePropertyName(entry.Key?.ToString() ?? "");
+                    WriteJson(writer, entry.Value);
+                }
+                writer.WriteEndObject();
+                return;
+            case System.Collections.IEnumerable seq:
+                writer.WriteStartArray();
+                foreach (var item in seq)
+                {
+                    WriteJson(writer, item);
+                }
+                writer.WriteEndArray();
+                return;
+            default:
+                writer.WriteStringValue(value.ToString());
+                return;
+        }
+    }
+
     internal static object? GetMember(object? item, string path)
     {
         if (item is null || path.Length == 0)

@@ -166,6 +166,15 @@ public sealed class TemplateResource
     }
 
     /// <summary>转 ScriptObject 供模板访问（双命名：snake 与 Pascal，与既有约定一致）</summary>
+    /// <summary>
+    /// 图像变换成员的注入点（由 <c>BuiltinTemplateFunctions.RegisterResourceFunctions</c>
+    /// 设置）：把 Resize/Fit/Fill/Crop/Process 挂到资源对象自身，
+    /// 使 <c>$img.Fill "600x600"</c> 这类成员调用可用。未设置时资源对象
+    /// 只有数据成员（调用变换会报 function not found）
+    /// </summary>
+    internal static Action<ScriptObject, TemplateResource>? AttachImageOps { get; set; }
+
+    /// <summary>资源 → 模板对象（数据成员 + 图像变换方法族）</summary>
     public ScriptObject ToScriptObject()
     {
         var data = new ScriptObject();
@@ -190,6 +199,10 @@ public sealed class TemplateResource
             ["params"] = Params, ["Params"] = Params,
             ["key"] = RelPermalink, ["Key"] = RelPermalink
         };
+        // 图像变换方法族（Resize/Fit/Fill/Crop/Process）由资源命名空间注册方
+        // 注入：需要 provider 与产物登记，模板侧的 <c>$img.Fill "600x600"</c>
+        // 与 <c>resources.Fill $img …</c> 共用同一实现（Blowfish 实测 1580 处）
+        AttachImageOps?.Invoke(o, this);
         return o;
     }
 

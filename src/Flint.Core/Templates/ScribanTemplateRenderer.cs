@@ -538,7 +538,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 页面级 Store 必须一并提供：hook 内 `include` 的 partial 若走
         // `page.store.set` 返回值通道（Stack helper/image.html 实测），
         // 缺 store 会报 "Cannot get the member page.store.set for a null object"
-        var hookStore = new PageStoreObject();
+        // 缺失键返回空对象：hook 早于布局渲染，暂存里的值（如 LoveIt 的 "params"）
+        // 尚未写入，直接给 null 会让 `$params.code` 报 null object 并使整篇解析失败
+        var hookStore = new PageStoreObject { MissingKeyReturnsEmptyObject = true };
         pageLike["store"] = hookStore;
         pageLike["Store"] = hookStore;
         pageLike["scratch"] = hookStore;
@@ -560,6 +562,28 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         pageLike["Param"] = hookGetPage;
         pageLike["has_shortcode"] = hookGetPage;
         pageLike["HasShortcode"] = hookGetPage;
+        // .Resources（页面资源对象）：render hook 在内容解析期运行，拿不到页面
+        // 资源索引，注册**宽松 stub**（查不到 → null / 空集合），让主题的
+        // `{{ with .Resources.GetMatch $src }}` 守卫安全跳过并走回退分支。
+        // 缺它会报 "Cannot get the member page.resources.getmatch for a null object"
+        // 并让**整篇内容解析失败**（Congo 的 _markup/render-image.html 实测）
+        var hookResources = new ScriptObject();
+        var resourceLookupStub = new StubPageMethodFunction();
+        foreach (var resName in new[] { "getmatch", "GetMatch", "get", "Get", "minify", "Minify",
+                                       "fingerprint", "Fingerprint", "concat", "Concat",
+                                       "process", "Process", "fill", "Fill", "resize", "Resize",
+                                       "fit", "Fit", "crop", "Crop" })
+        {
+            hookResources[resName] = resourceLookupStub;
+        }
+        var resourceListStub = new StubPageMethodFunction(new ScriptArray());
+        foreach (var resName in new[] { "match", "Match", "bytype", "ByType" })
+        {
+            hookResources[resName] = resourceListStub;
+        }
+        pageLike["resources"] = hookResources;
+        pageLike["Resources"] = hookResources;
+
         var hookRenderString = new StubPageMethodFunction("");
         pageLike["render_string"] = hookRenderString;
         pageLike["RenderString"] = hookRenderString;

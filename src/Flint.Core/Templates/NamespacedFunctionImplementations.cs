@@ -386,7 +386,9 @@ public sealed partial class BuiltinTemplateFunctions
                 o["scheme"] = u.Scheme;
                 o["host"] = u.Host;
                 o["path"] = u.AbsolutePath;
-                o["query"] = u.Query.TrimStart('?');
+                o["query"] = BuildQueryObject(u.Query);
+                o["raw_query"] = u.Query.TrimStart('?');
+                o["RawQuery"] = u.Query.TrimStart('?');
                 o["fragment"] = u.Fragment.TrimStart('#');
                 o["opaque"] = "";
                 o["user"] = u.UserInfo;
@@ -398,7 +400,9 @@ public sealed partial class BuiltinTemplateFunctions
                 o["scheme"] = "";
                 o["host"] = "";
                 o["path"] = q >= 0 ? raw[..q] : raw;
-                o["query"] = q >= 0 ? raw[(q + 1)..] : "";
+                o["query"] = BuildQueryObject(q >= 0 ? raw[(q + 1)..] : "");
+                o["raw_query"] = q >= 0 ? raw[(q + 1)..] : "";
+                o["RawQuery"] = q >= 0 ? raw[(q + 1)..] : "";
                 o["fragment"] = "";
                 o["opaque"] = "";
                 o["user"] = "";
@@ -408,7 +412,9 @@ public sealed partial class BuiltinTemplateFunctions
                 o["scheme"] = "";
                 o["host"] = "";
                 o["path"] = "";
-                o["query"] = "";
+                o["query"] = BuildQueryObject("");
+                o["raw_query"] = "";
+                o["RawQuery"] = "";
                 o["fragment"] = "";
                 o["opaque"] = s ?? "";
                 o["user"] = "";
@@ -781,6 +787,38 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>math.Counter：按 key 递增（Hugo 语义，进程内共享）</summary>
+    /// <summary>
+    /// 构造 query 映射对象（Hugo <c>url.Values</c> 语义）：同名键取首值，
+    /// 并暴露 <c>get</c>/<c>Get</c>（大小写不敏感）。
+    /// Congo 的 render-image.html 写 `$params = $url?.query` 后 `$params.get "2x"`，
+    /// 暴露成裸字符串时报 "The function `$params.get` was not found"；
+    /// 原始串另走 raw_query/RawQuery（Hugo 同名）
+    /// </summary>
+    private static ScriptObject BuildQueryObject(string rawQuery)
+    {
+        var o = new ScriptObject();
+        var query = rawQuery.TrimStart('?');
+        var pairs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var eq = part.IndexOf('=', StringComparison.Ordinal);
+            var k = eq >= 0 ? part[..eq] : part;
+            var v = eq >= 0 ? part[(eq + 1)..] : "";
+            v = Uri.UnescapeDataString(v.Replace('+', ' '));
+            if (k.Length == 0 || pairs.ContainsKey(k))
+            {
+                continue;
+            }
+            pairs[k] = v;
+            o[k] = v;
+        }
+        o.Import("get", (string? key) =>
+            key is not null && pairs.TryGetValue(key, out var found) ? found : null);
+        o.Import("Get", (string? key) =>
+            key is not null && pairs.TryGetValue(key, out var found) ? found : null);
+        return o;
+    }
+
     private sealed class CounterFunction(Dictionary<string, long> counters, object gate)
         : Scriban.Runtime.IScriptCustomFunction
     {
