@@ -1080,22 +1080,18 @@ internal sealed class ScribanConverter(
             {
                 return v;
             }
-            // 键须为合法 Scriban 标识符，否则用引号形式（"data-x": v）。
-            // 实测主题用 "a=1" / "data-src" 这类非标识符键，裸写会报
-            // "Unexpected token `-` Expecting a colon"
-            var keyText = IsIdentifier(key) ? key : "\"" + key.Replace("\\", "\\\\", StringComparison.Ordinal)
+            // 键一律用引号：主题用 "a=1" / "data-src" 这类非标识符键（裸写会报
+            // "Unexpected token `-` Expecting a colon"），统一引号形态也就不必区分
+            var keyText = "\"" + key.Replace("\\", "\\\\", StringComparison.Ordinal)
                 .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
-            pairs.Add($"{keyText}: {v.Text}");
+            pairs.Add(keyText);
+            pairs.Add(v.Text);
         }
 
-        // 空 dict：Scriban 无法解析空对象字面量 `{ }`（实测 PARSE-ERR），
-        // 改用 dict 函数形态；非空用对象字面量（更贴近 Hugo 语义且可读）
-        if (pairs.Count == 0)
-        {
-            return new ConversionResult("dict", ConversionKind.Equivalent);
-        }
-
-        return new ConversionResult("{ " + string.Join(", ", pairs) + " }", ConversionKind.Equivalent);
+        // 一律走 dict 函数：Scriban **没有对象字面量**，`{ k: v }` 会被当成语句块
+        // （作为函数参数时 jsonify 收到 0 参 → "Argument index must be < 1"，
+        //  也产出不了对象；Congo 的 schema.html、FixIt 的 taxonomy.html 实测）
+        return new ConversionResult("dict " + string.Join(" ", pairs), ConversionKind.Equivalent);
     }
 
     /// <summary>

@@ -55,12 +55,26 @@ public sealed class PageStoreObject : ScriptObject
         }
     }
 
-    /// <summary>Get KEY：取值，缺失返回 null</summary>
+    /// <summary>
+    /// 缺失键是否返回**空对象**而非 null（render hook 上下文用）。
+    /// hook 在内容解析期渲染，此时页面暂存尚未被布局写入——Hugo 里
+    /// `.Scratch.Get "params"` 能取到先前布局写入的值，Flint 取不到。
+    /// 返回空对象让主题的 `$params.code.copy | default true` 这类链式访问
+    /// 得到 null 而不是 "Cannot get the member … for a null object"
+    /// 整篇解析失败（LoveIt 的 render-codeblock-goat.html 实测）
+    /// </summary>
+    internal bool MissingKeyReturnsEmptyObject { get; init; }
+
+    /// <summary>Get KEY：取值，缺失返回 null（或空对象，见上）</summary>
     public object? Get(string key)
     {
         lock (_gate)
         {
-            return _values.TryGetValue(key, out var v) ? v : null;
+            if (_values.TryGetValue(key, out var v))
+            {
+                return v;
+            }
+            return MissingKeyReturnsEmptyObject ? new ScriptObject() : null;
         }
     }
 

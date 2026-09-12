@@ -182,9 +182,17 @@ public sealed partial class ShortcodeProcessor
         var processor = _registry.Get(shortcode.Name);
 
         // 内联短代码（Hugo enableInlineShortcodes）：内容内定义，注册表里查不到，
-        // 由成对标签的 innerContent 作为模板源现场构造
-        if (processor is null && EnableInlineShortcodes && InlineShortcode.IsInlineName(shortcode.Name))
+        // 由成对标签的 innerContent 作为模板源现场构造。
+        // 开关关闭时 Hugo **不报错**而是丢弃整个成对块（含 body）——实测：
+        // 无开关的站点里 `{{< css.inline >}}<style>…</style>{{< /css.inline >}}`
+        // 产出为两行（BEFORE 与 AFTER）、exit=0。Flint 原先报 PARSE001 硬错误
+        // 使整站构建失败（hugo-coder / blog-awesome 实测）
+        if (processor is null && InlineShortcode.IsInlineName(shortcode.Name))
         {
+            if (!EnableInlineShortcodes)
+            {
+                return string.Empty;
+            }
             processor = InlineShortcode.TryCreate(shortcode.Name, shortcode.InnerContent);
         }
 

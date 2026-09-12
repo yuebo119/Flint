@@ -466,42 +466,66 @@ public sealed partial class BuiltinTemplateFunctions
 
         // 图像：尺寸变换（Flint 的图像变换在构建期由 ImageProcessor 处理，
         // 模板侧提供元数据与 URL；实际像素处理走 assets 管线）
-        foreach (var op in new[] { "Resize", "Fit", "Fill", "Crop", "Process" })
+        foreach (var op in ImageOps)
         {
             var opName = op;
-            res.Import(opName, (object? value, string? spec) =>
-            {
-                var r = ToResource(value);
-                if (r is null)
-                {
-                    return null;
-                }
-                var (w, h) = ParseImageSpec(spec);
-                // 变换产物路径：{name}_{op}_{spec}.{ext}（确定性，供差分对比）
-                var dir = Path.GetDirectoryName(r.Name)?.Replace('\\', '/') ?? "";
-                var file = Path.GetFileNameWithoutExtension(r.Name);
-                var ext = Path.GetExtension(r.Name);
-                var suffix = string.IsNullOrEmpty(spec) ? opName.ToLowerInvariant() : opName.ToLowerInvariant() + "_" + spec.Replace('x', 'x');
-                var newName = (dir.Length > 0 ? dir + "/" : "") + file + "_" + suffix + ext;
-                var baseRes = TemplateResource.Create(newName, r.Content, provider.BaseUrl);
-                var outRes = new TemplateResource
-                {
-                    Name = baseRes.Name,
-                    Title = baseRes.Title,
-                    ResourceType = "image",
-                    MediaType = baseRes.MediaType,
-                    Content = baseRes.Content,
-                    RelPermalink = baseRes.RelPermalink,
-                    Permalink = baseRes.Permalink,
-                    Width = w > 0 ? w : r.Width,
-                    Height = h > 0 ? h : r.Height
-                };
-                Track(outRes);
-                return outRes.ToScriptObject();
-            });
+            res.Import(opName, (object? value, string? spec) => ApplyImageOp(ToResource(value), opName, spec));
         }
 
+        // 图像变换方法族同时挂到**资源对象自身**上：主题写 `$img.Fill "600x600"`、
+        // `$img.Resize "x300"`（Blowfish 的 `$authorImage.Fill` 实测 1580 处报
+        // "The function `$authorImage.Fill` was not found"——命名空间级
+        // resources.* 之外还需成员级）。Scriban 成员查找大小写敏感，双形态注册
+        TemplateResource.AttachImageOps = (obj, resource) =>
+        {
+            foreach (var op in ImageOps)
+            {
+                var opName = op;
+                obj.Import(opName, (object? spec) => ApplyImageOp(resource, opName, spec as string));
+                obj.Import(opName.ToLowerInvariant(),
+                    (object? spec) => ApplyImageOp(resource, opName, spec as string));
+            }
+        };
+
         images.Import("Config", () => new ScriptObject());
+    }
+
+    /// <summary>Hugo 的图像尺寸变换方法名（命名空间级与资源成员级共用）</summary>
+    private static readonly string[] ImageOps = ["Resize", "Fit", "Fill", "Crop", "Process"];
+
+    /// <summary>
+    /// 图像变换：Flint 的像素处理在构建期由 ImageProcessor 处理，模板侧产出
+    /// 确定性命名（{name}_{op}_{spec}.{ext}）的兄弟资源并登记落盘
+    /// （命名空间级 <c>resources.Fill</c> 与资源成员级 <c>$img.Fill</c> 共用）
+    /// </summary>
+    private object? ApplyImageOp(TemplateResource? r, string opName, string? spec)
+    {
+        if (r is null)
+        {
+            return null;
+        }
+        var (w, h) = ParseImageSpec(spec);
+        // (char)92 = 反斜杠：用码点写法避免源码里的转义层级（同 ScribanTemplateRenderer）
+        var dir = Path.GetDirectoryName(r.Name)?.Replace((char)92, '/') ?? "";
+        var file = Path.GetFileNameWithoutExtension(r.Name);
+        var ext = Path.GetExtension(r.Name);
+        var suffix = string.IsNullOrEmpty(spec) ? opName.ToLowerInvariant() : opName.ToLowerInvariant() + "_" + spec;
+        var newName = (dir.Length > 0 ? dir + "/" : "") + file + "_" + suffix + ext;
+        var baseRes = TemplateResource.Create(newName, r.Content, _resources?.BaseUrl ?? "");
+        var outRes = new TemplateResource
+        {
+            Name = baseRes.Name,
+            Title = baseRes.Title,
+            ResourceType = "image",
+            MediaType = baseRes.MediaType,
+            Content = baseRes.Content,
+            RelPermalink = baseRes.RelPermalink,
+            Permalink = baseRes.Permalink,
+            Width = w > 0 ? w : r.Width,
+            Height = h > 0 ? h : r.Height
+        };
+        Track(outRes);
+        return outRes.ToScriptObject();
     }
 
     private static void RegisterCssFunctions(ScriptObject css)

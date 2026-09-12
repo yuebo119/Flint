@@ -1382,3 +1382,47 @@ site→pages→page 的对象环无限递归，打到 Scriban 的函数递归上
 `configTaxo.toml` 装的是根级键（`enableInlineShortcodes`/`timeout`/`privacy`），
 原先被塞进 `configTaxo` 子表 → 开关读不到。改为白名单段名
 （params/menus/languages/…）挂同名键，其余按根级深合并（Hugo 语义）。
+
+### D. 第二批（第七轮续）：资源、短代码与序列化
+
+**D1. 资源对象的**图像变换方法族**：`$img.Fill "600x600"` / `.Resize` / `.Fit` /
+`.Crop` / `.Process` 此前只注册在**命名空间**（`resources.Fill`），资源**对象**上没有
+→ Blowfish 的 `$authorImage.Fill` 报 function not found（1580 处）。
+新增 `TemplateResource.AttachImageOps` 注入点（由资源命名空间注册方设置），
+命名空间级与成员级共用同一实现（确定性命名 + 产物登记落盘）。
+
+**D2. 内联短代码开关的**默认行为**：Hugo 实测——`enableInlineShortcodes` 关闭时
+Hugo **不报错**，而是丢弃整个成对块（产出 `BEFORE`/`AFTER`、exit=0）。
+Flint 原先报 `PARSE001 未注册的短代码` 使整站失败（hugo-coder / blog-awesome 实测）。
+改为：开关关闭 → 丢弃该块；开启 → 渲染 body。
+
+**D3. `dict` 不能产出为 `{ k: v }`**：Scriban **没有对象字面量**，`{ k: v }`
+会被当成语句块——作为函数参数时 `jsonify` 收到 0 参
+（`Argument index must be < 1`，Congo 的 schema.html 86 处）。改为一律产
+`dict "k" v …`。
+
+**D4. `jsonify` 的 Hugo 形态与 AOT 序列化**：
+- Hugo 签名是 `jsonify [OPTIONS] VALUE`（选项在前）；Scriban 管道把值注入**首参**，
+  于是实到两参 → 单参严格形参越界。改为收 `params` 并按字典键
+  （indent/prefix）识别选项。
+- 模板对象（ScriptObject/ScriptArray）的**反射序列化在 NativeAOT 下被禁用**，
+  原先一律抛异常回退成字面 `"null"` → 新增手写遍历序列化
+  （`Utf8JsonWriter`，覆盖 null/布尔/数值/时间/字符串/映射/序列）。
+
+**D5. `url.query` 是映射不是字符串**（Hugo `url.Values` 语义）：
+`(.Query).Get "x"` 是惯用法（Congo 的 render-image.html）。改为映射对象
+（同名键取首值 + `get`/`Get`），原始串另走 `raw_query`/`RawQuery`。
+
+**D6. `slice` 的两义消歧**：Hugo 实测 `slice 1 2` ⇒ 长度 2（构建数组），
+而 Flint 把"第二参为数值"解成 `slice SEQ START [LEN]` 自造语义 → `slice 1 2`
+产出空数组。改为按**首参是否为序列**消歧：序列 + 数值第二参 → 子序列（保留
+`site.pages | slice 0 2` 的既有可用形态）；否则 → Hugo 的构造器语义。
+
+**D7. render hook 的页面资源与暂存宽容化**：
+- `.Resources`（页面资源）在 hook 上下文注册宽松 stub（`getmatch`/`get`/`match`/
+  `bytype` 等 → null / 空集合），否则 `{{ with .Resources.GetMatch $src }}`
+  报 `Cannot get the member page.resources.getmatch for a null object` 并让
+  **整篇内容解析失败**（Congo 的 _markup/render-image.html 实测）。
+- `.Scratch.Get "params"` 在 hook 里取不到布局先前写入的值（hook 早于布局渲染）：
+  缺失键返回**空对象**而非 null，使 `$params.code.copy | default true`
+  这类链式访问得到 null 而不是硬错误（LoveIt 的 render-codeblock-goat.html 实测）。
