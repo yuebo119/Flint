@@ -241,7 +241,7 @@ internal sealed class TemplateConverter(
                 {
                     var key = ScribanConverter.RetKeyPrefix + selfName;
                     return Wrap(
-                        $"page.store.set \"{key}\" {retVal} }}}}}}{{{{ ret",
+                        $"__partial_ret_set \"{key}\" {retVal} }}}}}}{{{{ ret",
                         trimL, trimR);
                 }
                 return Wrap($"ret {retVal}", trimL, trimR);
@@ -271,6 +271,11 @@ internal sealed class TemplateConverter(
         // "Invalid token found `,`. Expecting <EOL>/end of line"），
         // 含多参数函数调用时须加括号：`for x in (f a b)`
         coll = ParenthesizeIfCallWithArgs(coll);
+        // 集合表达式按 Hugo 的 range 语义归一（nil/false → 空集合不迭代；
+        // 标量 → 单元素）。Scriban 的 `for x in false` 会抛
+        // "Unexpected type `System.Boolean` for iterator"（Blowfish 的
+        // `range (or .social .links)` 两者皆空时实测 1574 处）
+        coll = $"as_list ({coll})";
 
         // 双变量：range $k, $v := X
         if (kb.Vars.Count >= 2)

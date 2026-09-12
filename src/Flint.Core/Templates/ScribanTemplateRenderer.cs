@@ -43,6 +43,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
+        _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
     }
 
     /// <summary>
@@ -61,6 +62,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl, resources, environment);
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
+        _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
     }
 
     /// <summary>
@@ -77,6 +79,21 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
         _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
         _timeProvider = timeProvider;
+        _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
+    }
+
+    /// <summary>templates.Exists 的探测实现：用与 include 相同的解析规则查文件</summary>
+    private bool ProbeTemplateExists(string name)
+    {
+        try
+        {
+            var path = _templateLoader.GetPath(null!, default, name);
+            return !string.IsNullOrEmpty(path) && File.Exists(path);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -499,6 +516,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             new PartialFunction(this, pageLike), readOnly: true);
         globals.TrySetValue(context, default, "partialValue",
             new PartialValueFunction(this, pageLike), readOnly: true);
+        globals[RetStoreKey] = new PageStoreObject();
+        globals.TrySetValue(context, default, "__partial_ret_set",
+            new PartialRetSetFunction(), readOnly: true);
+        globals.TrySetValue(context, default, "template_exists",
+            new TemplateExistsFunction((FileTemplateLoader)_templateLoader), readOnly: true);
 
         // i18n：hook 渲染发生在内容解析期（可能早于站点上下文装配），
         // 故用可设置的翻译表快照；未装配时为空表（查不到的键渲染为空串，
@@ -860,6 +882,112 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     ///
     /// 兜底：Store 中无对应键时回退到标量还原（兼容无 return 的 partial）。
     /// </summary>
+    /// <summary>
+    /// templates.Exists（Hugo）：模板是否可解析。此前实现是 `!string.IsNullOrEmpty(name)`
+    /// ——**恒真**，使主题的 `{{ if templates.Exists "partials/favicons.html" }}` 守卫失效，
+    /// 径直调用不存在的 partial 并在 include 处报 FileNotFound（Blowfish 1574 处实测）。
+    /// 此处接 FileTemplateLoader，用与 include 相同的解析规则判断
+    /// </summary>
+    private sealed class TemplateExistsFunction(FileTemplateLoader loader)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count == 0)
+            {
+                return false;
+            }
+            var name = arguments[0]?.ToString() ?? "";
+            if (name.Length == 0)
+            {
+                return false;
+            }
+            try
+            {
+                var path = loader.GetPath(context, default, name);
+                // GetPath 未命中时返回"主根 + 名字"的兜底形态（非真实文件）
+                return File.Exists(path);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return false;
+            }
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(bool);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), "name");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(bool), "exists");
+    }
+
+    /// <summary>
+    /// 渲染期返回值 store 的**键名**（挂在渲染上下文 globals 上，每页独立）。
+    /// 用它而非 page.Store 的原因：返回值通道必须在**任意渲染上下文**可用——
+    /// 短代码/hook/被覆盖 page 的 partial 里 `page` 可能为 null（Blowfish 实测
+    /// 1571 处 "Cannot get the member page.store.set for a null object"）
+    /// </summary>
+    internal const string RetStoreKey = "__flint_ret_store";
+
+    /// <summary>
+    /// 返回值通道写入：`__partial_ret_set "name" value`。
+    /// 从当前渲染上下文取 store（每页一个）——不依赖 page
+    /// </summary>
+    private sealed class PartialRetSetFunction : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count < 1)
+            {
+                return "";
+            }
+            var name = arguments[0]?.ToString() ?? "";
+            var value = arguments.Count > 1 ? arguments[1] : null;
+            var store = ResolveStore(context);
+            store?.Set(PartialValueFunction.KeyPrefix + name, value);
+            return "";
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 2;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(string);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(index == 0 ? typeof(string) : typeof(object), index == 0 ? "name" : "value");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(string), "empty");
+    }
+
+    /// <summary>从渲染上下文取返回值 store（未装配时返回 null）</summary>
+    internal static PageStoreObject? ResolveStore(Scriban.TemplateContext context)
+    {
+        // CurrentGlobal 是 IScriptObject 接口（无 ContainsKey/索引器）→ 用 TryGetValue
+        if (context.CurrentGlobal is { } globals &&
+            globals.TryGetValue(context, default, RetStoreKey, out var value) &&
+            value is PageStoreObject store)
+        {
+            return store;
+        }
+        return null;
+    }
+
     private sealed class PartialValueFunction(ScribanTemplateRenderer renderer, ScriptObject pageObject)
         : Scriban.Runtime.IScriptCustomFunction
     {
@@ -877,7 +1005,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 throw new InvalidOperationException("partialValue 需要至少一个字符串参数（partial 名称）");
             }
 
-            var store = (pageObject as LazyPageObject)?.Store;
+            // 优先渲染期 store（任意上下文可用）；回退 page.Store（兼容旧产物）
+            PageStoreObject? store = ResolveStore(context) ?? (pageObject as LazyPageObject)?.Store;
             if (store is null)
             {
                 return renderer.RenderPartialWithType(context, name);
@@ -1369,6 +1498,13 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 本函数渲染后取回。Store 是真实容器，完全保真且零序列化成本（实测验证）
         globals.TrySetValue(scribanContext, default, "partialValue",
             new PartialValueFunction(this, pageObject), readOnly: true);
+        // 返回值通道：每页独立的 store + 写入函数（转换器的 `{{ return X }}` 改写用）
+        globals[RetStoreKey] = new PageStoreObject();
+        globals.TrySetValue(scribanContext, default, "__partial_ret_set",
+            new PartialRetSetFunction(), readOnly: true);
+        // templates.Exists 接真实 loader（覆盖全局的恒真实现）
+        globals.TrySetValue(scribanContext, default, "template_exists",
+            new TemplateExistsFunction((FileTemplateLoader)_templateLoader), readOnly: true);
         globals.TrySetValue(scribanContext, default, "includeCached",
             new PartialCachedFunction(this), readOnly: true);
         globals.TrySetValue(scribanContext, default, "include_cached",
