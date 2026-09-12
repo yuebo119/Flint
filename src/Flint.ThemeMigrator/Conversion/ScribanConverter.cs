@@ -351,9 +351,16 @@ internal sealed class ScribanConverter(
             // 一部分（剥掉会产出 `page.bytype`，丢失 resources 层，测试实测）
             var isSiteRoot = fe.Path.StartsWith(".Site", StringComparison.OrdinalIgnoreCase)
                 && (fe.Path.Length == ".Site".Length || fe.Path[".Site".Length] == '.');
+            // `.Page.X` 与 `.Site.X` 对称：`.Page` 段即"当前页"，须先剥掉再补 page 根，
+            // 否则产出 `page.page.x`（LoveIt 的 `.Page.Scratch.Get "params"` 22 处、
+            // Console 的 `.Page.Resources` 同因，实测）
+            var isPageRoot = fe.Path.StartsWith(".Page", StringComparison.OrdinalIgnoreCase)
+                && (fe.Path.Length == ".Page".Length || fe.Path[".Page".Length] == '.');
             var feMapped = isSiteRoot
                 ? "site" + ToSnakePath(fe.Path[".Site".Length..])
-                : "page" + ToSnakePath(fe.Path);
+                : isPageRoot
+                    ? "page" + ToSnakePath(fe.Path[".Page".Length..])
+                    : "page" + ToSnakePath(fe.Path);
             var mapped = MapChainMethod(feMapped);
             if (mapped is not null)
             {
@@ -1253,6 +1260,16 @@ internal sealed class ScribanConverter(
                         sbVar.Append("?.").Append(normalized);
                     }
                     return new ConversionResult(sbVar.ToString(), ConversionKind.Equivalent);
+                }
+
+                // `.Page.X` 无参形态同样剥除首段（与上面的字段+参数分支对称）
+                if (raw.StartsWith(".Page", StringComparison.OrdinalIgnoreCase) &&
+                    (raw.Length == ".Page".Length || raw[".Page".Length] == '.'))
+                {
+                    // 链式段用 nil 安全 `?.`（与普通字段路径一致：Hugo 遇 nil 返回 nil）
+                    return new ConversionResult(
+                        "page" + NilSafePath(raw[".Page".Length..]),
+                        ConversionKind.Equivalent);
                 }
 
                 if (raw.StartsWith('.') && raw.Length > 1)

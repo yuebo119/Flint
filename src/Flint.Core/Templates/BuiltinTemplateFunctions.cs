@@ -791,16 +791,35 @@ public sealed partial class BuiltinTemplateFunctions
     private static void RegisterMathFunctions(ScriptObject obj)
     {
         // add - 加法
-        obj.Import("add", (object? a, object? b) => ToNum(a) + ToNum(b));
+        // add - 求和。Hugo 的 add 是 **variadic**（`add 1 2 3` = 6，单参返回自身），
+        // 严格双参形参会把单参调用打成 "Invalid number of arguments 1 ... expecting 2"
+        //（even 主题 37 处实测）
+        obj.Import("add", (params object?[] a) =>
+            a.Aggregate(0d, (acc, v) => acc + ToNum(v)));
 
         // sub - 减法
-        obj.Import("sub", (object? a, object? b) => ToNum(a) - ToNum(b));
+        // sub - 差。同样 variadic：`sub 10 2 3` = 5（首参减其余），单参返回自身
+        obj.Import("sub", (params object?[] a) => a.Length switch
+        {
+            0 => 0d,
+            1 => ToNum(a[0]),
+            _ => a.Skip(1).Aggregate(ToNum(a[0]), (acc, v) => acc - ToNum(v))
+        });
 
         // mul - 乘法
-        obj.Import("mul", (object? a, object? b) => ToNum(a) * ToNum(b));
+        // mul - 积（variadic，单参返回自身）
+        obj.Import("mul", (params object?[] a) =>
+            a.Aggregate(1d, (acc, v) => acc * ToNum(v)));
 
         // div - 除法
-        obj.Import("div", (object? a, object? b) => ToNum(b) == 0 ? 0d : ToNum(a) / ToNum(b));
+        // div - 商（variadic，单参返回自身；除零保持旧行为返回 0）
+        obj.Import("div", (params object?[] a) => a.Length switch
+        {
+            0 => 0d,
+            1 => ToNum(a[0]),
+            _ => a.Skip(1).Aggregate(ToNum(a[0]),
+                (acc, v) => ToNum(v) == 0 ? 0d : acc / ToNum(v))
+        });
 
         // mod - 取模
         obj.Import("mod", (int a, int b) => b != 0 ? a % b : 0);
