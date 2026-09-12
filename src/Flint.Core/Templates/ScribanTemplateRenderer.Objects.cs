@@ -283,6 +283,21 @@ public sealed partial class ScribanTemplateRenderer
             var getTerms = new PageGetTermsFunction(_page, _siteTaxonomies);
             SetValue("get_terms", getTerms, false);
             SetValue("GetTerms", getTerms, false);
+
+            // .HasShortcode / .RenderString / .Param：Hugo 的页面方法族
+            //（hugo-coder 42 处 `page?.has_shortcode`、archie `page.render_string`、
+            //  fixit `page?.param` 实测——主题按方法调用，缺则整页渲染失败）
+            var hasShortcode = new PageHasShortcodeFunction(_page);
+            SetValue("has_shortcode", hasShortcode, false);
+            SetValue("HasShortcode", hasShortcode, false);
+
+            var renderString = new PageRenderStringFunction();
+            SetValue("render_string", renderString, false);
+            SetValue("RenderString", renderString, false);
+
+            var pageParam = new PageParamFunction(_page);
+            SetValue("param", pageParam, false);
+            SetValue("Param", pageParam, false);
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
             SetValue("Content", page.Content, false);
@@ -417,6 +432,149 @@ public sealed partial class ScribanTemplateRenderer
             new(typeof(object), "pages");
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new(typeof(object), "paginator");
+    }
+
+    /// <summary>
+    /// .HasShortcode（Hugo 页面方法）：内容是否含指定名字的短代码。
+    /// 主题用它为含特定短代码的页面附加资源（如 mermaid/katex 的脚本）——
+    /// 判定宽松（内容里出现 <c>{{&lt; name</c> 或 <c>{{% name</c> 即算命中），
+    /// 与 Hugo 的"短代码名为路径最后一段"语义一致
+    /// </summary>
+    internal sealed class PageHasShortcodeFunction(FlintPageContext page)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count == 0)
+            {
+                return false;
+            }
+            var name = arguments[0]?.ToString() ?? "";
+            if (name.Length == 0)
+            {
+                return false;
+            }
+            var raw = page.RawContent ?? "";
+            if (raw.Length == 0)
+            {
+                return false;
+            }
+            // 短代码名可能是路径（"foo/bar"），Hugo 按末段匹配文件名
+            var lastSeg = name.Contains('/') ? name[(name.LastIndexOf('/') + 1)..] : name;
+            foreach (var marker in new[] { "{{< ", "{{% ", "{{<" , "{{%" })
+            {
+                if (raw.Contains(marker + lastSeg, StringComparison.Ordinal) ||
+                    raw.Contains(marker + name, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(bool);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), "name");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(bool), "result");
+    }
+
+    /// <summary>
+    /// .RenderString（Hugo 页面方法）：把字符串按 Markdown 渲染为 HTML。
+    /// Hugo 的签名是 <c>RenderString STRING [OPTS]</c>（可选 display/type 选项）。
+    /// Flint 侧用内容管线的 Markdown 渲染器（与正文渲染一致）
+    /// </summary>
+    internal sealed class PageRenderStringFunction()
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        private static readonly Content.MarkdownParser Parser = new();
+
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count == 0)
+            {
+                return "";
+            }
+            var text = arguments[0]?.ToString() ?? "";
+            if (text.Length == 0)
+            {
+                return "";
+            }
+            try
+            {
+                return Parser.ToHtml(text);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // 渲染失败返回原文（Hugo 对渲染错误同样不中断页面渲染）
+                return text;
+            }
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 2;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(string);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(index == 0 ? typeof(string) : typeof(object), index == 0 ? "text" : "options");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(string), "html");
+    }
+
+    /// <summary>
+    /// .Param（Hugo 页面方法）：按点路径取参数（页面 params → 站点 params 回落）。
+    /// 与全局 paramLookup 同语义，登记为页面方法使 <c>page.Param "x"</c> 可直接调用
+    /// </summary>
+    internal sealed class PageParamFunction(FlintPageContext page)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            if (arguments.Count == 0)
+            {
+                return null;
+            }
+            var path = arguments[0]?.ToString() ?? "";
+            if (path.Length == 0 || page.Params is null)
+            {
+                return null;
+            }
+            // 页面参数点路径查找（Hugo .Param 语义；站点回落由模板侧的 paramLookup 覆盖）
+            return BuiltinTemplateFunctions.GetMember(page.Params, path);
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
+            Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(string), "path");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(object), "value");
     }
 
     /// <summary>
@@ -1429,14 +1587,20 @@ public sealed partial class ScribanTemplateRenderer
         // linker 不会裁剪被引用成员——运行时安全，方法级压制
 #pragma warning disable IL2026
         // to_string - 格式化日期，支持 DateTimeOffset
-        dateObject.Import("to_string", (object? date, string? format) =>
+        // 形参用 params：Hugo 的 time.Format/dateFormat 在部分应用形态下只给格式串
+        //（`{{ date.to_string $config }}`），严格双参形参会报
+        // "Invalid number of arguments 1 ... expecting 2"（doit 21 处实测）
+        dateObject.Import("to_string", (params object?[] a) =>
         {
+            var date = a.Length > 0 ? a[0] : null;
+            var format = a.Length > 1 ? a[1]?.ToString() : null;
             var dt = ConvertToDateTimeOffset(date);
             if (dt == null)
                 return "";
 
-            // 使用 .NET 标准格式化
-            return dt.Value.ToString(format ?? "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            return dt.Value.ToString(
+                string.IsNullOrEmpty(format) ? "yyyy-MM-dd" : format,
+                System.Globalization.CultureInfo.InvariantCulture);
         });
 
         // now - 当前时间

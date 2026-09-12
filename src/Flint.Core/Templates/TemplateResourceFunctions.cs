@@ -46,7 +46,13 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
     private readonly string[] _roots;
     private readonly Dictionary<string, string> _index =
         new(StringComparer.OrdinalIgnoreCase);
-    private bool _indexed;
+    private volatile bool _indexed;
+
+    // 索引是**惰性**构建的，而页面渲染是并行的：首个访问 resources.get/Match 的
+    // 页面会触发扫描，多线程同时进入会并发写 Dictionary →
+    // "Operations that change non-concurrent collections must have exclusive access"
+    //（DoIt 主题 22 处实测，触发点 resources.get）。双重检查加锁
+    private readonly Lock _indexGate = new();
 
     public FileSystemResourceProvider(string baseUrl, params string[] assetRoots)
     {
@@ -64,6 +70,19 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
             return;
         }
 
+        lock (_indexGate)
+        {
+            if (_indexed)
+            {
+                return;
+            }
+            BuildIndex();
+            _indexed = true;
+        }
+    }
+
+    private void BuildIndex()
+    {
         foreach (var root in _roots.AsEnumerable().Reverse())
         {
             if (!Directory.Exists(root))
@@ -187,6 +206,13 @@ public sealed partial class BuiltinTemplateFunctions
 {
     private readonly ITemplateResourceProvider? _resources;
     private readonly List<TemplateResource> _generated = [];
+
+    // _generated 的写入发生在**并行渲染**期间（各页的模板函数各自 Track 产物），
+    // 而 List 非线程安全——并发 RemoveAll/Add 会抛 "Operations that change
+    // non-concurrent collections must have exclusive access"（DoIt 主题 22 处实测，
+    // 触发点：plugin/fontawesome.html 生成资源）。加锁保护写入；
+    // 读取（GeneratedResources）在渲染完成后单线程进行，无需锁
+    private readonly Lock _generatedGate = new();
 
     /// <summary>本实例产生的模板资源产物（Concat/FromString 结果），供输出阶段落盘</summary>
     public IReadOnlyList<TemplateResource> GeneratedResources => _generated;
@@ -541,8 +567,11 @@ public sealed partial class BuiltinTemplateFunctions
         {
             return;
         }
-        _generated.RemoveAll(x => x.RelPermalink == r.RelPermalink);
-        _generated.Add(r);
+        lock (_generatedGate)
+        {
+            _generated.RemoveAll(x => x.RelPermalink == r.RelPermalink);
+            _generated.Add(r);
+        }
     }
 
     private TemplateResource? ToResource(object? value) => TemplateResource.FromScriptObject(value);

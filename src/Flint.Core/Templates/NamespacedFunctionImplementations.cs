@@ -44,15 +44,18 @@ public sealed partial class BuiltinTemplateFunctions
         Add("chomp", (string? s) => s?.TrimEnd('\r', '\n') ?? "");
         Add("first_upper", (string? s) =>
             string.IsNullOrEmpty(s) ? "" : char.ToUpperInvariant(s[0]) + s[1..]);
-        Add("slicestr", (string? s, object? startRaw, object? endRaw) =>
+        // slicestr STRING START [END]：end 可省（Hugo 两参形态），
+        // 严格三参形参会把 `slicestr $name 2` 打成参数数错误（even 主题 37 处实测）
+        Add("slicestr", (params object?[] a) =>
         {
-            if (string.IsNullOrEmpty(s))
+            var s = a.Length > 0 ? a[0]?.ToString() : null;
+            if (string.IsNullOrEmpty(s) || a.Length < 2)
             {
-                return "";
+                return s ?? "";
             }
-            var start = (int)ToDouble(startRaw);
+            var start = (int)ToDouble(a[1]);
             var from = Math.Clamp(start, 0, s.Length);
-            var end = endRaw is null ? (int?)null : (int)ToDouble(endRaw);
+            var end = a.Length > 2 && a[2] is not null ? (int?)ToDouble(a[2]) : null;
             var to = end is null or < 0 ? s.Length : Math.Clamp(end.Value, from, s.Length);
             return s[from..to];
         });
@@ -361,8 +364,11 @@ public sealed partial class BuiltinTemplateFunctions
         // ---- urls 补充 ----
         Add("path_escape", (string? s) => Uri.EscapeDataString(s ?? ""));
         Add("path_unescape", (string? s) => Uri.UnescapeDataString(s ?? ""));
-        Add("url_parse", (string? s) =>
+        // 零参宽容：`urls.Parse` 无参时返回空对象（严格单参形参报
+        // "Invalid number of arguments 0 ... expecting 1"，doit 实测）
+        Add("url_parse", (params object?[] args) =>
         {
+            var s = args.Length > 0 ? args[0]?.ToString() : null;
             var o = new ScriptObject();
             if (Uri.TryCreate(s, UriKind.Absolute, out var u))
             {
