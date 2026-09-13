@@ -62,6 +62,67 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
+    /// 把筛选结果还原成**带页面集合方法族**的对象；返回 null 表示"不是页面序列"，
+    /// 调用方改用普通列表。
+    /// </summary>
+    /// <remarks>
+    /// Hugo 里页面集合的筛选结果仍是页面集合，主题会在其上继续调用
+    /// （yinyang 的 <c>(where .Data.Pages "Type" "in" …).GroupByDate "2006"</c> 实测
+    /// 失败 22 处）。判据分两种：
+    /// <list type="bullet">
+    /// <item>结果非空：元素**全部**是内容页对象 → 按这些页面重建集合</item>
+    /// <item>结果为空：源集合的元素全是页面/词条页对象（或源本身就是页面集合）→
+    /// 返回**空页面集合**。Hugo 实测（v0.166，主题 yinyang 的 /tags/ 页）：
+    /// <c>.Data.Pages</c> 是词条页集合，按 Type 过滤后为空，随后 <c>.GroupByDate</c>
+    /// 返回空而不报错——空集合仍带方法族</item>
+    /// </list>
+    /// 元素不是页面对象时（如对字符串列表做筛选）返回 null，维持普通列表语义，
+    /// 不把方法族扩到任意集合上。
+    /// </remarks>
+    internal static object? RewrapPageSequence(object? source, IReadOnlyList<object?> items)
+    {
+        if (items.Count > 0)
+        {
+            var pages = new List<FlintPageContext>(items.Count);
+            foreach (var item in items)
+            {
+                if (item is LazyPageObject page)
+                {
+                    pages.Add(page.PageContext);
+                }
+                else
+                {
+                    return null;
+                }
+            }
+
+            return GetSharedPageList(pages);
+        }
+
+        // 空结果：看源集合的元素种类（源为空时退回"源本身是页面集合"）
+        if (source is LazyPageList)
+        {
+            return GetSharedPageList([]);
+        }
+
+        var sawPageLike = false;
+        if (source is System.Collections.IEnumerable sourceSeq and not string)
+        {
+            foreach (var item in sourceSeq)
+            {
+                if (item is LazyPageObject or LazyTermPage)
+                {
+                    sawPageLike = true;
+                    continue;
+                }
+                return null;
+            }
+        }
+
+        return sawPageLike ? GetSharedPageList([]) : null;
+    }
+
+    /// <summary>
     /// 惰性页面对象：常规键构造时直接绑定；高成本的 prev/next 递归页对象延迟到
     /// 模板实际访问时构建（默认主题不访问 prev/next——万页构建可省 2×N 次全键
     /// 构建），并经 SharedPageObjects 复用。TryGetValue 只读不回写（并发渲染下
@@ -130,7 +191,7 @@ public sealed partial class ScribanTemplateRenderer
             // .Params：Hugo 语义是「front matter 全量并入 + 自定义参数」，
             // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
             // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
-            SetValue("params", BuildParamsDict(page), false);
+            SetValue("params", BuildParamsObject(BuildParamsDict(page)), false);
             // .Resources：包装为带方法的集合（Hugo 的 .Resources.ByType/GetMatch/Match
             // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
             SetValue("resources", new PageResourcesObject(page.Resources), false);
@@ -152,6 +213,7 @@ public sealed partial class ScribanTemplateRenderer
             // Singular/Plural/Terms/Pages）。此前非分类页不注册，导致主题的
             // `.Data.Integrity` 等链式访问报 "Cannot get the member ... for a null object"
             var pageData = BuildPageDataObject(page) ?? new ScriptObject();
+            AddListPageDataPages(page, pageData);
             SetValue("data", pageData, false);
             SetValue("Data", pageData, false);
 
@@ -980,11 +1042,43 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
+    /// 列表页（home/section）的 <c>.Data.Pages</c>。
+    /// </summary>
+    /// <remarks>
+    /// Hugo v0.166 实测：section 页的 <c>.Data.Pages</c> 与 <c>.Pages</c> 同源且非空
+    /// （主题常写 <c>(where .Data.Pages "Type" "in" …).GroupByDate</c>，yinyang 的
+    /// <c>_default/list.html</c> 用它渲染 section/多语言首页）。Flint 此前只给
+    /// taxonomy/term 页建 <c>.Data</c>，其余页面是空 map → <c>.Data.Pages</c> 取空，
+    /// 过滤结果退化成普通列表，随后的 <c>.GroupByDate</c> 报 "function not found"。
+    /// 只补 <c>pages</c> 键：<c>terms</c>/<c>singular</c> 等仍是分类页专属，
+    /// 免得把空 <c>Terms</c> 变成真值而翻转主题的 <c>{{ if .Data.Terms }}</c> 分支。
+    /// 普通内容页（kind=page）不补——Hugo 那里没有子页集合
+    /// </remarks>
+    private static void AddListPageDataPages(FlintPageContext page, ScriptObject pageData)
+    {
+        if (pageData.ContainsKey("pages"))
+        {
+            return;
+        }
+
+        if (!page.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)
+            && !page.Kind.Equals("section", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var pagesValue = GetSharedPageList(page.Pages ?? []);
+        pageData["pages"] = pagesValue;
+        pageData["Pages"] = pagesValue;
+    }
+
+    /// <summary>
     /// 分类页数据对象（对齐 Hugo <c>.Data</c>）：
     /// <c>singular</c>/<c>plural</c>/<c>terms</c>（含 Alphabetical/ByCount）/<c>pages</c>。
     /// kind=taxonomy（terms.html）的 <c>pages</c> 为词条对象列表；
     /// kind=term（taxonomy.html）的 <c>pages</c> 为内容页列表。
-    /// 非分类页返回 null（不注册 <c>data</c> 键，模板访问得 null 而非误值）
+    /// 非分类页返回 null（<c>.Data</c> 本身由调用方补空 map，
+    /// <c>pages</c> 见 <see cref="AddListPageDataPages"/>）
     /// </summary>
     private static ScriptObject? BuildPageDataObject(FlintPageContext page)
     {
@@ -1153,7 +1247,7 @@ public sealed partial class ScribanTemplateRenderer
             ["paginator"] = BuildPaginatorObject(site),
             ["config"] = site.Config,
             ["data"] = site.Data,
-            ["params"] = site.Params,
+            ["params"] = BuildParamsObject(site.Params),
             ["build_date"] = site.BuildDate,
             ["last_change"] = site.LastChange,
             ["is_multilingual"] = site.IsMultiLingual,
@@ -1179,12 +1273,67 @@ public sealed partial class ScribanTemplateRenderer
             ["Menus"] = CreateMenusObject(site.Menus),
             ["Config"] = site.Config,
             ["Data"] = site.Data,
-            ["Params"] = site.Params,
+            ["Params"] = BuildParamsObject(site.Params),
             ["BuildDate"] = site.BuildDate,
             ["LastChange"] = site.LastChange,
             ["IsMultiLingual"] = site.IsMultiLingual,
             ["Languages"] = site.Languages,
         };
+    }
+
+    /// <summary>
+    /// 参数对象（带 snake_case 别名）。
+    /// </summary>
+    /// <remarks>
+    /// 配置里的参数键多为 camelCase（<c>[params] mainSections</c> / <c>headTitle</c>），
+    /// 而 Hugo 主题里常按 snake_case 访问（<c>site.Params.main_sections</c>），
+    /// 迁移工具也会把成员名归一成 snake_case。Scriban 的成员查找不区分大小写
+    /// 但**不**忽略下划线（"main_sections" ≠ "mainSections"）→ 取空值。
+    /// yinyang 实测：<c>site.params.main_sections</c> 为空使
+    /// <c>where .Data.Pages "Type" "in" …</c> 的过滤条件失效
+    /// （Hugo 侧同一表达式返回空集，Flint 侧却把全部词条页当命中）。
+    /// 为含大写的键补 snake_case 别名；同名键已存在时不覆盖。
+    /// </remarks>
+    private static ScriptObject BuildParamsObject(IReadOnlyDictionary<string, object>? source)
+    {
+        var obj = new ScriptObject();
+        if (source is null)
+        {
+            return obj;
+        }
+
+        foreach (var kv in source)
+        {
+            obj[kv.Key] = kv.Value;
+        }
+
+        foreach (var kv in source)
+        {
+            var snake = ToSnakeCaseKey(kv.Key);
+            if (!string.Equals(snake, kv.Key, StringComparison.Ordinal) && !obj.ContainsKey(snake))
+            {
+                obj[snake] = kv.Value;
+            }
+        }
+
+        return obj;
+    }
+
+    /// <summary>camelCase/PascalCase 键 → snake_case（mainSections → main_sections）</summary>
+    private static string ToSnakeCaseKey(string key)
+    {
+        var sb = new System.Text.StringBuilder(key.Length + 4);
+        for (var i = 0; i < key.Length; i++)
+        {
+            var ch = key[i];
+            if (char.IsUpper(ch) && i > 0 && key[i - 1] != '_')
+            {
+                sb.Append('_');
+            }
+            sb.Append(char.ToLowerInvariant(ch));
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>
@@ -1223,6 +1372,15 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("limit", new PagesLimitFunction(pages), false);
             SetValue("groupby", new PagesGroupByFunction(pages), false);
             SetValue("groupbydate", new PagesGroupByDateFunction(pages), false);
+            // Hugo 方法名的下划线拼写别名：转换器对链式方法名有两条归一化路径，
+            // 一条产出折叠形（groupbydate）、一条产出下划线形（group_by_publish_date，
+            // monochrome 的 list.html 实测 "The function `page?.pages?.group_by_publish_date`
+            // was not found" 20 处）。Scriban 成员查找不区分大小写但**不**忽略下划线，
+            // 故两种拼写都要注册
+            SetValue("group_by", new PagesGroupByFunction(pages), false);
+            SetValue("group_by_date", new PagesGroupByDateFunction(pages), false);
+            SetValue("groupbypublishdate", new PagesGroupByDateFunction(pages), false);
+            SetValue("group_by_publish_date", new PagesGroupByDateFunction(pages), false);
             SetValue("indexof", new PagesIndexOfFunction(pages), false);
             SetValue("next", new PagesNextPrevFunction(pages, forward: true), false);
             SetValue("prev", new PagesNextPrevFunction(pages, forward: false), false);

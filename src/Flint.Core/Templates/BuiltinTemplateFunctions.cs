@@ -159,6 +159,56 @@ public sealed partial class BuiltinTemplateFunctions
         throw new ArgumentException($"数学函数收到非数值参数: '{text}'");
     }
 
+    /// <summary>
+    /// 可选 LIMIT 参数的解析：容忍任意输入，非法值按 0（不限制）处理。
+    /// limit 是 Hugo 这些函数的**可选尾参**，不应因类型不匹配让整页渲染失败
+    /// （对比 ToNum：那是数学函数的必需参数，非数值应当报错）
+    /// </summary>
+    private static int ToLimitOrZero(object? v)
+    {
+        switch (v)
+        {
+            case null:
+                return 0;
+            case int i:
+                return i;
+            case long l:
+                return (int)Math.Clamp(l, 0, int.MaxValue);
+            case double d:
+                return (int)Math.Clamp(d, 0d, int.MaxValue);
+            case decimal m:
+                return (int)Math.Clamp(m, 0m, int.MaxValue);
+            case float f:
+                return (int)Math.Clamp(f, 0f, int.MaxValue);
+            case bool b:
+                return b ? 1 : 0;
+        }
+
+        return double.TryParse(v.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+            ? (int)Math.Clamp(parsed, 0d, int.MaxValue)
+            : 0;
+    }
+
+    /// <summary>
+    /// 有界正则替换（Hugo 的 <c>replaceRE ... LIMIT</c> 语义：最多替换 LIMIT 次）。
+    /// 用 MatchEvaluator 计数并复用 <see cref="Match.Result"/>，
+    /// 以便替换串里的 <c>$1</c> 反向引用与 Regex.Replace 保持同一套语义
+    /// </summary>
+    private static string ReplaceWithLimit(string input, string pattern, string replacement, int limit)
+    {
+        var done = 0;
+        return Regex.Replace(input, pattern, m =>
+        {
+            if (done >= limit)
+            {
+                return m.Value;
+            }
+            done++;
+            return m.Result(replacement);
+        });
+    }
+
     #region 字符串函数 (20+)
 
     private void RegisterStringFunctions(ScriptObject obj)
@@ -221,17 +271,28 @@ public sealed partial class BuiltinTemplateFunctions
             s?.Replace(old ?? "", @new ?? "") ?? "");
 
         // replace_re - 正则替换
-        obj.Import("replace_re", (string? s, string? pattern, string? replacement) =>
+        // 参数序按 Hugo 文档：replaceRE PATTERN REPLACEMENT INPUT [LIMIT]。
+        // 注意与同族的 replace 相反——Hugo 的 replace 是 INPUT OLD NEW（输入在前），
+        // 而 replaceRE 的 PATTERN 在前。此前 Flint 把 replace_re 也注册成输入在前，
+        // 于是任何 Hugo 形态的调用都静默错位（`replaceRE "a" "" $s` 会把模式当输入），
+        // 带第 4 参 limit 时更直接报 "Argument index must be < 3"
+        // （narrow 的 icon.html 实测 33 处）。
+        // limit：Hugo 语义为最多替换次数，缺省或 ≤0 表示不限制
+        obj.Import("replace_re", (string? pattern, string? replacement, string? s, params object?[] rest) =>
         {
             if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(pattern))
                 return s ?? "";
-            return Regex.Replace(s, pattern, replacement ?? "");
+            var repl = replacement ?? "";
+            var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
+            return limit > 0 ? ReplaceWithLimit(s, pattern, repl, limit) : Regex.Replace(s, pattern, repl);
         });
-        obj.Import("replaceRE", (string? s, string? pattern, string? replacement) =>
+        obj.Import("replaceRE", (string? pattern, string? replacement, string? s, params object?[] rest) =>
         {
             if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(pattern))
                 return s ?? "";
-            return Regex.Replace(s, pattern, replacement ?? "");
+            var repl = replacement ?? "";
+            var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
+            return limit > 0 ? ReplaceWithLimit(s, pattern, repl, limit) : Regex.Replace(s, pattern, repl);
         });
 
         // split - 分割字符串
@@ -1975,8 +2036,10 @@ public sealed partial class BuiltinTemplateFunctions
         {
             var actual = GetMember(item, key);
             return CompareByOperator(actual, op, target);
-        });
-        return filtered.ToList();
+        }).ToList();
+        // 页面集合的筛选结果仍须带 Pages 方法族（Hugo 语义）——
+        // `(where …).GroupByDate "2006"` 这类链式调用实测 22 处失败
+        return ScribanTemplateRenderer.RewrapPageSequence(seq, filtered) ?? (object)filtered;
     }
 
     /// <summary>按 Hugo operator 比较</summary>
@@ -1995,7 +2058,13 @@ public sealed partial class BuiltinTemplateFunctions
                 {
                     return te.Cast<object?>().Any(x => Eq(x, actual));
                 }
-                return a.Contains(target?.ToString() ?? "", StringComparison.OrdinalIgnoreCase);
+                // 字符串包含是宽容分支（Hugo 要求 target 为切片）。
+                // 但 target 为空/null 时**不能**返回 true：`a.Contains("")` 恒真，
+                // 会把整个集合判成命中。Hugo v0.166 实测 `where .Pages "Type" "in" nil`
+                // 与 `… "in" (slice)` 均返回 0 条
+                var inTarget = target?.ToString() ?? "";
+                return inTarget.Length > 0
+                    && a.Contains(inTarget, StringComparison.OrdinalIgnoreCase);
             case "not in":
                 return !CompareByOperator(actual, "in", target);
             case "like":
@@ -2049,7 +2118,8 @@ public sealed partial class BuiltinTemplateFunctions
                 result.Add(item);
             }
         }
-        return result;
+        // 同 4 参分支：页面集合的筛选结果保留 Pages 方法族
+        return ScribanTemplateRenderer.RewrapPageSequence(seq, result) ?? (object)result;
     }
 
     /// <summary>
