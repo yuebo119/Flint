@@ -55,13 +55,26 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     private void InstallShortcodeContext()
     {
-        Content.Shortcodes.TemplateShortcode.EnrichContext = context =>
+        Content.Shortcodes.TemplateShortcode.EnrichContext = (context, shortcodeGlobals) =>
         {
             EnsureFunctionObjects(context);
             var pageLike = new ScriptObject { ["store"] = new PageStoreObject() };
             pageLike["Store"] = pageLike["store"];
             pageLike["scratch"] = pageLike["store"];
             pageLike["Scratch"] = pageLike["store"];
+            // 短代码上下文的成员同样挂到 page 对象上：Hugo 短代码里 `.` 是**短代码上下文**
+            // （.Name/.Parent/.Ordinal/.Get/.Inner），而迁移产物把所有"点上下文"统一写成
+            // `page.x`（转换器无法区分布局与短代码里的点）。只挂短代码自己的键，
+            // 不覆盖 page 已有的同名键（真实页面上用的成员优先）
+            // —— narrow 的 tab.html 实测：`page?.parent`/`page?.name`/`page?.ordinal`
+            // 此前全取空，6 处报 "must be nested inside tabs"
+            foreach (var key in shortcodeGlobals.Keys)
+            {
+                if (!pageLike.ContainsKey(key))
+                {
+                    pageLike[key] = shortcodeGlobals[key];
+                }
+            }
             context.PushGlobal(new ScriptObject { ["page"] = pageLike, ["Page"] = pageLike });
             context.PushGlobal(BuildPartialGlobals(pageLike));
         };
