@@ -297,8 +297,11 @@ internal sealed class GoTemplateParser
             return new KeywordBody("else", ParsePipeline(rest.Skip(1).ToList(), line), [], [], null);
         }
 
-        // range $k, $v := X
-        if (name == "range")
+        // range $k, $v := X  /  with $v := X（Go 允许 with 带变量声明，
+        // 变量声明必须解析出来，否则转换器会把变量名当成被赋值对象
+        // ——hugo-book 的 `with $terms := $.GetTerms $taxonomy` 实测：
+        //  产出 `$__w1 = $terms page?.get_terms …`，$terms 被当函数调用报错）
+        if (name is "range" or "with")
         {
             var opIdx = rest.FindIndex(t => t.Type is TokenType.Declare or TokenType.Assign);
             if (opIdx > 0)

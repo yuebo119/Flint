@@ -115,7 +115,13 @@ internal sealed class ThemeMigrator
             // Scriban 无此机制，必须提取为独立文件使 include 可命中
             var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text, namedTemplates);
             var selfPartial = SelfPartialNameOf(rel);
-            var result = ConvertTemplate(rel, remainingText, valueReturning, selfPartial);
+            // 主题范围是否存在 baseof 骨架（Hugo 的模板继承外壳）：
+            // 仅 define 触发继承的模板（hugo-book 的 single.html）转换后为空，
+            // 需要补 include baseof，否则整站空页
+            var layoutsRoot = Path.Combine(sourceRoot, "layouts");
+            var baseofAvailable = File.Exists(Path.Combine(layoutsRoot, "baseof.html")) &&
+                !rel.Replace((char)92, '/').Contains("partials/", StringComparison.OrdinalIgnoreCase);
+            var result = ConvertTemplate(rel, remainingText, valueReturning, selfPartial, baseofAvailable);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -172,7 +178,8 @@ internal sealed class ThemeMigrator
         string relPath,
         string text,
         IReadOnlySet<string>? valueReturning = null,
-        string? selfPartialName = null)
+        string? selfPartialName = null,
+        bool baseofAvailable = false)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -180,7 +187,7 @@ internal sealed class ThemeMigrator
         var parser = new GoTemplateParser(tokens);
         var parts = parser.Parse();
 
-        var converter = new TemplateConverter(_map, valueReturning, selfPartialName);
+        var converter = new TemplateConverter(_map, valueReturning, selfPartialName, baseofAvailable);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);

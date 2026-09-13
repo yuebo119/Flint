@@ -1426,3 +1426,81 @@ Flint 原先报 `PARSE001 未注册的短代码` 使整站失败（hugo-coder / 
 - `.Scratch.Get "params"` 在 hook 里取不到布局先前写入的值（hook 早于布局渲染）：
   缺失键返回**空对象**而非 null，使 `$params.code.copy | default true`
   这类链式访问得到 null 而不是硬错误（LoveIt 的 render-codeblock-goat.html 实测）。
+
+---
+
+## 二十三、第三批：baseof 继承、资源管线与递归（2026-09-13 第八轮）
+
+### A. baseof 继承（hugo-book 从"每页 2 字节"到通过）
+
+**A1. 只含 `{{ define "dummy" }}{{ end }}` 的模板**（hugo-book 的 single.html /
+list.html 等）：这是 Hugo 的"仅用 define 触发 baseof 继承"写法。转换器把 define
+提取为独立 partial 后本文件变空——Hugo 仍会渲染 baseof 骨架，Flint 则输出空文件
+（14 页合计 94 字节）。修：转换后 body 为空**且**主题有 `layouts/baseof.html`
+时补 `{{ include "baseof.html" }}`。兜底**只对非 partial 布局生效**——否则
+`_partials/...` 里的空文件也会引 baseof，形成
+`inject/head → baseof → head-styles → inject/head` 的无限递归。
+
+**A2. `{{ with $v := EXPR }}`（Go 的带变量声明 with）**：解析器此前不认这个变量
+声明，转换器便把它当成被赋值对象，产出 `$__w1 = $terms page?.get_terms $taxonomy`
+——Scriban 把 `$terms` 当函数调用（"The function `$terms` was not found"）。
+修：`with` 与 `range` 共用"变量声明 + 管道"的解析分支，产出 `$terms = EXPR; if $terms`。
+
+**A3. `{{ template "X" CTX }}` 的上下文**：此前丢弃 CTX，被调模板里的 `.Field`
+落到外层 page 上。修：非内置命名模板改为 `partial "_partials/X" CTX`。
+
+### B. 资源管线
+
+**B1. `transform.Unmarshal` 接受资源对象**：Hugo 惯用
+`resources.Get "styles/index.yaml" | transform.Unmarshal`，而 Flint 只接受字符串
+→ 整个链塌成 null。修：取参数表里最后一个"文本位"参数（字符串直接用、资源取其
+内容）。
+
+**B2. YAML 子集解析**：原实现只认 `key: value`，纯序列文件（hugo-book 的
+`styles/index.yaml` 是 CSS 清单）被解析成空对象 → `resources.Concat` 拿到空集合
+→ partial 上下文为 null → 全站页头报错。新增 `ParseSimpleYaml`：序列、映射、
+缩进嵌套、标量（去引号/布尔/数值）。
+
+**B3. `resources.ExecuteAsTemplate` 的参数序**：Hugo 是
+`ExecuteAsTemplate TARGETPATH DATA RESOURCE`（管道把资源注入末位），原实现只取
+**首参**当资源——而首参是目标路径字符串 → 返回 null → `$searchJS` 整条链塌掉。
+修：按"找资源 + 找路径"解析，并把资源改名到目标路径使 RelPermalink 与 Hugo 一致。
+
+### C. 递归与缓存
+
+**C1. Scriban 的函数递归计数会跨调用累积**：它在"嵌套渲染 + `ret` 提前返回"时
+不递减，partial 调用上百次的主题（hugo-book 单次构建调 `docs/title.html` 1871 次）
+会假性超限（"Exceeding number of recursive depth limit 100 for node: `default
+site.title`"，opengraph 全挂）。修：与 LoopLimit 同口径设 `RecursiveLimit = 0`
+（页面渲染 3 处 + 短代码上下文），递归安全改由**自建**的 partial 嵌套深度守卫
+（200 层，ThreadStatic）负责——真无限递归给出明确错误而不是无限循环。
+
+**C2. partial 模板解析缓存**：每次调用都 `Template.Parse` 时，深调用链下解析器
+自身的递归会顶到栈（"The parser recursive depth limit was reached near a stack
+overflow"）。修：按物理路径缓存解析结果（复用 `_templateCache`，含 mtime 失效）。
+
+**C3. `reflect.IsMap` 再排除两类**：`PageStoreObject`（Hugo 的 `.Scratch` 是
+struct）与页面集合（Hugo 的 `.Pages` 是 slice）。不排除时，主题的 map 递归辅助
+函数会钻进 partial 上下文注入的 `store` 内部——那里又引用了页面/站点，形成环
+→ 无限递归（FixIt 的 camel-case-keys 实测，由自建深度守卫捕获）。
+
+### D. 上下文与命名空间
+
+**D1. dict 上下文并入页面成员**：Hugo 惯用 `dict "Page" . | partial "x"`，partial
+内 `.Page.X` 被迁移成 `page.x`（page 即那个 dict）→ 取不到页面成员
+（FixIt 的 `get-cover.html` `$page := .Page` → `$page.resources.getmatch` 报 null）。
+修：`RenderPartialWithContext` 的 dict 分支把 dict 里 page-like 的 `Page`/`page`
+值的成员并入绑定对象（dict 自身键优先）。
+
+**D2. `diagrams` 命名空间**：`diagrams.Goat` / `diagrams.ASCIIArt` 返回含
+`Inner`/`Width`/`Height` 的对象（LoveIt 的 plugin/goat.html 用 `{{ with
+diagrams.Goat .Inner }}` 取这三者）。保真度说明：Hugo 用内嵌 ASCII 艺术字形表逐字
+绘制，Flint 用等宽 SVG text 逐字排布（结构等价、视觉是普通等宽文本）。
+
+**D3. 内置短代码补全**：`twitter_simple` / `x_simple`（Hugo v0.146+ 的 `_simple`
+家族，实测 twitter_simple/x_simple/vimeo_simple 均有内置）。
+
+### E. 测试同步
+
+本轮行为变更同步了 6 个过时断言（返回值通道 `__partial_ret_set`、dict 函数形态、
+`num_lt` 比较、值返回型 partial 的上下文参数）——测试与实现必须同源。

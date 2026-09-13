@@ -134,6 +134,10 @@ public sealed partial class BuiltinTemplateFunctions
             ("IsImageResourceProcessable", "reflect_is_image_resource_processable"),
             ("IsImageResourceWithMeta", "reflect_is_image_resource_with_meta"),
         ]),
+        ("diagrams",
+        [
+            ("Goat", "diagrams_goat"), ("ASCIIArt", "diagrams_ascii_art"),
+        ]),
         ("templates",
         [
             ("Exists", "template_exists"), ("Current", "template_current"),

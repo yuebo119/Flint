@@ -606,6 +606,13 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             StrictVariables = false,
             // 对齐 Hugo：循环迭代数不做 1000 级人为限制——万页站点的列表/
             // taxonomy 页单循环即超默认值（同数据集对比测试实证）
+            // Scriban 的函数递归计数在"嵌套渲染 + ret 提前返回"时不递减，
+            // 会**跨调用累积**：partial 调用上百次的主题（hugo-book 每页调
+            // docs/title.html / icon.html 等）会假性超限（opengraph 的
+            // "Exceeding number of recursive depth limit 100 for node: default site.title"）。
+            // 与 LoopLimit 同口径关掉引擎侧计数，递归安全由 partial 渲染的
+            // 自有深度守卫负责
+            RecursiveLimit = 0,
             LoopLimit = 1_000_000
         };
         // 内置函数（含 safe_html 等 safe* 家族）在钩子路径同样可用——缺失时
@@ -768,7 +775,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 TemplateLoader = _templateLoader,
                 MemberRenamer = member => member.Name,
                 StrictVariables = false,
-                LoopLimit = 1_000_000
+                // Scriban 的函数递归计数在"嵌套渲染 + ret 提前返回"时不递减，
+            // 会**跨调用累积**：partial 调用上百次的主题（hugo-book 每页调
+            // docs/title.html / icon.html 等）会假性超限（opengraph 的
+            // "Exceeding number of recursive depth limit 100 for node: default site.title"）。
+            // 与 LoopLimit 同口径关掉引擎侧计数，递归安全由 partial 渲染的
+            // 自有深度守卫负责
+            RecursiveLimit = 0,
+            LoopLimit = 1_000_000
             };
             // 内置函数 + 日期对象都要装：只装前者时 `date.to_string` 会落到
             // Scriban **内置**的 date 对象（要求 DateTime），而 Flint 页面日期是
@@ -809,24 +823,65 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// Scriban 的 include 只给字符串——此函数把 "true"/"false" 还原为布尔、
     /// 纯数字还原为数值，使 <c>{{ if (partial "x" .) }}</c> 的布尔判断语义正确
     /// </summary>
+    /// <summary>
+    /// partial 嵌套深度守卫（替代已关闭的 Scriban 递归计数）：真无限递归
+    /// （partial A → B → A）给出明确错误，而不是无限循环或误导性的
+    /// "recursive depth limit 100"
+    /// </summary>
+    [ThreadStatic]
+    private static int _partialDepth;
+
+    private const int MaxPartialDepth = 200;
+
+    private static void EnterPartial()
+    {
+        if (++_partialDepth > MaxPartialDepth)
+        {
+            _partialDepth = 0;
+            throw new InvalidOperationException(
+                $"partial 嵌套深度超过 {MaxPartialDepth}：疑似 partial 互相递归（检查其调用链）");
+        }
+    }
+
+    private static void ExitPartial() => _partialDepth--;
+
     internal object RenderPartialWithType(Scriban.TemplateContext callerContext, string name)
     {
         var path = _templateLoader.GetPath(callerContext, default, name)
             ?? throw new InvalidOperationException($"partial 路径解析失败: {name}");
         var content = _templateLoader.Load(callerContext, default, path)
             ?? throw new InvalidOperationException($"partial 未找到: {name}");
-        var partialTemplate = Template.Parse(content, path);
-        if (partialTemplate.HasErrors)
+        // partial 模板按物理路径**缓存解析结果**：每次调用都 Template.Parse 时，
+        // ① 深调用链下解析器自身的递归会顶到栈（"The parser recursive depth limit
+        // was reached near a stack overflow"，hugo-book 的 title.html 实测）；
+        // ② 高频 partial 反复解析（hugo-book 单次构建调 title.html 1871 次）
+        var cacheKey = "partial:" + path;
+        if (!_templateCache.TryGetValue(cacheKey, out var cached) || IsStale(cached))
         {
-            throw new TemplateParseException(
-                name,
-                partialTemplate.Messages.Select(m => m.ToString()).ToList());
+            var parsedPartial = Template.Parse(content, path);
+            if (parsedPartial.HasErrors)
+            {
+                throw new TemplateParseException(
+                    name,
+                    parsedPartial.Messages.Select(m => m.ToString()).ToList());
+            }
+            cached = new CachedTemplate(parsedPartial, path, GetMtimeUtc(path));
+            _templateCache[cacheKey] = cached;
         }
+        var partialTemplate = cached.Template;
 
         // 复用调用者上下文：partial 内可见 page/site/内置函数（Hugo partial 的
         // 第二参数语义在 Scriban 中由共享上下文天然满足）
-        var rendered = partialTemplate.Render(callerContext);
-        return RestoreScalarType(rendered);
+        EnterPartial();
+        try
+        {
+            var rendered = partialTemplate.Render(callerContext);
+            return RestoreScalarType(rendered);
+        }
+        finally
+        {
+            ExitPartial();
+        }
     }
 
     /// <summary>
@@ -870,6 +925,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             merged["scratch"] = store;
             merged["Scratch"] = store;
             AddPageMethodFamily(merged, pageObject);
+            MergePageMembers(merged, ctxObj);
             effective = merged;
         }
         else if (context is ScriptObject plainCtx)
@@ -878,6 +934,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 页面方法的写法很常见（FixIt `dict "Page" . "Key" "toc" | partial
             // "function/param.html"` → partial 内 `.Page.Param`，实测 function not found）
             AddPageMethodFamily(plainCtx, pageObject);
+            MergePageMembers(plainCtx, plainCtx);
         }
 
         var overlay = new ScriptObject
@@ -927,6 +984,32 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         "has_shortcode", "HasShortcode", "render_string", "RenderString",
         "paginate", "Paginate", "fragments", "Fragments"
     ];
+
+    /// <summary>
+    /// 把 dict 里"装着页面"的键（Hugo 惯用 `dict "Page" . | partial "x"`）的页面成员
+    /// 并入绑定对象（dict 自身键优先）。Hugo 语义下 `.Page.X` 取的是该页面的 X，
+    /// 而迁移产物里的 `.Page.X` 被写成 `page.x`（page 即 dict 本身）→ 取不到页面成员。
+    /// FixIt 的 get-cover.html（`$page := .Page` → `$page = page`）实测：
+    /// `$page.resources.getmatch` 报 "for a null object"
+    /// </summary>
+    private static void MergePageMembers(ScriptObject target, ScriptObject source)
+    {
+        foreach (var key in new[] { "page", "Page" })
+        {
+            if (!source.ContainsKey(key) || source[key] is not ScriptObject pageObj ||
+                !pageObj.ContainsKey("rel_permalink") || !pageObj.ContainsKey("title"))
+            {
+                continue;
+            }
+            foreach (var member in pageObj.Keys)
+            {
+                if (!target.ContainsKey(member))
+                {
+                    target[member] = pageObj[member];
+                }
+            }
+        }
+    }
 
     /// <summary>把调用者页面的方法族补给 dict 上下文（缺则补，dict 已有键不覆盖）</summary>
     private static void AddPageMethodFamily(ScriptObject target, ScriptObject? source)
@@ -1640,6 +1723,13 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             TemplateLoader = _templateLoader,
             MemberRenamer = member => member.Name, // 保持原始属性名
             StrictVariables = false, // 允许访问未定义的变量
+            // Scriban 的函数递归计数在"嵌套渲染 + ret 提前返回"时不递减，
+            // 会**跨调用累积**：partial 调用上百次的主题（hugo-book 每页调
+            // docs/title.html / icon.html 等）会假性超限（opengraph 的
+            // "Exceeding number of recursive depth limit 100 for node: default site.title"）。
+            // 与 LoopLimit 同口径关掉引擎侧计数，递归安全由 partial 渲染的
+            // 自有深度守卫负责
+            RecursiveLimit = 0,
             LoopLimit = 1_000_000 // 万页站点的大列表循环（同数据集对比测试实证）
         };
 

@@ -446,11 +446,44 @@ public sealed partial class BuiltinTemplateFunctions
             return renamed.ToScriptObject();
         });
 
-        res.Import("ExecuteAsTemplate", (object? value, params object[] opts) =>
+        res.Import("ExecuteAsTemplate", (params object?[] args) =>
         {
-            // 资源作为模板渲染：Flint 侧不递归渲染（避免与主渲染管线耦合），
-            // 原样返回并记录——语义差异由迁移报告标注
-            return ToResource(value)?.ToScriptObject();
+            // Hugo 的签名是 `ExecuteAsTemplate TARGETPATH DATA RESOURCE`
+            //（管道形态把资源注入末位）。早期实现只取**首参**当资源——而首参是
+            // 目标路径字符串 → ToResource 得 null → 整条 `| resources.Minify
+            // | resources.Fingerprint` 链塌成 null（hugo-book 的 $searchJS 实测：
+            // partial 上下文为 null，全站页头报错）。此处按"找资源 + 找路径"解析，
+            // 并把资源改名到目标路径使 RelPermalink 与 Hugo 一致
+            //（内容不递归渲染，避免与主渲染管线耦合）
+            TemplateResource? src = null;
+            string? target = null;
+            foreach (var a in args)
+            {
+                // (char)10 = 换行：目标路径是单行字符串（用码点避免源码转义层级）
+                if (a is string str && target is null && str.Length > 0 &&
+                    !str.Contains((char)10, StringComparison.Ordinal))
+                {
+                    target = str;
+                    continue;
+                }
+                var r = a switch
+                {
+                    TemplateResource tr => tr,
+                    ScriptObject o when o.ContainsKey("resource_type") => TemplateResource.FromScriptObject(o),
+                    _ => null
+                };
+                if (r is not null)
+                {
+                    src = r;
+                }
+            }
+            if (src is null)
+            {
+                return null;
+            }
+            var renamed = TemplateResource.Create(target ?? src.Name, src.Content, _resources?.BaseUrl ?? "");
+            Track(renamed);
+            return renamed.ToScriptObject();
         });
 
         res.Import("Publish", (object? value) =>

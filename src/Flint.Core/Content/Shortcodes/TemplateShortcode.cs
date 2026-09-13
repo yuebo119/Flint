@@ -115,7 +115,14 @@ public sealed class TemplateShortcode : IShortcodeProcessor
         });
 #pragma warning restore IL2026, IL3050
 
-        var templateContext = new Scriban.TemplateContext();
+        var templateContext = new Scriban.TemplateContext
+        {
+            // 与页面渲染同口径：Scriban 的函数递归计数在嵌套渲染时不递减、
+            // 会跨调用累积（短代码内调 partial 链会假性超限：
+            // "Exceeding recursive depth limit, near to stack overflow"）
+            RecursiveLimit = 0,
+            LoopLimit = 1_000_000
+        };
         templateContext.PushGlobal(globals);
         // 短代码此前用**全新空上下文**渲染：`partial`/`safe_html`/`as_list` 等
         // 全局函数全部不可用（Clarity 的 `partial "sprite"` 报 "function partial
