@@ -49,11 +49,21 @@ internal sealed partial class TemplateConverter(
         var sb = new StringBuilder();
         var scope = new List<string>(); // range/with 上下文变量栈
 
-        foreach (var part in parts)
+        for (var i = 0; i < parts.Count; i++)
         {
+            var part = parts[i];
             switch (part)
             {
                 case TextPart t:
+                    // 文本以 `{` 结尾且紧接动作块时补一个空格：`{` + `{{` 相邻会成为
+                    // `{{{`，Scriban 解析器在此报 "Invalid token found }"（模板里的
+                    // CSS/JS 花括号与 `{{ }}` 混排时高发；techdoc 的 custom-css.html
+                    // `:root {` 实测）。CSS/JS/HTML 中块前的空白无副作用
+                    if (t.Text.EndsWith('{') && i + 1 < parts.Count && parts[i + 1] is ActionPart)
+                    {
+                        sb.Append(t.Text).Append(' ');
+                        break;
+                    }
                     sb.Append(t.Text);
                     break;
 

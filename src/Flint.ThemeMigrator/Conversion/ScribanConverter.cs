@@ -695,7 +695,6 @@ internal sealed class ScribanConverter(
         // 转换期产出须与引擎注册名一致）
         if (name.Contains('.', StringComparison.Ordinal) || name.Contains('$', StringComparison.Ordinal))
         {
-            Console.Error.WriteLine("[DIAG] ConvertCall name=" + name + " argc=" + args.Count);
             var mapped = MapChainMethod(name);
             if (mapped is not null)
             {
@@ -829,10 +828,6 @@ internal sealed class ScribanConverter(
     /// </summary>
     private static string? MapChainMethod(string name)
     {
-        if (name.Contains('(', StringComparison.Ordinal))
-        {
-            Console.Error.WriteLine("[DIAG] MapChainMethod name=" + name);
-        }
         // 末尾方法段（.ByType → bytype）
         var lastDot = name.LastIndexOf('.');
         if (lastDot < 0 || lastDot == name.Length - 1)
