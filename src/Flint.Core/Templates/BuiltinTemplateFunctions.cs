@@ -250,20 +250,45 @@ public sealed partial class BuiltinTemplateFunctions
         // truncate - 截断字符串（省略号可省，默认 "…"；Hugo `truncate LEN STRING` 经
         // 管道形态 `X | truncate LEN` 只给两参——严格三参形参报
         // "Invalid number of arguments 2 passed to `truncate`"，PaperMod schema_json 实测）
+        // truncate —— 同样兼容两种参数序：
+        //   Hugo 的 truncate LENGTH [ELLIPSIS] STRING（实测 `truncate 3 "abcdef"` → "abc …"）
+        //   Flint 历史的 truncate STRING LENGTH [ELLIPSIS]（`"abcdef" | truncate 3`）
+        // 主题里几乎都是管道形态（矩阵实测 9 处全部如此），但非管道形态按 Hugo
+        // 文档写就是 (长度, 文本)，故按类型判定方向，两种都能用
         obj.Import("truncate", (params object?[] a) =>
         {
             if (a.Length < 2)
             {
                 return a.Length > 0 ? a[0]?.ToString() ?? "" : "";
             }
-            var s = a[0]?.ToString();
-            var length = ToInt(a[1]);
-            var ellipsis = a.Length > 2 ? a[2]?.ToString() ?? "…" : "…";
+            string? s;
+            int length;
+            // 判方向：Hugo 序是 (长度, 文本)，Flint 序是 (文本, 长度)；省略号都在末位
+            if (LooksLikeNumber(a[0]) && a[1] is string text)
+            {
+                length = ToInt(a[0]);
+                s = text;
+            }
+            else
+            {
+                s = a[0]?.ToString();
+                length = ToInt(a[1]);
+            }
             if (string.IsNullOrEmpty(s) || s.Length <= length)
                 return s ?? "";
-            if (length <= ellipsis.Length)
-                return ellipsis[..length];
-            return s[..(length - ellipsis.Length)] + ellipsis;
+            if (a.Length > 2 && a[2]?.ToString() is { Length: > 0 } explicitEllipsis)
+            {
+                // 显式省略号：保持 Flint 语义（省略号计入长度）——不复制 Hugo 的实现，
+                // 因为 Hugo v0.166 在显式省略号下行为不自洽：实测
+                // `truncate 5 s "..."` → "..."（整段被省略号取代）、
+                // `truncate 2 s "..."` → ".." + 全文。主题几乎不用显式省略号形态
+                if (length <= explicitEllipsis.Length)
+                    return explicitEllipsis[..length];
+                return s[..(length - explicitEllipsis.Length)] + explicitEllipsis;
+            }
+            // 默认省略号：Hugo v0.166 实测语义——取前 N 个字符 + " …"（省略号不计入 N）：
+            // `truncate 3 "abcdef"` → "abc …"（len=7：3 + 空格 + 3 字节省略号）
+            return s[..length] + DefaultTruncateEllipsis;
         });
 
         // replace - 替换字符串
@@ -347,10 +372,34 @@ public sealed partial class BuiltinTemplateFunctions
             return s.Substring(start, length);
         });
 
-        // repeat - 重复字符串
-        obj.Import("repeat", (string? s, int count) =>
+        // repeat —— **两种参数序都接受**：
+        //   Hugo 的 strings.Repeat COUNT STRING（Hugo v0.166 实测 `strings.Repeat 3 "ab"`
+        //   → "ababab"）
+        //   Flint 历史的 repeat STRING COUNT（`"ab" | repeat 3` 的管道形态）
+        // 靠**类型**判定方向（一边是数字、一边是文本），故 smol 的 header.html
+        // （`strings.Repeat (site.title | len | add 6) "="`，17 处
+        // "Unable to convert type string to int"）与既有管道写法都能过。
+        // 两边同为文本/数字时按 Flint 历史序（字符串在前）
+        obj.Import("repeat", (params object?[] a) =>
         {
-            if (string.IsNullOrEmpty(s) || count <= 0)
+            if (a.Length < 2)
+            {
+                return a.Length > 0 ? a[0]?.ToString() ?? "" : "";
+            }
+            string s;
+            int count;
+            // 判方向：Hugo 序是 (计数, 文本)，Flint 序是 (文本, 计数)
+            if (LooksLikeNumber(a[0]) && a[1] is string second)
+            {
+                count = ToInt(a[0]);
+                s = second;
+            }
+            else
+            {
+                s = a[0]?.ToString() ?? "";
+                count = ToInt(a[1]);
+            }
+            if (s.Length == 0 || count <= 0)
                 return "";
             return string.Concat(Enumerable.Repeat(s, count));
         });
@@ -1992,10 +2041,31 @@ public sealed partial class BuiltinTemplateFunctions
         _ => true
     };
 
-    /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>
-    internal static int ToInt(object? v)
+    /// <summary>truncate 默认省略号（Hugo v0.166 实测：空格 + 省略号，且不计入长度参数）</summary>
+    private const string DefaultTruncateEllipsis = " …";
+
+    /// <summary>
+    /// 参数序判定用：是否为"数值形态"（数值类型，或能整体解析为数字的字符串）。
+    /// 用于 repeat/truncate 这类 Hugo 与 Flint 参数序相反、需要按类型判方向的函数
+    /// </summary>
+    private static bool LooksLikeNumber(object? v)
     {
         if (v is null)
+        {
+            return false;
+        }
+        switch (v)
+        {
+            case int or long or double or float or decimal or short or byte:
+                return true;
+        }
+        return double.TryParse(v.ToString(), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out _);
+    }
+
+    /// <summary>宽松转 int（数值直转；数字字符串可解析；其余 0）</summary>
+    internal static int ToInt(object? v)
+    {        if (v is null)
         {
             return 0;
         }

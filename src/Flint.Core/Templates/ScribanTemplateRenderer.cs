@@ -945,8 +945,26 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         EnterPartial(name);
         try
         {
-            var rendered = partialTemplate.Render(callerContext);
-            return RestoreScalarType(rendered);
+            // 输出缓冲隔离（否则会清掉调用者已累积的输出）：
+            // Scriban 的 Template.Render 把 context.Output 当作**自己的**缓冲——
+            // 渲染完读取其内容后执行 `Builder.Length = 0`。直接传调用者的 context，
+            // 读到的就是"调用者已写内容 + partial 自身输出"，随后被整体清空；
+            // 只有该返回值又恰好被写回输出时才看不出问题，一旦调用点不写回
+            // （如条件分支、赋值、多级嵌套），调用者此前的内容就凭空消失——
+            // narrow 实测：baseof 里 head 之后的 header 一渲染，TOP/MID 全丢，
+            // 整页只剩空白（构建仍报"成功"，属静默失败）。
+            // PushOutput 是 Scriban 为此提供的隔离手段：新缓冲只装本次 partial 的
+            // 输出，返回的字符串因此也恰好是 partial 的纯输出
+            callerContext.PushOutput();
+            try
+            {
+                var rendered = partialTemplate.Render(callerContext);
+                return RestoreScalarType(rendered);
+            }
+            finally
+            {
+                callerContext.PopOutput();
+            }
         }
         finally
         {

@@ -1424,7 +1424,13 @@ internal sealed class ScribanConverter(
             }
 
             case Parsing.VariableExpr v:
-                return new ConversionResult(v.Name, ConversionKind.Equivalent);
+                // 裸 `$` 是 Hugo 的**顶层上下文**（布局里即当前页），Scriban 的 `$`
+                // 却是"函数参数数组"——两个语义毫不相干。原样透传会让
+                // `partial $partialPath $`（narrow 的 home.html 实测）把空参数数组当
+                // 上下文传给 partial，被调方 `page` 变 null，报
+                // "Cannot get the member page.content for a null object"
+                return new ConversionResult(
+                    v.Name == "$" ? "page" : v.Name, ConversionKind.Equivalent);
 
             case Parsing.ChainExpr { Base: Parsing.VariableExpr { Name: not "$" } ve } vc:
             {

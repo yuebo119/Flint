@@ -477,8 +477,11 @@ public sealed class ThemeConvergenceRegressionTests
     public void truncate省略号可省()
     {
         // PaperMod schema_json：`| truncate 180`（曾报 "Invalid number of arguments 2 ... expecting 3"）
+        // Hugo v0.166 实测语义：默认省略号是 " …"（空格+省略号）且**不计入**长度参数——
+        // `strings.Truncate 5 "abcdefghij"` → "abcde …"（len=7 = 5 字符 + 空格 + 3 字节省略号）。
+        // 此前 Flint 按"省略号计入长度"实现（s[..4] + "…"，共 5 字符），与 Hugo 产出不一致
         var r = Eval("{{ \"abcdefghij\" | truncate 5 }}");
-        Assert.Equal(5, r.Length);
+        Assert.Equal("abcde …", r);
     }
 
     // ---- printf：Go 动词 ----
