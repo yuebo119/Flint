@@ -1504,3 +1504,116 @@ diagrams.Goat .Inner }}` 取这三者）。保真度说明：Hugo 用内嵌 ASCI
 
 本轮行为变更同步了 6 个过时断言（返回值通道 `__partial_ret_set`、dict 函数形态、
 `num_lt` 比较、值返回型 partial 的上下文参数）——测试与实现必须同源。
+
+---
+
+## 二十四、第四批：range 语义、上下文细化与一次有害尝试（2026-09-13 第九轮）
+
+### A. `range` 的 map/slice 语义（Hugo 实测）
+
+```
+{{ range $v    := (dict "a" 1 "b" 2) }} ⇒ 1,2      （值）
+{{ range $k,$v := (dict "a" 1 "b" 2) }} ⇒ a=1,b=2  （键值对）
+{{ range $i,$v := (slice "x" "y") }}    ⇒ 0=x,1=y  （索引+值）
+{{ range $v    := (slice "x" "y") }}    ⇒ x,y      （元素）
+```
+
+**A1. `as_list` 把映射当标量**：`as_list(dict)` 返回**单元素**（那个 dict 本身），
+于是双变量 range 的 `$pair` 就是 dict → `reflect.IsMap $pair` 为真 → 主题的
+"递归转换 map 键"辅助函数（FixIt 的 `camel-case-keys.html`）沿同一个 map
+**无限自递归**（自建深度守卫捕获）。修：`as_list` 对映射返回**值序列**。
+
+**A2. 新增 `as_pairs`**（键值对序列）：转换器把 `range $k, $v := X` 产成
+`for $pair in as_pairs (X)`，`$k = $pair.Key` / `$v = $pair.Value`。
+
+**A3. 列表优先于映射**（关键回归点）：页面集合是 `ScriptObject + IList<ScriptObject>`
+（LazyPageList）。若按 `ScriptObject` 判定，就会去迭代它的**成员**
+（bydate/bytitle/count… 一堆函数值）而不是页面本列——迭代出函数值后 Scriban 会
+自动调用它们（"Argument index must be < 1"、"Unable to convert type object to int"，
+loveit/hugo-coder/blowfish 实测）。故判定顺序必须是
+`IList<ScriptObject>` → `IList` → 映射 → 其余 `IEnumerable`。
+
+**A4. 迭代跳过"非数据成员"**：函数值成员在 Scriban 的取值位置会被自动调用
+（0 参 → 参数校验失败）。Hugo 的映射从不含函数，故跳过。
+
+**A5. `ScriptObject` 的成员值必须经 `Keys` + 索引器取**：`IDictionary.Values` /
+`DictionaryEntry.Value` 返回 Scriban 的 `InternalValue` 包装（渲染成类型名）。
+
+### B. partial 上下文细化
+
+**B1. 大小写别名**：主题用 `dict "Config" …` 造 PascalCase 键，而迁移产物按页面
+成员约定写小写（`page.config`）——Scriban 成员查找大小写敏感。给 partial 的 dict
+上下文补大小写双向别名。
+
+**B2. 缺失模板宽容**：`partial`/`partialValue` 解析不到模板时**输出空并记录诊断**
+（TEMPLATE001），而不是抛异常打断整页——主题常引用由 Hugo Module 提供的 partial
+（FixIt 的 `_funcs/get-page-images` 来自 LoveIt 模块）。
+
+**B3. 内置模板哨兵路径**：内置模板的"路径"是哨兵（U+0001builtin:xxx），不能对它
+调 `File.GetLastWriteTimeUtc`（内部 `Path.GetFullPath` 会把哨兵当相对路径解析并抛错）。
+
+**B4. 转换器：管道形态 `dict … | partial "x"` 的上下文丢括号** → Scriban 把它当多个
+实参（FixIt 的 rss.html：partial 内 `$page := .Page` 取到函数对象）。
+
+**B5. `fingerprint` 收下可选算法参数**：内建注册是 `(string? path)` 单参版，
+主题写 `$res | fingerprint "sha512"` 时形参不符 → "Argument index must be < 1"
+（LoveIt 的 plugin/style.html 实测）。合并为一个资源感知的 variadic 实现：
+资源对象走资源指纹（同 `resources.Fingerprint`）、字符串路径保留旧的 `?v=hash`。
+
+### C. 渲染次序
+
+**home 页先串行渲染**，其余页再分批并行（对齐 Hugo 的页面渲染次序）：主题常在 home
+里把跨页数据写进 `.Site.Store`（FixIt 的 `$.Store.Set "mainSectionPages"`，随后由
+`single/footer.html` 读取），分批并行会让读取先于写入。
+
+### D. 一次有害尝试（已回退，记录备查）
+
+为对齐 Hugo 的 nil 宽容（实测 `{{ (dict "a" 1).b.c }}` 无错、`{{ ge nil 1 }}` ⇒ false），
+曾开启 Scriban 的 `EnableRelaxedTargetAccess`。**实测有害**：某主题的关键守卫从
+"抛错"变成"静默 false"，页面渲染成空壳——Congo 从 26.3MB 塌到 471 字节
+（157 页全是空白）。矩阵即验证：宁可显式失败，不可静默空页。已移除该开关。
+
+**教训**：引擎级"宽容开关"是**全局语义变更**，必须用整站产出量做反向验证
+（S3），只看错误数下降会漏掉静默劣化。
+
+---
+
+## 二十五、第五批：partial 解析与一次回退（2026-09-13 第十轮）
+
+**1. partial 的"相对调用者目录"解析丢了调用者信息**
+
+Hugo 的 partial 名可相对**调用者所在目录**解析（PaperMod 的
+`_partials/templates/opengraph.html` 调 `partial "_funcs/get-page-images"` 命中
+`_partials/templates/_funcs/get-page-images.html`）。走 Scriban 内置 `include` 时
+调用者位置由 Scriban 的 span 提供；把 partial 调用改走 Flint 自己的实现后该信息丢失
+→ 嵌套相对路径的 partial 全部解析失败（PaperMod 实测 18 处）。修：
+`PartialFunction`/`PartialValueFunction` 把 `callerContext.Span` 传给解析器。
+
+**2. 动态 partial 名**
+
+`{{ partial $partial . }}` / `{{ partial (printf "home/%s" $layout) . }}`：名字在运行期
+才确定。此前产 TODO 占位 → 命中分支只有注释、正文为空（Congo 的 `index.html` 经
+`templates.Exists` 分支实测）。修：名字表达式**透传**给 Flint 的 `partial`
+（它本就按字符串在运行期解析）。
+
+**3. `fingerprint` 收下可选算法参数**
+
+内建注册是 `(string? path)` 单参版，主题写 `$res | fingerprint "sha512"` 时形参不符
+→ "Argument index must be < 1"（LoveIt 的 plugin/style.html 实测）。合并为资源感知的
+variadic 实现：资源对象走资源指纹（同 `resources.Fingerprint`）、字符串路径保留旧的
+`?v=hash`。
+
+**4. 列表判定优先于映射**（回归修复，见第二十四节 A3）
+
+### E. 又一次回退（S3 反向验证，记录备查）
+
+**partial 内的提前返回**：为消除"Scriban 的 `ret` 把 FlowState 置为 Return、连带截断
+调用者渲染"的隐患，曾把 partial 内的 `{{ return }}` 改产 Flint 自有信号
+`__flint_partial_return`（抛 `PartialReturnSignal`，由 partial 渲染处捕获）。
+
+**实测不成立**：在 `partialcached` 的隔离上下文路径上与 Clarity 的样式链冲突
+（39 处渲染失败），而 Congo 的空页**并未**因此修复（两种方案下都空）。按诊断三步骤
+S3 反向验证原则回退到 `{{ ret }}`——回退后 Clarity 恢复通过。
+
+**教训**：替换引擎既有控制流语义（Scriban 的 return）牵动面极广，收益必须有
+**产出量级**的证据支撑，不能只凭"消除了一类隐患"的判断。

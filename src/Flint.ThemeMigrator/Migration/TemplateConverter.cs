@@ -265,6 +265,11 @@ internal sealed class TemplateConverter(
                 var selfName = _expr.SelfPartialName;
                 if (selfName is not null)
                 {
+                    // 恢复 Scriban 的 `ret`：曾改用 Flint 的自有信号
+                    // `__flint_partial_return`（意图避免 Scriban 的 FlowState 泄漏截断
+                    // 调用者），但实测在 partialcached 的隔离上下文路径上与 Clarity 的
+                    // 样式链冲突（39 处渲染失败）而 Congo 的空页并未因此修复——按 S3
+                    // 反向验证原则回退
                     var key = ScribanConverter.RetKeyPrefix + selfName;
                     return Wrap(
                         $"__partial_ret_set \"{key}\" {retVal} }}}}}}{{{{ ret",
@@ -297,11 +302,10 @@ internal sealed class TemplateConverter(
         // "Invalid token found `,`. Expecting <EOL>/end of line"），
         // 含多参数函数调用时须加括号：`for x in (f a b)`
         coll = ParenthesizeIfCallWithArgs(coll);
-        // 集合表达式按 Hugo 的 range 语义归一（nil/false → 空集合不迭代；
-        // 标量 → 单元素）。Scriban 的 `for x in false` 会抛
-        // "Unexpected type `System.Boolean` for iterator"（Blowfish 的
-        // `range (or .social .links)` 两者皆空时实测 1574 处）
-        coll = $"as_list ({coll})";
+        // 集合归一交给单/双变量各自的分支（as_list = 值序列、as_pairs = 键值对序列）：
+        // 两者的共同前提是 nil/false → 空、标量 → 单元素——Scriban 的
+        // `for x in false` 会抛 "Unexpected type `System.Boolean` for iterator"
+        //（Blowfish 的 `range (or .social .links)` 两者皆空时实测 1574 处）
 
         // 双变量：range $k, $v := X
         if (kb.Vars.Count >= 2)
@@ -320,9 +324,14 @@ internal sealed class TemplateConverter(
             // 显式拼接而非插值：`}}`/`{{` 在插值串里要写成 4 个花括号，
             // 极易多写一个（历史 bug：写成 6 个 → 产出 3 个 `}`，
             // 使**每个**双变量 range 都向页面注入一个字面 `}`）
-            var body = "for " + pair + " in " + coll + " }}{{ " +
-                       kvar + " = " + pair + ".Key ?? for.index; " +
-                       vvar + " = " + pair + ".Value ?? " + pair;
+            // 双变量用 **as_pairs**（Hugo v0.166 实测：映射 → (key,value)、
+            // 序列 → (index,value)）。早期靠 as_list + `pair.Key ?? for.index` /
+            // `pair.Value ?? pair` 兜底，而 as_list 当时把映射当**标量**（单元素）
+            // → $pair 就是那个映射本身 → 主题的"递归转换 map 键"辅助函数
+            //（FixIt 的 camel-case-keys.html）沿 map 无限自递归
+            var body = "for " + pair + " in as_pairs (" + coll + ") }}{{ " +
+                       kvar + " = " + pair + ".Key; " +
+                       vvar + " = " + pair + ".Value";
             return Wrap(body, trimL, trimR);
         }
 
@@ -330,7 +339,7 @@ internal sealed class TemplateConverter(
         var loopVar = kb.Vars.Count == 1 ? kb.Vars[0] : $"$__it{_syntheticIndex++}";
         _blockStack.Add(("range", null));
         scope.Add(loopVar);
-        return Wrap($"for {loopVar} in {coll}", trimL, trimR);
+        return Wrap($"for {loopVar} in as_list ({coll})", trimL, trimR);
     }
 
     /// <summary>当前是否处于 with .Resources.* 块内（裸方法属资源接收者）</summary>

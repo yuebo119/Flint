@@ -273,9 +273,18 @@ public sealed partial class SiteBuilder
         }
 
         // 优化：批量处理以减少并发调度开销
+        // 渲染次序：home 页**先串行渲染**、其余页再分批并行（对齐 Hugo 的页面渲染次序）。
+        // 主题常在 home 里把跨页数据写入 .Site.Store（FixIt 的
+        // `$.Store.Set "mainSectionPages"` 之后由 single/footer.html 读取），
+        // 分批并行会让读取先于写入 → "$pages.Prev for a null object"
+        foreach (var homePage in renderTargets.Where(p => p.Kind == "home"))
+        {
+            await RenderBatchAsync([homePage], cancellationToken).ConfigureAwait(false);
+        }
+
         // 每批处理多个页面，共享模板查找开销
         const int batchSize = 20;
-        var batches = renderTargets.Chunk(batchSize).ToArray();
+        var batches = renderTargets.Where(p => p.Kind != "home").Chunk(batchSize).ToArray();
 
         await Parallel.ForEachAsync(
             batches,
@@ -286,6 +295,11 @@ public sealed partial class SiteBuilder
             },
             async (batch, ct) =>
             {
+                await RenderBatchAsync(batch, ct).ConfigureAwait(false);
+            });
+
+        async ValueTask RenderBatchAsync(PageContext[] batch, CancellationToken ct)
+        {
                 foreach (var page in batch)
                 {
                     try
@@ -365,7 +379,7 @@ public sealed partial class SiteBuilder
                         });
                     }
                 }
-            });
+        }
 
         return [.. results];
     }
