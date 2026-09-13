@@ -396,8 +396,10 @@ internal sealed class ScribanConverter(
                         ConversionKind.Equivalent);
                 }
 
+                // 有参调用不能用 nil 安全分隔符（Scriban 会把 `(x)?.f a` 整体当函数名）
+                var feTarget = argTexts.Count > 0 ? UnsafeTarget(mapped) : mapped;
                 return new ConversionResult(
-                    mapped + " " + string.Join(" ", argTexts), ConversionKind.Equivalent);
+                    feTarget + " " + string.Join(" ", argTexts), ConversionKind.Equivalent);
             }
         }
 
@@ -693,6 +695,7 @@ internal sealed class ScribanConverter(
         // 转换期产出须与引擎注册名一致）
         if (name.Contains('.', StringComparison.Ordinal) || name.Contains('$', StringComparison.Ordinal))
         {
+            Console.Error.WriteLine("[DIAG] ConvertCall name=" + name + " argc=" + args.Count);
             var mapped = MapChainMethod(name);
             if (mapped is not null)
             {
@@ -736,7 +739,12 @@ internal sealed class ScribanConverter(
                     return new ConversionResult(callR.Trim(), ConversionKind.Equivalent);
                 }
 
-                var call0 = argTexts0.Count == 0 ? mapped : mapped + " " + string.Join(" ", argTexts0);
+                // **有参调用不能用 nil 安全分隔符**：Scriban 会把 `(x)?.f a` 整体当作
+                // 函数名（"The function `(x)?.f` was not found"）。MapChainMethod 为
+                // 接收者是括号/变量的**字段访问**（无参）加了 `?.`，调用形态必须退回普通点
+                //（yinyang 的 `(where …).GroupByDate "2006"` 实测 22 处）
+                var callTarget = argTexts0.Count > 0 ? UnsafeTarget(mapped) : mapped;
+                var call0 = argTexts0.Count == 0 ? mapped : callTarget + " " + string.Join(" ", argTexts0);
                 return new ConversionResult(call0, ConversionKind.Equivalent);
             }
         }
@@ -821,6 +829,10 @@ internal sealed class ScribanConverter(
     /// </summary>
     private static string? MapChainMethod(string name)
     {
+        if (name.Contains('(', StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine("[DIAG] MapChainMethod name=" + name);
+        }
         // 末尾方法段（.ByType → bytype）
         var lastDot = name.LastIndexOf('.');
         if (lastDot < 0 || lastDot == name.Length - 1)
@@ -1537,6 +1549,16 @@ internal sealed class ScribanConverter(
             default:
                 return new ConversionResult("", ConversionKind.Unsupported, $"未知表达式 {expr.GetType().Name}");
         }
+    }
+
+    /// <summary>
+    /// 把"接收者与方法之间的 nil 安全分隔符"退回普通点：仅用于**有参调用**形态。
+    /// Scriban 不支持 `(x)?.f a`（整体被当函数名），而字段访问（无参）保留 `?.` 的宽容语义
+    /// </summary>
+    private static string UnsafeTarget(string mapped)
+    {
+        var idx = mapped.LastIndexOf("?.", StringComparison.Ordinal);
+        return idx < 0 ? mapped : mapped[..idx] + "." + mapped[(idx + 2)..];
     }
 
     /// <summary>Scriban 对象键的合法标识符判定（字母/下划线开头，字母数字下划线）</summary>

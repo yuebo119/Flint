@@ -28,7 +28,7 @@ internal sealed class TemplateConversionStats
 /// 模板转换器：TemplatePart 列表 → Scriban 文本。
 /// 有状态（块栈、define 收集），每个模板文件用一个实例。
 /// </summary>
-internal sealed class TemplateConverter(
+internal sealed partial class TemplateConverter(
     MigrationMap map,
     IReadOnlySet<string>? valueReturningPartials = null,
     string? selfPartialName = null,
@@ -85,6 +85,122 @@ internal sealed class TemplateConverter(
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// nil 安全分隔符的**调用形态**修正：Scriban 不支持 `a?.f ARG`——整个
+    /// `a?.f` 会被当成函数名（"The function `(where …)?.groupbydate` was not found"）。
+    /// 转换期给"接收者为括号/变量的成员访问"加 `?.` 是为了字段访问的宽容语义
+    /// （`$x?.y` 在 $x 为 nil 时返回 nil），而**调用**（后跟实参）必须退回普通点。
+    /// 这里对每个动作文本做一次收敛：`?.name` 之后若是**实参**（非运算符/关键字）则改点。
+    /// yinyang 的 `(where …).GroupByDate "2006"` 实测 22 处
+    /// </summary>
+    private static readonly string[] NotArgumentKeywords =
+    [
+        "and", "or", "not", "if", "else", "end", "in", "with", "range", "break", "continue", "ret",
+        "as", "this", "null", "true", "false"
+    ];
+
+    /// <summary>
+    /// nil 安全分隔符的**调用形态**修正（深度感知）：Scriban 不支持 `a?.f ARG`——
+    /// 整个 `a?.f` 会被当成函数名（"The function `(where …)?.groupbydate` was not found"）。
+    /// 转换期给"接收者为括号/变量的成员访问"加 `?.` 是为了字段访问的宽容语义，而**调用**
+    /// （后跟实参）必须退回普通点。
+    ///
+    /// 只在**动作文本的顶层**（括号/方括号/字符串之外）判定：嵌套在实参里的
+    /// `where page?.data?.pages "Type"` 里的 `?.pages` 是**实参表达式**，其后随的
+    /// 引号属于外层调用——按正则一刀切会把它误改（实测）
+    /// </summary>
+    private static string FixNilSafeCalls(string actionText)
+    {
+        if (!actionText.Contains("?.", StringComparison.Ordinal))
+        {
+            return actionText;
+        }
+
+        var sb = new StringBuilder(actionText.Length);
+        var depth = 0;
+        var quote = (char)0;
+        var i = 0;
+        while (i < actionText.Length)
+        {
+            var ch = actionText[i];
+            if (quote != (char)0)
+            {
+                sb.Append(ch);
+                if (ch == quote)
+                {
+                    quote = (char)0;
+                }
+                i++;
+                continue;
+            }
+            if (ch == 34 || ch == (char)39)
+            {
+                quote = ch;
+                sb.Append(ch);
+                i++;
+                continue;
+            }
+            if (ch is '(' or '[' or '{')
+            {
+                depth++;
+                sb.Append(ch);
+                i++;
+                continue;
+            }
+            if (ch is ')' or ']' or '}')
+            {
+                depth = Math.Max(0, depth - 1);
+                sb.Append(ch);
+                i++;
+                continue;
+            }
+            // 判据：接收者是**括号表达式**（`)?.name`）——它只可能是"对调用结果取成员"，
+            // 其后随实参即**调用**形态，Scriban 不支持 `(x)?.f ARG`（整体当函数名）。
+            // 不按"深度 0"判定：转换器自己会把表达式包进 `as_list (…)` 等括号里，
+            // 那样就会漏掉（yinyang 的 `range (where …).GroupByDate "2006"` 实测）
+            if (i > 0 && actionText[i - 1] == ')' && ch == '?' &&
+                i + 1 < actionText.Length && actionText[i + 1] == '.')
+            {
+                var memberStart = i + 2;
+                var memberEnd = ReadWordEnd(actionText, memberStart);
+                var member = actionText[memberStart..memberEnd];
+                var k = memberEnd;
+                while (k < actionText.Length && char.IsWhiteSpace(actionText[k]))
+                {
+                    k++;
+                }
+                if (member.Length > 0 && k < actionText.Length && IsArgumentStart(actionText[k]))
+                {
+                    var word = ReadWord(actionText, k);
+                    if (word.Length == 0 || !NotArgumentKeywords.Contains(word, StringComparer.Ordinal))
+                    {
+                        sb.Append('.').Append(member);
+                        i = memberEnd;
+                        continue;
+                    }
+                }
+            }
+            sb.Append(ch);
+            i++;
+        }
+        return sb.ToString();
+    }
+
+    private static bool IsArgumentStart(char c) =>
+        char.IsLetterOrDigit(c) || c == 34 || c == (char)39 || c is '[' or '(' or '$';
+
+    private static string ReadWord(string text, int start) => text[start..ReadWordEnd(text, start)];
+
+    private static int ReadWordEnd(string text, int start)
+    {
+        var end = start;
+        while (end < text.Length && (char.IsLetterOrDigit(text[end]) || text[end] == '_'))
+        {
+            end++;
+        }
+        return end;
     }
 
     /// <summary>转换单个动作</summary>
@@ -303,6 +419,18 @@ internal sealed class TemplateConverter(
         // "Invalid token found `,`. Expecting <EOL>/end of line"），
         // 含多参数函数调用时须加括号：`for x in (f a b)`
         coll = ParenthesizeIfCallWithArgs(coll);
+
+        // **括号接收者的成员调用要提取临时变量**：Scriban 不支持 `(expr).method ARG`
+        // （把 `(expr)` 整体当函数名 → "The function `(where …)` was not found"），
+        // 而**变量接收者**的成员调用合法。故把 `(expr).method …` 的 `(expr)` 提到
+        // `$__accN`，集合表达式改用 `$__accN.method …`
+        //（yinyang 的 `range (where .Data.Pages "Type" "in" …).GroupByDate "2006"` 实测）
+        var hoist = "";
+        var hoisted = HoistParenReceiver(coll, ref hoist);
+        if (hoisted is not null)
+        {
+            coll = hoisted;
+        }
         // 集合归一交给单/双变量各自的分支（as_list = 值序列、as_pairs = 键值对序列）：
         // 两者的共同前提是 nil/false → 空、标量 → 单元素——Scriban 的
         // `for x in false` 会抛 "Unexpected type `System.Boolean` for iterator"
@@ -333,14 +461,97 @@ internal sealed class TemplateConverter(
             var body = "for " + pair + " in as_pairs (" + coll + ") }}{{ " +
                        kvar + " = " + pair + ".Key; " +
                        vvar + " = " + pair + ".Value";
-            return Wrap(body, trimL, trimR);
+            return hoist + Wrap(body, trimL, trimR);
         }
 
         // 单变量：range $x := X 或 range X
         var loopVar = kb.Vars.Count == 1 ? kb.Vars[0] : $"$__it{_syntheticIndex++}";
         _blockStack.Add(("range", null));
         scope.Add(loopVar);
-        return Wrap($"for {loopVar} in as_list ({coll})", trimL, trimR);
+        return hoist + Wrap($"for {loopVar} in as_list ({coll})", trimL, trimR);
+    }
+
+    /// <summary>
+    /// 把集合表达式里"括号接收者的成员调用"提取为临时变量：
+    /// `(expr).method ARG` → `$__accN.method ARG`（并把 `expr` 赋给 `$__accN`，
+    /// 赋值动作随 range 一起返回）。Scriban 不支持对括号表达式调用成员函数
+    /// （`(x).f a` 整体被当函数名）。无可提取者时返回 null
+    /// </summary>
+    private string? HoistParenReceiver(string coll, ref string prelude)
+    {
+        for (var open = 0; open < coll.Length; open++)
+        {
+            if (coll[open] != '(')
+            {
+                continue;
+            }
+
+            var depth = 0;
+            var close = -1;
+            for (var i = open; i < coll.Length; i++)
+            {
+                if (coll[i] == '(')
+                {
+                    depth++;
+                }
+                else if (coll[i] == ')')
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        close = i;
+                        break;
+                    }
+                }
+            }
+
+            // sep: 本阶段 coll 里可能还是 `?.`（nil 安全修正发生在 Wrap 阶段，晚于此处），
+            // 两种分隔符都要接受；重组时统一用普通点（调用形态不能用 `?.`）
+            var sepLen = coll.Length > close + 1 && coll[close + 1] == '.'
+                ? 1
+                : coll.Length > close + 2 && coll[close + 1] == '?' && coll[close + 2] == '.'
+                    ? 2
+                    : 0;
+            if (close < 0 || sepLen == 0)
+            {
+                continue;
+            }
+
+            var memberStart = close + 1 + sepLen;
+            var memberEnd = memberStart;
+
+            // 之后必须是"标识符 + 空白 + 实参"——否则是字段访问（`(x).count`），
+            // 无需提取（Scriban 的字段访问对括号接收者合法）
+            while (memberEnd < coll.Length &&
+                   (char.IsLetterOrDigit(coll[memberEnd]) || coll[memberEnd] == '_'))
+            {
+                memberEnd++;
+            }
+
+            if (memberEnd == memberStart)
+            {
+                continue;
+            }
+
+            var k = memberEnd;
+            while (k < coll.Length && char.IsWhiteSpace(coll[k]))
+            {
+                k++;
+            }
+
+            if (k >= coll.Length ||
+                !(char.IsLetterOrDigit(coll[k]) || coll[k] == '"' || coll[k] == '(' || coll[k] == '$'))
+            {
+                continue;
+            }
+
+            var inner = coll[open..(close + 1)];
+            var variable = $"$__acc{_syntheticIndex++}";
+            prelude = "{{ " + variable + " = " + inner + " -}}";
+            return coll[..open] + variable + "." + coll[memberStart..];
+        }
+
+        return null;
     }
 
     /// <summary>当前是否处于 with .Resources.* 块内（裸方法属资源接收者）</summary>
@@ -447,7 +658,7 @@ internal sealed class TemplateConverter(
     }
 
     private static string Wrap(string body, string trimL, string trimR) =>
-        "{{" + trimL + " " + body.Trim() + " " + trimR + "}}";
+        "{{" + trimL + " " + FixNilSafeCalls(body.Trim()) + " " + trimR + "}}";
 
     /// <summary>
     /// 块名 → 合法 Scriban 标识符。Hugo 允许块名含连字符（Stack 的
