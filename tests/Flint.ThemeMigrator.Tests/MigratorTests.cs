@@ -179,6 +179,35 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
+    public void 多参dict中的括号实参不触发结构守卫()
+    {
+        // 括号出现在**实参**位置是合法形态。此前结构守卫的畸形状检查是全局正则
+        // `\)\s*[A-Za-z0-9_"']`，只有标识符**紧邻**左括号（`f(`）时才放行——
+        // `dict "k" (slice 1 2) "k2" "v2"` 的括号前还有其他实参，放行条件匹配不上，
+        // 整条表达式被判 Unsupported 并**静默产出空字符串**
+        //（fixit 的 get-taxonomy-icon → `$defaults = ""` → index 越界；stack 的 helper/image 同源）
+        var result = Convert("{{ $d := dict \"a\" (slice \"1\" \"2\") \"b\" \"9\" }}");
+
+        Assert.Contains("dict \"a\"", result, StringComparison.Ordinal);
+        Assert.Contains("[\"1\", \"2\"]", result, StringComparison.Ordinal);
+        Assert.Contains("\"b\" \"9\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("$d = \"\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 多行dict逐对转换()
+    {
+        // 主题里 dict 常跨多行书写（fixit 的 get-taxonomy-icon 三对键值各占一行）
+        var result = Convert(
+            "{{- $d := dict\n  \"a\" (slice \"1\" \"2\")\n  \"b\" (slice \"3\" \"4\")\n-}}");
+
+        Assert.Contains("dict \"a\"", result, StringComparison.Ordinal);
+        Assert.Contains("[\"1\", \"2\"]", result, StringComparison.Ordinal);
+        Assert.Contains("[\"3\", \"4\"]", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("= \"\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 注释完全丢弃()
     {
         var result = Convert("A{{/* note */}}B");
@@ -529,9 +558,37 @@ public sealed class PipeAndParserRegressionTests
     public void 命名模板的template调用改走partial()
     {
         // Go 的 `template "X" CTX` 调用 define 出来的命名模板；
-        // 简单名 → 提取为 _partials/X.html，调用点走 partial 路径
+        // 简单名 → 提取为 _partials/X.html，调用点走 partial 路径。
+        // **上下文必须一起传**：此前解析器只取名字、把 CTX 整体丢弃
+        // （Pipeline 恒为 null），转换器里"传上下文"的分支成了死代码，
+        // 被调模板里的 `.Field` 落到外层 page 上
+        //（techdoc 的 pagination.html 实测 68 处）
         var result = Convert("{{ template \"integrity\" $styles }}");
         Assert.Contains("_partials/integrity", result, StringComparison.Ordinal);
+        Assert.Contains("$styles", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void template调用的dict上下文完整保留()
+    {
+        // CTX 是 (dict …) 时，按"位置"切分（名字之后的全部 token）——
+        // 若按 token 类型过滤会把 dict 的键字符串一并删掉，dict 变成奇数参数，
+        // 整条表达式判 Unsupported 并产出 `false`
+        var result = Convert(
+            "{{ template \"pagination\" (dict \"menu\" .Site.Home \"currentnode\" .) }}");
+
+        Assert.Contains("_partials/pagination", result, StringComparison.Ordinal);
+        Assert.Contains("dict \"menu\"", result, StringComparison.Ordinal);
+        Assert.Contains("\"currentnode\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain(" false", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void template调用无上下文时仍走include分支()
+    {
+        // 无 CTX 时保持原行为（include，不带上下文）
+        var result = Convert("{{ template \"head\" }}");
+        Assert.Contains("include \"_partials/head\"", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -561,5 +618,43 @@ public sealed class PipeAndParserRegressionTests
         // Stack：`hugo.Data.external.PhotoSwipe.Style` 的键是作者定义的驼峰
         var result = Convert("{{ hugo.Data.external.PhotoSwipe.Style }}");
         Assert.Contains("site?.data?.external?.PhotoSwipe?.Style", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 文件内同名命名模板提取改名不覆盖自身()
+    {
+        // Hugo 允许在 `_partials/pagination.html` 里定义 `{{ define "pagination" }}`。
+        // 提取时若不改名，提取出的 define 体会落到**同一个路径**，把外层内容整体覆盖
+        //（techdoc 实测：外层 nav 与 prev/next 全丢，只剩 define 体，
+        //  68 处 "Cannot get the member $currentNode.scratch for a null object"）
+        const string source = """
+            {{- $currentNode := . -}}
+            <nav>{{ template "pagination" (dict "menu" .Site.Home) }}</nav>
+            {{- define "pagination" -}}X{{- end -}}
+            """;
+
+        var names = new HashSet<string>(StringComparer.Ordinal) { "pagination" };
+        var (remaining, partials) = InlinePartialExtractor.Extract(
+            source, names, "layouts/_partials/pagination.html");
+
+        var rel = Assert.Single(partials).RelativePath;
+        Assert.Equal("_partials/pagination__named.html", rel);
+        // 外层内容仍在（未被 define 体覆盖）
+        Assert.Contains("<nav>", remaining, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 非同名命名模板提取不改名()
+    {
+        // 只有"提取路径 == 所在文件"才加后缀，其余保持原名
+        const string source = """
+            {{- define "integrity" -}}X{{- end -}}
+            """;
+
+        var names = new HashSet<string>(StringComparer.Ordinal) { "integrity" };
+        var (_, partials) = InlinePartialExtractor.Extract(
+            source, names, "layouts/_partials/other.html");
+
+        Assert.Equal("_partials/integrity.html", Assert.Single(partials).RelativePath);
     }
 }

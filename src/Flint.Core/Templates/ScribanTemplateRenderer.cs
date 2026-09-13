@@ -1002,46 +1002,65 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         Scriban.Parsing.SourceSpan callerSpan = default)
     {
         // 目标 partial 若读写页面 Store（partial 返回值通道 / 显式暂存），
-        // **不能**用裸 context 覆盖 page——Store 挂在原 page 对象上，覆盖即切断通道
+        // 而 CONTEXT 又是**非脚本对象**（字符串等）时无法承载 store → 退回共享上下文
         //（Ananke/Stack 实测 "page.store.set / page.Store.get for a null object"）。
-        // 该判定按 partial 源文本做确定性检查（含其 include 链上的名字）；
-        // 命中时退回共享上下文（dot 偏差换取通道完整）
+        // 该判定按 partial 源文本做确定性检查（含其 include 链上的名字）
         var path = _templateLoader.GetPath(callerContext, callerSpan, name) ?? "";
         var source = path.Length > 0 ? _templateLoader.Load(callerContext, default, path) : null;
-        if (source is null || UsesPageStore(source))
+        if (source is null)
         {
             return RenderPartialWithType(callerContext, name);
         }
 
-        // 上下文为字典时，把调用者的 store/scratch 合并进去：既让 partial 内的
-        // `.X` 指向传入上下文（Hugo dot 语义），又保留 page.store 通道可用
-        var callerPage = pageObject is { } pg && pg.ContainsKey("store") ? pg["store"] : null;
-        object? store = callerPage;
-        object? effective = context;
-        if (context is ScriptObject ctxObj && store is not null)
+        // Store 实例：优先取页面对象上的（返回值通道就是它），
+        // 页面对象含懒建 store（LazyPageObject.Store 在构造期已建），不只是 ContainsKey
+        object? store = pageObject switch
         {
-            var merged = new ScriptObject();
-            foreach (var key in ctxObj.Keys)
-            {
-                merged[key] = ctxObj[key];
-            }
-            merged["store"] = store;
-            merged["Store"] = store;
-            merged["scratch"] = store;
-            merged["Scratch"] = store;
-            AddKeyCaseAliases(merged);
-            AddPageMethodFamily(merged, pageObject);
-            MergePageMembers(merged, ctxObj);
-            effective = merged;
+            LazyPageObject lpo when lpo.Store is { } pageStore => pageStore,
+            _ when pageObject.ContainsKey("store") => pageObject["store"],
+            _ => null
+        };
+
+        if (context is not ScriptObject && UsesPageStore(source))
+        {
+            return RenderPartialWithType(callerContext, name);
         }
-        else if (context is ScriptObject plainCtx)
+
+        // 上下文为字典/脚本对象时，把 store 合并进去：**两条通道共存**——
+        // partial 内的 `.X` 指向传入上下文（Hugo dot 语义），`page.store`/`scratch`
+        // 仍指向调用者的实例。此前是"目标用到 store 就整体退回共享上下文"，
+        // 于是同时用两者的 partial 读不到传入的 dict：
+        // techdoc 的 pagination.html（`partial "pagination.html" (dict "CurrentNode" …)`
+        // 内既读 .CurrentNode 又写 .Scratch）实测 68 处
+        // "Cannot get the member $currentNode.scratch for a null object"
+        var effective = context;
+        if (context is ScriptObject ctxObj)
         {
-            // 无 store 通道的 dict 上下文：同样补页面方法族——dict 里装页面再调
-            // 页面方法的写法很常见（FixIt `dict "Page" . "Key" "toc" | partial
-            // "function/param.html"` → partial 内 `.Page.Param`，实测 function not found）
-            AddKeyCaseAliases(plainCtx);
-            AddPageMethodFamily(plainCtx, pageObject);
-            MergePageMembers(plainCtx, plainCtx);
+            if (store is null)
+            {
+                AddKeyCaseAliases(ctxObj);
+                AddPageMethodFamily(ctxObj, pageObject);
+                MergePageMembers(ctxObj, ctxObj);
+            }
+            else
+            {
+                var merged = new ScriptObject();
+                foreach (var key in ctxObj.Keys)
+                {
+                    merged[key] = ctxObj[key];
+                }
+                merged["store"] = store;
+                merged["Store"] = store;
+                merged["scratch"] = store;
+                merged["Scratch"] = store;
+                AddKeyCaseAliases(merged);
+                AddPageMethodFamily(merged, pageObject);
+                MergePageMembers(merged, ctxObj);
+                // 调用者页面的成员兜底（低优先级）：partial 里既用传入 dict、
+                // 又顺手读页面字段的写法很常见，缺这层会让原先能解析的键变空
+                MergePageMembers(merged, new ScriptObject { ["page"] = pageObject, ["Page"] = pageObject });
+                effective = merged;
+            }
         }
 
         var overlay = new ScriptObject

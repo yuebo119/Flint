@@ -113,7 +113,7 @@ internal sealed class ThemeMigrator
 
             // 内联 partial 提取（Hugo 的 define "_partials/X.html"）：
             // Scriban 无此机制，必须提取为独立文件使 include 可命中
-            var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text, namedTemplates);
+            var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text, namedTemplates, rel);
             var selfPartial = SelfPartialNameOf(rel);
             // 主题范围是否存在 baseof 骨架（Hugo 的模板继承外壳）：
             // 仅 define 触发继承的模板（hugo-book 的 single.html）转换后为空，

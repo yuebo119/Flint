@@ -23,6 +23,12 @@ internal sealed record ExtractedInlinePartial(string RelativePath, string Conten
 internal static partial class InlinePartialExtractor
 {
     /// <summary>
+    /// 本文件内同名命名模板提取时的后缀（与 ScribanConverter.PartialPathFor 一致）：
+    /// 提取路径与所在文件相同时必须改名，否则覆盖自身外层内容
+    /// </summary>
+    internal const string NamedTemplateSelfSuffix = "__named";
+
+    /// <summary>
     /// 从模板源文本中提取内联 partial 定义。
     /// 返回（剥离内联定义后的文本, 提取出的 partial 列表）。
     /// </summary>
@@ -32,8 +38,14 @@ internal static partial class InlinePartialExtractor
     /// baseof 继承处理（capture blk_X），仅当名字出现在本集合时才提取——
     /// 该判定由调用方跨文件扫描（block 名 vs 命名模板名）得出
     /// </param>
+    /// <param name="selfRel">
+    /// 当前文件的相对路径（相对 layouts/）。命名模板若是**本文件内**的 define
+    /// 且提取路径与本文件相同，必须加后缀——否则提取出的文件会覆盖外层内容
+    /// （techdoc 的 _partials/pagination.html：define "pagination" 提取到同一路径，
+    /// 外层 nav 与 prev/next 全丢，只剩 define 体，68 处 $currentNode 为 null）
+    /// </param>
     public static (string RemainingText, IReadOnlyList<ExtractedInlinePartial> Partials) Extract(
-        string source, IReadOnlySet<string>? namedTemplates = null)
+        string source, IReadOnlySet<string>? namedTemplates = null, string? selfRel = null)
     {
         var partials = new List<ExtractedInlinePartial>();
         if (!source.Contains("define \"", StringComparison.Ordinal))
@@ -101,6 +113,20 @@ internal static partial class InlinePartialExtractor
                     rel += ".html";
                 }
 
+                // 自冲突：命名模板的提取路径与本文件相同 → 加后缀，避免覆盖自身
+                // （两侧路径基准不同：提取路径以 layouts/ 为基准，selfRel 以主题根为基准，
+                //   故先统一成"相对 layouts/"再比较）
+                if (selfRel is not null && string.Equals(
+                        NormalizeLayoutsRelative(rel),
+                        NormalizeLayoutsRelative(selfRel),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    var dot = rel.LastIndexOf('.');
+                    rel = dot < 0
+                        ? rel + NamedTemplateSelfSuffix
+                        : rel[..dot] + NamedTemplateSelfSuffix + rel[dot..];
+                }
+
                 // 内容：重新序列化为原文拼接（保持模板语法，供后续转换）
                 var content = string.Concat(body.Select(SerializePart));
                 partials.Add(new ExtractedInlinePartial(rel, content));
@@ -117,6 +143,20 @@ internal static partial class InlinePartialExtractor
         }
 
         return (string.Concat(remaining.Select(SerializePart)), partials);
+    }
+
+    /// <summary>
+    /// 把路径归一为"相对 layouts/"的形态（统一分隔符、去掉 layouts/ 前缀）：
+    /// 自冲突判定两侧的基准目录不同，必须归一后比较
+    /// </summary>
+    private static string NormalizeLayoutsRelative(string path)
+    {
+        var n = path.Replace((char)92, '/').TrimStart('/');
+        if (n.StartsWith("layouts/", StringComparison.OrdinalIgnoreCase))
+        {
+            n = n["layouts/".Length..];
+        }
+        return n;
     }
 
     /// <summary>把 AST 片段还原为源文本（保持模板语法）</summary>

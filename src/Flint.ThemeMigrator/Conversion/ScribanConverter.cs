@@ -100,9 +100,27 @@ internal sealed class ScribanConverter(
     /// 若只产出裸名，`partial "404.html"` 会解析到 <c>layouts/404.html</c>
     /// （页面模板自身）→ 自递归至 "Exceeding number of recursive depth limit" 而
     /// 构建失败（hugo-coder 实测）。故统一产出显式 <c>_partials/</c> 前缀路径，
-    /// 由 FileTemplateLoader 在 partials 目录（含旧目录回退）内解析
+    /// 由 FileTemplateLoader 在 partials 目录（含旧目录回退）内解析。
+    /// <para>
+    /// **本文件内同名命名模板**要加后缀：Hugo 允许在 <c>_partials/pagination.html</c>
+    /// 里写 <c>{{ define "pagination" }}</c>，而提取出的命名模板路径恰好与所在文件相同
+    /// ——不加后缀会覆盖外层内容（techdoc 的 pagination.html 实测：外层 nav 与
+    /// prev/next 全丢，只剩 define 体；调用与提取两侧必须用同一后缀）
+    /// </para>
     /// </summary>
-    internal static string PartialPathFor(string raw) => "_partials/" + CanonicalPartialName(raw);
+    internal string PartialPathFor(string raw)
+    {
+        var canonical = CanonicalPartialName(raw);
+        if (SelfPartialName is { } self &&
+            string.Equals(CanonicalPartialName(self), canonical, StringComparison.OrdinalIgnoreCase))
+        {
+            canonical += NamedTemplateSelfSuffix;
+        }
+        return "_partials/" + canonical;
+    }
+
+    /// <summary>本文件内同名命名模板提取/调用时的后缀（与 InlinePartialExtractor 一致）</summary>
+    internal const string NamedTemplateSelfSuffix = "__named";
 
     /// <summary>转换一个管道（表达式主体）</summary>
     public ConversionResult ConvertPipeline(Parsing.Pipeline pipeline, IReadOnlyList<string> scope, bool resourceContext = false)
@@ -1715,12 +1733,19 @@ internal static class StructuralGuard
             return "引号不平衡";
         }
 
-        // 畸形状：`) 操作数` —— 括号闭合后直接跟标识符/数字（缺运算符）
+        // 畸形状：`) 操作数` —— 括号闭合后直接跟标识符/数字/字符串（缺运算符）。
+        // **只在括号处于"被调用位置"时才算可疑**：`(a) (b)` 是把括号表达式当函数名，
+        // Scriban 不支持（转换器用 HoistParenReceiver 提取临时变量来绕开）。
+        // 括号出现在**实参**位置则是合法形态，此前被误判——
+        // `dict "k" (slice 1 2) "k2" "v2"`、`index (slice 1 2) 0` 这类多参调用里，
+        // 只要括号前还有其他实参，原白名单 `[A-Za-z_][\w.]*\s*\(`（要求标识符**紧邻**左括号）
+        // 就匹配不上，整条表达式被判 Unsupported，产出退化为空字符串：
+        // fixit 的 get-taxonomy-icon（`$defaults = ""` → index 越界）
+        // 与 stack 的 helper/image 实测 17 处
         var bad = System.Text.RegularExpressions.Regex.IsMatch(
-            text, @"\)\s*[A-Za-z0-9_""']",
+            text, @"^\s*\([^()]*\)\s*[A-Za-z0-9_""']",
             System.Text.RegularExpressions.RegexOptions.None);
-        // 允许函数调用形态 f(...) 与数组字面量
-        if (bad && !System.Text.RegularExpressions.Regex.IsMatch(text, @"[A-Za-z_][\w.]*\s*\("))
+        if (bad)
         {
             return "括号后紧跟操作数（可能缺运算符）";
         }

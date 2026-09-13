@@ -196,6 +196,11 @@ public sealed partial class ScribanTemplateRenderer
             // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
             SetValue("resources", new PageResourcesObject(page.Resources), false);
             SetValue("pages", _pagesValue, false);
+            // .Sections：本页直属的 section 子页集合（Hugo 语义，树阶段装配）。
+            // 与 pages 一样包装成带方法族的集合——主题直接调 .ByWeight / .ByTitle
+            //（techdoc 的 open-menu 用 site.home.sections.by_weight 建导航，
+            //  缺此成员时 72 处 "Cannot get the member ... for a null object"）
+            SetValue("sections", page.Sections is not null ? GetSharedPageList(page.Sections) : null, false);
             SetValue("terms", _termsValue, false);
             SetValue("paginator", _paginatorValue, false);
             SetValue("section", page.Section, false);
