@@ -1012,14 +1012,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             return RenderPartialWithType(callerContext, name);
         }
 
-        // Store 实例：优先取页面对象上的（返回值通道就是它），
-        // 页面对象含懒建 store（LazyPageObject.Store 在构造期已建），不只是 ContainsKey
-        object? store = pageObject switch
-        {
-            LazyPageObject lpo when lpo.Store is { } pageStore => pageStore,
-            _ when pageObject.ContainsKey("store") => pageObject["store"],
-            _ => null
-        };
+        // Store 实例：取调用者页面对象上的实例（返回值通道就是它）。
+        // 注意**只认 ContainsKey**：LazyPageObject 的 store 通过 TryGetValue 懒提供，
+        // 用 Store 属性探测会让"凡是真实页面的 dict 上下文 partial"全部走合并分支——
+        // 合并对象带着页面成员，主题对它做 reflect.IsMap/遍历时行为随之改变
+        //（ananke 的 hook→filter 链实测：页面全空且无错误报出）
+        object? store = pageObject.ContainsKey("store") ? pageObject["store"] : null;
 
         if (context is not ScriptObject && UsesPageStore(source))
         {
@@ -1056,9 +1054,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 AddKeyCaseAliases(merged);
                 AddPageMethodFamily(merged, pageObject);
                 MergePageMembers(merged, ctxObj);
-                // 调用者页面的成员兜底（低优先级）：partial 里既用传入 dict、
-                // 又顺手读页面字段的写法很常见，缺这层会让原先能解析的键变空
-                MergePageMembers(merged, new ScriptObject { ["page"] = pageObject, ["Page"] = pageObject });
                 effective = merged;
             }
         }
