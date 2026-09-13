@@ -1809,3 +1809,92 @@ TOP/MID/BOTTOM 与 partial 自身输出全部保留；`partialValue` 的返回�
 **教训**：嵌套渲染的"输出归谁"必须显式管理。凡把宿主 context 传进 `Template.Render`
 的地方都要先推输出缓冲——这类缺陷不报错、只丢内容，靠页面数不变量（"产出页数>0
 且最小页 ≥200B"）才能发现，这正是矩阵双侧页数对比的价值。
+
+## 二十八、第七批：静默失败收口与命名模板（2026-09-13 第十三轮）
+
+本轮的主线是**"构建成功但内容是空的/错的"这类静默失败**——它们不会被错误计数暴露，
+只能靠"双侧页数 + 最小页尺寸"不变量与产出对照发现。
+
+### A. partial 嵌套渲染清空调用者输出（引擎，本轮最关键）
+
+见第二十七节 F。补记排查手法：把"Scriban 的 `Template.Render` 把 `context.Output`
+当自己缓冲"这一事实从**反编译产物**里读出来（`ilspycmd -t Scriban.Template`），
+而不是靠猜——`Render` 读取后执行 `Builder.Length = 0` 是唯一能同时解释
+"返回值和调用者内容混在一起"与"调用者缓冲被清空"的机制。
+
+### B. 转换器：结构守卫的括号误判（fixit / stack）
+
+`StructuralGuard.Check` 的畸形状检查用全局面正则 `\)\s*[A-Za-z0-9_"']`，
+白名单只放行"标识符**紧邻**左括号"（`f(`）。于是
+`dict "k" (slice 1 2) "k2" "v2"`、`index (slice 1 2) 0` 这类"括号前还有其他实参"
+的合法调用匹配不上白名单，整条表达式被判 **Unsupported 并静默产出空字符串**：
+fixit 的 `get-taxonomy-icon` 因此得到 `$defaults = ""`，随后 `index ""` 越界。
+
+修法：只检查"括号处于**被调用位置**"（`^\s*\([^()]*\)\s*[操作数]`），
+实参位置的括号一律放行。回归测试同时锁住"开头括号仍被拦"。
+
+### C. 解析器：`template "X" CTX` 的上下文被整体丢弃
+
+`GoTemplateParser` 对 `template` 关键字只收集字符串 token 作名字，CTX 直接丢弃、
+`Pipeline` 恒为 null——转换器里"传上下文"的分支成了**死代码**
+（注释写着"丢弃它会让被调模板里的 `.Field` 落到外层 page 上"，代码却从未生效）。
+补上后注意一个坑：CTX 必须按**位置**切分（名字之后的全部 token），
+按类型过滤会把 `(dict "currentnode" …)` 的键字符串一并删掉 → dict 变奇数参数
+→ Unsupported → 产出 `false`。
+
+### D. 文件内同名命名模板提取会覆盖自身（techdoc）
+
+Hugo 允许在 `_partials/pagination.html` 里写 `{{ define "pagination" }}`；
+提取命名模板时目标路径恰好是**同一个文件**，于是外层内容被 define 体整体覆盖
+（techdoc：外层 `<nav>`/prev/next 全丢，68 处 `$currentNode` 为 null）。
+两侧路径基准还不同（提取路径相对 `layouts/`，文件 rel 相对主题根），
+比较前必须归一。修法：提取与调用统一加 `__named` 后缀。
+
+### E. 页面 `.Sections`（引擎）
+
+Hugo 的 `.Sections`（home 为一级 section 页、section 为下级 section 页）此前不存在，
+`site.home.sections.by_weight` 取到 null（techdoc 72 处）。新增
+`PageContext.Sections`——与 `.Pages` 同在**树阶段**装配、随页面对象流动，
+不额外穿参；页面对象暴露为带方法族的集合（`.ByWeight` 直接可用）。
+
+### F. 短代码：details 与 qr
+
+- `details`（Hugo v0.140+ 内建）：按 Hugo v0.166 实测 markup 实现，
+  内层按 `.Inner | markdownify` 渲染。
+- `qr`（Hugo v0.144+ 内建）：**未实现**。Hugo 会把文本编码成二维码并发布 PNG 资源
+  （实测 `<img src="/qr_<hash>.png" width="132" height="132">`），需要完整的
+  QR 编码（RS 纠错）+ PNG 输出链路。Flint 注册它但产出**带原因的注释**
+  （`<!-- flint: qr 短代码未实现… -->`）——既不静默产空串，也不让整篇内容
+  PARSE001 失败。这是本轮唯一的已知未实现项，需在文档与交付说明中保持可见。
+
+### 教训
+
+1. **静默失败比报错更贵**：本轮三个缺陷（输出被清空、守卫误判、上下文丢失）都不报错，
+   产出却是错的/空的。矩阵的"双侧页数 + 最小页 ≥200B"不变量是发现它们的唯一手段。
+2. **死代码注释会骗人**：`template` 的上下文逻辑注释写得很清楚，但上游从未提供数据。
+   读到"注释说 A、代码却做不到"时，要顺着数据流往上游查，而不是相信注释。
+3. **反编译比猜测便宜**：涉及第三方引擎的输出/缓冲语义，直接读 IL 定论，
+   比在多种假设之间反复试错快得多。
+
+### G. 一次回归与它的教训（partial 上下文合并的边界）
+
+D 组的修复需要"显式 dict 上下文 + 页面 store 两条通道共存"，第一版实现里我顺手做了两件事：
+
+1. 用 `LazyPageObject.Store` 属性探测 store（而不只是 `ContainsKey("store")`）；
+2. 把调用者页面的成员**兜底合并**进 merged 对象。
+
+结果 **ananke 从"通过（137KB）"变成"空页（4B）且构建成功、无任何错误"**：
+它的 `baseof` 调 `partial "_partials/hook" (dict "hook" … "context" page)`，
+而 store 探测一旦放宽，**所有"调用者是真页面的 dict 上下文 partial"**都会走合并分支，
+合并对象带着整份页面成员——主题随后对它做 `reflect.IsMap`/`collections.Merge`/遍历时
+行为随之改变（hook→filter 链断掉，整页无输出）。
+
+**回退到只有 `ContainsKey("store")` 成立才合并**后，ananke 恢复 137348B，
+techdoc 依旧通过（73 页）。教训：
+
+- **"顺手多做一点"就是回归的来源**。两处额外改动都不是需求要求的，
+  且都把变更面从"特定的 dict+store 组合"扩大到"所有 dict 上下文"。
+- **静默失败会伪装成通过**：ananke 那次全站空页但退出码 0，只有"最大页 <1KB"
+  这条不变量把它拦下来——矩阵双侧页数对照不是形式主义。
+- 回归定位手段：把可疑的 partial 用**站点级同名 partial** 覆盖成桩
+  （`layouts/_partials/hook.html` 写字面量），输出立刻恢复 → 锁定该 partial 为触发点。
