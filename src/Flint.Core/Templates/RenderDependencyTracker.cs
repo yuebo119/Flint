@@ -56,7 +56,7 @@ public static class RenderDependencyTracker
 /// 带依赖记录的站点对象：模板访问 site.* 成员时记录 <c>data:site.&lt;member&gt;</c>。
 /// 仅挂站点对象——页面自身的文件是天然依赖，访问 page.* 不需要记录
 /// </summary>
-internal sealed class DependencyTrackingScriptObject : ScriptObject
+internal sealed class DependencyTrackingScriptObject : ScriptObject, IFlintNonDataObject
 {
     public override bool TryGetValue(TemplateContext? context, SourceSpan span, string member, out object? value)
     {

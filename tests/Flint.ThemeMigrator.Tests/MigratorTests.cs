@@ -232,6 +232,29 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
+    public void dict变量键不再判不支持()
+    {
+        // `dict $newKey $newValue`（键是变量）此前被判 Unsupported 并**静默产出空串**：
+        // FixIt 的 camel-case-keys.html 因此把
+        // `$output = merge $output (dict $newKey $newValue)` 转成 `$output = ""`，
+        // 返回值通道发空、下游 `index $output 0` 越界
+        //（"Index was outside the bounds of the array"）。Scriban 的 dict 接受任意
+        // 表达式作键（实测 `dict $k $v` → {"myKey":7}）
+        var result = Convert("{{ $o = merge $o (dict $newKey $newValue) }}");
+
+        Assert.Contains("dict $newKey $newValue", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("= \"\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void dictLiteral键仍加引号()
+    {
+        // 字面量键保持既有行为（非标识符键裸写会触发 Scriban 解析错误）
+        var result = Convert("{{ $d := dict \"data-src\" 1 }}");
+        Assert.Contains("dict \"data-src\" 1", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 多行dict逐对转换()
     {
         // 主题里 dict 常跨多行书写（fixit 的 get-taxonomy-icon 三对键值各占一行）

@@ -432,19 +432,40 @@ public sealed partial class BuiltinTemplateFunctions
         Add("reflect_is_map", (object? v) => v switch
         {
             null => false,
+            // 引擎内部投影（页面片段/store/词条映射/分页器等）对模板是不透明标量：
+            // 判成 map 会让"递归转换键名"的辅助函数钻进内部成员（引用图有环）→ 不收敛
+            IFlintNonDataObject => false,
             // 页面 / 站点 / 页面集合都不是 map（Hugo：.Scratch 是 struct、.Pages 是
             // slice）；必须逐一排除，否则主题里"递归转换 map 键"的辅助函数会钻进
             // 它们的成员（partial 上下文注入的 store 内部还引用了这些对象，形成环
             // → 无限递归）。FixIt 的 camel-case-keys.html 实测
             ScriptObject page when page.ContainsKey("rel_permalink") && page.ContainsKey("title") => false,
             ScriptObject site when site.ContainsKey("base_url") && !site.ContainsKey("rel_permalink") => false,
-            PageStoreObject => false,
             IList<ScriptObject> => false,
             ScriptObject => true,
             IDictionary<string, object> => true,
             _ => false
         });
-        Add("reflect_is_slice", (object? v) => v is System.Collections.IEnumerable and not string);
+        // reflect.IsSlice：Hugo 里**只有真集合**为真（map/页面/store 都不是 slice）。
+        // 关键：Scriban 的 ScriptObject 全部实现 IEnumerable，用
+        // `v is IEnumerable and not string` 会把**页面对象、store、内部投影**也判成切片
+        // ——主题据此走"逐元素处理"分支，于是把对象成员当数据一层层下钻，递归不收敛
+        //（FixIt 的 camel-case-keys.html 实测：`reflect.IsSlice page` 为真 → 下钻页面成员
+        //  到内部投影对象 → 200 层后触发 partial 深度守卫）。
+        // 判定顺序：**列表优先于映射**（页面集合是 ScriptObject + IList&lt;ScriptObject&gt;，
+        // 按 ScriptObject 判会误判成非切片 → 主题不再遍历 .Pages）
+        Add("reflect_is_slice", (object? v) => v switch
+        {
+            null => false,
+            string => false,
+            // 真集合优先判定；内部投影都是 ScriptObject，由下面的 ScriptObject 分支回 false
+            IList<ScriptObject> => true,
+            System.Collections.IList => true,
+            ScriptObject => false,
+            System.Collections.IDictionary => false,
+            System.Collections.IEnumerable => true,
+            _ => false
+        });
         Add("reflect_is_page", (object? v) =>
             v is ScriptObject o && o.ContainsKey("rel_permalink") && o.ContainsKey("title"));
         Add("reflect_is_resource", (object? v) => v is TemplateResource);
