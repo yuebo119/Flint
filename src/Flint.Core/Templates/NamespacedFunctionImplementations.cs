@@ -150,8 +150,12 @@ public sealed partial class BuiltinTemplateFunctions
 
         // transform.Unmarshal：把 YAML/JSON/TOML 字符串解析为对象/数组
         // （Hugo 主题用它读内联配置；LoveIt 实测）
-        Add("transform_unmarshal", (string? text) =>
+        // 入参既可能是**字符串**也可能是**资源对象**（Hugo：
+        // `resources.Get "styles/index.yaml" | transform.Unmarshal`，
+        // hugo-book 实测）；选项字典在 Go 里前置，故取最后一个「文本位」参数
+        Add("transform_unmarshal", (params object?[] args) =>
         {
+            var text = LastTextArg(args);
             if (string.IsNullOrWhiteSpace(text))
             {
                 return new ScriptObject();
@@ -164,25 +168,7 @@ public sealed partial class BuiltinTemplateFunctions
                     var doc = System.Text.Json.JsonDocument.Parse(t);
                     return JsonToScript(doc.RootElement);
                 }
-                // YAML（含简单 key: value 与列表）
-                var yamlObj = new ScriptObject();
-                foreach (var raw in t.Split('\n'))
-                {
-                    var line = raw.Trim();
-                    if (line.Length == 0 || line.StartsWith('#'))
-                    {
-                        continue;
-                    }
-                    var colon = line.IndexOf(':');
-                    if (colon <= 0)
-                    {
-                        continue;
-                    }
-                    var k = line[..colon].Trim();
-                    var v = line[(colon + 1)..].Trim().Trim('"', (char)39);
-                    yamlObj[k] = v;
-                }
-                return yamlObj;
+                return ParseSimpleYaml(t);
             }
             catch (System.Text.Json.JsonException)
             {
@@ -377,6 +363,9 @@ public sealed partial class BuiltinTemplateFunctions
         Add("path_unescape", (string? s) => Uri.UnescapeDataString(s ?? ""));
         // 零参宽容：`urls.Parse` 无参时返回空对象（严格单参形参报
         // "Invalid number of arguments 0 ... expecting 1"，doit 实测）
+        Add("diagrams_goat", (string? text) => BuildGoatDiagram(text));
+        Add("diagrams_ascii_art", (string? text) => BuildGoatDiagram(text));
+
         Add("url_parse", (params object?[] args) =>
         {
             var s = args.Length > 0 ? args[0]?.ToString() : null;
@@ -437,8 +426,14 @@ public sealed partial class BuiltinTemplateFunctions
         Add("reflect_is_map", (object? v) => v switch
         {
             null => false,
+            // 页面 / 站点 / 页面集合都不是 map（Hugo：.Scratch 是 struct、.Pages 是
+            // slice）；必须逐一排除，否则主题里"递归转换 map 键"的辅助函数会钻进
+            // 它们的成员（partial 上下文注入的 store 内部还引用了这些对象，形成环
+            // → 无限递归）。FixIt 的 camel-case-keys.html 实测
             ScriptObject page when page.ContainsKey("rel_permalink") && page.ContainsKey("title") => false,
             ScriptObject site when site.ContainsKey("base_url") && !site.ContainsKey("rel_permalink") => false,
+            PageStoreObject => false,
+            IList<ScriptObject> => false,
             ScriptObject => true,
             IDictionary<string, object> => true,
             _ => false
@@ -794,6 +789,199 @@ public sealed partial class BuiltinTemplateFunctions
     /// 暴露成裸字符串时报 "The function `$params.get` was not found"；
     /// 原始串另走 raw_query/RawQuery（Hugo 同名）
     /// </summary>
+    /// <summary>
+    /// YAML 子集解析：序列（<c>- item</c>）、映射（<c>key: value</c>）、缩进嵌套
+    /// （映射值/序列项）与标量（去引号字符串、布尔、数值）。
+    /// 主题的 assets 清单多是纯序列文件（hugo-book 的 styles/index.yaml 实测），
+    /// 早期实现只认 <c>key: value</c> → 序列被解析成空对象 → 后续 resources.Concat
+    /// 拿到空集合 → partial 上下文为 null → 整站只剩 404 页
+    /// </summary>
+    private static object ParseSimpleYaml(string text)
+    {
+        var entries = new List<(int Indent, string Content)>();
+        foreach (var raw in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        {
+            var trimmed = raw.TrimEnd();
+            if (trimmed.Length == 0)
+            {
+                continue;
+            }
+            var content = trimmed.TrimStart();
+            if (content.StartsWith('#'))
+            {
+                continue;
+            }
+            entries.Add((trimmed.Length - content.Length, content));
+        }
+        if (entries.Count == 0)
+        {
+            return new ScriptObject();
+        }
+        var pos = 0;
+        return ParseYamlNode(entries, ref pos, entries[0].Indent);
+    }
+
+    private static object ParseYamlNode(List<(int Indent, string Content)> entries, ref int pos, int indent)
+    {
+        var isSequence = pos < entries.Count && entries[pos].Indent == indent &&
+                         entries[pos].Content.StartsWith("- ", StringComparison.Ordinal);
+        if (isSequence)
+        {
+            var arr = new ScriptArray();
+            while (pos < entries.Count && entries[pos].Indent == indent &&
+                   entries[pos].Content.StartsWith("- ", StringComparison.Ordinal))
+            {
+                var item = entries[pos].Content[2..].Trim();
+                pos++;
+                if (item.Length == 0)
+                {
+                    arr.Add(pos < entries.Count && entries[pos].Indent > indent
+                        ? ParseYamlNode(entries, ref pos, entries[pos].Indent)
+                        : new ScriptObject());
+                    continue;
+                }
+                var colon = item.IndexOf(':');
+                if (colon > 0)
+                {
+                    var map = new ScriptObject { [item[..colon].Trim()] = YamlScalar(item[(colon + 1)..].Trim()) };
+                    while (pos < entries.Count && entries[pos].Indent > indent &&
+                           !entries[pos].Content.StartsWith("- ", StringComparison.Ordinal))
+                    {
+                        var (childIndent, childText) = entries[pos];
+                        var c = childText.IndexOf(':');
+                        if (c <= 0)
+                        {
+                            pos++;
+                            continue;
+                        }
+                        var key = childText[..c].Trim();
+                        var rest = childText[(c + 1)..].Trim();
+                        pos++;
+                        map[key] = rest.Length == 0 && pos < entries.Count && entries[pos].Indent > childIndent
+                            ? ParseYamlNode(entries, ref pos, entries[pos].Indent)
+                            : YamlScalar(rest);
+                    }
+                    arr.Add(map);
+                    continue;
+                }
+                arr.Add(YamlScalar(item));
+            }
+            return arr;
+        }
+
+        var obj = new ScriptObject();
+        while (pos < entries.Count && entries[pos].Indent == indent)
+        {
+            var lineText = entries[pos].Content;
+            var colon = lineText.IndexOf(':');
+            if (colon <= 0)
+            {
+                pos++;
+                continue;
+            }
+            var mapKey = lineText[..colon].Trim();
+            var mapRest = lineText[(colon + 1)..].Trim();
+            pos++;
+            obj[mapKey] = mapRest.Length == 0 && pos < entries.Count && entries[pos].Indent > indent
+                ? ParseYamlNode(entries, ref pos, entries[pos].Indent)
+                : YamlScalar(mapRest);
+        }
+        return obj;
+    }
+
+    /// <summary>YAML 标量：去引号、识别布尔与数值，其余原样</summary>
+    private static object YamlScalar(string v)
+    {
+        var s = v.Trim();
+        if (s.Length >= 2 && ((s[0] == '"' && s[^1] == '"') || (s[0] == '\'' && s[^1] == '\'')))
+        {
+            s = s[1..^1];
+        }
+        if (s is "true" or "false")
+        {
+            return s == "true";
+        }
+        if (s.Length > 0 && (char.IsDigit(s[0]) || s[0] == '-') &&
+            double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var d))
+        {
+            return d;
+        }
+        return s;
+    }
+
+    /// <summary>
+    /// 取参数表里最后一个「文本位」参数：字符串直接用，资源对象取其内容
+    /// （Hugo 的 transform.Unmarshal 接受字符串或 resources.Get 的结果，
+    /// 选项字典在 Go 里前置）
+    /// </summary>
+    private static string? LastTextArg(object?[] args)
+    {
+        for (var i = args.Length - 1; i >= 0; i--)
+        {
+            switch (args[i])
+            {
+                case string s:
+                    return s;
+                case TemplateResource r:
+                    return r.Content;
+                case ScriptObject o when o.ContainsKey("content") && o["content"] is string c:
+                    return c;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// diagrams.Goat / diagrams.ASCIIArt（Hugo 的字符图）：把文本渲染为 SVG 片段，
+    /// 返回含 <c>Inner</c>/<c>Width</c>/<c>Height</c> 的对象（LoveIt 的
+    /// plugin/goat.html 用 `{{ with diagrams.Goat .Inner }}` 取这三者）。
+    /// 保真度说明：Hugo 用内嵌的 ASCII 艺术字形表逐字绘制，Flint 用等宽 SVG text
+    /// 逐字排布（结构等价、视觉是普通等宽文本）——形态差异记录在迁移报告
+    /// </summary>
+    private static ScriptObject BuildGoatDiagram(string? text)
+    {
+        const int charWidth = 8;
+        const int diagramHeight = 25;
+        // (char)10 = 换行：用码点避免源码里的转义层级
+        const char nl = (char)10;
+        var content = text ?? "";
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<g transform='translate(8,16)'>").Append(nl);
+        var col = 0;
+        var maxCols = 0;
+        var lines = 1;
+        foreach (var ch in content)
+        {
+            if (ch == nl)
+            {
+                maxCols = Math.Max(maxCols, col);
+                col = 0;
+                lines++;
+                sb.Append("</g>").Append(nl).Append("<g transform='translate(8,16)'>").Append(nl);
+                continue;
+            }
+            sb.Append("<text text-anchor='middle' x='").Append(col * charWidth)
+              .Append("' y='4' fill='currentColor' style='font-size:1em'>")
+              .Append(System.Net.WebUtility.HtmlEncode(ch.ToString()))
+              .Append("</text>").Append(nl);
+            col++;
+        }
+        sb.Append("</g>");
+        maxCols = Math.Max(maxCols, col);
+
+        var o = new ScriptObject
+        {
+            ["Inner"] = sb.ToString(),
+            ["inner"] = sb.ToString(),
+            ["Width"] = maxCols * charWidth,
+            ["width"] = maxCols * charWidth,
+            ["Height"] = lines * diagramHeight,
+            ["height"] = lines * diagramHeight
+        };
+        return o;
+    }
+
     private static ScriptObject BuildQueryObject(string rawQuery)
     {
         var o = new ScriptObject();

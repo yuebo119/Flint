@@ -31,7 +31,8 @@ internal sealed class TemplateConversionStats
 internal sealed class TemplateConverter(
     MigrationMap map,
     IReadOnlySet<string>? valueReturningPartials = null,
-    string? selfPartialName = null)
+    string? selfPartialName = null,
+    bool baseofAvailable = false)
 {
     private readonly ScribanConverter _expr = new(map, valueReturningPartials, selfPartialName);
     private readonly List<(string Kind, string? Var)> _blockStack = [];
@@ -73,6 +74,14 @@ internal sealed class TemplateConverter(
         {
             var pairs = string.Join(" ", _definedBlocks.Select(b => $"{b}: {b}"));
             sb.Append("\n{{ include \"baseof.html\" ").Append(pairs).Append(" }}\n");
+        }
+        // Hugo 的「仅用 define 触发 baseof 继承」写法：hugo-book 的 single.html/
+        // list.html 全部内容只是 `{{ define "dummy" }}{{ end }}`——define 被提取为
+        // 独立 partial 后本文件变空，但 Hugo 仍会渲染 baseof 骨架。不补 include 时
+        // 整站每页都是空文件（hugo-book 实测：14 页合计 94 字节）
+        else if (baseofAvailable && sb.ToString().Trim().Length == 0)
+        {
+            sb.Append("{{ include \"baseof.html\" }}\n");
         }
 
         return sb.ToString();
@@ -167,8 +176,13 @@ internal sealed class TemplateConverter(
 
             case "with":
             {
-                // Scriban 无 with/else → $w = expr; if $w
-                var var = $"$__w{_blockStack.Count}";
+                // Scriban 无 with/else → $w = expr; if $w。
+                // Go 的 `with $v := EXPR` **带变量声明**：必须用 $v 本身承载值
+                // （原实现一律生成 $__wN，把 $v 当成了被赋值对象 → 产出
+                //  `$__w1 = $terms page?.get_terms $taxonomy`，Scriban 把 $terms
+                //  当函数调用报 "The function `$terms` was not found"
+                //  ——hugo-book 的 post-meta.html 实测）
+                var var = kb.Vars.Count > 0 ? kb.Vars[0] : $"$__w{_blockStack.Count}";
                 var arg = ConvertPipelineText(kb.Pipeline, scope);
 
                 // 记录接收者语义：with 的资源上下文内，裸方法（.GetMatch/.ByType）
@@ -217,11 +231,20 @@ internal sealed class TemplateConverter(
                 // 内置模板（`_internal/xxx`）仍是 include（命中引擎内置表）
                 var name = kb.Names.Count > 0 ? kb.Names[0] : "";
                 var isBuiltin = name.StartsWith("_internal/", StringComparison.OrdinalIgnoreCase);
+                // `template "X" CTX` 的 CTX 是 X 内的 `.`（Hugo 语义）——
+                // 丢弃它会让被调模板里的 `.Field` 落到外层 page 上（hugo-book 的
+                // `template "integrity" $styles` 实测：partial 内 .RelPermalink 取不到）
+                var ctx = kb.Pipeline is { Commands.Count: > 0 }
+                    ? ConvertPipelineText(kb.Pipeline, scope)
+                    : null;
                 if (isBuiltin || name.Contains('/', StringComparison.Ordinal))
                 {
                     return Wrap($"include \"{name}\"", trimL, trimR);
                 }
-                return Wrap($"include \"{ScribanConverter.PartialPathFor(name)}\"", trimL, trimR);
+                var templatePath = ScribanConverter.PartialPathFor(name);
+                return ctx is null
+                    ? Wrap($"include \"{templatePath}\"", trimL, trimR)
+                    : Wrap($"partial \"{templatePath}\" {ctx}", trimL, trimR);
             }
 
             case "return":

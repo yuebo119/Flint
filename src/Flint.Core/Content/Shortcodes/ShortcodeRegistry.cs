@@ -97,6 +97,10 @@ public sealed class ShortcodeRegistry : IShortcodeRegistry
         // Hugo 内置也有 vimeo_simple（简单嵌入形态）：clarity 的
         // rich-content.md 用 `{{< vimeo_simple 48912912 >}}` 实测
         Register(new ShortcodeAlias("vimeo_simple", new VimeoShortcode()));
+        // Hugo 内置的 _simple 家族（v0.146+，实测 twitter_simple / x_simple /
+        // vimeo_simple 均存在）：risotto 的 rich-content.md 用 twitter_simple
+        Register(new ShortcodeAlias("twitter_simple", new TweetShortcode()));
+        Register(new ShortcodeAlias("x_simple", new TweetShortcode()));
         Register(new InstagramShortcode());
         Register(new ParamShortcode());
     }

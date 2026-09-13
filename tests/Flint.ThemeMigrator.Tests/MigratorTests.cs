@@ -77,7 +77,10 @@ public sealed class ParserConverterTests
         // Scriban 的函数是前缀形态 len <arg>（不是 C 风格 len(...)），
         // 关键是结构与运算符正确
         Assert.Contains("len page.pages", result, StringComparison.Ordinal);
-        Assert.Contains("< 10", result, StringComparison.Ordinal);
+        // 比较运算符产出宽容比较函数 num_lt（Scriban 的 < 在两侧类型不一致时抛
+        // "Unable to convert type object to int"；Hugo 语义是类型强制后比较）
+        Assert.Contains("num_lt", result, StringComparison.Ordinal);
+        Assert.Contains("10", result, StringComparison.Ordinal);
         Assert.DoesNotContain("(len < page.pages) 10", result, StringComparison.Ordinal);
     }
 
@@ -147,14 +150,16 @@ public sealed class ParserConverterTests
         var output = converter.Convert(parts);
 
         Assert.Contains("partial \"_partials/x\"", output, StringComparison.Ordinal);
-        Assert.Contains("k: 1", output, StringComparison.Ordinal);
+        Assert.Contains("dict \"k\" 1", output, StringComparison.Ordinal);
     }
 
     [Fact]
     public void dict直接构造为对象字面量()
     {
+        // Scriban **没有对象字面量**：`{ k: v }` 被当语句块（作函数实参时 jsonify
+        // 收到 0 参 → "Argument index must be < 1"，Congo 实测），故一律产 dict 函数
         var result = Convert("{{ $d := dict \"k\" 1 }}");
-        Assert.Contains("k: 1", result, StringComparison.Ordinal);
+        Assert.Contains("dict \"k\" 1", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -170,7 +175,7 @@ public sealed class ParserConverterTests
     public void dict非标识符键加引号()
     {
         var result = Convert("{{ dict \"a=1\" \"v\" }}");
-        Assert.Contains("\"a=1\":", result, StringComparison.Ordinal);
+        Assert.Contains("dict \"a=1\" \"v\"", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -298,7 +303,9 @@ public sealed class PartialReturnValueTests
         // Hugo 的 return 返回任意对象；Scriban 的 include 只能文本化，
         // 故用页面 Store 作对象通道（实测：跨 include 保真且零序列化）
         var result = Convert("{{ return $x }}", selfPartial: "func/maker");
-        Assert.Contains("page.store.set", result, StringComparison.Ordinal);
+        // 通道落在**渲染上下文**的 store（`__partial_ret_set`）而非 page.store：
+        // 短代码/render hook/被覆盖 page 的 partial 里 page 可能为 null（实测）
+        Assert.Contains("__partial_ret_set", result, StringComparison.Ordinal);
         Assert.Contains("__partial_ret_func/maker", result, StringComparison.Ordinal);
         Assert.Contains("ret", result, StringComparison.Ordinal);
     }
@@ -338,12 +345,15 @@ public sealed class PartialReturnValueTests
     }
 
     [Fact]
-    public void 返回值型partial上下文非dot时保持include()
+    public void 返回值型partial上下文非dot时传上下文()
     {
-        // 传其他页面对象时语义不等价（partialValue 共享调用者上下文）
+        // FixIt 实测：丢弃上下文会让 partial 内的 `.` 落到外层 page
+        // （`split page "_"` 拿到页面对象 → 递归深度上限）。引擎侧 partialValue
+        // 已支持第二参数，故产物是 `partialValue NAME CONTEXT`
         var vr = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "func/maker" };
         var result = Convert("{{ partial \"func/maker.html\" $otherPage }}", valueReturning: vr);
-        Assert.Contains("include", result, StringComparison.Ordinal);
+        Assert.Contains("partialValue", result, StringComparison.Ordinal);
+        Assert.Contains("$otherPage", result, StringComparison.Ordinal);
     }
 
     [Fact]
