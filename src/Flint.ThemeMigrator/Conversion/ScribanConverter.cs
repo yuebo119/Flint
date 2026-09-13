@@ -226,8 +226,13 @@ internal sealed class ScribanConverter(
                     note = callRes.Note;
                 }
                 // partialValue 改写仅对 dot 上下文生效（见 ConvertCall）；
-                // 此处左值非 dot 时保持 include，行为差异已在 Note 标注
-                acc = callRes.Text + " " + acc;
+                // 此处左值非 dot 时保持 include，行为差异已在 Note 标注。
+                // 左值是**多 token 调用**（`dict "Page" . "Preview" true`）时必须加
+                // 括号，否则 Scriban 把它解析成多个实参——模板名之后紧跟 `dict`
+                // 标识符，上下文参数整体错位（FixIt 的 rss.html / summary.html：
+                // partial 内 `$page := .Page` 变成 `$page = page` 取到函数对象，
+                // `$page.resources.getmatch` 报 null object）
+                acc = callRes.Text + " " + ParenthesizeIfNeeded(acc);
                 continue;
             }
 
@@ -1112,11 +1117,38 @@ internal sealed class ScribanConverter(
         };
         if (nameExpr is null)
         {
+            // **动态 partial 名**（`partial $partial .`）：Flint 的 partial 在运行期解析
+            // 字符串名，故直接把名字表达式透传，不必在迁移期定名。
+            // 此前产 TODO 占位 → 命中分支只有注释、正文为空（Congo 的 index.html
+            // `templates.Exists` → `partial $partial .` 实测：整站首页空壳）
+            var dynName = ConvertExpr(args[0], scope, false);
+            if (dynName.Kind != ConversionKind.Unsupported && dynName.Text.Length > 0)
+            {
+                var dynCtxText = "";
+                if (args.Count > 1)
+                {
+                    var ctxResult = ConvertExpr(args[1], scope, false);
+                    if (ctxResult.Kind != ConversionKind.Unsupported)
+                    {
+                        dynCtxText = ctxResult.Text;
+                    }
+                }
+                var call = dynCtxText.Length > 0
+                    ? $"partial {ParenthesizeIfNeeded(dynName.Text)} {ParenthesizeIfNeeded(dynCtxText)}"
+                    : $"partial {ParenthesizeIfNeeded(dynName.Text)}";
+                Diagnostics.Add($"动态 partial 名（{dynName.Text}）：运行期解析");
+                return new ConversionResult(call, ConversionKind.Downgraded, "partial 名为动态表达式");
+            }
             return new ConversionResult("", ConversionKind.Unsupported, "partial 名称非字面量");
         }
 
         var isCached = name is "partialCached" or "partials.IncludeCached";
-        var target = isCached ? "partialcached" : "include";
+        // 目标函数用 Flint 自己的 partial（不是 Scriban 内置 include）：
+        // 内置 include 在模板缺失时**硬抛**（"Unexpected exception while creating
+        // template from path …"），而主题常引用由 Hugo Module 提供的 partial
+        //（FixIt 的 `_funcs/get-page-images` 由 LoveIt 模块提供，独立克隆时不存在）
+        // ——Flint 的 partial 缺模板时输出空并记录诊断，不打断整站
+        var target = isCached ? "partialcached" : "partial";
 
         // 返回值型 partial → partialValue（Hugo 返回对象 vs Scriban 文本化）。
         // 上下文参数一并传出：partialValue 支持 context 参数（引擎侧同签名），

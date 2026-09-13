@@ -234,9 +234,11 @@ public sealed class ParserConverterTests
     [Fact]
     public void partial上下文参数省略()
     {
-        // Scriban 的 include 共享调用者上下文，Hugo 的第二参数无需显式传递
+        // dot 上下文即调用者页面 → 走 Flint 的 partial（共享调用者上下文），
+        // 不传上下文参数。用 partial 而非 Scriban 内置 include：内置 include 在
+        // 模板缺失时硬抛，而主题常引用由 Hugo Module 提供的 partial
         var result = Convert("{{ partial \"cover\" . }}");
-        Assert.Contains("include \"_partials/cover\"", result, StringComparison.Ordinal);
+        Assert.Contains("partial \"_partials/cover\"", result, StringComparison.Ordinal);
     }
 }
 
@@ -336,11 +338,11 @@ public sealed class PartialReturnValueTests
     }
 
     [Fact]
-    public void 非返回值型partial保持include()
+    public void 非返回值型partial走文本渲染路径()
     {
         var vr = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "func/other" };
         var result = Convert("{{ partial \"func/maker.html\" . }}", valueReturning: vr);
-        Assert.Contains("include", result, StringComparison.Ordinal);
+        Assert.Contains("partial \"_partials/func/maker\"", result, StringComparison.Ordinal);
         Assert.DoesNotContain("partialValue", result, StringComparison.Ordinal);
     }
 

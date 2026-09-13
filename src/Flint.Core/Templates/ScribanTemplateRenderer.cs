@@ -96,6 +96,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
     private readonly System.Collections.Concurrent.ConcurrentQueue<string> _templateErrors = new();
 
+    /// <summary>记录一条模板级错误（渲染器内部的宽容降级路径用；
+    /// 与模板 errorf 同一汇聚通道，构建收尾计入 BuildResult.Errors）</summary>
+    private void ReportTemplateError(string message) => _templateErrors.Enqueue(message);
+
     /// <summary>
     /// 模板 <c>errorf</c> 记录的错误（Hugo 语义：记录后继续渲染，页面照常产出，
     /// 构建结束按错误计数判失败）。SiteBuilder 在构建收尾时取走并计入 BuildResult.Errors
@@ -130,6 +134,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     private ScriptObject BuildPartialGlobals(ScriptObject pageLike)
     {
         var g = new ScriptObject();
+        g.TrySetValue(null, default, "__flint_partial_return",
+            new PartialReturnFunction(), readOnly: true);
         g.TrySetValue(null, default, "partial", new PartialFunction(this, pageLike), readOnly: true);
         g.TrySetValue(null, default, "partialValue", new PartialValueFunction(this, pageLike), readOnly: true);
         g.TrySetValue(null, default, "partialcached", new PartialCachedFunction(this), readOnly: true);
@@ -301,6 +307,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             var result = await template.RenderAsync(scribanContext);
             context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
             return result;
+        }
+        catch (PartialReturnSignal)
+        {
+            // 泄漏到顶层的 partial 提前返回（经 Scriban 内置 include 等未走
+            // RenderPartialWithType 的路径）：按"模板就地结束"处理——已写入输出缓冲的内容
+            // 仍在产物里，不该把一次 return 升级成整页失败（Clarity 的
+            // func/getStylesBundle.html 实测 39 处）
+            context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
+            return string.Empty;
         }
         catch (Scriban.Syntax.ScriptRuntimeException ex)
         {
@@ -755,6 +770,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             + "\u0003" + mtimeTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return _partialResultCache.GetOrAdd(cacheKey, _ =>
         {
+            try
+            {
             var content = _templateLoader.Load(scribanContext, default, path)
                 ?? throw new InvalidOperationException($"partial 未找到: {name}");
             var partialTemplate = Template.Parse(content, path);
@@ -812,7 +829,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             isolatedContext.PushGlobal(partialGlobals);
             // 同步 Render：隔离 context 的模板加载（FileTemplateLoader）为同步实现，
             // 无需异步——避免 sync-over-async（G17 棘轮）
+            Console.Error.WriteLine("[DIAG] 即将渲染 partialcached: " + name);
             return partialTemplate.Render(isolatedContext);
+            }
+            catch (PartialReturnSignal)
+            {
+                // partial 内的提前返回：就地结束（不冒泡到调用者）
+                Console.Error.WriteLine("[DIAG] partialcached 捕获信号: " + name);
+                return string.Empty;
+            }
         });
     }
 
@@ -831,32 +856,131 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     [ThreadStatic]
     private static int _partialDepth;
 
+    /// <summary>诊断用：按深度环形记录 partial 名（溢出时报出最近 12 层调用链）</summary>
+    [ThreadStatic]
+    private static string[]? _partialTrace;
+
     private const int MaxPartialDepth = 200;
 
-    private static void EnterPartial()
+    private static void EnterPartial(string name)
     {
-        if (++_partialDepth > MaxPartialDepth)
+        _partialTrace ??= new string[16];
+        var depth = ++_partialDepth;
+        _partialTrace[depth % 16] = name;
+        if (depth > MaxPartialDepth)
         {
+            var tail = new List<string>();
+            for (var d = depth - 12; d < depth; d++)
+            {
+                if (d >= 0 && _partialTrace[d % 16] is { } n)
+                {
+                    tail.Add($"{d}:{n}");
+                }
+            }
             _partialDepth = 0;
             throw new InvalidOperationException(
-                $"partial 嵌套深度超过 {MaxPartialDepth}：疑似 partial 互相递归（检查其调用链）");
+                $"partial 嵌套深度超过 {MaxPartialDepth}：疑似 partial 互相递归。最近 12 层: {string.Join(" → ", tail)}");
         }
     }
 
     private static void ExitPartial() => _partialDepth--;
 
-    internal object RenderPartialWithType(Scriban.TemplateContext callerContext, string name)
+    /// <summary>
+    /// partial 内提前返回的控制流信号（由模板里的 `__flint_partial_return` 抛出，
+    /// RenderPartialWithType 捕获）。用它替代 Scriban 的 `ret` 语句：后者的
+    /// FlowState 会泄漏到调用者，静默截断调用者的剩余输出
+    /// </summary>
+    /// CA1032/CA1064 抑制：内部控制流信号，不对外暴露也不参与 catch 语义
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1032:Implement standard exception constructors",
+        Justification = "内部控制流信号：只由 __flint_partial_return 抛出、由 RenderPartialWithType 捕获")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1064:Exceptions should be public",
+        Justification = "内部控制流信号：不对外暴露（公共异常会诱导使用者 catch 它）")]
+    internal sealed class PartialReturnSignal : Exception;
+
+    /// <summary>`__flint_partial_return`：抛 PartialReturnSignal 结束当前 partial</summary>
+    private sealed class PartialReturnFunction : Scriban.Runtime.IScriptCustomFunction
     {
-        var path = _templateLoader.GetPath(callerContext, default, name)
-            ?? throw new InvalidOperationException($"partial 路径解析失败: {name}");
-        var content = _templateLoader.Load(callerContext, default, path)
-            ?? throw new InvalidOperationException($"partial 未找到: {name}");
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            Console.Error.WriteLine("[DIAG] PartialReturnSignal 抛出点栈: " + Environment.StackTrace);
+            throw new PartialReturnSignal();
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 0;
+        public int ParameterCount => 0;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind => Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) => new(typeof(object), "arg");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo => new(typeof(object), "value");
+    }
+
+
+    internal object RenderPartialWithType(
+        Scriban.TemplateContext callerContext,
+        string name,
+        Scriban.Parsing.SourceSpan callerSpan = default)
+    {
+        // 模板缺失 → **宽容**：记录诊断并输出空。主题常引用由 Hugo Module 提供的
+        // partial（FixIt 的 `_funcs/get-page-images` 来自 LoveIt 模块），独立克隆
+        // 时不存在；硬抛会让整页（乃至整站）失败，而 Hugo 侧该分支常常从未执行。
+        // callerSpan 决定"相对调用者目录"的候选（Hugo 的 partial 名可相对调用者目录
+        // 解析：PaperMod 的 `_partials/templates/opengraph.html` 调 `_funcs/get-page-images`
+        // 命中 `_partials/templates/_funcs/get-page-images.html`）——走 Scriban 内置
+        // include 时该 span 由 Scriban 提供，改走 Flint 自己的 partial 后必须显式传入
+        var path = _templateLoader.GetPath(callerContext, callerSpan, name);
+        if (path is null)
+        {
+            ReportTemplateError($"partial 未找到（已按空输出处理）: {name}");
+            return string.Empty;
+        }
+        string? content;
+        try
+        {
+            content = _templateLoader.Load(callerContext, default, path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            // loader 未命中时返回「候选路径」交 Load 抛错（带上下文）；
+            // 此处兜住并降级——IO/路径异常不该让整页失败
+            ReportTemplateError($"partial 未找到（已按空输出处理）: {name} — {ex.Message}");
+            return string.Empty;
+        }
+        if (content is null)
+        {
+            ReportTemplateError($"partial 内容不可读（已按空输出处理）: {name}");
+            return string.Empty;
+        }
         // partial 模板按物理路径**缓存解析结果**：每次调用都 Template.Parse 时，
         // ① 深调用链下解析器自身的递归会顶到栈（"The parser recursive depth limit
         // was reached near a stack overflow"，hugo-book 的 title.html 实测）；
         // ② 高频 partial 反复解析（hugo-book 单次构建调 title.html 1871 次）
         var cacheKey = "partial:" + path;
-        if (!_templateCache.TryGetValue(cacheKey, out var cached) || IsStale(cached))
+        // 内置模板的 path 是**哨兵**（U+0001builtin:xxx）而非物理文件：不能走 mtime
+        // （File.GetLastWriteTimeUtc 内部 Path.GetFullPath 会把哨兵当相对路径解析并抛
+        // ArgumentException），改为固定 mtime 缓存
+        CachedTemplate? cached;
+        if (path.StartsWith(FileTemplateLoader.BuiltinPrefix, StringComparison.Ordinal))
+        {
+            if (!_templateCache.TryGetValue(cacheKey, out var builtinCached))
+            {
+                var builtinParsed = Template.Parse(content, path);
+                if (builtinParsed.HasErrors)
+                {
+                    throw new TemplateParseException(
+                        name, builtinParsed.Messages.Select(m => m.ToString()).ToList());
+                }
+                builtinCached = new CachedTemplate(builtinParsed, null, DateTime.MinValue);
+                _templateCache[cacheKey] = builtinCached;
+            }
+            cached = builtinCached;
+        }
+        else if (!_templateCache.TryGetValue(cacheKey, out cached) || IsStale(cached))
         {
             var parsedPartial = Template.Parse(content, path);
             if (parsedPartial.HasErrors)
@@ -868,15 +992,25 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             cached = new CachedTemplate(parsedPartial, path, GetMtimeUtc(path));
             _templateCache[cacheKey] = cached;
         }
-        var partialTemplate = cached.Template;
+        // 两个分支都赋了非空值（缓存未命中时当场解析）
+        var partialTemplate = cached!.Template;
 
         // 复用调用者上下文：partial 内可见 page/site/内置函数（Hugo partial 的
         // 第二参数语义在 Scriban 中由共享上下文天然满足）
-        EnterPartial();
+        EnterPartial(name);
         try
         {
+            // partial 内的提前返回（转换器产出的 `__flint_partial_return`）抛
+            // PartialReturnSignal：就地结束该 partial，**不影响调用者**。
+            // 曾经用 Scriban 的 `ret` 语句：它会把 FlowState 置为 Return，连带中断
+            // 包含该 partial 的调用者渲染，调用者剩余输出被静默丢弃
+            //（Congo 的 baseof 链经 _partials/functions/date.html 实测：探针停在 `A=[`）
             var rendered = partialTemplate.Render(callerContext);
             return RestoreScalarType(rendered);
+        }
+        catch (PartialReturnSignal)
+        {
+            return string.Empty;
         }
         finally
         {
@@ -894,14 +1028,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// 使 partial 内 <c>.</c> 取不到值（报 "icon '%s.svg' is not found"）
     /// </summary>
     internal object RenderPartialWithContext(
-        Scriban.TemplateContext callerContext, string name, object? context, ScriptObject pageObject)
+        Scriban.TemplateContext callerContext,
+        string name,
+        object? context,
+        ScriptObject pageObject,
+        Scriban.Parsing.SourceSpan callerSpan = default)
     {
         // 目标 partial 若读写页面 Store（partial 返回值通道 / 显式暂存），
         // **不能**用裸 context 覆盖 page——Store 挂在原 page 对象上，覆盖即切断通道
         //（Ananke/Stack 实测 "page.store.set / page.Store.get for a null object"）。
         // 该判定按 partial 源文本做确定性检查（含其 include 链上的名字）；
         // 命中时退回共享上下文（dot 偏差换取通道完整）
-        var path = _templateLoader.GetPath(callerContext, default, name) ?? "";
+        var path = _templateLoader.GetPath(callerContext, callerSpan, name) ?? "";
         var source = path.Length > 0 ? _templateLoader.Load(callerContext, default, path) : null;
         if (source is null || UsesPageStore(source))
         {
@@ -924,6 +1062,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             merged["Store"] = store;
             merged["scratch"] = store;
             merged["Scratch"] = store;
+            AddKeyCaseAliases(merged);
             AddPageMethodFamily(merged, pageObject);
             MergePageMembers(merged, ctxObj);
             effective = merged;
@@ -933,6 +1072,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 无 store 通道的 dict 上下文：同样补页面方法族——dict 里装页面再调
             // 页面方法的写法很常见（FixIt `dict "Page" . "Key" "toc" | partial
             // "function/param.html"` → partial 内 `.Page.Param`，实测 function not found）
+            AddKeyCaseAliases(plainCtx);
             AddPageMethodFamily(plainCtx, pageObject);
             MergePageMembers(plainCtx, plainCtx);
         }
@@ -992,6 +1132,33 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// FixIt 的 get-cover.html（`$page := .Page` → `$page = page`）实测：
     /// `$page.resources.getmatch` 报 "for a null object"
     /// </summary>
+    /// <summary>
+    /// 给 partial 的 dict 上下文补**大小写别名**：主题常用 `dict "Config" …`
+    /// 造 PascalCase 键，而迁移产物按页面成员约定写成小写（`page.config`）——
+    /// Scriban 成员查找大小写敏感，缺别名时取到 null
+    ///（FixIt 的 feed/rss.html `.Config.limit` 实测）
+    /// </summary>
+    private static void AddKeyCaseAliases(ScriptObject target)
+    {
+        foreach (var key in target.Keys.ToList())
+        {
+            if (key.Length == 0)
+            {
+                continue;
+            }
+            var lowerFirst = char.ToLowerInvariant(key[0]) + key[1..];
+            var upperFirst = char.ToUpperInvariant(key[0]) + key[1..];
+            if (lowerFirst != key && !target.ContainsKey(lowerFirst))
+            {
+                target[lowerFirst] = target[key];
+            }
+            if (upperFirst != key && !target.ContainsKey(upperFirst))
+            {
+                target[upperFirst] = target[key];
+            }
+        }
+    }
+
     private static void MergePageMembers(ScriptObject target, ScriptObject source)
     {
         foreach (var key in new[] { "page", "Page" })
@@ -1083,13 +1250,15 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             {
                 throw new InvalidOperationException("partial 需要至少一个字符串参数（partial 名称）");
             }
+            // 调用者的源码位置：partial 名可相对调用者目录解析（见 RenderPartialWithType）
+            var callerSpan = callerContext?.Span ?? default;
             // Hugo 的 `partial "x" CONTEXT`：第二参数成为 partial 内的 `.`。
             // 迁移产物的裸 `.X` 被转成 `page.x`，故把 context 临时压成 `page` 全局
             if (arguments.Count > 1)
             {
-                return renderer.RenderPartialWithContext(context, name, arguments[1], pageObject);
+                return renderer.RenderPartialWithContext(context, name, arguments[1], pageObject, callerSpan);
             }
-            return renderer.RenderPartialWithType(context, name);
+            return renderer.RenderPartialWithType(context, name, callerSpan);
         }
 
         public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
@@ -1291,6 +1460,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 而调用方可能传 "func/X.html" —— 必须同规则归一，否则键不匹配
             // （实测：CALL 返回空，因写入键为 __partial_ret_func/X 而读取键为
             //   __partial_ret_func/X.html）
+            var callerSpan = callerContext?.Span ?? default;
             var canonical = CanonicalPartialKey(name);
             var key = KeyPrefix + canonical;
             // 清除上次残留（同一 partial 多次调用时避免读到旧值）
@@ -1309,6 +1479,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             {
                 rendered = RenderValue();
             }
+            catch (PartialReturnSignal)
+            {
+                // partial 内的提前返回：就地结束（返回值已写入通道 Store）
+                rendered = string.Empty;
+            }
             finally
             {
                 context.PopOutput();
@@ -1321,8 +1496,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             return value ?? rendered;
 
             object? RenderValue() => arguments.Count > 1
-                ? renderer.RenderPartialWithContext(context, name, arguments[1], pageObject)
-                : renderer.RenderPartialWithType(context, name);
+                ? renderer.RenderPartialWithContext(context, name, arguments[1], pageObject, callerSpan)
+                : renderer.RenderPartialWithType(context, name, callerSpan);
         }
 
         public System.Threading.Tasks.ValueTask<object?> InvokeAsync(

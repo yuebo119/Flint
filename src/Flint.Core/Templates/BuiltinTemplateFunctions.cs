@@ -1322,16 +1322,30 @@ public sealed partial class BuiltinTemplateFunctions
 
     private void RegisterResourceFunctions(ScriptObject obj)
     {
-        // fingerprint - 资源指纹
-        obj.Import("fingerprint", (string? path) =>
+        // fingerprint - 资源指纹。**必须收下可选算法参数**：Scriban 只绑定首个注册的
+        // 重载，旧实现是 `(string? path)` 单参版，主题写 `$res | fingerprint "sha512"`
+        // 时形参不符 → "Argument index must be < 1"（LoveIt 的 plugin/style.html 实测）。
+        // 资源对象走资源指纹（与 resources.Fingerprint 同实现、产物登记落盘）；
+        // 字符串路径保留 "?v=hash" 兼容行为
+        obj.Import("fingerprint", (Func<object?, object?[], object?>)((value, rest) =>
         {
+            var algorithm = rest.Length > 0 ? rest[0]?.ToString() ?? "sha256" : "sha256";
+            var resource = ToResource(value);
+            if (resource is not null)
+            {
+                var fingerprinted = resource.WithFingerprint(algorithm);
+                Track(fingerprinted);
+                return fingerprinted.ToScriptObject();
+            }
+            var path = value?.ToString();
             if (string.IsNullOrEmpty(path))
+            {
                 return "";
-            // 简单实现：添加查询参数
+            }
             var hash = SHA256.HashData(Encoding.UTF8.GetBytes(path));
             var shortHash = Convert.ToHexStringLower(hash)[..8];
             return path.Contains('?') ? $"{path}&v={shortHash}" : $"{path}?v={shortHash}";
-        });
+        }));
 
         // resources.Get / resources.Match / resources.GetMatch / minify 未提供
         // （依赖资源对象模型），不注册：调用报函数未定义而非静默空转
@@ -1392,15 +1406,16 @@ public sealed partial class BuiltinTemplateFunctions
         // 对标量迭代一次、对集合逐项迭代）。Scriban 的 `for x in false` 会抛
         // "Unexpected type `System.Boolean` for iterator"——转换器对 range 的集合
         // 表达式统一包本函数（Blowfish 的 `range (or .social .links)` 两值为空时实测）
-        obj.Import("as_list", (object? v) => v switch
-        {
-            null => new List<object?>(),
-            bool b => b ? new List<object?> { true } : new List<object?>(),
-            string str => new List<object?> { str },
-            System.Collections.IDictionary => new List<object?> { v },
-            System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
-            _ => new List<object?> { v }
-        });
+        obj.Import("as_list", (object? v) => AsList(v));
+
+        // as_pairs：Hugo 的**双变量** range 语义（v0.166 实测）——map 产出 (key, value)、
+        // slice 产出 (index, value)、标量/空产出单元素或空。转换器把
+        // `range $k, $v := X` 产成 `for $pair in as_pairs (X)`。
+        // 早期实现双变量 range 靠 `$pair.Key ?? for.index` / `$pair.Value ?? $pair` 兜底，
+        // 但 as_list 当时把 map 当**标量**（单元素）→ $pair 就是那个 map 本身 →
+        // `reflect.IsMap $pair` 为真 → 主题的"递归转换 map 键"辅助函数无限自递归
+        //（FixIt 的 camel-case-keys.html 实测：200 层后由深度守卫捕获）
+        obj.Import("as_pairs", (object? v) => AsPairs(v));
 
         // num_gt / num_ge / num_lt / num_le：**宽容数值比较**（Hugo 的比较语义）。
         // Hugo 的 gt/lt 对字符串数字与数值做类型强制，而 Scriban 的 `>` 运算符与
@@ -1783,6 +1798,105 @@ public sealed partial class BuiltinTemplateFunctions
     /// 集合/对象等复合值返回空串——**不**走隐式转换，避免 Scriban 遍历成员
     /// 触发递归深度上限（见 split 的注释）
     /// </summary>
+    /// <summary>
+    /// 是否是可迭代**数据**之外的成员：函数值（页面/上下文对象的 store 方法、
+    /// 页面方法族等）与引擎内部键（`__` 前缀）。Hugo 的映射从不含函数，
+    /// 而 Scriban 在取值位置会**自动调用**函数成员（0 参调用 → 参数校验失败
+    /// "Invalid number of arguments `0` passed to `$pair.Value`"），故一律跳过
+    /// </summary>
+    private static bool IsNonDataMember(string key, object? value) =>
+        value is Scriban.Runtime.IScriptCustomFunction ||
+        key.StartsWith("__", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 归一为可迭代的值序列（Hugo 单变量 range 语义，v0.166 实测）：
+    /// nil/false → 空、字符串 → 单元素、映射 → **值序列**、序列 → 元素、标量 → 单元素
+    /// </summary>
+    private static List<object?> AsList(object? v) => v switch
+    {
+        null => [],
+        bool b => b ? [true] : [],
+        string str => [str],
+        // **列表优先于映射**：页面集合是 `ScriptObject + IList<ScriptObject>`（LazyPageList），
+        // 若按 ScriptObject 判定会去迭代它的**成员**（bydate/bytitle/count… 一堆函数值）
+        // 而不是页面本列——迭代出函数值后 Scriban 会自动调用它们（"Argument index
+        // must be < 1"、"Unable to convert type object to int"，loveit/hugo-coder/blowfish 实测）
+        IList<ScriptObject> pageList => pageList.Cast<object?>().ToList(),
+        System.Collections.IList list => list.Cast<object?>().ToList(),
+        // 纯映射：ScriptObject 的 IDictionary.Values / DictionaryEntry.Value 返回
+        // Scriban 的 InternalValue 包装（渲染成类型名），只有 Keys + 索引器能拿到真实值
+        ScriptObject o => o.Keys.Where(k => !IsNonDataMember(k, o[k])).Select(k => o[k]).ToList(),
+        System.Collections.IDictionary d => d.Values.Cast<object?>().ToList(),
+        System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
+        _ => [v]
+    };
+
+    /// <summary>
+    /// 归一为 (Key, Value) 对序列（Hugo 双变量 range 语义）：映射 → (键, 值)、
+    /// 序列 → (索引, 元素)、nil/false → 空、标量 → 单个 (0, 标量)
+    /// </summary>
+    private static List<object?> AsPairs(object? v)
+    {
+        var result = new List<object?>();
+        switch (v)
+        {
+            case null:
+                return result;
+            case bool b:
+                if (b)
+                {
+                    result.Add(new ScriptObject { ["Key"] = 0, ["Value"] = true });
+                }
+                return result;
+            case string str:
+                result.Add(new ScriptObject { ["Key"] = 0, ["Value"] = str });
+                return result;
+            // **列表优先于映射**（同 AsList）：页面集合是 ScriptObject + IList<ScriptObject>，
+            // 按映射判定会把它的成员当键值对（迭代出函数值 → 自动调用报错）
+            case IList<ScriptObject> pageList:
+                for (var i = 0; i < pageList.Count; i++)
+                {
+                    result.Add(new ScriptObject { ["Key"] = i, ["Value"] = pageList[i] });
+                }
+                return result;
+            case System.Collections.IList list:
+                for (var i = 0; i < list.Count; i++)
+                {
+                    result.Add(new ScriptObject { ["Key"] = i, ["Value"] = list[i] });
+                }
+                return result;
+            // 映射：ScriptObject 的成员要经 Keys + 索引器取真值（见 AsList 注释）
+            case ScriptObject obj:
+                foreach (var key in obj.Keys)
+                {
+                    var member = obj[key];
+                    if (IsNonDataMember(key, member))
+                    {
+                        continue;
+                    }
+                    result.Add(new ScriptObject { ["Key"] = key, ["Value"] = member });
+                }
+                return result;
+            case System.Collections.IDictionary dict:
+                foreach (System.Collections.DictionaryEntry entry in dict)
+                {
+                    result.Add(new ScriptObject { ["Key"] = entry.Key, ["Value"] = entry.Value });
+                }
+                return result;
+            case System.Collections.IEnumerable seq:
+                var index = 0;
+                foreach (var item in seq)
+                {
+                    result.Add(new ScriptObject { ["Key"] = index, ["Value"] = item });
+                    index++;
+                }
+                return result;
+            default:
+                result.Add(new ScriptObject { ["Key"] = 0, ["Value"] = v });
+                return result;
+        }
+    }
+
     internal static string ToFlatString(object? v) => v switch
     {
         null => "",
