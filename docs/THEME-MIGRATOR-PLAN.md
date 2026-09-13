@@ -1669,14 +1669,42 @@ terminal · zzo（+ gokarna 因脚本 cp 冲突未测准）
 主题模板自身解析错误（hextra/learn/lynx/terminal/jane/intro/noteworthy）、
 配置不兼容（meme/relearn）。
 
-### 新矩阵集（20 个）
+### 新矩阵集（24 个）
 
 保留 16 个已验证可用：ananke · bearblog · blog-awesome · blowfish · clarity ·
 console · even · fixit · github-style · hugo-book · hugo-coder · hugo-paper ·
 loveit · papermod · stack · xmin
 
-新增 4 个（覆盖不同定位）：**monochrome**（功能全，238★）· **techdoc**（文档类，237★）·
-**yinyang**（极简 CJK，504★）· **m10c**（极简，495★）
+**全部 8 个新验证可用的主题都加入矩阵**（用户要求）：
 
-其余候选移入 `tools/themes-candidates/`（24 个，供后续轮次取用）——矩阵脚本按
-`tools/themes/` 目录枚举，故候选池不参与矩阵。
+| 主题 | 星 | 配置源 | Hugo 页数 | 最小页 | 说明 |
+|---|---|---|---|---|---|
+| monochrome | 238 | exampleSite | 112 | 242B | 功能全 |
+| techdoc | 237 | exampleSite | 71 | 260B | 文档类 |
+| yinyang | 504 | exampleSite | 25 | 245B | 极简 CJK |
+| m10c | 495 | exampleSite | 46 | 242B | 极简 |
+| narrow | 220 | exampleSite | 59 | 242B | 极简博客 |
+| tale | 255 | 最小配置 | 20 | 242B | 极简（无可用 exampleSite） |
+| smol | 296 | 最小配置 | 20 | 242B | 极简（无可用 exampleSite） |
+| etch | 306 | exampleSite* | 12 | 1025B | **exampleSite 内容过时**——主题可用，但原样 exampleSite 在最新 Hugo 上 exit≠0 |
+
+判定标准（`scripts/verify-themes.sh`，纯 Hugo 侧）：**exit=0 + 页数>0 + 最小页 ≥200B**。
+etch 的 exampleSite 需要"换最小内容"才可用，故在矩阵里 Hugo 列显示"否"（基线不成立）。
+
+矩阵基线：**16/24 通过**。失败 8 个：fixit · hugo-book · stack（既有）+
+monochrome · techdoc · yinyang · narrow · smol · tale 之外的新缺口（下节）。
+
+### 新主题立刻暴露的缺口（按错误聚类）
+
+| 聚类 | 影响 | 性质 |
+|---|---|---|
+| `Argument index must be < N (Parameter 'index')` | narrow 33 · monochrome 77 | 某个 Flint 函数读 `arguments[N]` 未按实际参数个数守卫 |
+| `Unable to convert type string to int` | smol 17 | 数值参数不做容忍转换 |
+| `page.pages.group_by_publish_date` 未注册 | monochrome 15 | 页面集合缺该方法的别名（已有 `groupbydate`） |
+| `$currentNode.scratch` 为 null | techdoc 68 | partial 上下文的变量缺失 |
+| `(where … "Type" "in" X)` 被当函数调用 | yinyang 22 | **转换器**：括号/链式访问产物错误 |
+| `Invalid token found }` | techdoc 4 | **转换器**：产出的语法错误 |
+| `$res.resources` 为 null | monochrome 5 | 局部变量缺失 |
+
+其中「转换器产出的语法错误」（techdoc 的 `Invalid token found }`、yinyang 的
+`(where …)` 被当函数）是**迁移工具自身的缺陷**，优先级最高。
