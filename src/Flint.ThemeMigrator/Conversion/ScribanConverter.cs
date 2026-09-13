@@ -16,7 +16,8 @@ namespace Flint.ThemeMigrator.Conversion;
 internal sealed class ScribanConverter(
     MigrationMap map,
     IReadOnlySet<string>? valueReturningPartials = null,
-    string? selfPartialName = null)
+    string? selfPartialName = null,
+    bool selfNamedTemplateExtracted = false)
 {
     private readonly MigrationMap _map = map;
 
@@ -25,6 +26,15 @@ internal sealed class ScribanConverter(
 
     /// <summary>本文件对应的 partial 规范名（null = 非 partial 文件）</summary>
     public string? SelfPartialName { get; } = selfPartialName;
+
+    /// <summary>
+    /// 本文件内是否**确有**同名命名模板被提取（define 与文件同名的情形）。
+    /// 只有它为真时调用路径才加后缀——否则会把"partial 递归调用自己"这种
+    /// 合法写法改成指向不存在的文件
+    ///（fixit 的 camel-case-keys.html 递归处理嵌套 map 实测：
+    ///  "Could not find a part of the path …camel-case-keys__named"）
+    /// </summary>
+    private readonly bool _selfNamedTemplateExtracted = selfNamedTemplateExtracted;
 
     /// <summary>partialValue 的 Store 键前缀（与引擎侧 ScribanTemplateRenderer 一致）</summary>
     internal const string RetKeyPrefix = "__partial_ret_";
@@ -111,7 +121,8 @@ internal sealed class ScribanConverter(
     internal string PartialPathFor(string raw)
     {
         var canonical = CanonicalPartialName(raw);
-        if (SelfPartialName is { } self &&
+        if (_selfNamedTemplateExtracted &&
+            SelfPartialName is { } self &&
             string.Equals(CanonicalPartialName(self), canonical, StringComparison.OrdinalIgnoreCase))
         {
             canonical += NamedTemplateSelfSuffix;
