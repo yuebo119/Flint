@@ -344,6 +344,13 @@ public sealed partial class BuiltinTemplateFunctions
             return arr;
         });
 
+        // GetRemote URL：Hugo 会联网下载远端资源并缓存；Flint 面向**可复现的离线构建**，
+        // 不做网络抓取，返回 nil（主题的 `with $remote` 分支自然跳过）。
+        // 已知限制：依赖远端资源的页面在 Flint 侧缺该资源——clarity 的
+        // partials/image.html 对 http 开头的图片走此路径（1 处 TEMPLATE001）。
+        // 宁可显式返回空值也不去联网：构建结果不应依赖外部服务可达性
+        res.Import("GetRemote", (Func<object?[], object?>)(_ => null));
+
         // FromString NAME CONTENT：虚拟资源
         res.Import("FromString", (string? name, string? content) =>
         {

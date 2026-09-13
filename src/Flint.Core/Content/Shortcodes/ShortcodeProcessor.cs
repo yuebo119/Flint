@@ -143,7 +143,7 @@ public sealed partial class ShortcodeProcessor
         for (var i = 0; i < parseResult.Shortcodes.Count; i++)
         {
             results[i] = await ProcessShortcodeAsync(
-                parseResult.Shortcodes[i], pageContext, siteContext, cancellationToken).ConfigureAwait(false);
+                parseResult.Shortcodes[i], pageContext, siteContext, null, i, cancellationToken).ConfigureAwait(false);
         }
 
         // 按 DelimiterType 分派：Angle → 防碰撞占位符后置展开；Percent → 内联。
@@ -176,6 +176,8 @@ public sealed partial class ShortcodeProcessor
         ParsedShortcode shortcode,
         object? pageContext,
         object? siteContext,
+        ShortcodeParent? parent,
+        int ordinal,
         CancellationToken cancellationToken)
     {
         // 获取处理器
@@ -208,7 +210,22 @@ public sealed partial class ShortcodeProcessor
             return $"<!-- 未知短代码: {shortcode.Name} -->";
         }
 
-        // 处理嵌套短代码
+        // 上下文先建：嵌套短代码要拿它当 `.Parent`（Hugo 语义），故不能等 innerContent
+        // 处理完再构造（那时嵌套调用已经发生，Parent 只能是 null——narrow 的 tab.html
+        // 因此报 "must be nested inside tabs"，6 处）
+        var context = new ShortcodeContext
+        {
+            Name = shortcode.Name,
+            Parameters = shortcode.Parameters,
+            PositionalArgs = shortcode.PositionalArgs,
+            InnerContent = shortcode.InnerContent,
+            Page = pageContext,
+            Site = siteContext,
+            Parent = parent,
+            Ordinal = ordinal
+        };
+
+        // 处理嵌套短代码（以当前上下文为父）
         var innerContent = shortcode.InnerContent;
         if (innerContent != null && shortcode.NestedShortcodes.Count > 0)
         {
@@ -217,19 +234,16 @@ public sealed partial class ShortcodeProcessor
                 shortcode.NestedShortcodes,
                 pageContext,
                 siteContext,
+                new ShortcodeParent(
+                    context.Name,
+                    context.Ordinal,
+                    context.Parameters,
+                    context.PositionalArgs,
+                    context.InnerContent,
+                    context.Parent),
                 cancellationToken).ConfigureAwait(false);
+            context = context with { InnerContent = innerContent };
         }
-
-        // 创建上下文
-        var context = new ShortcodeContext
-        {
-            Name = shortcode.Name,
-            Parameters = shortcode.Parameters,
-            PositionalArgs = shortcode.PositionalArgs,
-            InnerContent = innerContent,
-            Page = pageContext,
-            Site = siteContext
-        };
 
         try
         {
@@ -256,6 +270,7 @@ public sealed partial class ShortcodeProcessor
         IReadOnlyList<ParsedShortcode> nestedShortcodes,
         object? pageContext,
         object? siteContext,
+        ShortcodeParent parent,
         CancellationToken cancellationToken)
     {
         var result = content;
@@ -263,7 +278,9 @@ public sealed partial class ShortcodeProcessor
         for (var i = 0; i < nestedShortcodes.Count; i++)
         {
             var nested = nestedShortcodes[i];
-            var processedNested = await ProcessShortcodeAsync(nested, pageContext, siteContext, cancellationToken).ConfigureAwait(false);
+            // 序号按同级计数（Hugo 的 .Ordinal 语义）——tab 用它拼 panel id
+            var processedNested = await ProcessShortcodeAsync(
+                nested, pageContext, siteContext, parent, i, cancellationToken).ConfigureAwait(false);
             result = result.Replace(
                 string.Format(InvariantCulture, "{{{{NESTED:{0}}}}}", i),
                 processedNested,

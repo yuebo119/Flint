@@ -157,10 +157,41 @@ public readonly record struct ShortcodeContext
     public object? Site { get; init; }
 
     /// <summary>
+    /// 父短代码上下文（Hugo 的 <c>.Parent</c>；顶层短代码为 null）。
+    /// 成对短代码的"容器/成员"结构靠它判断：Narrow 的 tab.html 首行即
+    /// <c>{{ if not .Parent }}{{ errorf "必须嵌套在 tabs 内" }}{{ end }}</c>
+    /// </summary>
+    public ShortcodeParent? Parent { get; init; }
+
+    /// <summary>
+    /// 同级序号（Hugo 的 <c>.Ordinal</c>，0 起）。Hugo 语义是"相对父级的序号"，
+    /// 顶层短代码即它在页面内容中的出现次序；tab.html 用它拼 panel id
+    /// （<c>printf "%s-panel-%d" (printf "tabs-%d" .Parent.Ordinal) .Ordinal</c>）
+    /// </summary>
+    public int Ordinal { get; init; }
+
+    /// <summary>
     /// 是否为自闭合短代码
     /// </summary>
     public bool IsSelfClosing => InnerContent is null;
 }
+
+/// <summary>
+/// 父短代码链上的一个节点（Hugo <c>.Parent</c> 的模板视角）。
+/// </summary>
+/// <remarks>
+/// 刻意定义为**引用类型**：<see cref="ShortcodeContext"/> 是 readonly record struct，
+/// 结构体不允许含自身的可空成员（CS0523 结构布局循环），父链只能走引用。
+/// 内容与 <see cref="ShortcodeContext"/> 对应字段一致，另带自身的 Parent 以支持
+/// 多级嵌套（Hugo 的 .Parent.Parent 链）
+/// </remarks>
+public sealed record ShortcodeParent(
+    string Name,
+    int Ordinal,
+    IReadOnlyDictionary<string, string> Parameters,
+    IReadOnlyList<string> PositionalArgs,
+    string? InnerContent,
+    ShortcodeParent? Parent);
 
 /// <summary>
 /// 短代码注册表接口

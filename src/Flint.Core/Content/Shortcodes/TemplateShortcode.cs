@@ -33,7 +33,7 @@ public sealed class TemplateShortcode : IShortcodeProcessor
     /// 上下文补装委托：由渲染器构造时注入（注册内置函数与 partial 等全局）。
     /// 短代码在内容解析期渲染，此时尚无页面上下文，故只补装与页面无关的全局
     /// </summary>
-    internal static Action<Scriban.TemplateContext>? EnrichContext { get; set; }
+    internal static Action<Scriban.TemplateContext, Scriban.Runtime.ScriptObject>? EnrichContext { get; set; }
 
     public TemplateShortcode(string name, string templateContent)
     {
@@ -52,6 +52,49 @@ public sealed class TemplateShortcode : IShortcodeProcessor
 
     /// <inheritdoc />
     public string Description => $"用户短代码（layouts/shortcodes/{Name}.html）";
+
+    /// <summary>
+    /// 父短代码的模板视角对象（Hugo 的 <c>.Parent</c>）：暴露 name/ordinal/params/
+    /// inner 以及自身的 parent（链式可追溯）。顶层返回 null —— Scriban 里
+    /// <c>{{ if not .Parent }}</c> 对 nil 判真，与 Hugo 语义一致
+    /// </summary>
+    private static Scriban.Runtime.ScriptObject? BuildParentObject(ShortcodeParent? parent)
+    {
+        if (parent is not { } p)
+        {
+            return null;
+        }
+
+        var obj = new Scriban.Runtime.ScriptObject
+        {
+            ["name"] = p.Name,
+            ["ordinal"] = p.Ordinal,
+            ["inner"] = p.InnerContent ?? string.Empty,
+            ["is_named_params"] = p.Parameters.Count > 0
+        };
+
+        var paramsObject = new Scriban.Runtime.ScriptObject();
+        foreach (var (key, value) in p.Parameters)
+        {
+            paramsObject[key] = value;
+        }
+        obj["params"] = paramsObject;
+        obj["Params"] = paramsObject;
+
+        var positional = new Scriban.Runtime.ScriptArray();
+        foreach (var arg in p.PositionalArgs)
+        {
+            positional.Add(arg);
+        }
+        obj["positional"] = positional;
+
+        if (BuildParentObject(p.Parent) is { } grandParent)
+        {
+            obj["parent"] = grandParent;
+        }
+
+        return obj;
+    }
 
     /// <inheritdoc />
     public async ValueTask<string> ProcessAsync(
@@ -94,6 +137,12 @@ public sealed class TemplateShortcode : IShortcodeProcessor
         globals["inner"] = context.InnerContent ?? string.Empty;
         globals["name"] = context.Name;
 
+        // Hugo 嵌套短代码契约：.Ordinal（同级序号）与 .Parent（父级上下文对象）。
+        // 顶层短代码的 parent 为 nil —— 这与 Hugo 一致（布局里的短代码 Parent 为 nil），
+        // 主题据此判断"是否被正确嵌套"（narrow 的 tab.html）
+        globals["ordinal"] = context.Ordinal;
+        globals["parent"] = BuildParentObject(context.Parent);
+
         // Hugo 短码 API 对齐：is_named_params + get（命名优先、数字取位置参数）
         globals["is_named_params"] = context.Parameters.Count > 0;
 #pragma warning disable IL2026, IL3050 // Scriban Import 走反射构造 DynamicCustomFunction；lambda 装箱后方法体被 linker 保留，运行时安全（与 BuiltinTemplateFunctions 同口径）
@@ -129,7 +178,7 @@ public sealed class TemplateShortcode : IShortcodeProcessor
         // was not found"，29 处）。渲染器构造时注入补装委托，使短代码与页面共享
         // 同一套全局函数；`page`/`site` 在解析期尚无值，但 partial 的上下文参数
         //（如 `partial "sprite" (dict "icon" "x")`）可正常传递
-        EnrichContext?.Invoke(templateContext);
+        EnrichContext?.Invoke(templateContext, globals);
         cancellationToken.ThrowIfCancellationRequested();
         return await _template.RenderAsync(templateContext);
     }
