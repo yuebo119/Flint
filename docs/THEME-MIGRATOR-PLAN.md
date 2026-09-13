@@ -1625,3 +1625,58 @@ S3 反向验证原则回退到 `{{ ret }}`——回退后 Clarity 恢复通过�
 表达式在**普通页**上正常、只在**分类页**上失败；`{{ ret }}` 方案下 stack 产出仍有
 129KB（6 处错误），而信号方案下 Clarity 会塌成 12 页——两害相权取产出量级更优者，
 故保留 `ret`。下一轮以 term 页上下文为切入口继续定位。
+
+---
+
+## 二十六、主题集重选：只保留"在最新 Hugo 上可用"的主题（2026-09-13 第十一轮）
+
+### 原则
+
+**主题本身在最新 Hugo 上跑不起来 → 其"迁移失败"无从判定**（没有可信的对照产物）。
+这类主题一律**剔除**，不做适配。
+
+### 剔除（4 个，Hugo 侧不可用）
+
+| 主题 | Hugo 侧现象 |
+|---|---|
+| archie | exampleSite 内容过时（换最小内容后勉强可用：13 页/245B） |
+| congo | exampleSite 在 Hugo v0.166 上 exit≠0、0 页 |
+| doit | 主题自身 `errorf`（exampleSite 缺图标参数） |
+| risotto | exampleSite 在 Hugo v0.166 上 exit≠0、0 页 |
+
+工具链侧同步删除：`tools/themes/<name>`、`matrix-full/<name>*`、`theme-verify/<name>`。
+
+### 候选发现与验证（28 个）
+
+候选 = GitHub topic:hugo-theme 按 star 的前列（awesome-hugo-themes 榜单）
++ 此前一轮**因验证方法缺陷可能被误排除**的主题（第十八节修了 5 个方法缺陷：
+exampleSite 未用、Dart Sass 未装、author 形状、enableGitInfo、主题名未归一）。
+新增脚本 `scripts/clone-candidates.sh`（克隆）+ 复用 `scripts/verify-themes.sh`（验证）。
+
+判定仍是 Hugo 侧三条件：**exit=0 + 产出页数 > 0 + 最小页 > 200 字节**（Dart Sass 进 PATH）。
+
+**新可用（干净构建，8 个）**：etch(12) · m10c(46) · monochrome(112) · narrow(59) ·
+smol(20) · tale(20) · techdoc(71) · yinyang(25)
+
+**非致命（Hugo exit≠0 但产出页面，2 个）**：hugo-profile(19) · mainroad(17) —— 不作基线
+
+**不可用（18 个）**：adritian · eureka · fresh · gallery · hello-friend · hermit ·
+hextra · hugo-tania · intro · jane · learn · lynx · meme · noteworthy · relearn ·
+terminal · zzo（+ gokarna 因脚本 cp 冲突未测准）
+
+失败原因归类：Hugo Modules 拉取失败（adritian/eureka/fresh/gallery）、
+`_internal/google_analytics` 等**内置模板已移除**（hermit/hugo-tania/zzo）、
+主题模板自身解析错误（hextra/learn/lynx/terminal/jane/intro/noteworthy）、
+配置不兼容（meme/relearn）。
+
+### 新矩阵集（20 个）
+
+保留 16 个已验证可用：ananke · bearblog · blog-awesome · blowfish · clarity ·
+console · even · fixit · github-style · hugo-book · hugo-coder · hugo-paper ·
+loveit · papermod · stack · xmin
+
+新增 4 个（覆盖不同定位）：**monochrome**（功能全，238★）· **techdoc**（文档类，237★）·
+**yinyang**（极简 CJK，504★）· **m10c**（极简，495★）
+
+其余候选移入 `tools/themes-candidates/`（24 个，供后续轮次取用）——矩阵脚本按
+`tools/themes/` 目录枚举，故候选池不参与矩阵。
