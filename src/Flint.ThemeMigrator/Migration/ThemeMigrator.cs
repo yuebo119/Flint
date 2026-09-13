@@ -121,7 +121,13 @@ internal sealed class ThemeMigrator
             var layoutsRoot = Path.Combine(sourceRoot, "layouts");
             var baseofAvailable = File.Exists(Path.Combine(layoutsRoot, "baseof.html")) &&
                 !rel.Replace((char)92, '/').Contains("partials/", StringComparison.OrdinalIgnoreCase);
-            var result = ConvertTemplate(rel, remainingText, valueReturning, selfPartial, baseofAvailable);
+            // 本文件内同名命名模板是否被提取改名（决定 partial 自调用是否要加后缀）：
+            // 只有提取器真的改名过才加——否则会把"partial 递归调用自己"改成不存在的文件
+            var selfNamedExtracted = inlinePartials.Any(ip =>
+                ip.RelativePath.Contains(
+                    InlinePartialExtractor.NamedTemplateSelfSuffix, StringComparison.Ordinal));
+            var result = ConvertTemplate(
+                rel, remainingText, valueReturning, selfPartial, baseofAvailable, selfNamedExtracted);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -179,7 +185,8 @@ internal sealed class ThemeMigrator
         string text,
         IReadOnlySet<string>? valueReturning = null,
         string? selfPartialName = null,
-        bool baseofAvailable = false)
+        bool baseofAvailable = false,
+        bool selfNamedTemplateExtracted = false)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -187,7 +194,8 @@ internal sealed class ThemeMigrator
         var parser = new GoTemplateParser(tokens);
         var parts = parser.Parse();
 
-        var converter = new TemplateConverter(_map, valueReturning, selfPartialName, baseofAvailable);
+        var converter = new TemplateConverter(
+            _map, valueReturning, selfPartialName, baseofAvailable, selfNamedTemplateExtracted);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);

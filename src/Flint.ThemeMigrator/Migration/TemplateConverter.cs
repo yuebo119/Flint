@@ -32,9 +32,11 @@ internal sealed partial class TemplateConverter(
     MigrationMap map,
     IReadOnlySet<string>? valueReturningPartials = null,
     string? selfPartialName = null,
-    bool baseofAvailable = false)
+    bool baseofAvailable = false,
+    bool selfNamedTemplateExtracted = false)
 {
-    private readonly ScribanConverter _expr = new(map, valueReturningPartials, selfPartialName);
+    private readonly ScribanConverter _expr =
+        new(map, valueReturningPartials, selfPartialName, selfNamedTemplateExtracted);
     private readonly List<(string Kind, string? Var)> _blockStack = [];
     private readonly List<string> _definedBlocks = [];
     private int _syntheticIndex;

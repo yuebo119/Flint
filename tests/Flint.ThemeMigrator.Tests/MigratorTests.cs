@@ -68,6 +68,43 @@ public sealed class ParserConverterTests
         return new TemplateConverter(MigrationMap.CreateDefault()).Convert(parts);
     }
 
+    /// <summary>带"本文件同名命名模板已提取"标记的转换（partial 调用是否加 __named 后缀）</summary>
+    private static string ConvertWithSelfNamed(string template, string selfPartial, bool selfNamedExtracted)
+    {
+        var tokens = new GoTemplateLexer(template).Tokenize();
+        var parts = new GoTemplateParser(tokens).Parse();
+        return new TemplateConverter(
+            MigrationMap.CreateDefault(), null, selfPartial, false, selfNamedExtracted).Convert(parts);
+    }
+
+    [Fact]
+    public void partial自调用在无同名define时不加后缀()
+    {
+        // fixit 的 camel-case-keys 递归调用自己处理嵌套 map——它不是命名模板。
+        // 若按"名字与所在文件相同"就加后缀，会指向不存在的文件：
+        // "Could not find a part of the path …camel-case-keys__named"
+        var result = ConvertWithSelfNamed(
+            "{{ partial \"function/camel-case-keys.html\" . }}",
+            "function/camel-case-keys",
+            selfNamedExtracted: false);
+
+        Assert.Contains("_partials/function/camel-case-keys\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("__named", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void partial自调用在确有同名define时加后缀()
+    {
+        // techdoc 的 pagination.html 内有 {{ define "pagination" }}：
+        // 提取器把它改名为 pagination__named.html，调用侧必须同步
+        var result = ConvertWithSelfNamed(
+            "{{ partial \"pagination.html\" (dict \"a\" 1) }}",
+            "pagination",
+            selfNamedExtracted: true);
+
+        Assert.Contains("_partials/pagination__named", result, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void 嵌套括号结构正确()
     {
