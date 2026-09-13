@@ -1708,3 +1708,24 @@ monochrome · techdoc · yinyang · narrow · smol · tale 之外的新缺口（
 
 其中「转换器产出的语法错误」（techdoc 的 `Invalid token found }`、yinyang 的
 `(where …)` 被当函数）是**迁移工具自身的缺陷**，优先级最高。
+
+### G. 转换器：括号接收者的成员调用（第十一轮续）
+
+**现象**：`{{ range (where .Data.Pages "Type" "in" site.Params.mainSections).GroupByDate "2006" }}`
+被产出两层非法形态：
+1. 先是 `(where …)?.groupbydate "2006"` —— Scriban 里 `?.(…)` 与调用组合非法；
+2. 去掉 `?.` 后仍是 `(where …).groupbydate "2006"` —— Scriban **不支持对括号表达式调用成员函数**
+   （把 `(where …)` 整体当函数名：`The function `(where …)` was not found`）。
+
+**修法（两处）**：
+1. `Wrap(...)` 阶段做一次"nil 安全分隔符的调用形态修正"：`?.name` 后跟**实参**时退回普通点
+   （字段访问保留 `?.` 的宽容语义）。判据是**接收者为括号表达式**（`)?.name`），
+   不按"括号深度 0"判定——转换器自己会把表达式包进 `as_list (…)` 等括号里
+   （深度判定会漏）。
+2. `range` 头里把括号接收者**提取为临时变量**：`(expr).method ARG` →
+   `{{ $__accN = (expr) -}}{{ for x in as_list ($__accN.method ARG) }}`
+   （变量接收者的成员调用合法）。
+
+**仍未闭环**：`$__accN.groupbydate` 报 "function not found"——`where` 的返回值是**普通数组**，
+不带页面集合方法族（`groupbydate`/`bydate` 等只注册在 LazyPageList 上）。引擎侧需要让
+筛选结果也携带这套方法族，或提供等价的全局形态。yinyang 的 22 处归此项。
