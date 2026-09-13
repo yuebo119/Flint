@@ -1684,12 +1684,34 @@ loveit · papermod · stack · xmin
 | yinyang | 504 | exampleSite | 25 | 245B | 极简 CJK |
 | m10c | 495 | exampleSite | 46 | 242B | 极简 |
 | narrow | 220 | exampleSite | 59 | 242B | 极简博客 |
-| tale | 255 | 最小配置 | 20 | 242B | 极简（无可用 exampleSite） |
-| smol | 296 | 最小配置 | 20 | 242B | 极简（无可用 exampleSite） |
+| ~~tale~~ | 255 | 最小配置 | 20 | 242B | **已剔除**：无可用 exampleSite，基线只有 20 页/242B，信息量不足 |
+| ~~smol~~ | 296 | 最小配置 | 20 | 242B | **已剔除**：同上 |
 | etch | 306 | exampleSite* | 12 | 1025B | **exampleSite 内容过时**——主题可用，但原样 exampleSite 在最新 Hugo 上 exit≠0 |
+
+**剔除记录（最小配置基线不成立）**：tale 与 smol 的 Hugo 侧基线来自**最小配置**
+（主题无可用 exampleSite），只能产出 20 页 / 最小页 242B——这个基线与
+"站点装配了哪些模板"几乎无关，既不能证明主题模板被真正渲染，也无法作为
+Flint 侧产出对照的参照。这与第十九节"空页不算通过"是同一条判据的延伸：
+**基线本身必须有信息量**。2026-09-13 第十三轮后按用户要求剔除，
+`tools/themes/`、`matrix-full/`、`theme-verify/`、`scripts/clone-candidates.sh` 同步清理。
 
 判定标准（`scripts/verify-themes.sh`，纯 Hugo 侧）：**exit=0 + 页数>0 + 最小页 ≥200B**。
 etch 的 exampleSite 需要"换最小内容"才可用，故在矩阵里 Hugo 列显示"否"（基线不成立）。
+
+### 当前矩阵集（21 个）
+
+上面这张表是当时（第二十六节）的记录。此后按用户要求又剔除两个
+（etch：exampleSite 在最新 Hugo 上不可用；tale / smol：最小配置基线不成立），
+**当前集合 21 个**：
+
+> ananke · bearblog · blog-awesome · blowfish · clarity · console · even · fixit ·
+> github-style · hugo-book · hugo-coder · hugo-paper · loveit · m10c · monochrome ·
+> narrow · papermod · stack · techdoc · xmin · yinyang
+
+最近一次全量矩阵（2026-09-13 第十三轮收尾，含第二十七/二十八节的全部修复）：
+**18 通过 / 3 失败**——失败为 fixit（`=` 相关转换器语法错误 31 处）、
+monochrome（`$res.resources` 变量链与 Go/.NET 正则差异）、
+stack（`try` 未实现 + `index` 越界）。
 
 矩阵基线：**16/24 通过**。失败 8 个：fixit · hugo-book · stack（既有）+
 monochrome · techdoc · yinyang · narrow · smol · tale 之外的新缺口（下节）。
