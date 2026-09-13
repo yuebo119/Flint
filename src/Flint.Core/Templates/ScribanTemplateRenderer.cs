@@ -134,8 +134,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     private ScriptObject BuildPartialGlobals(ScriptObject pageLike)
     {
         var g = new ScriptObject();
-        g.TrySetValue(null, default, "__flint_partial_return",
-            new PartialReturnFunction(), readOnly: true);
         g.TrySetValue(null, default, "partial", new PartialFunction(this, pageLike), readOnly: true);
         g.TrySetValue(null, default, "partialValue", new PartialValueFunction(this, pageLike), readOnly: true);
         g.TrySetValue(null, default, "partialcached", new PartialCachedFunction(this), readOnly: true);
@@ -307,15 +305,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             var result = await template.RenderAsync(scribanContext);
             context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
             return result;
-        }
-        catch (PartialReturnSignal)
-        {
-            // 泄漏到顶层的 partial 提前返回（经 Scriban 内置 include 等未走
-            // RenderPartialWithType 的路径）：按"模板就地结束"处理——已写入输出缓冲的内容
-            // 仍在产物里，不该把一次 return 升级成整页失败（Clarity 的
-            // func/getStylesBundle.html 实测 39 处）
-            context.RenderedDependencies = RenderDependencyTracker.Extract(scribanContext);
-            return string.Empty;
         }
         catch (Scriban.Syntax.ScriptRuntimeException ex)
         {
@@ -770,8 +759,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             + "\u0003" + mtimeTicks.ToString(System.Globalization.CultureInfo.InvariantCulture);
         return _partialResultCache.GetOrAdd(cacheKey, _ =>
         {
-            try
-            {
             var content = _templateLoader.Load(scribanContext, default, path)
                 ?? throw new InvalidOperationException($"partial 未找到: {name}");
             var partialTemplate = Template.Parse(content, path);
@@ -829,15 +816,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             isolatedContext.PushGlobal(partialGlobals);
             // 同步 Render：隔离 context 的模板加载（FileTemplateLoader）为同步实现，
             // 无需异步——避免 sync-over-async（G17 棘轮）
-            Console.Error.WriteLine("[DIAG] 即将渲染 partialcached: " + name);
             return partialTemplate.Render(isolatedContext);
-            }
-            catch (PartialReturnSignal)
-            {
-                // partial 内的提前返回：就地结束（不冒泡到调用者）
-                Console.Error.WriteLine("[DIAG] partialcached 捕获信号: " + name);
-                return string.Empty;
-            }
         });
     }
 
@@ -885,40 +864,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
     private static void ExitPartial() => _partialDepth--;
 
-    /// <summary>
-    /// partial 内提前返回的控制流信号（由模板里的 `__flint_partial_return` 抛出，
-    /// RenderPartialWithType 捕获）。用它替代 Scriban 的 `ret` 语句：后者的
-    /// FlowState 会泄漏到调用者，静默截断调用者的剩余输出
-    /// </summary>
-    /// CA1032/CA1064 抑制：内部控制流信号，不对外暴露也不参与 catch 语义
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1032:Implement standard exception constructors",
-        Justification = "内部控制流信号：只由 __flint_partial_return 抛出、由 RenderPartialWithType 捕获")]
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1064:Exceptions should be public",
-        Justification = "内部控制流信号：不对外暴露（公共异常会诱导使用者 catch 它）")]
-    internal sealed class PartialReturnSignal : Exception;
-
-    /// <summary>`__flint_partial_return`：抛 PartialReturnSignal 结束当前 partial</summary>
-    private sealed class PartialReturnFunction : Scriban.Runtime.IScriptCustomFunction
-    {
-        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
-            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
-        {
-            Console.Error.WriteLine("[DIAG] PartialReturnSignal 抛出点栈: " + Environment.StackTrace);
-            throw new PartialReturnSignal();
-        }
-
-        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
-            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
-            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
-            new(Invoke(context, callerContext, arguments, blockStatement));
-
-        public int RequiredParameterCount => 0;
-        public int ParameterCount => 0;
-        public Scriban.Runtime.ScriptVarParamKind VarParamKind => Scriban.Runtime.ScriptVarParamKind.Direct;
-        public Type ReturnType => typeof(object);
-        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) => new(typeof(object), "arg");
-        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo => new(typeof(object), "value");
-    }
 
 
     internal object RenderPartialWithType(
@@ -1000,17 +945,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         EnterPartial(name);
         try
         {
-            // partial 内的提前返回（转换器产出的 `__flint_partial_return`）抛
-            // PartialReturnSignal：就地结束该 partial，**不影响调用者**。
-            // 曾经用 Scriban 的 `ret` 语句：它会把 FlowState 置为 Return，连带中断
-            // 包含该 partial 的调用者渲染，调用者剩余输出被静默丢弃
-            //（Congo 的 baseof 链经 _partials/functions/date.html 实测：探针停在 `A=[`）
             var rendered = partialTemplate.Render(callerContext);
             return RestoreScalarType(rendered);
-        }
-        catch (PartialReturnSignal)
-        {
-            return string.Empty;
         }
         finally
         {
@@ -1478,11 +1414,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             try
             {
                 rendered = RenderValue();
-            }
-            catch (PartialReturnSignal)
-            {
-                // partial 内的提前返回：就地结束（返回值已写入通道 Store）
-                rendered = string.Empty;
             }
             finally
             {

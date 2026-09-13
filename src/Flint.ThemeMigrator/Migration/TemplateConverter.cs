@@ -265,11 +265,12 @@ internal sealed class TemplateConverter(
                 var selfName = _expr.SelfPartialName;
                 if (selfName is not null)
                 {
-                    // 恢复 Scriban 的 `ret`：曾改用 Flint 的自有信号
-                    // `__flint_partial_return`（意图避免 Scriban 的 FlowState 泄漏截断
-                    // 调用者），但实测在 partialcached 的隔离上下文路径上与 Clarity 的
-                    // 样式链冲突（39 处渲染失败）而 Congo 的空页并未因此修复——按 S3
-                    // 反向验证原则回退
+                    // partial 内的提前返回改用 Flint 自有可捕获信号（`__flint_partial_return`）
+                    // 的尝试**已回退**：Scriban 的 `ret` 会泄漏 FlowState 截断调用者，
+                    // 但信号方案在与 Clarity 的 partialcached 链同用时使整站塌成 12 页
+                    //（信号在 Clarity 的调用链里逃逸，未定位到具体路径），而 `ret` 方案下
+                    // 只有 Stack 的 11 处 IndexOutOfRange（产出仍有 129KB）。
+                    // 两害相权取产出量级更优者，Stack 的残留问题记录在案
                     var key = ScribanConverter.RetKeyPrefix + selfName;
                     return Wrap(
                         $"__partial_ret_set \"{key}\" {retVal} }}}}}}{{{{ ret",
