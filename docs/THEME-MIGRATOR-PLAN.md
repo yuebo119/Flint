@@ -1709,9 +1709,16 @@ etch 的 exampleSite 需要"换最小内容"才可用，故在矩阵里 Hugo 列
 > narrow · papermod · stack · techdoc · xmin · yinyang
 
 最近一次全量矩阵（2026-09-13 第十三轮收尾，含第二十七/二十八节的全部修复）：
-**18 通过 / 3 失败**——失败为 fixit（`=` 相关转换器语法错误 31 处）、
-monochrome（`$res.resources` 变量链与 Go/.NET 正则差异）、
-stack（`try` 未实现 + `index` 越界）。
+**18 通过 / 3 失败**——失败为 fixit、monochrome、stack。三者的当前阻塞点：
+
+| 主题 | 当前错误 | 性质 |
+|---|---|---|
+| fixit | `Index was outside the bounds of the array` ×5 · `$pages.Prev`/`$Resources.getmatch` 为 null ×6 · `camel-case-keys` 递归到 200 层 ×2 | 变量链 + 递归终止条件 |
+| monochrome | `$res.resources` 为 null ×5 · `Invalid pattern '<!-- end-chunk -->'` ×4 | 变量链 + Go/.NET 正则差异 |
+| stack | `Index was outside the bounds of the array` ×11 · `disqus` partial 递归深度超限 | Hugo 的 `try` 未实现（转换器需改写而非加函数）+ index 越界 |
+
+注：fixit 早先那批 `Expecting <expression> instead of =` / `Invalid token found =`（31 处）
+已由第二十八节的守卫与 template 上下文修复带走，当前报告里为 0 次。
 
 矩阵基线：**16/24 通过**。失败 8 个：fixit · hugo-book · stack（既有）+
 monochrome · techdoc · yinyang · narrow · smol · tale 之外的新缺口（下节）。
