@@ -1104,16 +1104,33 @@ internal sealed class ScribanConverter(
         for (var i = 0; i < args.Count; i += 2)
         {
             var keyExpr = args[i];
-            var key = keyExpr switch
+            // 键可以是**任意表达式**：字面量加引号，标识符/变量/表达式按原样产出。
+            // 此前只接受字面量与标识符，`dict $newKey $newValue`（变量键）被判 Unsupported
+            // 并**静默产出空串**——FixIt 的 camel-case-keys.html 因此把
+            // `$output = merge $output (dict $newKey $newValue)` 转成 `$output = ""`，
+            // 返回值通道发空、下游 `index $output 0` 越界
+            //（"Index was outside the bounds of the array"，fixit/stack 同源）。
+            // Scriban 的 dict 接受任意表达式作键（实测 `dict $k $v` → {"myKey":7}）
+            string keyText;
+            switch (keyExpr)
             {
-                Parsing.LiteralExpr lit => lit.Unquoted,
-                Parsing.IdentifierExpr idExpr => idExpr.Name,
-                _ => null
-            };
-            if (key is null)
-            {
-                Diagnostics.Add($"dict 键非字面量: {keyExpr.GetType().Name}");
-                return new ConversionResult("", ConversionKind.Unsupported, "dict 键非字面量");
+                case Parsing.LiteralExpr lit:
+                    // 键一律用引号：主题用 "a=1" / "data-src" 这类非标识符键（裸写会报
+                    // "Unexpected token `-` Expecting a colon"），统一引号形态也就不必区分
+                    keyText = "\"" + lit.Unquoted.Replace("\\", "\\\\", StringComparison.Ordinal)
+                        .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
+                    break;
+                case Parsing.IdentifierExpr idExpr:
+                    keyText = idExpr.Name;
+                    break;
+                default:
+                    var k = ConvertExpr(keyExpr, scope, false);
+                    if (k.Kind == ConversionKind.Unsupported)
+                    {
+                        return k;
+                    }
+                    keyText = k.Text;
+                    break;
             }
 
             var v = ConvertExpr(args[i + 1], scope, false);
@@ -1121,10 +1138,6 @@ internal sealed class ScribanConverter(
             {
                 return v;
             }
-            // 键一律用引号：主题用 "a=1" / "data-src" 这类非标识符键（裸写会报
-            // "Unexpected token `-` Expecting a colon"），统一引号形态也就不必区分
-            var keyText = "\"" + key.Replace("\\", "\\\\", StringComparison.Ordinal)
-                .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
             pairs.Add(keyText);
             pairs.Add(v.Text);
         }

@@ -1925,6 +1925,9 @@ public sealed partial class BuiltinTemplateFunctions
     private static List<object?> AsList(object? v) => v switch
     {
         null => [],
+        // 引擎内部投影不展开（见 IFlintNonDataObject）：展开即把内部成员当数据，
+        // 主题的递归辅助函数会顺着有环的引用图无限下钻
+        IFlintNonDataObject => [],
         bool b => b ? [true] : [],
         string str => [str],
         // **列表优先于映射**：页面集合是 `ScriptObject + IList<ScriptObject>`（LazyPageList），
@@ -1948,6 +1951,12 @@ public sealed partial class BuiltinTemplateFunctions
     private static List<object?> AsPairs(object? v)
     {
         var result = new List<object?>();
+        // 引擎内部投影不展开（见 IFlintNonDataObject）：展开会把内部成员当数据，
+        // 主题的递归辅助函数顺着有环引用图无限下钻（FixIt 的 camel-case-keys 实测）
+        if (v is IFlintNonDataObject)
+        {
+            return result;
+        }
         switch (v)
         {
             case null:

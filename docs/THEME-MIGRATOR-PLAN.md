@@ -1927,3 +1927,70 @@ techdoc 依旧通过（73 页）。教训：
   这条不变量把它拦下来——矩阵双侧页数对照不是形式主义。
 - 回归定位手段：把可疑的 partial 用**站点级同名 partial** 覆盖成桩
   （`layouts/_partials/hook.html` 写字面量），输出立刻恢复 → 锁定该 partial 为触发点。
+
+## 二十九、第八批：反射判定、内部投影不透明与 dict 变量键（2026-09-14 第十四轮）
+
+本轮按"先验证 Hugo 侧可用性，再测迁移工具"的顺序走：21 个主题在 Hugo v0.166 上
+**全部可用**（exit=0 + 页数>0 + 最小页 ≥200B），随后跑迁移矩阵并逐个修问题。
+
+### A. `reflect.IsSlice` 把一切都判成切片（引擎）
+
+原实现 `v is IEnumerable and not string` —— 而 **Scriban 的 ScriptObject 全部实现
+IEnumerable**，于是页面对象、`.Scratch`/store、内部投影**全被判成 slice**。
+Hugo 的 `reflect.IsSlice` 只对真集合为真。后果：主题里"按类型递归处理 map/slice"的
+辅助函数（FixIt 的 `camel-case-keys.html`）把对象成员当数据逐层下钻，引用图有环 →
+**无限递归**，200 层后触发 partial 深度守卫，整页渲染失败。
+
+修法（判定顺序很关键）：**列表优先于映射**
+```
+IList<ScriptObject> => true    // 页面集合（.Pages/.Resources）：Hugo 里就是 slice
+System.Collections.IList => true
+ScriptObject => false          // 含 map、页面、store、内部投影
+IDictionary => false
+IEnumerable => true            // 其余真可枚举
+```
+两条不变式由此固定：**页面集合仍是 slice**（主题继续 `range .Pages`），
+**页面/store/投影不是 slice**。
+
+### B. 内部投影对模板不透明（引擎）
+
+Flint 为对齐 Hugo API，把若干内部结构包装成 ScriptObject 暴露给模板
+（页面片段 `.Content` 的 `to_html` 形态、`.Data.Terms`、分页器、页面 store、站点对象）。
+它们与"用户数据 map"在 .NET 类型上同为 ScriptObject，模板侧无从区分，而内部成员的
+引用图**有环**（store → 页面 → 片段 → …）。
+
+新增 `IFlintNonDataObject` 标记，`reflect_is_map`/`reflect_is_slice` 一律回答 false、
+`as_list`/`as_pairs` 一律返回空——模板把它们当**不透明标量**。
+**不标记**真集合同理（`LazyPageList`、`PageResourcesObject` 继续可遍历）。
+
+### C. `dict` 变量键静默产出空串（转换器）
+
+`ConvertDict` 此前只接受字面量与标识符键，`dict $newKey $newValue` 被判 Unsupported
+并**静默产出空串**：FixIt 的 `camel-case-keys.html`
+`$output = merge $output (dict $newKey $newValue)` 被转成 `$output = ""`，
+返回值通道发空、下游 `index $output 0` 越界（"Index was outside the bounds of the
+array"，fixit 与 stack 同源）。Scriban 的 `dict` 接受任意表达式作键（实测
+`dict $k $v` → `{"myKey":7}`），故键改为"字面量加引号、其余按表达式转换"。
+
+### D. 顺带修掉的两处（前一回合引入）
+
+- **`__named` 后缀误伤 partial 自递归**：后缀只应在"本文件确有同名 define"时生效，
+  否则 `partial "function/camel-case-keys.html" $nested`（递归处理嵌套 map）
+  会被改成不存在的 `camel-case-keys__named`。标志从提取器经转换器传下来。
+- **store 只在该 partial 真用它时注入**（`UsesPageStore` 判定），避免数据 dict 被
+  塞进引擎对象成员。
+
+### E. fixit 的剩余障碍：Hugo 的 `page` 全局与"点"不是一回事
+
+`_partials/plugin/image.html` 源文件写
+`{{- $Resources := .Resources | default page.Resources -}}`：
+- Hugo 里 `.` 是**传入的 dict**，`page` 是**全局的当前页**；
+- Flint 里 `page` 就是 dot（传入的 dict）——于是 `page.Resources` 取到 null，
+  报 "Cannot get the member $Resources.getmatch for a null object"。
+
+这不是 bug 而是**上下文身份的设计差异**：转换器把 `.X` 统一成 `page.x` 在布局里
+成立（`. ` 就是页面），但在"显式 dict 上下文的 partial"里，
+Hugo 的全局 `page` 与 dot 分叉。修它需要引入独立的"当前页"全局（例如 `__page`）
+并让转换器区分"dot 成员"与"Hugo 全局 page 成员"两处来源。
+**本轮未做**：需要先确认 Hugo 侧 `page` 全局的确切可用范围（是否有版本/作用域限制），
+再决定是在引擎侧加全局还是在转换器侧改写，属下一轮的设计级改动。

@@ -628,7 +628,7 @@ public sealed partial class ScribanTemplateRenderer
     /// 只 override TryGetValue 会让函数调用路径查不到成员而报 function not found
     /// </summary>
     internal sealed class PageFragmentsObject(IReadOnlyList<MarkdownHeading> headings)
-        : ScriptObject
+        : ScriptObject, IFlintNonDataObject
     {
         public IReadOnlyList<MarkdownHeading> HeadingsSource { get; } = headings;
 
@@ -1167,7 +1167,7 @@ public sealed partial class ScribanTemplateRenderer
     /// <c>Alphabetical</c>（按名序）与 <c>ByCount</c>（按数量降序）两个排序视图，
     /// 对齐 Hugo 文档的 taxonomy 用法
     /// </summary>
-    private sealed class LazyTermsMap : ScriptObject
+    private sealed class LazyTermsMap : ScriptObject, IFlintNonDataObject
     {
         private readonly IReadOnlyList<TaxonomyTerm> _terms;
         private List<object>? _alphabetical;
@@ -1471,7 +1471,7 @@ public sealed partial class ScribanTemplateRenderer
     /// <summary>
     /// 懒加载分类集合包装器
     /// </summary>
-    private sealed class LazyTaxonomies : ScriptObject
+    private sealed class LazyTaxonomies : ScriptObject, IFlintNonDataObject
     {
         private readonly FlintTaxonomyCollection _taxonomies;
         private readonly Dictionary<string, object> _convertedTaxonomies = new();
@@ -1505,7 +1505,7 @@ public sealed partial class ScribanTemplateRenderer
     /// <summary>
     /// 懒加载分类术语包装器
     /// </summary>
-    private sealed class LazyTaxonomyTerm : ScriptObject
+    private sealed class LazyTaxonomyTerm : ScriptObject, IFlintNonDataObject
     {
         private readonly TaxonomyTerm _term;
         private LazyPageList? _lazyPages;
@@ -1687,7 +1687,7 @@ public sealed partial class ScribanTemplateRenderer
     /// 单个 pager 对象：标量元数据即时绑定，pages 切片惰性求值
     /// （视图共享，切片本身在 PaginatorView 内已缓存）
     /// </summary>
-    private sealed class PagerObject : ScriptObject
+    private sealed class PagerObject : ScriptObject, IFlintNonDataObject
     {
         private readonly PaginatorView _pager;
         private LazyPageList? _pages;

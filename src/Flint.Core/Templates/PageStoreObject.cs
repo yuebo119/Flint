@@ -17,7 +17,7 @@ namespace Flint.Core.Templates;
 /// 页面级可变暂存（Hugo .Scratch / .Store）。
 /// 以 ScriptObject 派生便于模板用 <c>store.key</c> 直接取值。
 /// </summary>
-public sealed class PageStoreObject : ScriptObject
+public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
 {
     private readonly Dictionary<string, object?> _values = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, object?>> _maps = new(StringComparer.Ordinal);

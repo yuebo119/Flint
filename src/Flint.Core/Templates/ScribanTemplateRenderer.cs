@@ -1017,7 +1017,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 用 Store 属性探测会让"凡是真实页面的 dict 上下文 partial"全部走合并分支——
         // 合并对象带着页面成员，主题对它做 reflect.IsMap/遍历时行为随之改变
         //（ananke 的 hook→filter 链实测：页面全空且无错误报出）
-        object? store = pageObject.ContainsKey("store") ? pageObject["store"] : null;
+        // store 只在**目标 partial 真的用页面 store** 时注入显式上下文：
+        // 否则传进来的 dict 会多出 store/scratch 成员，主题把它当数据遍历时
+        // 会顺着 store 钻进 Flint 内部对象（内部投影对象是 ScriptObject，
+        // 与"数据 map"在类型上无从区分）→ 递归不收敛。
+        // FixIt 的 camel-case-keys.html 实测：递归转换 map 键时输入里出现
+        // `{"a_b":1,"store":{…}}`，逐层下钻到 `{"to_html":…}` 类内部对象，
+        // 200 层后触发 partial 深度守卫（转换率与产出双降）。
+        // 判据复用既有的 UsesPageStore（按 partial 源文本 + include 链判定）
+        var contextUsesStore = UsesPageStore(source);
+        object? store = contextUsesStore && pageObject.ContainsKey("store") ? pageObject["store"] : null;
 
         if (context is not ScriptObject && UsesPageStore(source))
         {
