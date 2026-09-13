@@ -60,16 +60,21 @@ public sealed partial class BuiltinTemplateFunctions
             var to = end is null or < 0 ? s.Length : Math.Clamp(end.Value, from, s.Length);
             return s[from..to];
         });
-        Add("find_re", (string? pattern, string? input) =>
+        // findRE PATTERN INPUT [LIMIT]：limit 为可选尾参（Hugo 文档）。
+        // 缺省仍保留既有 100 条上限（防止病态模式产出爆炸；这是 Flint 的防护，
+        // 不是 Hugo 语义），显式给出 limit 时以 limit 为准
+        // （monochrome 的 states.html 传 `1`，此前报 "Argument index must be < 2" 77 处）
+        Add("find_re", (string? pattern, string? input, params object?[] rest) =>
         {
             if (string.IsNullOrEmpty(pattern) || string.IsNullOrEmpty(input))
             {
                 return new ScriptArray();
             }
+            var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
             try
             {
                 var arr = new ScriptArray();
-                foreach (var m in Regex.Matches(input, pattern).Take(100))
+                foreach (var m in Regex.Matches(input, pattern).Take(limit > 0 ? limit : 100))
                 {
                     arr.Add(m.ToString());
                 }
@@ -80,16 +85,17 @@ public sealed partial class BuiltinTemplateFunctions
                 return new ScriptArray();
             }
         });
-        Add("find_re_submatch", (string? pattern, string? input) =>
+        Add("find_re_submatch", (string? pattern, string? input, params object?[] rest) =>
         {
             if (string.IsNullOrEmpty(pattern) || string.IsNullOrEmpty(input))
             {
                 return new ScriptArray();
             }
+            var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
             try
             {
                 var arr = new ScriptArray();
-                foreach (Match m in Regex.Matches(input, pattern).Take(100))
+                foreach (Match m in Regex.Matches(input, pattern).Take(limit > 0 ? limit : 100))
                 {
                     var groups = new ScriptArray();
                     foreach (var g in m.Groups.Cast<Group>())
