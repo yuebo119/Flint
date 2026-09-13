@@ -1617,3 +1617,11 @@ S3 反向验证原则回退到 `{{ ret }}`——回退后 Clarity 恢复通过�
 
 **教训**：替换引擎既有控制流语义（Scriban 的 return）牵动面极广，收益必须有
 **产出量级**的证据支撑，不能只凭"消除了一类隐患"的判断。
+
+### F. 本轮残留（记录在案）
+
+**Stack 的 11 处 `Index was outside the bounds of the array`**（term/taxonomy 页的
+`partialValue "helper/image" (dict … "Context" page)` 调用链）。探针复现显示同样的
+表达式在**普通页**上正常、只在**分类页**上失败；`{{ ret }}` 方案下 stack 产出仍有
+129KB（6 处错误），而信号方案下 Clarity 会塌成 12 页——两害相权取产出量级更优者，
+故保留 `ret`。下一轮以 term 页上下文为切入口继续定位。
