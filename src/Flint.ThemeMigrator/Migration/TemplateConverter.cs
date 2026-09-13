@@ -367,7 +367,7 @@ internal sealed partial class TemplateConverter(
                 {
                     return Wrap($"include \"{name}\"", trimL, trimR);
                 }
-                var templatePath = ScribanConverter.PartialPathFor(name);
+                var templatePath = _expr.PartialPathFor(name);
                 return ctx is null
                     ? Wrap($"include \"{templatePath}\"", trimL, trimR)
                     : Wrap($"partial \"{templatePath}\" {ctx}", trimL, trimR);

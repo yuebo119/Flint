@@ -82,6 +82,12 @@ public sealed class ShortcodeRegistry : IShortcodeRegistry
     {
         // 注册所有内置短代码处理器
         Register(new FigureShortcode());
+        // Hugo 内建 details（可折叠块）：techdoc 的 sample/built-in-shortcodes.md
+        // 用 `{{< details summary="…" >}}`，缺此注册整篇内容解析失败（PARSE001）
+        Register(new DetailsShortcode());
+        // Hugo 内建 qr（二维码）：未实现（需 QR 编码 + PNG 输出），
+        // 注册为产出"带原因的注释"而非让整篇内容 PARSE001 失败
+        Register(new QrShortcode());
         Register(new HighlightShortcode());
         Register(new RefShortcode());
         Register(new RelrefShortcode());

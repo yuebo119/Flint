@@ -281,14 +281,26 @@ internal sealed class GoTemplateParser
             return new KeywordBody(name, null, names, [], null);
         }
 
-        // template "name" [args...]
+        // template "name" [CTX]
         if (name == "template")
         {
-            var names = rest
-                .Where(t => t.Type is TokenType.String or TokenType.RawString)
-                .Select(t => t.Value.Trim('"', '`'))
-                .ToList();
-            return new KeywordBody(name, null, names, [], null);
+            var nameIdx = rest.FindIndex(t => t.Type is TokenType.String or TokenType.RawString);
+            if (nameIdx < 0)
+            {
+                return new KeywordBody(name, null, [], [], null);
+            }
+
+            var names = new List<string> { rest[nameIdx].Value.Trim('"', '`') };
+            // CTX 是**名字之后**的全部 token——按"位置"切分而非按类型过滤：
+            // 按类型过滤会把上下文里的字符串（`(dict "currentnode" …)` 的键）
+            // 一并删掉，dict 变成奇数参数 → 整体判 Unsupported 并产出 `false`
+            var ctxTokens = rest.Skip(nameIdx + 1).ToList();
+            while (ctxTokens.Count > 0 && ctxTokens[0].Type == TokenType.Space)
+            {
+                ctxTokens.RemoveAt(0);
+            }
+            var ctxPipeline = ctxTokens.Count > 0 ? ParsePipeline(ctxTokens, line) : null;
+            return new KeywordBody(name, ctxPipeline, names, [], null);
         }
 
         // else if ...

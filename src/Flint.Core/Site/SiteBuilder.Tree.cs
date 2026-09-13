@@ -307,11 +307,21 @@ public sealed partial class SiteBuilder
         var regular = regularByKey.Select(e => e.Page).ToList();
 
         var result = new List<PageContext>(ordered.Count);
+        // section 页集合（Hugo 的 .Sections）：与 .Pages 同阶段装配，随页面对象流动。
+        // 主题按层级遍历站点结构（techdoc 的 open-menu 用 site.home.sections.by_weight）
+        var allSections = ordered
+            .Where(e => e.Page.Type == "section")
+            .ToList();
         foreach (var (key, page) in ordered)
         {
             if (page.Type == "home")
             {
-                result.Add(page.WithPages(regular));
+                // home 的直属 section 即一级 section 页（路径无 '/'）
+                result.Add(page.WithPages(regular)
+                    .WithSections(allSections
+                        .Where(e => !e.Key.Contains('/', StringComparison.Ordinal))
+                        .Select(e => e.Page)
+                        .ToList()));
             }
             else if (page.Type == "section")
             {
@@ -320,7 +330,13 @@ public sealed partial class SiteBuilder
                     .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal))
                     .Select(e => e.Page)
                     .ToList();
-                result.Add(page.WithPages(sectionPages));
+                // 直属子 section：前缀匹配且层数恰好 +1（深层 section 不属于本页）
+                var childSections = allSections
+                    .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal) &&
+                                e.Key.Count(c => c == '/') == key.Count(c => c == '/') + 1)
+                    .Select(e => e.Page)
+                    .ToList();
+                result.Add(page.WithPages(sectionPages).WithSections(childSections));
             }
             else
             {

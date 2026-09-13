@@ -625,3 +625,84 @@ public sealed class ParamShortcode : ShortcodeProcessorBase
         return ValueTask.FromResult(string.Empty);
     }
 }
+
+/// <summary>
+/// details 短代码（Hugo v0.140+ 内建）：可折叠内容块。
+/// 用法：<c>{{&lt; details summary="标题" open="true" &gt;}}内容{{&lt; /details &gt;}}</c>
+/// </summary>
+/// <remarks>
+/// 产出对齐 Hugo v0.166 实测 markup（techdoc 的 sample/built-in-shortcodes.md）：
+/// <code>
+/// &lt;details&gt;
+/// \t&lt;summary&gt;See the details&lt;/summary&gt;
+/// \t&lt;p&gt;This is a &lt;strong&gt;bold&lt;/strong&gt; word.&lt;/p&gt;
+/// &lt;/details&gt;
+/// </code>
+/// 内层内容按 Hugo 的 <c>.Inner | markdownify</c> 语义渲染（Hugo 的 details 模板如此），
+/// 缺省标题取 Hugo 的 "Details"
+/// </remarks>
+public sealed class DetailsShortcode : ShortcodeProcessorBase
+{
+    private static readonly Content.MarkdownParser InnerMarkdown = new();
+
+    /// <inheritdoc />
+    public override string Name => "details";
+
+    /// <inheritdoc />
+    public override string Description => "可折叠内容块（Hugo 内建短代码）";
+
+    /// <inheritdoc />
+    public override ValueTask<string> ProcessAsync(ShortcodeContext context, CancellationToken cancellationToken = default)
+    {
+        var summary = GetParameter(context, "summary", 0, "Details");
+        // open 参数按 Hugo 语义：存在且非 "false" 即展开（Hugo 用 `if $open` 判真）
+        var openValue = GetParameter(context, "open", -1);
+        var isOpen = !string.IsNullOrEmpty(openValue) &&
+                     !string.Equals(openValue, "false", StringComparison.OrdinalIgnoreCase);
+
+        var inner = context.InnerContent?.Trim() ?? string.Empty;
+        var renderedInner = inner.Length == 0
+            ? string.Empty
+            : InnerMarkdown.ToHtml(inner).TrimEnd('\n');
+
+        var sb = new StringBuilder();
+        sb.Append("<details");
+        if (isOpen)
+        {
+            sb.Append(" open");
+        }
+        sb.Append(">\n\t<summary>").Append(HtmlEncode(summary)).Append("</summary>\n\t");
+        sb.Append(renderedInner);
+        sb.Append("\n</details>");
+
+        return ValueTask.FromResult(sb.ToString());
+    }
+}
+
+/// <summary>
+/// qr 短代码（Hugo v0.144+ 内建）：把文本渲染成二维码图片。
+/// </summary>
+/// <remarks>
+/// **未实现**：Hugo 会把文本编码成 QR 码并作为 PNG 资源发布
+/// （实测产出 <c>&lt;img src="/qr_&lt;hash&gt;.png" width="132" height="132"&gt;</c>），
+/// 需要完整的 QR 编码（RS 纠错）+ PNG 输出链路，Flint 目前没有图像生成能力。
+/// 这里**不静默产出空串**，而是在页面里留下带原因的注释：既不阻断构建
+/// （未注册会让整篇内容 PARSE001 失败），也让缺失在产出里可见、可检索。
+/// 已知限制已记入 docs/THEME-MIGRATOR-PLAN.md 第二十七节
+/// </remarks>
+public sealed class QrShortcode : ShortcodeProcessorBase
+{
+    /// <inheritdoc />
+    public override string Name => "qr";
+
+    /// <inheritdoc />
+    public override string Description => "二维码短代码（未实现：需 QR 编码 + PNG 输出，产出带原因的注释）";
+
+    /// <inheritdoc />
+    public override ValueTask<string> ProcessAsync(ShortcodeContext context, CancellationToken cancellationToken = default)
+    {
+        var text = GetParameter(context, "text", 0);
+        return ValueTask.FromResult(
+            $"<!-- flint: qr 短代码未实现（需 QR 编码与 PNG 输出）；原文本: {HtmlEncode(text)} -->");
+    }
+}

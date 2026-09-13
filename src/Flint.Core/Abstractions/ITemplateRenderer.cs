@@ -467,6 +467,14 @@ public sealed class PageContext
     public IReadOnlyList<PageContext>? Pages { get; init; }
 
     /// <summary>
+    /// 本页**直属**的 section 子页集合（对齐 Hugo <c>.Sections</c>）：home 为一级
+    /// section 页，section 为下级 section 页，其余页面为空。与 <see cref="Pages"/>
+    /// 同在站点构建的树阶段装配，随页面对象一起流动——供主题遍历站点结构
+    /// （techdoc 的菜单 partial 用 <c>site.home.sections.by_weight</c>）
+    /// </summary>
+    public IReadOnlyList<PageContext>? Sections { get; init; }
+
+    /// <summary>
     /// 本页绑定的分页器（C1）：列表页的第 N 页渲染实例携带该 pager；
     /// 非列表页/非分页渲染为 null（模板 <c>page.paginator</c> 返回空）
     /// </summary>
@@ -533,6 +541,13 @@ public sealed class PageContext
         Clone(Permalink, RelPermalink, pages, Paginator);
 
     /// <summary>
+    /// 以指定 section 集合派生一个页面实例（对齐 Hugo <c>.Sections</c>）：
+    /// 浅拷贝全部字段，仅替换 Sections
+    /// </summary>
+    public PageContext WithSections(IReadOnlyList<PageContext> sections) =>
+        Clone(Permalink, RelPermalink, Pages, Paginator, sections);
+
+    /// <summary>
     /// 以指定分页器派生一个页面实例（C1 分页多页）：浅拷贝全部字段，
     /// Paginator 绑定为该 pager，RelPermalink/Permalink/Pages 指向该页
     /// （第 1 页即列表页自身 URL，与分页前一致）。
@@ -551,7 +566,8 @@ public sealed class PageContext
         string permalink,
         string relPermalink,
         IReadOnlyList<PageContext>? pages,
-        PaginatorView? paginator)
+        PaginatorView? paginator,
+        IReadOnlyList<PageContext>? sections = null)
     {
         return new PageContext
         {
@@ -590,6 +606,7 @@ public sealed class PageContext
             Draft = Draft,
             Weight = Weight,
             Pages = pages,
+            Sections = sections ?? Sections,
             Terms = Terms,
             MenuEntries = MenuEntries,
             Params = Params,
