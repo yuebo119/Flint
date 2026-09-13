@@ -1729,3 +1729,83 @@ monochrome · techdoc · yinyang · narrow · smol · tale 之外的新缺口（
 **仍未闭环**：`$__accN.groupbydate` 报 "function not found"——`where` 的返回值是**普通数组**，
 不带页面集合方法族（`groupbydate`/`bydate` 等只注册在 LazyPageList 上）。引擎侧需要让
 筛选结果也携带这套方法族，或提供等价的全局形态。yinyang 的 22 处归此项。
+
+## 二十七、第六批：页面集合方法族、参数键拼写与 partial 输出缓冲（2026-09-13 第十二轮）
+
+本轮每一处都先用 **Hugo v0.166 实测**确认语义，再动代码。矩阵结果：yinyang 由 1 页 →
+**通过**（23 页/666KB），monochrome 6 → 94 页，narrow 由"0 页假成功"→ 有内容但另有残留。
+
+### A. 正则族的可选尾参（转换器 + 引擎）
+
+`findRE`/`findRESubmatch` 的第 3 参 LIMIT 此前未注册 → `Argument index must be < 2`
+（monochrome 的 `_partials/states.html` 77 处）。更隐蔽的是 `replaceRE`：
+Flint 把它注册成**输入在前** `(s, pattern, replacement)`，而 Hugo 文档是
+`replaceRE PATTERN REPLACEMENT INPUT [LIMIT]`。后果分两层：
+带 limit 的调用直接报 `Argument index must be < 3`（narrow 的 `icon.html` 33 处），
+不带 limit 的调用则**静默错位**（`replaceRE "a" "" $s` 把模式当输入）。
+注意同族的 `replace` 确实是输入在前（`replace INPUT OLD NEW`），两个函数约定相反，
+不能"统一参数序"。
+
+修法：按 Hugo 文档序重注册，可选尾参用 `params object?[]` 承接；
+新增 `ToLimitOrZero`（可选参数不做类型报错，区别于数学函数的 `ToNum`）与
+`ReplaceWithLimit`（`Match.Result` 保留 `$1` 反向引用）。
+回归测试锁住"省略 limit 的短调用仍可用"。
+
+### B. 筛选结果保留页面集合方法族（引擎）
+
+`(where .Data.Pages …).GroupByDate "2006"` → `The function $__acc0.groupbydate was not found`。
+Hugo 里页面集合的筛选结果仍是页面集合。新增 `RewrapPageSequence`：
+命中结果按元素（`LazyPageObject`）重建页面集合；**空结果**按源元素种类返回空页面集合。
+
+Hugo 实测（主题 yinyang 的 `/tags/` 页）给了两个判据：
+- `.Data.Pages` 在 kind=taxonomy 页是**词条页集合**（6 条，与 `.Pages` 同源），
+  按 `Type "in" ["posts"]` 过滤为 0 条；
+- 随后 `.GroupByDate` 返回 0 组而**不报错**——空集合仍带方法族。
+
+同时修 `where` 的 `in` 分支：target 为空时 `a.Contains("")` 恒真，会把整个集合判成命中；
+Hugo 实测 nil 与空切片目标均返回 0 条。
+
+### C. 参数键拼写（引擎）
+
+配置键是 camelCase（`[params] mainSections`），主题与迁移产物按 snake_case 访问
+（`site.params.main_sections`）。Scriban 成员查找**不区分大小写但不忽略下划线**，
+于是取到空值——这使 yinyang 的过滤条件失效（Hugo 返回空集，Flint 却全命中）。
+新增 `BuildParamsObject` 为含大写的键补 snake_case 别名，站点与页面参数都走它。
+
+### D. section 页的 `.Data.Pages`（引擎）
+
+Hugo 实测 section 页 `.Data.Pages` 与 `.Pages` 同源且非空。Flint 只给 taxonomy/term 页建
+`.Data`，其余是空 map → `.Data.Pages` 取空。补 `pages` 键时**不引入空 `Terms`**，
+避免翻转主题的 `{{ if .Data.Terms }}` 分支。
+
+### E. 裸 `$` 语义（转换器）
+
+Hugo 的裸 `$` 是**顶层上下文**（布局里即当前页），Scriban 的 `$` 是**函数参数数组**。
+原样透传使 `partial $partialPath $`（narrow 的 `home.html`）把空参数数组当上下文传给
+partial，被调方 `page` 变 null（`Cannot get the member page.content for a null object`）。
+
+### F. partial 的输出缓冲隔离（引擎，本轮最重要）
+
+**现象**：`{{ capture blk_main }}…{{ end }}{{ include "baseof.html" blk_main: blk_main }}`
+结构里，baseof 内先调 `partial "layout/head"`（正常，67KB），再调
+`partial "navigation/header"` → **整页只剩空白**（3 字节），而构建仍报"成功"。
+
+**根因（读 Scriban 源码确证，非推断）**：`Template.Render(context)` 把
+`context.Output` 当作**自己的**输出缓冲——渲染完读取其内容，然后
+`StringBuilderOutput.Builder.Length = 0` 清空。Flint 的 partial 直接传调用者的
+`callerContext`，于是：
+1. 读到的"partial 输出"其实是"调用者已写内容 + partial 输出"；
+2. 随后把调用者的缓冲整体清空。
+
+多数主题看不出问题，是因为该返回值通常又会被写回输出（内容碰巧被"搬运"回来）；
+一旦调用点不写回（条件分支、赋值、多级嵌套），调用者此前的内容就凭空消失。
+同一机制也解释了历史上 `partialValue` 返回 "}}}" 之类碎文本的现象。
+
+**修法**：`callerContext.PushOutput()` / `PopOutput()` 包住嵌套渲染。
+这正是 Scriban 提供的隔离手段（"Pushes a new output used for rendering the current
+template while keeping the previous output"）。修后同一用例 4178 → 17468 字节，
+TOP/MID/BOTTOM 与 partial 自身输出全部保留；`partialValue` 的返回值也变成 partial 的纯输出。
+
+**教训**：嵌套渲染的"输出归谁"必须显式管理。凡把宿主 context 传进 `Template.Render`
+的地方都要先推输出缓冲——这类缺陷不报错、只丢内容，靠页面数不变量（"产出页数>0
+且最小页 ≥200B"）才能发现，这正是矩阵双侧页数对比的价值。
