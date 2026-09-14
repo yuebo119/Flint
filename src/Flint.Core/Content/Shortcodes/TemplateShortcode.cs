@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using Flint.Core.Abstractions;
+using Flint.Core.Templates;
 using Scriban;
 using Scriban.Runtime;
 
@@ -164,7 +165,7 @@ public sealed class TemplateShortcode : IShortcodeProcessor
         });
 #pragma warning restore IL2026, IL3050
 
-        var templateContext = new Scriban.TemplateContext
+        var templateContext = new FlintScribanContext
         {
             // 与页面渲染同口径：Scriban 的函数递归计数在嵌套渲染时不递减、
             // 会跨调用累积（短代码内调 partial 链会假性超限：

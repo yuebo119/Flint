@@ -624,7 +624,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         globals["Page"] = pageLike;
         globals["__page"] = pageLike;
 
-        var context = new Scriban.TemplateContext
+        var context = new FlintScribanContext
         {
             TemplateLoader = _templateLoader,
             MemberRenamer = member => member.Name,
@@ -795,7 +795,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // Hugo 同此约定）。此前完全剥离上下文，使引用 site.params 的
             // partialCached 报 "Cannot get the member site.params for a null object"
             // （Ananke 的 social/follow.html 实证）
-            var isolatedContext = new Scriban.TemplateContext
+            var isolatedContext = new FlintScribanContext
             {
                 TemplateLoader = _templateLoader,
                 MemberRenamer = member => member.Name,
@@ -1889,7 +1889,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 安全契约决策（见 README「HTML 转义契约」）：Scriban 默认不启用
         // HTML 自动转义——Flint 保持该默认，模板输出不做上下文转义矩阵，
         // 内容可信性由内容管线与模板作者负责（对齐 Hugo safe* 恒等语义）
-        var scribanContext = new Scriban.TemplateContext
+        var scribanContext = new FlintScribanContext
         {
             TemplateLoader = _templateLoader,
             MemberRenamer = member => member.Name, // 保持原始属性名

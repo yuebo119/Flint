@@ -2381,25 +2381,33 @@ IEnumerable`——页面集合在第二个分支就被截住，`dict.Contains("0
 调用必须走 `ScriptFunctionCall.Call`（Scriban 自己的调用入口）而非直接 `Invoke`——
 直接调用时 `params` 形参不展开，`printf "<%s>" .` 拿到的是"格式串当返回值"的兜底结果。
 
-### E. `if` 的真值语义：窄修 + 引擎侧待办
+### E. `if` 的真值语义：引擎侧对齐 Hugo（已落地）
 
-探针：`{{ if 0 }}` / `{{ if "" }}` / `{{ if [] }}` 在 Flint **全部为真**，Hugo 全为假
-（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
+探针：`{{ if 0 }}` / `{{ if "" }}` / `{{ if [] }}` 在 Flint 原实现下**全部为真**，
+Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
 `{{- if len $errors -}}`（`$errors` 为空数组）在 Hugo 不进入分支、在 Flint 进入 →
-`errorf` 触发 → 构建失败。
+`errorf` 触发 → 构建失败。影响面：`{{ if len X }}` 是 Hugo 主题的高频写法
+（"非空才渲染"），原实现下分支语义与 Hugo 相反。
 
-影响面：`{{ if len X }}` 是 Hugo 主题的高频写法（"非空才渲染"），当前一律为真
-（多渲染空块，通常在输出层不致命，但分支语义与 Hugo 相反）。
+**修法（引擎，已落地）**：新增 `FlintScribanContext : Scriban.TemplateContext`，
+覆盖 `ToBool`（Scriban 文档明示 "Can be overriden"），按 Go 模板 `IsTruthful`
+判定：`nil`/`false`/数值 `0`/空串/空集合为假，其余为真。四处上下文构造点
+（页面渲染 / 隔离上下文 / 输出格式上下文 / 模板短代码）统一改用它。
 
-**本轮已做（转换器窄修）**：`TemplateConverter` 的 `if` / `else if` 条件若**整段**
-是 `len EXPR`，改写为 `(len EXPR) > 0`——与 Hugo 语义等价，影响面限于该形态。
-FixIt 的 deprecation 误报随之消失（46 → 0）。
+两个**必须显式豁免为真**的类型（否则被"空集合为假"误伤）：
 
-**未做（引擎侧，下一轮）**：`TemplateContext.ToBool` 是虚方法（Scriban 文档明示
-"Can be overridden"），可派生 Flint 上下文实现 Hugo 真值：`0`/`""`/空集合为假。
-风险点：**页面对象是 ScriptObject（可枚举）**，若按"空集合为假"处理会把页面/站点
-判为假 → 需以 `IFlintNonDataObject` 标记（第九节引入的不透明投影接口）显式豁免为真。
-复合条件（`and`/`or`/`not` 内嵌 `len`）的同类问题也在这一层解决。
+| 类型 | 原因 |
+|---|---|
+| `LazyPageObject`（页面对象） | 成员惰性装配，按集合判空会把页面判成假；Hugo 里是结构体指针，恒真 |
+| `IFlintNonDataObject`（store / 内容片段 / 词条映射 / 分页器） | 对模板是不透明标量，Hugo 侧对应结构体，恒真 |
+
+对照验证：11 项真值探针（`0`/`""`/空 slice/`1`/`"x"`/非空 slice/页面/站点/
+`len` 空集/`false`/空查询结果）在 Hugo v0.166 与 Flint 上**逐项同值**；
+回归测试见 `tests/Flint.Core.Tests/Templates/HugoTemplateTruthinessTests.cs`。
+
+**转换器侧的窄修已撤回**：本节早先版本在 `TemplateConverter` 里把整段
+`len X` 条件改写成 `(len X) > 0`。引擎对齐后该改写成为冗余的第二套语义修正，
+按"同一语义只留一处机制"撤回，转换器恢复最小。
 
 ### F. FixIt 现状（剩余为组件级缺口，非本批修复项）
 
