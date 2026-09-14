@@ -530,6 +530,17 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     private static readonly ConcurrentDictionary<string, byte> PaginatedListUrls = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// 当前构建的**全量站点页面**（含 section/term 页）——<c>.GetPage</c> 用它解析路径。
+    /// 页面对象按引用共享缓存（CWT），创建时机不同会拿到不同快照（列表渲染早于页面渲染），
+    /// 只靠构造参数会让 `<c>.GetPage "docs"</c>` 时有时无地找不到 section（hugo-book 实测），
+    /// 故由站点渲染入口统一登记，调用时读取（与分页标记同一模式）
+    /// </summary>
+    private static IReadOnlyList<Flint.Core.Abstractions.PageContext>? CurrentSitePages;
+
+    /// <summary>登记当前构建的全量站点页面（站点渲染开始时调用）</summary>
+    internal static void SetCurrentSitePages(IReadOnlyList<Flint.Core.Abstractions.PageContext> pages) => CurrentSitePages = pages;
+
     /// <summary>标记某列表页被模板分页（由 <c>.Paginate</c> 调用触发）</summary>
     internal static void NotePaginateInvoked(string? relPermalink)
     {
@@ -539,12 +550,36 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
     }
 
+    /// <summary>
+    /// 模板传给 <c>.Paginate</c> 的**显式集合**（Hugo 语义：按传入集合分页）。
+    /// 站点侧据此计算分页页数与每页内容，而不是照当前页 <c>Pages</c> 切片
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, IReadOnlyList<Flint.Core.Abstractions.PageContext>> PaginateCollections = new(StringComparer.Ordinal);
+
+    /// <summary>登记显式分页集合</summary>
+    internal static void NotePaginateCollection(
+        string? relPermalink, IReadOnlyList<Flint.Core.Abstractions.PageContext> items)
+    {
+        if (!string.IsNullOrEmpty(relPermalink))
+        {
+            PaginateCollections[relPermalink] = items;
+        }
+    }
+
+    /// <summary>取显式分页集合（无则 null）</summary>
+    internal static IReadOnlyList<Flint.Core.Abstractions.PageContext>? GetPaginateCollection(string relPermalink) =>
+        PaginateCollections.TryGetValue(relPermalink, out var items) ? items : null;
+
     /// <summary>该列表页是否被模板分页过</summary>
     internal static bool WasPaginateInvoked(string relPermalink) =>
         PaginatedListUrls.ContainsKey(relPermalink);
 
     /// <summary>清空分页标记（站点渲染开始时调用，避免跨构建串味）</summary>
-    internal static void ResetPaginateTracking() => PaginatedListUrls.Clear();
+    internal static void ResetPaginateTracking()
+    {
+        PaginatedListUrls.Clear();
+        PaginateCollections.Clear();
+    }
 
     /// <summary>
     /// 依赖记录中的顶层模板：逻辑名 + 物理路径（内置回退模板无文件，只记逻辑名）。
@@ -1161,7 +1196,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     [
         "param", "Param", "get_page", "GetPage", "get_terms", "GetTerms",
         "has_shortcode", "HasShortcode", "render_string", "RenderString",
-        "paginate", "Paginate", "fragments", "Fragments"
+        "paginate", "Paginate", "fragments", "Fragments",
+        // 祖先判定：hugo-book 的 menu-filetree 以 dict 调用时按这些名字取用
+        "is_ancestor", "IsAncestor", "is_descendant", "IsDescendant"
     ];
 
     /// <summary>
@@ -1956,7 +1993,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             context.Site.RegularPages,
             context.Site.Config.Paginate,
             context.Site.Config.PaginatePath,
-            context.Site.Taxonomies.Taxonomies);
+            context.Site.Taxonomies.Taxonomies,
+            // .GetPage 需要全量页面（含 section）——常规页集合里没有章节页
+            context.Site.Pages);
 
         // 创建站点对象
         var siteObject = CreateSiteObject(context.Site);

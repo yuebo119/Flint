@@ -49,10 +49,12 @@ public sealed partial class ScribanTemplateRenderer
         IReadOnlyList<FlintPageContext>? siteRegularPages = null,
         int paginateSize = 0,
         string paginatePath = "page",
-        IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null)
+        IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null,
+        IReadOnlyList<FlintPageContext>? siteAllPages = null)
     {
         return SharedPageObjects.GetValue(
-            page, p => new LazyPageObject(p, siteRegularPages, paginateSize, paginatePath, siteTaxonomies));
+            page, p => new LazyPageObject(
+                p, siteRegularPages, paginateSize, paginatePath, siteTaxonomies, siteAllPages));
     }
 
     /// <summary>同上但返回具体类型（partialValue 需访问 LazyPageObject.Store）</summary>
@@ -150,14 +152,23 @@ public sealed partial class ScribanTemplateRenderer
         /// <summary>站点分类表（.GetTerms 需按当前页过滤词条）</summary>
         private readonly IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? _siteTaxonomies;
 
+        /// <summary>
+        /// 站点**全部**页面（含 section/taxonomy 页）——`.GetPage` 需要，
+        /// 常规页集合里没有 section（hugo-book 的 `menu-section` 用
+        /// `.GetPage "docs"` 取章节，缺它时报 "Section 'docs' not found"）
+        /// </summary>
+        private readonly IReadOnlyList<FlintPageContext>? _siteAllPages;
+
         public LazyPageObject(
             FlintPageContext page,
             IReadOnlyList<FlintPageContext>? siteRegularPages = null,
             int paginateSize = 0,
             string paginatePath = "page",
-            IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null)
+            IReadOnlyDictionary<string, IReadOnlyList<TaxonomyTerm>>? siteTaxonomies = null,
+            IReadOnlyList<FlintPageContext>? siteAllPages = null)
         {
             _page = page;
+            _siteAllPages = siteAllPages;
             _siteRegularPages = siteRegularPages;
             _paginateSize = paginateSize;
             _paginatePath = paginatePath;
@@ -345,8 +356,8 @@ public sealed partial class ScribanTemplateRenderer
             // PaperMod/LoveIt 均命中——主题用 `.GetPage "section" .Section` 取 section 页，
             // 用 `.Paginate .Pages` 做分页）。引擎此前只在 site 对象上暴露 get_page
             var sitePages = _siteRegularPages ?? [];
-            SetValue("get_page", new GetPageFunction(sitePages), false);
-            SetValue("GetPage", new GetPageFunction(sitePages), false);
+            SetValue("get_page", new GetPageFunction(_siteAllPages ?? sitePages), false);
+            SetValue("GetPage", new GetPageFunction(_siteAllPages ?? sitePages), false);
             SetValue("paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
             SetValue("Paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
 
@@ -356,6 +367,16 @@ public sealed partial class ScribanTemplateRenderer
             var getTerms = new PageGetTermsFunction(_page, _siteTaxonomies);
             SetValue("get_terms", getTerms, false);
             SetValue("GetTerms", getTerms, false);
+
+            // .IsAncestor PAGE / .IsDescendant PAGE（Hugo 页面方法）：
+            // hugo-book 的 menu-filetree 用 `.Page.IsAncestor .CurrentPage` 决定
+            // 侧边菜单是否展开；缺它时报 function not found
+            var isAncestorFn = new PageRelationFunction(_page, isAncestor: true);
+            SetValue("is_ancestor", isAncestorFn, false);
+            SetValue("IsAncestor", isAncestorFn, false);
+            var isDescendantFn = new PageRelationFunction(_page, isAncestor: false);
+            SetValue("is_descendant", isDescendantFn, false);
+            SetValue("IsDescendant", isDescendantFn, false);
 
             // .HasShortcode / .RenderString / .Param：Hugo 的页面方法族
             //（hugo-coder 42 处 `page?.has_shortcode`、archie `page.render_string`、
@@ -505,13 +526,15 @@ public sealed partial class ScribanTemplateRenderer
             //（Hugo 语义：分页页由模板调用驱动，不是站点级预生成）
             ScribanTemplateRenderer.NotePaginateInvoked(page.RelPermalink);
 
-            // 显式传入集合（默认用当前页 Pages）
-            var items = page.Pages ?? [];
-            if (arguments.Count > 0 && arguments[0] is Scriban.Runtime.ScriptArray arr)
+            // **显式集合**：Hugo 的 `.Paginate $pages` 按传入集合分页（页数、每页内容
+            // 都以它为准）。旧实现丢弃实参、恒按当前页 Pages → 主题传
+            // site.RegularPages 时页数与列表内容都不是 Hugo 的样子
+            //（papermod/m10c 的 home 用 `.Paginate $pages`，实测页数不一致）
+            var items = ResolvePageArgument(arguments.Count > 0 ? arguments[0] : null)
+                        ?? page.Pages ?? [];
+            if (items.Count > 0)
             {
-                // 从 ScriptObject 列表还原 PageContext 不可行（对象已投影）——
-                // 故仅当传入的就是页面集合时复用；否则按当前页 Pages 分页
-                _ = arr;
+                ScribanTemplateRenderer.NotePaginateCollection(page.RelPermalink, items);
             }
 
             var size = pageSize > 0 ? pageSize : 10;
@@ -530,6 +553,36 @@ public sealed partial class ScribanTemplateRenderer
         public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
             Scriban.Runtime.ScriptVarParamKind.Direct;
         public Type ReturnType => typeof(object);
+        /// <summary>
+        /// 把实参还原成页面集合（页面序列 / 页面对象列表）；不是页面集合时返回 null
+        /// （调用方回落到当前页 <c>Pages</c>）。元素不是页面对象即判否——
+        /// 混入字符串的普通列表不该被当成页面集合分页
+        /// </summary>
+        private static IReadOnlyList<FlintPageContext>? ResolvePageArgument(object? argument)
+        {
+            switch (argument)
+            {
+                case FlintPageContext single:
+                    return [single];
+                case System.Collections.IEnumerable seq and not string:
+                    var pages = new List<FlintPageContext>();
+                    foreach (var item in seq)
+                    {
+                        if (item is LazyPageObject lp)
+                        {
+                            pages.Add(lp.PageContext);
+                        }
+                        else
+                        {
+                            return null;
+                        }
+                    }
+                    return pages.Count > 0 ? pages : null;
+                default:
+                    return null;
+            }
+        }
+
         public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
             new(typeof(object), "pages");
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
@@ -811,6 +864,56 @@ public sealed partial class ScribanTemplateRenderer
     /// .Site.GetPage / .Page.GetPage：按路径或 (kind, 名) 查页。
     /// 未命中返回 null（Hugo 语义；主题通常用 with 包裹）
     /// </summary>
+    /// <summary>
+    /// <c>.IsAncestor PAGE</c> / <c>.IsDescendant PAGE</c>（Hugo 页面方法）：
+    /// 按 URL 段判定祖先/后代关系（home 是所有非 home 页面的祖先）
+    /// </summary>
+    internal sealed class PageRelationFunction(FlintPageContext page, bool isAncestor)
+        : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
+        {
+            var other = arguments.Count > 0 ? ToPageContext(arguments[0]) : null;
+            if (other is null)
+            {
+                return false;
+            }
+
+            var self = page.RelPermalink.Trim('/');
+            var target = other.RelPermalink.Trim('/');
+            var (ancestor, descendant) = isAncestor ? (self, target) : (target, self);
+            // home（路径为空）是所有非 home 页面的祖先
+            if (ancestor.Length == 0)
+            {
+                return descendant.Length > 0;
+            }
+            return descendant.Length > ancestor.Length &&
+                   descendant.StartsWith(ancestor + "/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 1;
+        public int ParameterCount => 1;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind => Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(bool);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(object), "page");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
+            new(typeof(bool), "result");
+
+        private static FlintPageContext? ToPageContext(object? value) => value switch
+        {
+            FlintPageContext p => p,
+            LazyPageObject lp => lp.PageContext,
+            _ => null
+        };
+    }
+
     internal sealed class GetPageFunction(
         IReadOnlyList<FlintPageContext> pages,
         string? languagePrefix = null)
@@ -826,6 +929,9 @@ public sealed partial class ScribanTemplateRenderer
 
             var a0 = arguments[0]?.ToString() ?? "";
             var a1 = arguments.Count > 1 ? arguments[1]?.ToString() : null;
+            // 检索集合优先用"当前构建的全量页面"（含 section/term）：页面对象的
+            // 构造快照可能是常规页集合（列表渲染先行创建），只认快照会漏 section
+            var searchPages = ScribanTemplateRenderer.CurrentSitePages ?? pages;
 
             FlintPageContext? found = null;
             if (a1 is not null)
@@ -833,12 +939,12 @@ public sealed partial class ScribanTemplateRenderer
                 // (kind, 名) 形态：section 按 Section 段匹配，page 按标题/slug 匹配
                 found = a0.ToLowerInvariant() switch
                 {
-                    "section" or "sections" => pages.FirstOrDefault(p =>
+                    "section" or "sections" => searchPages.FirstOrDefault(p =>
                         p.Kind.Equals("section", StringComparison.OrdinalIgnoreCase) &&
                         (p.Section.Equals(a1, StringComparison.OrdinalIgnoreCase) ||
                          p.RelPermalink.Trim('/').Equals(a1, StringComparison.OrdinalIgnoreCase))),
-                    "home" => pages.FirstOrDefault(p => p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)),
-                    "page" => pages.FirstOrDefault(p => p.Title.Equals(a1, StringComparison.OrdinalIgnoreCase)),
+                    "home" => searchPages.FirstOrDefault(p => p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)),
+                    "page" => searchPages.FirstOrDefault(p => p.Title.Equals(a1, StringComparison.OrdinalIgnoreCase)),
                     _ => null
                 };
             }
@@ -850,7 +956,7 @@ public sealed partial class ScribanTemplateRenderer
                 //（monochrome 的 states.html：`.Site.GetPage .Params.balloon_resources`
                 // （值 "/about"）返回 null → "$res.resources for a null object"）
                 var path = a0.Trim('/');
-                found = pages.FirstOrDefault(p =>
+                found = searchPages.FirstOrDefault(p =>
                     p.RelPermalink.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) ||
                     p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true ||
                     MatchesIgnoringLanguagePrefix(p, path) ||
@@ -1362,6 +1468,26 @@ public sealed partial class ScribanTemplateRenderer
     /// （Hugo 侧同一表达式返回空集，Flint 侧却把全部词条页当命中）。
     /// 为含大写的键补 snake_case 别名；同名键已存在时不覆盖。
     /// </remarks>
+    /// <summary>
+    /// 参数对象 + <c>mainSections</c>：Hugo 在未显式配置时会把"常规页出现的 section"
+    /// 算好写进 <c>site.Params.mainSections</c>，主题（papermod 的 home、FixIt 的
+    /// 导航）据它过滤文章列表
+    /// </summary>
+    private static ScriptObject BuildParamsObjectWithMainSections(
+        FlintSiteContext site, object mainSections)
+    {
+        var obj = BuildParamsObject(site.Params);
+        if (!obj.ContainsKey("mainSections"))
+        {
+            obj["mainSections"] = mainSections;
+        }
+        if (!obj.ContainsKey("main_sections"))
+        {
+            obj["main_sections"] = mainSections;
+        }
+        return obj;
+    }
+
     private static ScriptObject BuildParamsObject(IReadOnlyDictionary<string, object>? source)
     {
         var obj = new ScriptObject();
@@ -1756,17 +1882,28 @@ public sealed partial class ScribanTemplateRenderer
     /// 站点级分页对象（无逐页绑定时回落，保持既有行为）：
     /// pages = 首版首页切片，total_pages/page_number/has_prev/has_next
     /// </summary>
+    /// <summary>
+    /// 站点级分页器（<c>site.paginator</c> 与内置分页模板的全局 <c>paginator</c>）。
+    /// **与页面级同型**：内置 pagination 模板会读 <c>paginator.pagers[i]</c>，
+    /// 少注册 members 会让它报 "Object `paginator.pagers` is null"
+    ///（ananke 的 home/list 经内置分页模板实测）
+    /// </summary>
+    /// <summary>
+    /// 站点级分页器（<c>site.paginator</c> 与内置分页模板使用的全局 <c>paginator</c>）。
+    /// **与页面级同型**：内置 pagination 模板会读 <c>paginator.pagers[i]</c>，
+    /// 少注册成员会报 "Object `paginator.pagers` is null"（ananke 的 home/list 实测）
+    /// </summary>
     private static ScriptObject BuildPaginatorObject(FlintSiteContext site)
     {
-        var so = new ScriptObject();
-        so["pages"] = GetSharedPageList(site.PaginatorPages);
-        so["total_pages"] = site.PaginatorTotalPages;
-        so["page_number"] = site.PaginatorPageNumber;
-        so["has_prev"] = site.PaginatorPageNumber > 1;
-        so["has_next"] = site.PaginatorPageNumber < site.PaginatorTotalPages;
-        return so;
+        return BuildPaginatorObjectCore(new PaginatorView
+        {
+            AllItems = site.PaginatorPages,
+            PageNumber = Math.Max(1, site.PaginatorPageNumber),
+            PageSize = Math.Max(1, site.Config.Paginate),
+            BaseRelPermalink = "/",
+            PaginatePath = site.Config.PaginatePath,
+        });
     }
-
     // 逐页绑定的分页对象复用缓存：同一 PaginatorView（一个列表页的所有 pager 共享）
     // 跨渲染/跨 site.paginator 与 page.paginator 只构建一次；CWT 键为视图引用，
     // 随构建周期回收（与 SharedPageObjects 同一模型）
