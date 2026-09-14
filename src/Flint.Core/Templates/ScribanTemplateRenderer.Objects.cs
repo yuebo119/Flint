@@ -202,7 +202,6 @@ public sealed partial class ScribanTemplateRenderer
             //  缺此成员时 72 处 "Cannot get the member ... for a null object"）
             SetValue("sections", page.Sections is not null ? GetSharedPageList(page.Sections) : null, false);
             SetValue("terms", _termsValue, false);
-            SetValue("paginator", _paginatorValue, false);
             SetValue("section", page.Section, false);
             SetValue("table_of_contents", page.TableOfContents, false);
             SetValue("plain", page.Plain, false);
@@ -398,7 +397,6 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("Resources", page.Resources, false);
             SetValue("Pages", _pagesValue, false);
             SetValue("Terms", _termsValue, false);
-            SetValue("Paginator", _paginatorValue, false);
             SetValue("Section", page.Section, false);
             SetValue("TableOfContents", page.TableOfContents, false);
             SetValue("Plain", page.Plain, false);
@@ -407,6 +405,18 @@ public sealed partial class ScribanTemplateRenderer
 
         public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
+            // .Paginator：**读取即视为"本页被模板分页"**（Hugo 语义：分页在首次访问
+            // `.Paginate` 或 `.Paginator` 时惰性建立，随后才产出 /page/N/）。
+            // Ananke 用 `.Paginator.Pages` 而非 `.Paginate`，只在 .Paginate 上打标记
+            // 会漏掉这类主题（实测：Hugo 产出 /posts/page/2/ 而 Flint 不产）。
+            // 故从成员字典里摘出来，统一走这里以便记录访问
+            if (member is "paginator" or "Paginator")
+            {
+                ScribanTemplateRenderer.NotePaginateInvoked(_page.RelPermalink);
+                value = _paginatorValue;
+                return true;
+            }
+
             // prev/next 懒构建：CWT 复用（相邻页面对象全构建内共享），只读不回写
             if (member is "prev_page" or "PrevPage")
             {
@@ -491,6 +501,10 @@ public sealed partial class ScribanTemplateRenderer
         public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
             Scriban.Runtime.ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
+            // 记录"本列表页被模板分页"——站点渲染据此决定是否产 /page/N/
+            //（Hugo 语义：分页页由模板调用驱动，不是站点级预生成）
+            ScribanTemplateRenderer.NotePaginateInvoked(page.RelPermalink);
+
             // 显式传入集合（默认用当前页 Pages）
             var items = page.Pages ?? [];
             if (arguments.Count > 0 && arguments[0] is Scriban.Runtime.ScriptArray arr)

@@ -286,6 +286,18 @@ public sealed partial class SiteBuilder
             Tree = tree,
             Handle = (key, node) =>
             {
+                // Hugo 语义：**嵌套**目录缺 _index.md 时不生成 section 页。探测实证
+                // （v0.166）：`content/a/x.md`（顶层 a 无 _index.md）→ 产出 /a/ ✔；
+                // `content/b/sub/y.md`（sub 无 _index.md，且 b 是 section）→ **不产出**
+                // /b/sub/ ✔；`content/b/sub2/_index.md` → 产出 /b/sub2/ ✔。
+                // 判据：合成节点（无 _index.md 补齐）且 key 含 '/'（嵌套）。
+                // 节点仍留在树里供 .Parent/.CurrentSection/级联查找使用，只是不产页
+                if (node.BundleType == PageBundleType.Synthesized &&
+                    key.Contains('/', StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
                 var nodeKind = KindOfNode(node);
                 var (cascaded, dataChain) = MergeAncestorCascades(key, nodeKind, cascades);
                 entries.Add((key, NodeToPageContext(node, config, cascaded, dataChain)));
@@ -316,8 +328,16 @@ public sealed partial class SiteBuilder
         {
             if (page.Type == "home")
             {
+                // Hugo 语义：home 的 .Pages 是**顶层子页 + 顶层 section**（不含深层页面）。
+                // 实测（Hugo v0.166）：content/docs/guide/getting-started.md 不进 home.Pages，
+                // 故 home 的分页页数也据此（此前用全部常规页 → 多出 /page/2/、/page/3/）
+                var homeChildren = ordered
+                    .Where(e => e.Page.Type is "page" or "section" &&
+                                !e.Key.Contains('/', StringComparison.Ordinal))
+                    .Select(e => e.Page)
+                    .ToList();
                 // home 的直属 section 即一级 section 页（路径无 '/'）
-                result.Add(page.WithPages(regular)
+                result.Add(page.WithPages(homeChildren)
                     .WithSections(allSections
                         .Where(e => !e.Key.Contains('/', StringComparison.Ordinal))
                         .Select(e => e.Page)

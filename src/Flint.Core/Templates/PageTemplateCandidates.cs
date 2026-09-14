@@ -219,36 +219,45 @@ public static class PageTemplateCandidates
 
     /// <summary>
     /// taxonomy 列表页（词条索引）。Hugo 候选链：
-    /// {taxonomy}/terms → {taxonomy}/taxonomy → {taxonomy}/list
-    /// → taxonomy/terms → taxonomy/taxonomy → taxonomy/list
-    /// → {layout} → terms → taxonomy → list
+    /// {taxonomy}/taxonomy → {taxonomy}/terms → {taxonomy}/list
+    /// → taxonomy/taxonomy → taxonomy/terms → taxonomy/list
+    /// → {layout} → taxonomy → terms → list
+    ///
+    /// 顺序依据（Hugo v0.166 实测，真实主题 ananke）：/tags/ 在同时存在
+    /// taxonomy.html 与 terms.html 时渲染 **taxonomy.html**——0.146 起
+    /// kind=taxonomy 的新名字是 taxonomy.html，terms.html 是旧名（优先级低）
     /// </summary>
     private static void BuildTaxonomy(PageTemplateQuery query, Action<string?> add)
     {
         var taxonomy = query.Taxonomy;
 
         add(Join(taxonomy, query.Layout));
-        add(Join(taxonomy, "terms"));
         add(Join(taxonomy, "taxonomy"));
+        add(Join(taxonomy, "terms"));
         add(Join(taxonomy, "list"));
 
         add(Join("taxonomy", query.Layout));
-        add(Join("taxonomy", "terms"));
         add(Join("taxonomy", "taxonomy"));
+        add(Join("taxonomy", "terms"));
         add(Join("taxonomy", "list"));
 
         add(query.Layout);
-        add("terms");
         add("taxonomy");
+        add("terms");
         add("list");
     }
 
     /// <summary>
     /// term 词条页。Hugo 候选链：
-    /// {taxonomy}/term → {taxonomy}/taxonomy → {taxonomy}/list
-    /// → term/term → term/taxonomy → term/list
-    /// → taxonomy/term → taxonomy/taxonomy → taxonomy/list
-    /// → {layout} → term → taxonomy → list
+    /// {taxonomy}/term → {taxonomy}/list → {taxonomy}/taxonomy
+    /// → term/term → term/list → term/taxonomy
+    /// → taxonomy/term → taxonomy/list → taxonomy/taxonomy
+    /// → {layout} → term → list → taxonomy
+    ///
+    /// 顺序依据（Hugo v0.166 实测，真实主题 ananke）：/tags/<词条>/ 在同时存在
+    /// taxonomy.html 与 list.html 时渲染 **list.html**——0.146 起 kind=term 的新名字
+    /// 是 term.html，taxonomy.html 让位；主题依赖 list.html 的 .Paginator 才会分页，
+    /// 选错模板会让词条页丢失列表与 /page/N/（实测 ananke 词条页内容为空）
     /// </summary>
     private static void BuildTerm(PageTemplateQuery query, Action<string?> add)
     {
@@ -256,23 +265,23 @@ public static class PageTemplateCandidates
 
         add(Join(taxonomy, query.Layout));
         add(Join(taxonomy, "term"));
-        add(Join(taxonomy, "taxonomy"));
         add(Join(taxonomy, "list"));
+        add(Join(taxonomy, "taxonomy"));
 
         add(Join("term", query.Layout));
         add(Join("term", "term"));
-        add(Join("term", "taxonomy"));
         add(Join("term", "list"));
+        add(Join("term", "taxonomy"));
 
         add(Join("taxonomy", query.Layout));
         add(Join("taxonomy", "term"));
-        add(Join("taxonomy", "taxonomy"));
         add(Join("taxonomy", "list"));
+        add(Join("taxonomy", "taxonomy"));
 
         add(query.Layout);
         add("term");
-        add("taxonomy");
         add("list");
+        add("taxonomy");
     }
 
     /// <summary>目录与名字拼接；任一段为空返回 null（由调用方 Add 过滤）</summary>

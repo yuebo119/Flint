@@ -123,7 +123,8 @@ public sealed class PageTemplateCandidatesTests
         });
 
         var names = Names(levels);
-        Assert.Equal("tags/terms", names[0]);
+        // Hugo v0.166：kind=taxonomy（/tags/）优先 taxonomy.html，terms.html 是旧名（次之）
+        Assert.Equal("tags/taxonomy", names[0]);
         Assert.Contains("terms", names);
         Assert.Contains("taxonomy", names);
         Assert.DoesNotContain("single", names);

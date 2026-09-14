@@ -2437,4 +2437,39 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
    站点配置 ✔），最后是**平台侧**（矩阵脚本把 `Flint.toml` 在追加主题参数前复制）
    与**主题默认值合并缺失**两个原因叠加——对齐 Hugo 的配置来源层级才能除根。
 
+---
+
+## 三十五、产物级保真：页面集合与 Hugo 对齐（2026-09-14 第二十轮）
+
+门禁④的 `对称` 判定在此之前**21 个主题全为 0**。先按"验证验证者"确认仪器可用：
+门禁③会重新构建 `--site-output` 目录，故变异必须落在 **Hugo 侧**——把 Hugo 产物
+删一页/改一段后重跑，门禁如实报 `对称性: 不通过`（结构相似度 100% → 33.5%），
+仪器可信，`对称=0` 是真实差异。
+
+逐主题列出"仅 Hugo / 仅 Flint"页面后，差异收敛为四类，全部用 Hugo v0.166 实测判定：
+
+| # | 差异 | Hugo 实测 | Flint 修前 | 修后 |
+|---|---|---|---|---|
+| A | 嵌套目录无 `_index.md` 是否产 section 页 | **不产**（`content/b/sub/y.md` → 无 `/b/sub/`；顶层 `content/a/x.md` → 有 `/a/`） | 产（`EnsureAncestors` 给所有祖先补合成节点并全部产页） | 合成且**嵌套**的节点只留树中供 `.Parent`/级联用，不产页 |
+| B | `/page/N/` 何时产出 | **模板调用驱动**：模板不访问 `.Paginate`/`.Paginator` 就没有 `/page/N/`；访问过的列表页额外产出 `/page/1/`（canonical + meta refresh 跳转页） | 站点级预生成：只要 `paginate > 0` 就给 home/section 产 `/page/2..N/`（ananke 多出 `/page/2/`、`/page/3/`） | 渲染第 1 页 → 看"是否被模板分页"标记 → 再定 `/page/1/` 与 `/page/2..N/`；标记点在 `.Paginate` 调用与 `.Paginator` 成员读取两处（Ananke 用 `.Paginator.Pages`，只标 `.Paginate` 会漏） |
+| C | 分类页模板名 | `kind=taxonomy`（`/tags/`）→ **taxonomy.html**；`kind=term`（`/tags/x/`）→ **term.html**，无则 **list.html**；两者都在时 `taxonomy.html` 让位（0.146 起的新旧名映射） | 反了：`/tags/` → terms.html、`/tags/x/` → taxonomy.html | 候选链按上表重排（真实主题 ananke 复现验证：`/tags/x/` 应出 list.html 特征串 `w-30-l`） |
+| D | 分类列表页的分页对象 | `.Paginator` 切**词条页集合**（`/tags/` 3 个词条 + pagerSize 2 → 产出 `/tags/page/2/`） | `.Paginator` 用 `taxPage.Pages`（taxonomy 页为 null）→ 恒 1 页，缺 `/tags/page/2/` | 与 `.Pages` 同源（词条页集合），并给分类列表页也生成 `/page/N/` 条目 |
+| E | home 的 `.Pages` | **顶层**子页 + 顶层 section（实测 `[Posts, About, Docs]`，深层页面不计入） | 全部常规页（含 `docs/guide/getting-started`） | 同 Hugo；home 分页页数随之对齐 |
+
+**结果**（同一矩阵，21 主题）：
+
+- `对称=1`（页面集合与 Hugo 完全一致）从 **0/21 → 12/21**（ananke、bearblog、blowfish、
+  console、github-style、loveit、narrow、stack、techdoc、xmin、yinyang、fixit）
+- 结构相似度显著上升：blowfish 16.4 → 39.2、clarity 28.9 → 55.3、hugo-paper 36.4 → 59.0、
+  hugo-coder 37.7 → 54.6、github-style 65.6 → 76.8、narrow 16.9 → 26.2、even 33.0 → 51.8
+- 回归防护：`Flint.Core.Tests` 927 通过（分类链与 E2E fixture 断言按 Hugo 实测更新）、
+  `Flint.ThemeMigrator.Tests` 70 通过
+
+**仍未对齐**（下一轮，均为"主题特定分页触发"）：
+
+- `hugo-book` 等 5-6 个主题的列表页在 Hugo 下会分页，但其模板里既无 `.Paginate`
+  也无 `.Paginator`（疑似 Hugo 内部/嵌入分页助手触发）——需再定位触发源
+- `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
+  （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
+
 

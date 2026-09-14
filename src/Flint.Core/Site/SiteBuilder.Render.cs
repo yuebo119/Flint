@@ -255,10 +255,20 @@ public sealed partial class SiteBuilder
     {
         var results = new ConcurrentBag<RenderedPage>();
 
-        // C1 分页多页产出：列表页（home/section）按站点 paginate 切片，逐页产出
-        // /page/2/、/page/3/…；分页实例替换原列表页实例（第 1 页即列表页 URL）。
+        // 分页标记按构建清空：跨构建残留会让"这轮没分页"的列表页被误判为分页
+        if (_templateRenderer is ScribanTemplateRenderer)
+        {
+            ScribanTemplateRenderer.ResetPaginateTracking();
+        }
+
+        // C1 分页多页产出（Hugo 语义）：列表页（home/section）的**第 1 页**始终产出
+        //（就是列表页自身的 URL）；`/page/1/` 跳转页与 `/page/2..N/` 只在**模板调用过
+        //  `.Paginate`** 时产出。探测实证（Hugo v0.166）：home 模板不调用 .Paginate 的
+        // 站点没有 /page/N/，调用过的列表页则额外产出 /page/1/（canonical 跳转页）。
+        // 故先只放第 1 页，其余等渲染完、看标记再补。
         // paginate <= 0 显式关闭分页（非列表页不受影响）
         var renderTargets = new List<PageContext>(pages.Count);
+        var paginatedLists = new List<(PageContext Page, IReadOnlyList<PageContext> Items, int TotalPages)>();
         foreach (var page in pages)
         {
             if ((page.Type is "home" or "section") && config.Paginate > 0)
@@ -266,13 +276,11 @@ public sealed partial class SiteBuilder
                 var items = page.Pages ?? [];
                 var totalPages = Math.Max(1,
                     (int)Math.Ceiling(items.Count / (double)config.Paginate));
-                for (var pageNumber = 1; pageNumber <= totalPages; pageNumber++)
-                {
-                    var pager = PaginatorView.Create(
-                        items, pageNumber, config.Paginate,
-                        page.RelPermalink, config.PaginatePath);
-                    renderTargets.Add(page.WithPaginator(pager, config.BaseURL));
-                }
+                var firstPager = PaginatorView.Create(
+                    items, 1, config.Paginate,
+                    page.RelPermalink, config.PaginatePath);
+                renderTargets.Add(page.WithPaginator(firstPager, config.BaseURL));
+                paginatedLists.Add((page, items, totalPages));
                 continue;
             }
             renderTargets.Add(page);
@@ -387,8 +395,54 @@ public sealed partial class SiteBuilder
                 }
         }
 
+        // 模板确证分页的列表页：补 /page/1/ 跳转页与 /page/2..N/
+        var extraTargets = new List<PageContext>();
+        foreach (var (listPage, items, totalPages) in paginatedLists)
+        {
+            if (!ScribanTemplateRenderer.WasPaginateInvoked(listPage.RelPermalink))
+            {
+                continue;
+            }
+
+            var firstPagePath = $"{listPage.RelPermalink.TrimEnd('/')}/{config.PaginatePath}/1/";
+            results.Add(new RenderedPage
+            {
+                OutputPath = GetOutputPathForFormat(firstPagePath, OutputFormats.Html, options.OutputPath),
+                Content = BuildPaginationRedirectPage(
+                    listPage.Permalink ?? listPage.RelPermalink)
+            });
+
+            for (var pageNumber = 2; pageNumber <= totalPages; pageNumber++)
+            {
+                var pager = PaginatorView.Create(
+                    items, pageNumber, config.Paginate,
+                    listPage.RelPermalink, config.PaginatePath);
+                extraTargets.Add(listPage.WithPaginator(pager, config.BaseURL));
+            }
+        }
+
+        if (extraTargets.Count > 0)
+        {
+            foreach (var batch in extraTargets.Chunk(batchSize))
+            {
+                await RenderBatchAsync(batch, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         return [.. results];
     }
+
+    /// <summary>
+    /// 分页跳转页内容：Hugo 对 <c>/page/1/</c> 的产出形态（canonical + meta refresh
+    /// 指向列表页本体），用于把分页 URL 归并到规范 URL
+    /// </summary>
+    private static string BuildPaginationRedirectPage(string canonicalUrl) =>
+        "<!DOCTYPE html>\n<html>\n\t<head>\n" +
+        $"\t\t<title>{canonicalUrl}</title>\n" +
+        $"\t\t<link rel=\"canonical\" href=\"{canonicalUrl}\">\n" +
+        "\t\t<meta charset=\"utf-8\">\n" +
+        $"\t\t<meta http-equiv=\"refresh\" content=\"0; url={canonicalUrl}\">\n" +
+        "\t</head>\n</html>\n";
 
     private async Task<RenderedPage?> GenerateHomePageAsync(
         SiteContext siteContext,
@@ -550,6 +604,11 @@ public sealed partial class SiteBuilder
 
         var taxonomyPages = generator.GeneratePages(taxonomies, config.Paginate);
 
+        // 分页产出（Hugo 语义）：先只渲染第 1 页；`/page/N/`(N≥2) 与 `/page/1/`
+        // 跳转页待确认"该词条/分类页的模板确实分页"（访问过 .Paginate/.Paginator）
+        // 再产出——Hugo 的分页页由模板调用驱动，不是站点级预生成
+        var deferred = new List<TaxonomyPageInfo>();
+        var firstPages = new List<TaxonomyPageInfo>();
         foreach (var taxPage in taxonomyPages)
         {
             // 列表页（无 TermName）受 "taxonomy" 控制，term 页受 "term" 控制
@@ -557,22 +616,77 @@ public sealed partial class SiteBuilder
             {
                 continue;
             }
+            if (taxPage.PageNumber > 1)
+            {
+                deferred.Add(taxPage);
+                continue;
+            }
+            await RenderTaxonomyPageAsync(taxPage).ConfigureAwait(false);
+            firstPages.Add(taxPage);
+        }
+
+        // `/page/1/` 跳转页：模板确实分页的 term/分类列表页都要（与总页数无关）
+        foreach (var firstPage in firstPages)
+        {
+            var baseRel = BaseRelPermalinkOf(firstPage);
+            if (!ScribanTemplateRenderer.WasPaginateInvoked(baseRel))
+            {
+                continue;
+            }
+            results.Add(new RenderedPage
+            {
+                OutputPath = GetOutputPathForFormat(
+                    $"{baseRel.TrimEnd('/')}/{config.PaginatePath}/1/", OutputFormats.Html, options.OutputPath),
+                Content = BuildPaginationRedirectPage($"{config.BaseURL.TrimEnd('/')}{baseRel}")
+            });
+        }
+
+        // `/page/N/`(N≥2)：同为模板分页确证后才产出
+        foreach (var taxPage in deferred)
+        {
+            if (!ScribanTemplateRenderer.WasPaginateInvoked(BaseRelPermalinkOf(taxPage)))
+            {
+                continue;
+            }
+            await RenderTaxonomyPageAsync(taxPage).ConfigureAwait(false);
+        }
+
+        string BaseRelPermalinkOf(TaxonomyPageInfo taxPage)
+        {
+            var rel = RelPermalinkOf(taxPage);
+            var suffix = $"/{config.PaginatePath}/{taxPage.PageNumber}/";
+            return rel.EndsWith(suffix, StringComparison.Ordinal)
+                ? rel[..^suffix.Length] + "/"
+                : rel;
+        }
+
+        // 从完整 URL 中提取相对路径（taxonomy/term 页共用）
+        string RelPermalinkOf(TaxonomyPageInfo taxPage)
+        {
+            var rel = taxPage.Permalink ?? "/";
+            var baseUrl = config.BaseURL.TrimEnd('/');
+            if (rel.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                rel = rel[baseUrl.Length..];
+            }
+            return rel.StartsWith('/') ? rel : "/" + rel;
+        }
+
+        async Task RenderTaxonomyPageAsync(TaxonomyPageInfo taxPage)
+        {
             try
             {
-                // 从完整 URL 中提取相对路径
-                var relPermalink = taxPage.Permalink ?? "/";
-                var baseUrl = config.BaseURL.TrimEnd('/');
-                if (relPermalink.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
-                {
-                    relPermalink = relPermalink[baseUrl.Length..];
-                }
-                if (!relPermalink.StartsWith('/'))
-                {
-                    relPermalink = "/" + relPermalink;
-                }
+                var relPermalink = RelPermalinkOf(taxPage);
 
                 // 创建分类页面的上下文
                 var isTaxonomyList = taxPage.PageType == TaxonomyPageType.TaxonomyList;
+                var pageSize = Math.Max(1, config.Paginate);
+                // taxonomy 列表页的集合 = **词条页集合**（Hugo 语义；分页切的就是它），
+                // term 页则是该词条下的页面集合
+                var taxonomyListItems = isTaxonomyList ? BuildTermPages(taxPage.Terms, config) : null;
+                var pageItems = isTaxonomyList
+                    ? taxonomyListItems!.Skip((taxPage.PageNumber - 1) * pageSize).Take(pageSize).ToList()
+                    : taxPage.Pages ?? [];
                 var pageContext = new PageContext
                 {
                     Title = taxPage.TermName ?? taxPage.TaxonomyName,
@@ -595,18 +709,19 @@ public sealed partial class SiteBuilder
                     // （主题用 `{{ range .Pages.ByDate }}` 列出全部标签）——
                     // 此前只给 term 页设 Pages，taxonomy 页为 null，使
                     // `page.pages.by_date` 报 null（mini fixture 实测）
-                    Pages = isTaxonomyList
-                        ? BuildTermPages(taxPage.Terms, config)
-                        : taxPage.Pages,
+                    Pages = pageItems,
                     Terms = taxPage.Terms,
                     // 分页器：Hugo 的 list 类页面（含 taxonomy/term）恒有 .Paginator，
                     // 主题直接访问 .TotalPages/.Pagers 而不加 with 保护——
                     // 缺省时模板报 "Cannot get the member $pag.TotalPages for a null object"
-                    // （mini 主题 fixture 实证）。空集合也有一页（对齐 Hugo）
+                    // （mini 主题 fixture 实证）。空集合也有一页（对齐 Hugo）。
+                    // 分页对象与 .Pages 同源：taxonomy 列表页分页的是**词条页集合**
+                    //（Hugo 实测：/tags/ 的 .Paginator 切词条页 → 产出 /tags/page/2/；
+                    //  此前用 taxPage.Pages（taxonomy 页为 null）→ 恒 1 页，缺 /tags/page/2/）
                     Paginator = PaginatorView.Create(
-                        taxPage.Pages ?? [],
+                        taxonomyListItems ?? (taxPage.Pages ?? []),
                         taxPage.PageNumber,
-                        Math.Max(1, config.Paginate),
+                        pageSize,
                         relPermalink,
                         config.PaginatePath)
                 };
