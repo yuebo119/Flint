@@ -2479,11 +2479,16 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
     多动作串会被 Wrap 再包一层 `{{ }}`，Scriban 当对象字面量而预检失败——实测踩过）
 
   效果：hugo-book 的**结构相似度 20.1% → 99.6%**（内容全部回来），预检失败 3 → 0。
-  剩余阻塞：`_partials/docs/prev-next.html` 的 `{{ return $scratch.get "BookPages" }}`
-  迁移成 `__partial_ret_set "k" $scratch.get "BookPages"`——**内层调用未加括号**，
-  Scriban 把 `"BookPages"` 绑定到外层函数，存进通道的不是页面列表 →
-  调用点 `$pages.Next page` 报 "The function `$pages.Next` was not found"。
-  修法：`return <调用表达式>` 改写为 `__partial_ret_set "<key>" (<调用表达式>)`
+  剩余阻塞（已定位到具体一行）：`_partials/book-menu-recurse.html` 迁移成
+  `{{ page.scratch.add "BookPages" ([page]) }}`——源模板是 **dot 上下文**
+  （`{{ .Scratch.Add "BookPages" (slice .Page) }}`，`.` 是调用点传的 dict
+  `dict "Scratch" $scratch "Page" $page`）。转换器把 dot 一律落到 `page.`，
+  于是写入的是**页面自己的** scratch，而 `menu-section-pages` 读的是传入的
+  `newScratch` → 取回空列表 → 调用点 `$pages.Next page` 报
+  "The function `$pages.Next` was not found"。
+  修法方向：识别"以 dict 调用、且 dict 键被 dot 访问"的 partial（跨文件扫描
+  调用点的 dict 键），把该 partial 内的 `.Key`/`$.Key` 改写成 dict 键访问
+  （引擎侧的"dict 键并入绑定对象、dict 优先"机制已存在，缺的是转换器侧的定向改写）
 - `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
   （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
 - FixIt 的模块组件挂载（`_funcs/*`）与图标资源解析
