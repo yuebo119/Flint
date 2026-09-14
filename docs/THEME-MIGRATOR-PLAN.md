@@ -2119,3 +2119,26 @@ Hugo v0.166 探针实测：`.Markup "home"` 返回内容作用域对象，
 
 12 页 → **15 页**，错误 9 → **4**：3 处 `$pages.Prev`（block 求值顺序，见第三十节 E）
 + 1 处 rss.html 的 `page.config.limit`。
+
+### E. 下一轮的两个精确入口（本轮实测记录）
+
+1. **`.Config.limit` 的末段方法名规则**（fixit 的 rss.html，1 处）
+   转换器在"无参字段链"分支里有一条规则：**末段命中已知集合方法名**时整条路径改回普通点
+   （`NilSafePath` 不生效），用于兜底 `?.` + 调用的历史失败（Stack/LoveIt 实测）；
+   例外只放行路径里含 `.Params.` 的"数据袋"。fixit 的 `.Config.limit` 里 `limit` 是
+   **用户数据键**（`.Site.Params.feed.limit` → 经 dict 传给 partial），不含 `.Params.`
+   → 被当成方法目标 → 产出 `page.config.limit`；最小配置下 `params.feed` 缺失时
+   `config` 为 null，普通点链抛 "Cannot get the member page.config.limit for a null object"
+   （Hugo 侧返回 nil、`ge nil 1` 为假，不报错）。
+   **本轮实测反例**：`page?.get_page ""`（`?.` + 调用）在 Scriban 里**是可以工作的**——
+   历史上失败的是 `(expr)?.f a`（括号接收者）形态。故该规则是否可放宽为
+   "末段也 nil 安全、调用形态单独处理"，需要用矩阵整体验证后再定（改动面覆盖所有字段链）。
+
+2. **block 求值顺序**（fixit 的 footer，3 处 `$pages.Prev`）
+   见第三十节 E：转换器把块体 `capture` 在 baseof 之前，而 Hugo 是先跑 baseof 外层
+   （含 `partial "init/global"` 这类副作用）、到 block 位置才求值子模板内容。
+   FixIt 的 `site.store.set "mainSectionPages"` 因此永远晚于读取，
+   `$pages` 为 null → `$pages.Prev` 报 "function not found"。
+   方案候选：转换器把块体改产为 Scriban `func` 并把函数作为命名参数传给 baseof，
+   引擎在"命名参数为函数时按需调用"（引擎侧一个小特性），即可让块体在 baseof 的
+   使用点求值——顺序与 Hugo 一致。
