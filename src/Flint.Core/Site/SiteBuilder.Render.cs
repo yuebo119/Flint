@@ -259,6 +259,8 @@ public sealed partial class SiteBuilder
         if (_templateRenderer is ScribanTemplateRenderer)
         {
             ScribanTemplateRenderer.ResetPaginateTracking();
+            // 登记全量页面：.GetPage 需要 section 页，而页面对象的构造快照可能只有常规页
+            ScribanTemplateRenderer.SetCurrentSitePages(pages);
         }
 
         // C1 分页多页产出（Hugo 语义）：列表页（home/section）的**第 1 页**始终产出
@@ -397,12 +399,19 @@ public sealed partial class SiteBuilder
 
         // 模板确证分页的列表页：补 /page/1/ 跳转页与 /page/2..N/
         var extraTargets = new List<PageContext>();
-        foreach (var (listPage, items, totalPages) in paginatedLists)
+        foreach (var (listPage, defaultItems, _) in paginatedLists)
         {
             if (!ScribanTemplateRenderer.WasPaginateInvoked(listPage.RelPermalink))
             {
                 continue;
             }
+
+            // 模板给 .Paginate 传了**显式集合**时以它为准（Hugo 语义）：
+            // 分页页数与每页内容都按该集合切片（papermod/m10c 的 home 实测）
+            var items = ScribanTemplateRenderer.GetPaginateCollection(listPage.RelPermalink)
+                        ?? defaultItems;
+            var totalPages = Math.Max(1,
+                (int)Math.Ceiling(items.Count / (double)Math.Max(1, config.Paginate)));
 
             var firstPagePath = $"{listPage.RelPermalink.TrimEnd('/')}/{config.PaginatePath}/1/";
             results.Add(new RenderedPage

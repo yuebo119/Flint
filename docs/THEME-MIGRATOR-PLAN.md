@@ -2487,16 +2487,34 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
      迁移产物用 `page.scratch` 小写访问 `.Scratch`）。探针验证：嵌套 dict 传
      scratch + `page.scratch.add` + 值返回通道 → `partialValue` 取回页面序列、
      `.first`/`.next` 均可用
-  2. 【未修】`{{ .Page }}` 在 dict 上下文里被转换器一律映射为 `page`（"页面上下文
-     的 .Page 就是自己"的特例），而 hugo-book 的递归是
-     `dict "Scratch" $scratch "Page" .`——`.Page` 应是**dict 的那个键**。
-     于是 `[page]` 收集进 scratch 的是"绑定对象自身"而非子页面，元素不是页面对象 →
-     回包装判定失败 → `$pages.Next` 仍报 function not found。
-     修法方向：把 `.Page`/`.Params` 这类特例限定在"dot 确实是页面"的 partial
-     （跨文件看调用点是 `.` 还是 dict），dict 上下文中一律按 dict 键访问
-     （引擎侧 dict 键并入绑定对象的机制已具备，`page.page` 即可取到 dict 的 Page）
-- `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
-  （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
-- FixIt 的模块组件挂载（`_funcs/*`）与图标资源解析
+  2. 【已修】`{{ .Page }}` 在 dict 上下文里曾一律映射为 `page`（"页面上下文的 .Page
+     就是自己"的特例），而 hugo-book 的递归是 `dict "Scratch" $scratch "Page" .`——
+     `.Page` 应为 **dict 的那个键**。映射成 `page` 会把绑定对象自身收进列表，元素不是
+     页面对象 → 集合方法族失效。改为 **`(page.page ?? page)`**：dict 有 Page 键时取它、
+     否则回落到页面自身，两种上下文通吃（字段+参数分支与无参字段链两条路径同改）
+  3. 【已修】`.GetPage "docs"` 找不到 section：页面对象的 `get_page` 用的是**常规页**
+     快照（不含 section），且页面对象按引用共享缓存，创建时机不同快照不同。改为渲染
+     入口登记**全量站点页面**（`SetCurrentSitePages`），`GetPageFunction` 调用时读取
+  4. 【已修】`.IsAncestor`/`.IsDescendant` 未实现（hugo-book 的 menu-filetree 用它决定
+     侧边菜单展开）：新增页面方法（按 URL 段判定祖先关系，home 是所有非 home 页的祖先），
+     并把四个拼写加进 `PageMethodKeys` 以便 dict 上下文转发
+  5. 【已修】站点级分页器缺少 `pagers` 等成员：内置 pagination 模板读
+     `paginator.pagers[i]` 时报 "Object `paginator.pagers` is null"。改为与页面级
+     **同型**（复用 `BuildPaginatorObjectCore`）
 
+  结果：**hugo-book 通过构建**（21/21 页、对称=1），矩阵 Flint 侧 20/21
+  （仅 fixit 未过：模块组件挂载 + 图标资源，属特性级）
 
+### 本轮试改后**回退**的两项（各带证据，留待专项）
+
+- **`.Type` 应为所属 section 名**（Hugo 语义）：探测确认 papermod 的首页
+  `where site.regular_pages "Type" "in" main_sections` 因 `Type == "page"` 恒为空 →
+  首页无文章、分页页缺失（`$pages | len = 0` 实测）。但改成 section 语义会同时改变
+  **模板查找链**的 `{type}` 段（Hugo 用它解析 `{section}/single.html`），影响面跨两侧；
+  试改后 ananke 命中另一条候选链并触发内置分页模板的整数索引错误 → 回退
+- **`site.Params.mainSections` 自动计算**（Hugo 未配置时会算好并写入 Params）：
+  注入后 ananke 的 `{{ $n_posts := $.Param "recent_posts_number" | compare.Default 3 }}`
+  所在分支从"跳过"变为"执行"，暴露出 **`函数调用 | default N` 的解析问题**——
+  探测：`page.param "x" | default 3` 得到的不是"调用结果的兜底"，说明管道被解析进
+  调用实参（`page.param ("x" | default 3)`）。这一条要修在转换器（对"调用结果参与管道"
+  的形态补括号）或引擎（`param` 的缺失值语义），与 `.Type` 一起做专项

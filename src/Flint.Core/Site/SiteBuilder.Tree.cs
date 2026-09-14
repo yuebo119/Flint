@@ -768,6 +768,12 @@ public sealed partial class SiteBuilder
             // kind 由树节点 bundle 类型推导（前置：front matter 显式 type 覆盖）——
             // _index.md 归一为 branch 节点后必须产出 section 语义（list 模板、IsList），
             // 此前用 "page" 兜底致真实 section 页走 single 模板
+            //
+            // 【待办】Hugo 的 .Type 是**所属 section 名**（`where … "Type" "in"
+            // mainSections` 靠它过滤），本轮试改为 section 语义后模板查找链随之变化：
+            // ananke 的 home 命中另一条候选链并触发内置分页模板的整数索引错误。
+            // 该改动影响面跨"模板解析 + Type 过滤"两侧，需单独一轮验证后再上；
+            // 现回退到 kind 语义，见 docs/THEME-MIGRATOR-PLAN.md 第三十六节
             Type = content.Metadata.Type ?? nodeKind ?? "page",
             // 模板查找链维度（A 组）：kind 来自树节点类型（用户 type 不覆盖它），
             // DeclaredType 只记 front matter 显式声明——两者分离后候选链才能既让

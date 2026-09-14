@@ -428,6 +428,17 @@ internal sealed class ScribanConverter(
             // Console 的 `.Page.Resources` 同因，实测）
             var isPageRoot = fe.Path.StartsWith(".Page", StringComparison.OrdinalIgnoreCase)
                 && (fe.Path.Length == ".Page".Length || fe.Path[".Page".Length] == '.');
+            // **裸 `.Page`**（无后续段）不能简单映射成 `page`：在"以 dict 调用的 partial"
+            // 里 `.` 是调用点传的 dict，`(slice .Page)` 取的是 **dict 的 Page 键**
+            // （hugo-book 的 `dict "Scratch" $scratch "Page" .` 递归收集章节页），
+            // 映射成 `page` 会把绑定对象自身收进列表 → 元素不是页面对象 → 集合方法族失效
+            //（`$pages.Next` 报 function not found）。
+            // 双上下文通吃的写法：dict 有 Page 键时取它（引擎把 dict 键并入绑定对象，
+            // 大小写别名齐备），否则回落到页面自身（页面上下文的 `.Page` 就是自己）
+            if (fe.Path.Equals(".Page", StringComparison.OrdinalIgnoreCase))
+            {
+                return new ConversionResult("(page.page ?? page)", ConversionKind.Equivalent);
+            }
             // 【曾试】把"字段+参数"的接收者也套用作用域变量（scope[^1]）以修 narrow 的
             // 嵌套 range（内层 `.Pages` 属外层分组对象）。全量矩阵判为回归：
             // monochrome 的 single.html 出现 IndexOutOfRange、页数 103→89——
@@ -1474,6 +1485,13 @@ internal sealed class ScribanConverter(
                 if (raw.StartsWith(".Page", StringComparison.OrdinalIgnoreCase) &&
                     (raw.Length == ".Page".Length || raw[".Page".Length] == '.'))
                 {
+                    // 裸 `.Page`（无后续段）：dict 上下文里指的是 **dict 的 Page 键**
+                    //（hugo-book 的 `(slice .Page)` 递归收集章节页），页面上下文里才是
+                    // 页面自身——`page.page ?? page` 两种上下文通吃（与字段+参数分支同一判据）
+                    if (raw.Equals(".Page", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return new ConversionResult("(page.page ?? page)", ConversionKind.Equivalent);
+                    }
                     // 链式段用 nil 安全 `?.`（与普通字段路径一致：Hugo 遇 nil 返回 nil）
                     return new ConversionResult(
                         "page" + NilSafePath(raw[".Page".Length..]),
