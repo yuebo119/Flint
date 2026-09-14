@@ -72,6 +72,14 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
         {
             if (_values.TryGetValue(key, out var v))
             {
+                // 页面列表回包装：Scratch/Store 里累积的页面集合取出来仍是裸列表，
+                // 集合方法族缺失（hugo-book 的 `$scratch.Add "BookPages" (slice .Page)`
+                // → `$pages.Next page` 报 "The function `$pages.Next` was not found"）。
+                // 与 where/append 等内置同口径：页面序列的派生仍是页面序列
+                if (v is System.Collections.Generic.IReadOnlyList<object?> list && list.Count > 0)
+                {
+                    return ScribanTemplateRenderer.RewrapPageSequence(null, list) ?? v;
+                }
                 return v;
             }
             return MissingKeyReturnsEmptyObject ? new ScriptObject() : null;

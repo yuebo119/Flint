@@ -2467,20 +2467,25 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
 
 **仍未对齐**（下一轮）：
 
-- **同名 `define` 提取冲突（hugo-book 类"命名模板式"主题，已定位根因）**：
-  这类主题不用 Hugo 的 `block`/baseof 继承，而是 `baseof.html` 里
-  `{{ template "main" . }}` + 每个页面模板各自 `{{ define "main" }}`（hugo-book:
-  54 个 define、0 个 block）。迁移器把简单名 define 提取为独立 partial 时**按名字
-  定路径**（`_partials/main.html`）→ 多文件同名互相覆盖，最后写入者胜：实测
-  `posts/list.html` 与 `term.html` 的分页列表体全丢，`_partials/main.html` 只剩
-  `book.html` 的正文模板，所有页面渲染同一个 main。
-  修法方向：提取路径带上**来源文件**作用域（如 `_partials/posts-list__main.html`），
-  并把 baseof 的 `{{ template "main" . }}` 改写成"按当前页面模板名解析"的形式
-  （引擎已有 partial 查找与页面模板信息，需评估是否暴露给模板侧）
-- **hugo-book 等 5-6 个主题的分页触发源**：其列表页在 Hugo 下分页，但模板模板链上
-  的 `posts/list.html` 内容被上一条 bug 吞掉 → 分页标记自然也没建立；修好上一条后
-  再复测（`{{ range sort .Paginator.Pages }}` 正是触发点）
+- **hugo-book 类"命名模板式"主题的槽位机制（已落地，剩一个绑定细节）**：
+  这类主题不用 `block`/baseof 继承，而是 `baseof.html` 定义 `main/toc/footer` 等
+  **默认体**并用 `{{ template "main" . }}` 调用、各页面模板以同名 define **覆盖**
+  （hugo-book：54 个 define、0 个 block；`main` 出现在 5 个文件里）。迁移器的处理：
+  - 扫描"多文件同名 define"→ 槽位集合，**不提取**（提取到同一路径会互相覆盖，
+    实测 `posts/list.html`、`term.html` 的列表体被 `book.html` 的正文体顶掉）
+  - 外壳（baseof.html）里的定义 → 就地 `capture __def_X`（默认体，且不再自 include）
+  - 页面模板里的定义 → 就地 `capture blk_X` 并随 `include "baseof.html" blk_X: blk_X` 回传
+  - 调用点 `{{ template "X" . }}` → 单动作 `{{ blk_X ?? __def_X }}`（覆盖优先、默认兜底；
+    多动作串会被 Wrap 再包一层 `{{ }}`，Scriban 当对象字面量而预检失败——实测踩过）
+
+  效果：hugo-book 的**结构相似度 20.1% → 99.6%**（内容全部回来），预检失败 3 → 0。
+  剩余阻塞：`_partials/docs/prev-next.html` 的 `{{ return $scratch.get "BookPages" }}`
+  迁移成 `__partial_ret_set "k" $scratch.get "BookPages"`——**内层调用未加括号**，
+  Scriban 把 `"BookPages"` 绑定到外层函数，存进通道的不是页面列表 →
+  调用点 `$pages.Next page` 报 "The function `$pages.Next` was not found"。
+  修法：`return <调用表达式>` 改写为 `__partial_ret_set "<key>" (<调用表达式>)`
 - `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
   （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
+- FixIt 的模块组件挂载（`_funcs/*`）与图标资源解析
 
 

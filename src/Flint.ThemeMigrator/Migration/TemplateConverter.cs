@@ -33,7 +33,9 @@ internal sealed partial class TemplateConverter(
     IReadOnlySet<string>? valueReturningPartials = null,
     string? selfPartialName = null,
     bool baseofAvailable = false,
-    bool selfNamedTemplateExtracted = false)
+    bool selfNamedTemplateExtracted = false,
+    IReadOnlySet<string>? slotNames = null,
+    bool isBaseTemplate = false)
 {
     private readonly ScribanConverter _expr =
         new(map, valueReturningPartials, selfPartialName, selfNamedTemplateExtracted);
@@ -81,8 +83,10 @@ internal sealed partial class TemplateConverter(
             }
         }
 
-        // 子模板块通过 include 命名参数传给 baseof（若有 define）
-        if (_definedBlocks.Count > 0)
+        // 子模板块通过 include 命名参数传给 baseof（若有 define）。
+        // 外壳（baseof.html）自身不 include 自己（否则自递归）：它的槽位默认体已就地
+        // capture 成 __def_X，由调用点的条件输出兜底
+        if (_definedBlocks.Count > 0 && !isBaseTemplate)
         {
             var pairs = string.Join(" ", _definedBlocks.Select(b => $"{b}: {b}"));
             sb.Append("\n{{ include \"baseof.html\" ").Append(pairs).Append(" }}\n");
@@ -91,7 +95,7 @@ internal sealed partial class TemplateConverter(
         // list.html 全部内容只是 `{{ define "dummy" }}{{ end }}`——define 被提取为
         // 独立 partial 后本文件变空，但 Hugo 仍会渲染 baseof 骨架。不补 include 时
         // 整站每页都是空文件（hugo-book 实测：14 页合计 94 字节）
-        else if (baseofAvailable && sb.ToString().Trim().Length == 0)
+        else if (baseofAvailable && !isBaseTemplate && sb.ToString().Trim().Length == 0)
         {
             sb.Append("{{ include \"baseof.html\" }}\n");
         }
@@ -312,6 +316,16 @@ internal sealed partial class TemplateConverter(
         }
     }
 
+    /// <summary>
+    /// 记下槽位覆盖（页面模板里的同名 define）：捕获为 <c>blk_X</c> 并登记，
+    /// 由文件末尾的 <c>include "baseof.html" blk_X: blk_X</c> 命名参数回传外壳
+    /// </summary>
+    private string AddSlotOverride(string name, string trimL, string trimR)
+    {
+        _definedBlocks.Add("blk_" + SanitizeIdent(name));
+        return Wrap("capture blk_" + SanitizeIdent(name), trimL, trimR);
+    }
+
     private string ConvertKeyword(KeywordBody kb, List<string> scope, string trimL, string trimR)
     {
         switch (kb.Name)
@@ -414,6 +428,17 @@ internal sealed partial class TemplateConverter(
                     return Wrap($"##TODO-HUGO(内联partial定义): define \"{name}\"## }}}}{{{{ if false", trimL, trimR);
                 }
                 _blockStack.Add(("define", null));
+                // 槽位命名模板（多文件同名 define，hugo-book 类）：外壳里的定义是**默认体**
+                //（capture __def_X，不作为块的提供者、也不触发自 include），页面模板里的
+                // 定义是**覆盖**（capture blk_X，随 include 的命名参数回传外壳）。
+                // 两者都就地 capture——提取到同一 partial 会互相覆盖（实测内容丢失）
+                if (slotNames is not null && slotNames.Contains(name))
+                {
+                    return isBaseTemplate
+                        ? Wrap("capture __def_" + SanitizeIdent(name), trimL, trimR)
+                        : AddSlotOverride(name, trimL, trimR);
+                }
+
                 _definedBlocks.Add("blk_" + SanitizeIdent(name));
                 // 块体用 `capture`（立即求值）而非 `func`（延迟求值）。
                 // 曾试产 `func` 以对齐 Hugo 的求值顺序（baseof 外层先跑、块体在使用点求值），
@@ -450,6 +475,20 @@ internal sealed partial class TemplateConverter(
                 var ctx = kb.Pipeline is { Commands.Count: > 0 }
                     ? ConvertPipelineText(kb.Pipeline, scope)
                     : null;
+                // 槽位调用（hugo-book 类的外壳：`{{ template "main" . }}`）：
+                // 覆盖优先（页面模板的 capture blk_X 随 include 命名参数传进来）、
+                // 默认兜底（外壳自己的 capture __def_X）。CTX 被忽略——槽位体在其
+                // 定义文件的作用域里 capture，hugo-book 的调用点传的都是当前页 `.`，
+                // 两者一致；若外壳传了别的上下文，该形态应改用单定义命名模板（走 partial + CTX）
+                if (slotNames is not null && slotNames.Contains(name))
+                {
+                    // 单动作输出（`??` 空合并）：覆盖优先、外壳默认兜底。
+                    // 不能输出 `{{ if blk_X }}...{{ end }}` 多动作串——Wrap 会再包一层
+                    // `{{ }}`，嵌套动作被 Scriban 当对象字面量而预检失败（实测 3 处）
+                    var ident = SanitizeIdent(name);
+                    return Wrap($"blk_{ident} ?? __def_{ident}", trimL, trimR);
+                }
+
                 if (isBuiltin || name.Contains('/', StringComparison.Ordinal))
                 {
                     return Wrap($"include \"{name}\"", trimL, trimR);
