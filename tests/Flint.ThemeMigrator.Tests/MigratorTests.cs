@@ -660,12 +660,32 @@ public sealed class PipeAndParserRegressionTests
     }
 
     [Fact]
+    public void if下len条件显式化为数值比较()
+    {
+        // Hugo 的 `if len X` 判"非空"；Scriban 里数字 0 为**真**（探针实测
+        // `{{ if 0 }}` = 真、`{{ if "" }}` = 真），故整段条件是 len X 时
+        // 必须显式写成 (len X) > 0，否则空集合分支照样进入
+        //（FixIt 的 `{{ if len $errors }}` 误报 errorf 即此因）
+        var bare = Convert("{{ if len $pages }}yes{{ end }}");
+        Assert.Contains("if (len $pages) > 0", bare, StringComparison.Ordinal);
+        // else if 同规则
+        var elseIf = Convert("{{ if $x }}a{{ else if len $y }}b{{ end }}");
+        Assert.Contains("else if (len $y) > 0", elseIf, StringComparison.Ordinal);
+        // 非 len 条件不得被改写
+        var other = Convert("{{ if $pages }}yes{{ end }}");
+        Assert.Contains("if $pages", other, StringComparison.Ordinal);
+        Assert.DoesNotContain("> 0", other, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 非管道default重排参数顺序()
     {
         // Hugo 的 default 是 `default DEFAULT GIVEN`，而 Flint 侧按 Scriban 语义取首参
-        //（管道注入位），故非管道形态需重排为 (GIVEN, DEFAULT)
+        //（管道注入位），故非管道形态需重排为 (GIVEN, DEFAULT)。
+        // 源模板里的 `page` 是**全局变量**（Hugo 语义），迁移后写作引擎的 __page
+        //（点号形态 `.` 才映射为 page 关键字），故断言用 __page
         var nonPiped = Convert("{{ default \"x\" page.title }}");
-        Assert.Contains("default page?.title \"x\"", nonPiped, StringComparison.Ordinal);
+        Assert.Contains("default __page?.title \"x\"", nonPiped, StringComparison.Ordinal);
         // 管道形态已是 (左值, 默认值)，不得重排
         var piped = Convert("{{ page.title | default \"x\" }}");
         Assert.Contains("default \"x\"", piped, StringComparison.Ordinal);

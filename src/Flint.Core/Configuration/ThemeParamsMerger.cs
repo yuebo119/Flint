@@ -42,7 +42,18 @@ public static class ThemeParamsMerger
                 }
             }
 
-            // ② config/_default/params.{toml,yaml,json} 顶层（Hugo 标准形态，优先于旧式）
+            // ② 主题根 config.toml/hugo.toml 的 [params]（Hugo 的主题配置文件形态；
+            //    优先级高于 theme.toml、低于 config/_default/params.*）。
+            //    缺这一层时主题默认值全部丢失：FixIt 的 hugo.toml 有 [params.author]，
+            //    Hugo 侧合并得到 map（校验通过），Flint 侧 site.Params.author 为空 →
+            //    主题自身的 `reflect.IsMap site.Params.author` 校验失败报 46 处错误
+            var themeConfigParams = ReadThemeRootConfigParams(themeRoot);
+            if (themeConfigParams is not null)
+            {
+                layered = DeepMerge(themeConfigParams, layered);
+            }
+
+            // ③ config/_default/params.{toml,yaml,json} 顶层（Hugo 标准形态，最高优先）
             var configParams = ReadThemeConfigSection(themeRoot, "params");
             if (configParams is not null)
             {
@@ -57,6 +68,40 @@ public static class ThemeParamsMerger
 
         var merged = DeepMerge(ToMutable(config.Params), layered);
         return RebuildWithParams(config, merged);
+    }
+
+    /// <summary>
+    /// 读取主题根 <c>hugo.toml</c>/<c>config.toml</c> 的 <c>[params]</c> 段
+    /// （Hugo 主题配置文件形态；主题组件可配置 params/menus/outputFormats/mediaTypes）。
+    /// 该段不是表时返回 null
+    /// </summary>
+    internal static Dictionary<string, object>? ReadThemeRootConfigParams(string themeRoot)
+    {
+        foreach (var name in new[] { "hugo.toml", "config.toml" })
+        {
+            var file = Path.Combine(themeRoot, name);
+            if (!File.Exists(file))
+            {
+                continue;
+            }
+
+            try
+            {
+                var table = TryReadTomlTable(file);
+                if (table is not null && table.TryGetValue("params", out var raw) && raw is TomlTable paramsTable)
+                {
+                    return ToPlainDictionary(paramsTable);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or Tomlyn.TomlException
+                or InvalidOperationException)
+            {
+                // 主题配置解析失败不阻断构建（与 theme.toml 合并一致）
+                Console.Error.WriteLine($"[警告] 主题配置解析失败，已跳过: {file} — {ex.Message}");
+            }
+        }
+
+        return null;
     }
 
     /// <summary>

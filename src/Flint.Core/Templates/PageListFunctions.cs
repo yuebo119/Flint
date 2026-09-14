@@ -59,6 +59,19 @@ public abstract class PageListFunctionBase : IScriptCustomFunction
         return arr;
     }
 
+    /// <summary>
+    /// 结果转**页面序列对象**（保留 Hugo Pages 方法族，与 <c>.Pages</c> 同型）。
+    /// 排序/分组/截取类方法的返回值用这个而非裸数组：Hugo 里页面集合的派生
+    /// 仍是页面集合，主题会在其上继续调用（<c>.ByLastmod.Reverse</c>、
+    /// <c>$group.Pages.ByDate</c>）；裸数组上这些成员不存在，
+    /// 在成员链中静默变成 null（FixIt RSS 实测）
+    /// </summary>
+    protected static object ToPageSequence(IEnumerable<FlintPageContext> pages)
+    {
+        var list = pages as IReadOnlyList<FlintPageContext> ?? pages.ToList();
+        return ScribanTemplateRenderer.SharedPageSequence(list);
+    }
+
     /// <summary>从 ScriptObject 还原 PageContext（供 Related 的入参归一）</summary>
     protected static FlintPageContext? ToPageContext(object? value) =>
         value switch
@@ -69,12 +82,12 @@ public abstract class PageListFunctionBase : IScriptCustomFunction
         };
 }
 
-/// <summary>按日期倒序（Hugo ByDate：新→旧）</summary>
+/// <summary>按日期升序（Hugo ByDate：旧→新，要新在前用 .Reverse）</summary>
 public sealed class PagesByDateFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.OrderByDescending(p => p.Date));
+        ToPageSequence(pages.OrderBy(p => p.Date));
 }
 
 /// <summary>按标题（忽略大小写、数字感知，Hugo 语义）</summary>
@@ -82,7 +95,7 @@ public sealed class PagesByTitleFunction(IReadOnlyList<FlintPageContext> pages) 
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.OrderBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
+        ToPageSequence(pages.OrderBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>按权重升序（Hugo ByWeight）</summary>
@@ -90,7 +103,7 @@ public sealed class PagesByWeightFunction(IReadOnlyList<FlintPageContext> pages)
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.OrderBy(p => p.Weight).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
+        ToPageSequence(pages.OrderBy(p => p.Weight).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>按内容长度降序（Hugo ByLength）</summary>
@@ -98,15 +111,15 @@ public sealed class PagesByLengthFunction(IReadOnlyList<FlintPageContext> pages)
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.OrderByDescending(p => p.Content.Length));
+        ToPageSequence(pages.OrderByDescending(p => p.Content.Length));
 }
 
-/// <summary>按最后修改倒序（Hugo ByLastmod）</summary>
+/// <summary>按最后修改升序（Hugo ByLastmod：旧→新，要新在前用 .Reverse）</summary>
 public sealed class PagesByLastmodFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.OrderByDescending(p => p.LastMod ?? p.Date));
+        ToPageSequence(pages.OrderBy(p => p.LastMod ?? p.Date));
 }
 
 /// <summary>按指定参数排序（Hugo ByParam NAME）</summary>
@@ -118,7 +131,7 @@ public sealed class PagesByParamFunction(IReadOnlyList<FlintPageContext> pages) 
         ScriptArray arguments, ScriptBlockStatement? blockStatement)
     {
         var key = arguments.Count > 0 ? arguments[0]?.ToString() ?? "" : "";
-        return ToArray(pages.OrderBy(p => ParamSortKey(p, key), StringComparer.OrdinalIgnoreCase));
+        return ToPageSequence(pages.OrderBy(p => ParamSortKey(p, key), StringComparer.OrdinalIgnoreCase));
     }
 
     private static string ParamSortKey(FlintPageContext p, string key) =>
@@ -159,7 +172,7 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
             }
         }
 
-        return ToArray(scored
+        return ToPageSequence(scored
             .OrderByDescending(x => x.Score)
             .ThenByDescending(x => x.Page.Date)
             .Select(x => x.Page));
@@ -251,7 +264,7 @@ public sealed class PagesReverseFunction(IReadOnlyList<FlintPageContext> pages) 
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToArray(pages.Reverse());
+        ToPageSequence(pages.Reverse());
 }
 
 /// <summary>取前 N（Hugo Limit N）</summary>
@@ -264,7 +277,7 @@ public sealed class PagesLimitFunction(IReadOnlyList<FlintPageContext> pages) : 
     {
         var n = arguments.Count > 0 && int.TryParse(arguments[0]?.ToString(),
             NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : 0;
-        return ToArray(pages.Take(Math.Max(0, n)));
+        return ToPageSequence(pages.Take(Math.Max(0, n)));
     }
 }
 
@@ -290,8 +303,8 @@ public sealed class PagesGroupByFunction(IReadOnlyList<FlintPageContext> pages) 
             {
                 ["Key"] = g.Key,
                 ["key"] = g.Key,
-                ["Pages"] = ToArray(g),
-                ["pages"] = ToArray(g)
+                ["Pages"] = ToPageSequence(g),
+                ["pages"] = ToPageSequence(g)
             };
             arr.Add(o);
         }
@@ -329,8 +342,8 @@ public sealed class PagesGroupByDateFunction(IReadOnlyList<FlintPageContext> pag
             {
                 ["Key"] = g.Key,
                 ["key"] = g.Key,
-                ["Pages"] = ToArray(g),
-                ["pages"] = ToArray(g)
+                ["Pages"] = ToPageSequence(g),
+                ["pages"] = ToPageSequence(g)
             };
             arr.Add(o);
         }

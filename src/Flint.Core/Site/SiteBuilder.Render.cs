@@ -215,13 +215,19 @@ public sealed partial class SiteBuilder
             scribanRenderer.Translations = translations ?? new Dictionary<string, string>();
         }
 
+        // 常规页 = Kind "page"（Hugo 语义：排除 home/section/taxonomy/term）。
+        // 旧判据 `Type != "section"` 只挡住 section，首页（kind=home）混进集合——
+        // `{{ range .Site.RegularPages }}` 会多出首页（实测：探测站 4 篇内容 +
+        // 首页得 5 条，Hugo v0.166 同站点为 4 条）
+        var regularPages = pages.Where(p => p.Kind == "page").ToList();
+
         return new SiteContext
         {
             Title = config.Title,
             BaseURL = config.BaseURL,
             Language = config.LanguageCode,
             Pages = pages,
-            RegularPages = pages.Where(p => p.Type != "section").ToList(),
+            RegularPages = regularPages,
             Taxonomies = taxonomies,
             Menus = menuBuilder.Build(),
             Config = config,
@@ -233,8 +239,8 @@ public sealed partial class SiteBuilder
             IsMultiLingual = false,
             Languages = [config.LanguageCode],
             Translations = translations ?? new Dictionary<string, string>(),
-            PaginatorPages = pages.Where(p => p.Type != "section").Take(Math.Max(1, config.Paginate)).ToList(),
-            PaginatorTotalPages = Math.Max(1, (int)Math.Ceiling(pages.Count(p => p.Type != "section") / (double)Math.Max(1, config.Paginate))),
+            PaginatorPages = regularPages.Take(Math.Max(1, config.Paginate)).ToList(),
+            PaginatorTotalPages = Math.Max(1, (int)Math.Ceiling(regularPages.Count / (double)Math.Max(1, config.Paginate))),
             PaginatorPageNumber = 1,
         };
     }

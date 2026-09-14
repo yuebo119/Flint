@@ -1590,6 +1590,24 @@ public class TemplateRendererIntegrationTests : IDisposable
     }
 
     /// <summary>
+    /// 测试编码函数 - transform.XMLEscape（Hugo v0.166 实测语义：实体转义 + 丢弃非法字符）
+    /// </summary>
+    [Fact]
+    public async Task RenderAsync_EncodingFunction_TransformXmlEscape_ShouldEscapeAndDropInvalid()
+    {
+        // Arrange：`"`→`&#34;`、`&`→`&amp;`、`<`→`&lt;`、
+        // U+0001（非法 XML 字符）**丢弃**
+        CreateTemplate("single", "{{ transform.XMLEscape 'a\u0001b<&\"' }}");
+        var context = CreateTemplateContext();
+
+        // Act
+        var result = await _renderer.RenderAsync("single", context);
+
+        // Assert
+        result.Trim().Should().Be("ab&lt;&amp;&#34;");
+    }
+
+    /// <summary>
     /// 测试编码函数 - md5
     /// </summary>
     [Fact]

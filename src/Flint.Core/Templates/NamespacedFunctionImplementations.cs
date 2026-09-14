@@ -150,9 +150,12 @@ public sealed partial class BuiltinTemplateFunctions
             return string.IsNullOrEmpty(chars) ? text : text.Trim(chars.ToCharArray());
         });
 
-        // urls.RelLangURL / AbsLangURL：带语言前缀的 URL（单语言站点等价 relURL/absURL）
-        Add("rel_lang_url", (string? s2) => s2 ?? "");
-        Add("abs_lang_url", (string? s2) => s2 ?? "");
+        // urls.RelLangURL / AbsLangURL：带语言前缀的 URL（单语言站点等价 relURL/absURL，
+        // Hugo 的语言前缀在 hreflang 阶段追加）。旧实现是**恒等桩** →
+        // `relLangURL "x1"` 返回 "x1" 而 Hugo 返回 "/x1"，与走真实现的 `relURL`
+        // 不一致（apply 探针实测：`apply (slice "x1") "relLangURL" "."` 应为 /x1）
+        Add("rel_lang_url", (string? s2) => RelUrl(s2));
+        Add("abs_lang_url", (string? s2) => AbsUrl(s2));
 
         // transform.Unmarshal：把 YAML/JSON/TOML 字符串解析为对象/数组
         // （Hugo 主题用它读内联配置；LoveIt 实测）

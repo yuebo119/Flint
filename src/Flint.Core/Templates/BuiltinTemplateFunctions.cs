@@ -877,60 +877,198 @@ public sealed partial class BuiltinTemplateFunctions
             return ContainsIn(a, b);
         });
 
-        // apply - 应用函数到每个元素
-        obj.Import("apply", (IEnumerable<object>? collection, Func<object, object>? func) =>
+        // apply - Hugo 语义：`apply SEQ FUNC_NAME [ARGS...]`。目标函数以**名字字符串**
+        // 给出，参数里的 "." 是元素占位（全部替换；**无占位时元素不传入**——
+        // Hugo v0.166 实测 `apply (slice "a" "b") "upper" "x"` → X,X，
+        // `apply (slice "a" "b") "replace" "." "a" "z"` → z,b）。
+        // 旧实现形参是 Func<object,object> → 主题传字符串时 Scriban 绑定直接抛
+        // "Unable to convert type `string` to `Func<Object, Object>`"
+        //（hugo-coder 的 _partials/header.html：
+        //  `apply (slice .URL) (.Params.urlFunc | default "relLangURL") "."`）。
+        // 用自定义函数对象（而非 lambda）是为了拿到 TemplateContext——被调函数
+        // 可能是 IScriptCustomFunction（页面集合方法族/命名空间函数），其 Invoke 需要它
+        obj.SetValue("apply", new ApplyFunction(obj), false);
+    }
+
+    /// <summary>
+    /// <c>apply</c>：把目标函数逐元素应用到集合（Hugo 语义，见注册处注释）
+    /// </summary>
+    private sealed class ApplyFunction(ScriptObject globals) : Scriban.Runtime.IScriptCustomFunction
+    {
+        public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
+            ScriptArray arguments, Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
-            if (collection == null || func == null)
-                return collection ?? Enumerable.Empty<object>();
-            return collection.Select(func);
-        });
+            if (arguments.Count == 0)
+            {
+                return null;
+            }
+
+            var collection = arguments[0];
+            if (arguments.Count < 2)
+            {
+                return collection;
+            }
+
+            var target = arguments[1];
+            var rest = new object?[Math.Max(0, arguments.Count - 2)];
+            for (var i = 0; i < rest.Length; i++)
+            {
+                rest[i] = arguments[i + 2];
+            }
+
+            return target switch
+            {
+                string name => MapApply(collection, item =>
+                    CallFunction(context, ResolveFunction(name), SubstitutePlaceholder(rest, item))),
+                // Scriban 风格：直接传可调用值（lambda / 自定义函数）
+                Scriban.Runtime.IScriptCustomFunction or Delegate =>
+                    MapApply(collection, item => CallFunction(context, target, [item])),
+                _ => collection
+            };
+        }
+
+        public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
+            Scriban.Syntax.ScriptNode? callerContext, ScriptArray arguments,
+            Scriban.Syntax.ScriptBlockStatement? blockStatement) =>
+            new(Invoke(context, callerContext, arguments, blockStatement));
+
+        public int RequiredParameterCount => 2;
+        public int ParameterCount => 2;
+        public Scriban.Runtime.ScriptVarParamKind VarParamKind => Scriban.Runtime.ScriptVarParamKind.Direct;
+        public Type ReturnType => typeof(object);
+        public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
+            new(typeof(object), index == 0 ? "seq" : "fn");
+        public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo => new(typeof(object), "result");
+
+        private Dictionary<string, string>? _nameIndex;
+
+        /// <summary>
+        /// 按名字取全局函数（找不到时报错，对齐 Hugo 的 fail-fast）。
+        /// 先用原名，再退化到"去下划线 + 小写"归一化比较——主题把函数名当**字符串**
+        /// 传给 apply（`default "relLangURL"`），转换器无从改写，故需要运行期归一化：
+        /// `relLangURL` → `rel_lang_url`、`htmlEscape` → `html_escape`、
+        /// `safeHTML` → `safe_html`（hugo-coder 实测）
+        /// </summary>
+        private object ResolveFunction(string name)
+        {
+            if (globals.TryGetValue(null, default, name, out var direct) && direct is not null)
+            {
+                return direct;
+            }
+
+            _nameIndex ??= BuildNameIndex();
+            if (_nameIndex.TryGetValue(NormalizeName(name), out var actual) &&
+                globals.TryGetValue(null, default, actual, out var aliased) && aliased is not null)
+            {
+                return aliased;
+            }
+
+            throw new Scriban.Syntax.ScriptRuntimeException(default, $"apply: 函数 `{name}` 未找到");
+        }
+
+        private Dictionary<string, string> BuildNameIndex()
+        {
+            var index = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var key in globals.Keys)
+            {
+                var normalized = NormalizeName(key);
+                if (!index.ContainsKey(normalized))
+                {
+                    index[normalized] = key;
+                }
+            }
+            return index;
+        }
+
+        private static string NormalizeName(string name) =>
+            name.Replace("_", "", StringComparison.Ordinal).ToLowerInvariant();
+
+        /// <summary>参数里的 "." 替换成当前元素（Hugo 语义：全部替换）</summary>
+        private static object?[] SubstitutePlaceholder(object?[] args, object? item)
+        {
+            var replaced = new object?[args.Length];
+            for (var i = 0; i < args.Length; i++)
+            {
+                replaced[i] = args[i] is string s && s == "." ? item : args[i];
+            }
+            return replaced;
+        }
+
+        private static object? CallFunction(Scriban.TemplateContext context, object function, object?[] args)
+        {
+            var callArgs = new ScriptArray();
+            foreach (var arg in args)
+            {
+                callArgs.Add(arg);
+            }
+
+            return function switch
+            {
+                // 走 Scriban 自己的调用入口（而非直接 Invoke）：它负责形参绑定，
+                // 含 **params 形参展开**——直接 Invoke 时 `printf "格式" 值` 的值
+                // 到不了 params 数组（实测：apply 内 `printf "<%s>" .` 得 "<%s>"，
+                // 正是 string.Format 抛异常后的兜底返回值）
+                Scriban.Runtime.IScriptCustomFunction custom =>
+                    Scriban.Syntax.ScriptFunctionCall.Call(context, null, custom, callArgs),
+                // 委托形态：与 Import 同一条 Scriban 反射路径（IL2026/IL3050 已在本文件
+                // 顶部压制；委托都是本程序集显式引用的 lambda，linker 不裁剪）
+                Delegate d => Scriban.Syntax.ScriptFunctionCall.Call(context, null,
+                    Scriban.Runtime.DynamicCustomFunction.Create(d), callArgs),
+                _ => null
+            };
+        }
+
+        private static object MapApply(object? collection, Func<object?, object?> map)
+        {
+            if (collection is null)
+            {
+                return new ScriptArray();
+            }
+
+            if (collection is System.Collections.IEnumerable seq and not string)
+            {
+                var result = new ScriptArray();
+                foreach (var item in seq)
+                {
+                    result.Add(map(item));
+                }
+                return result;
+            }
+
+            return collection;
+        }
     }
 
     #endregion
 
     #region URL 函数 (10+)
 
+    /// <summary>相对 URL：前导 <c>/</c>，绝对 URL 原样返回（Hugo relURL 语义）</summary>
+    private static string RelUrl(string? path) =>
+        string.IsNullOrEmpty(path) ? "/"
+        : IsAbsoluteUrl(path) ? path
+        : "/" + path.TrimStart('/');
+
+    /// <summary>绝对 URL：拼到 baseURL（Hugo absURL 语义，baseURL 已含语言前缀时等价 AbsLangURL）</summary>
+    private string AbsUrl(string? path) =>
+        string.IsNullOrEmpty(path) ? _baseUrl
+        : IsAbsoluteUrl(path) ? path
+        : _baseUrl + "/" + path.TrimStart('/');
+
+    private static bool IsAbsoluteUrl(string path) =>
+        path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+
     private void RegisterUrlFunctions(ScriptObject obj)
     {
-        // absURL - 绝对 URL
-        obj.Import("absURL", (string? path) =>
-        {
-            if (string.IsNullOrEmpty(path))
-                return _baseUrl;
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                return path;
-            return _baseUrl + "/" + path.TrimStart('/');
-        });
-        obj.Import("abs_url", (string? path) =>
-        {
-            if (string.IsNullOrEmpty(path))
-                return _baseUrl;
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                return path;
-            return _baseUrl + "/" + path.TrimStart('/');
-        });
+        // absURL - 绝对 URL（与 urls.AbsLangURL 共用 AbsUrl：单语言站点等价，
+        // 两条路径此前是各写一遍的重复实现）
+        obj.Import("absURL", (string? path) => AbsUrl(path));
+        obj.Import("abs_url", (string? path) => AbsUrl(path));
 
-        // relURL - 相对 URL
-        obj.Import("relURL", (string? path) =>
-        {
-            if (string.IsNullOrEmpty(path))
-                return "/";
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                return path;
-            return "/" + path.TrimStart('/');
-        });
-        obj.Import("rel_url", (string? path) =>
-        {
-            if (string.IsNullOrEmpty(path))
-                return "/";
-            if (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                path.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                return path;
-            return "/" + path.TrimStart('/');
-        });
+        // relURL - 相对 URL（与 urls.RelLangURL 共用 RelUrl）
+        obj.Import("relURL", (string? path) => RelUrl(path));
+        obj.Import("rel_url", (string? path) => RelUrl(path));
 
         // safeURL - 安全 URL
         obj.Import("safeURL", (string? url) => url ?? "");
@@ -1121,6 +1259,15 @@ public sealed partial class BuiltinTemplateFunctions
             HttpUtility.HtmlDecode(s ?? ""));
         obj.Import("html_unescape", (string? s) =>
             HttpUtility.HtmlDecode(s ?? ""));
+
+        // transform.XMLEscape - XML 转义 + 丢弃非法 XML 字符
+        // （Hugo v0.166 实测：`&<>`→实体，`"`→`&#34;`、`'`→`&#39;`、
+        //  \t/\n/\r→`&#x9;`/`&#xA;`/`&#xD;`，非法字符（如 U+0001）**丢弃**而非替换；
+        //  全局 `xmlEscape` 在 v0.166 已移除，仅命名空间形态存在，此处注册全局
+        //  实现供 transform.XMLEscape 解析——命名空间表按全局名查找实现。
+        //  FixIt 的 rss.xml `transform.XMLEscape .Summary` 实测命中）
+        obj.Import("xml_escape", (string? s) => XmlEscape(s ?? ""));
+        obj.Import("xmlEscape", (string? s) => XmlEscape(s ?? ""));
 
         // jsonify - JSON 序列化
         // jsonify 序列化的是运行时任意对象（模板变量），类型无法静态已知，
@@ -1793,6 +1940,18 @@ public sealed partial class BuiltinTemplateFunctions
             return idx >= 0 && idx < text.Length ? text[idx].ToString() : null;
         }
 
+        // 列表按整数下标取值，**必须先于**下面的字典/成员分支：页面集合
+        // LazyPageList 同时是 ScriptObject 与 System.Collections.IDictionary
+        //（Scriban 成员字典视图），走字典分支时 `index $pages 0` 恒为 null
+        //（实测：FixIt RSS 的 `(index $pages.ByLastmod.Reverse 0).LastMod`
+        //  以及 `(index $pages 0)`；同一对象的 `$pages[0]` 语法本就可取，
+        //  两条取值路径此前不一致）。字符串键仍走字典/成员查找
+        //（`index $pages "len"` = 5 依赖后者）
+        if (target is IList<ScriptObject> listTarget && TryKeyAsIndex(key, out var listIndex))
+        {
+            return listIndex >= 0 && listIndex < listTarget.Count ? listTarget[listIndex] : null;
+        }
+
         if (target is System.Collections.IDictionary dict)
         {
             return dict.Contains(key?.ToString() ?? "") ? dict[key?.ToString() ?? ""] : null;
@@ -1812,6 +1971,72 @@ public sealed partial class BuiltinTemplateFunctions
 
         return null;
     }
+
+    /// <summary>
+    /// index 的键是否为整数下标：整数/长整数/整数字符串都算；
+    /// 其他类型（如成员名 <c>"count"</c>）不算——它们走字典/成员查找分支
+    /// </summary>
+    private static bool TryKeyAsIndex(object? key, out int index)
+    {
+        switch (key)
+        {
+            case int i:
+                index = i;
+                return true;
+            case long l when l is >= int.MinValue and <= int.MaxValue:
+                index = (int)l;
+                return true;
+            case string s when int.TryParse(s, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed):
+                index = parsed;
+                return true;
+            default:
+                index = 0;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// XML 文本转义（transform.XMLEscape）：转义 <c>&amp; &lt; &gt; " '</c> 与
+    /// 制表/换行/回车，**丢弃**其余非法 XML 字符（对齐 Hugo v0.166 实测行为，
+    /// 非法区间见 XML 1.0 字符集）
+    /// </summary>
+    private static string XmlEscape(string text)
+    {
+        if (text.Length == 0)
+        {
+            return text;
+        }
+
+        var sb = new StringBuilder(text.Length + 16);
+        foreach (var ch in text)
+        {
+            switch (ch)
+            {
+                case '&': sb.Append("&amp;"); break;
+                case '<': sb.Append("&lt;"); break;
+                case '>': sb.Append("&gt;"); break;
+                case '"': sb.Append("&#34;"); break;
+                case '\'': sb.Append("&#39;"); break;
+                case '\t': sb.Append("&#x9;"); break;
+                case '\n': sb.Append("&#xA;"); break;
+                case '\r': sb.Append("&#xD;"); break;
+                default:
+                    if (IsValidXmlChar(ch))
+                    {
+                        sb.Append(ch);
+                    }
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>XML 1.0 合法字符（合法代理项保留——成对出现即辅助平面字符）</summary>
+    private static bool IsValidXmlChar(char ch) =>
+        ch == '\t' || ch == '\n' || ch == '\r' ||
+        (ch >= ' ' && ch <= '\uD7FF') ||
+        (ch >= '\uE000') || char.IsSurrogate(ch);
 
     /// <summary>
     /// slice：Flint 序列切片（<c>slice SEQ START [LEN]</c>）与 Hugo 可变参数

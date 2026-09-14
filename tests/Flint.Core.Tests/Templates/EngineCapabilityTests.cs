@@ -285,13 +285,14 @@ public sealed class PagesRelatedTests
         var none = Page("none", ["z"], d.AddDays(30));        // 0
 
         var f = new PagesRelatedFunction([target, high, low, none]);
+        // 结果形态 = 页面序列对象（与 .Pages 同型，IList<ScriptObject>），
+        // 故 .Related 之后仍可继续调用集合方法族
         var arr = f.Invoke(new Scriban.TemplateContext(), null,
             new Scriban.Runtime.ScriptArray { target.ToScriptObjectForTest() }, null)
-            as Scriban.Runtime.ScriptArray;
+            as System.Collections.Generic.IList<Scriban.Runtime.ScriptObject>;
 
         Assert.NotNull(arr);
-        var titles = arr!.Cast<Scriban.Runtime.ScriptObject>()
-            .Select(o => o["title"]?.ToString()).ToList();
+        var titles = arr!.Select(o => o["title"]?.ToString()).ToList();
         Assert.Equal(["high", "low"], titles);  // none 得 0 分落选
     }
 
@@ -306,10 +307,10 @@ public sealed class PagesRelatedTests
         var f = new PagesRelatedFunction([target, sameDay, otherDay]);
         var arr = f.Invoke(new Scriban.TemplateContext(), null,
             new Scriban.Runtime.ScriptArray { target.ToScriptObjectForTest() }, null)
-            as Scriban.Runtime.ScriptArray;
+            as System.Collections.Generic.IList<Scriban.Runtime.ScriptObject>;
 
         Assert.Single(arr!);
-        Assert.Equal("sameday", ((Scriban.Runtime.ScriptObject)arr![0]!)["title"]);
+        Assert.Equal("sameday", arr![0]["title"]);
     }
 }
 

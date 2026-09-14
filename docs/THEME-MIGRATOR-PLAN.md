@@ -2283,3 +2283,150 @@ Scriban 对"nil 安全链 + 实参"的支持是**有限**的，探针实测边�
 **剩余 1 处（fixit 的 RSS）**：需要（a）引擎的链中透明，或（b）转换器在链中间段
 命中集合方法名时产出显式调用（`X.by_lastmod()`——探针已确认该形态可调用 ✔）。
 方案 (b) 影响面小、可作为下一轮首选。
+
+> **本节结论已被下一节修正**：C 的判据错了（不是"调用时机"而是"返回值形态"），
+> 据此设计的转换器改写方案已撤回。见第三十四节 A/B。
+
+---
+
+## 三十四、第十三批：`index` 列表下标、集合方法返回形态与三处 Hugo 语义对齐（2026-09-14 第十九轮）
+
+### A. 根因定位：`index $pages 0` 恒 null（引擎，已验证）
+
+上一节把 fixit 的 RSS 障碍归为"链中间段不被调用"。本轮先用探针把判据拆开：
+
+| 探针 | 结果 |
+|---|---|
+| `site.regular_pages.size / .count / .len / .length` | 5 / 5 / 5 / 5（LazyPageList） |
+| `site.regular_pages.by_lastmod.size / .count` | 5 / 空（**不是** LazyPageList） |
+| `slice (seq 1 3) 0` 的 `.size / .count` | 3 / 空（裸数组指纹） |
+| `index site.regular_pages 0` 与 `index site.regular_pages "0"` | 都是 null |
+| `index site.regular_pages "len"` / `"count"` | 5 / 5 |
+| `site.regular_pages[2].title` | C（**同对象的另一条取值路径可用**） |
+| `index (slice (seq 1 3) 0) 1` | 2（裸数组下标可用） |
+
+五个探针都无法定位分支归属，改为**引擎内一行插桩**（`FLINT_TRACE_INDEX` 环境变量
+门控，定位后已删除）打印 `target` 类型与三个形态判定，立刻确定：
+
+```
+[idx] target=LazyPageList key=Int32:0 isDict=True isSO=True isIListSO=True
+```
+
+**根因**：Scriban 的 `ScriptObject` 同时实现非泛型 `System.Collections.IDictionary`
+（成员字典视图），而 `SeqIndex` 的分支顺序是 `字符串 → IDictionary → ScriptObject →
+IEnumerable`——页面集合在第二个分支就被截住，`dict.Contains("0")` 为 false → null，
+`LazyPageList.TryGetValue` 里既有的数字下标分支**永远不会被走到**。
+
+**修法（引擎）**：在字典分支**之前**插入"列表 + 整数键"分支
+（`target is IList<ScriptObject> && TryKeyAsIndex(key, ...)`；`TryKeyAsIndex` 接受
+`int`/`long`/整数字符串，`"len"` 这类成员名键仍走字典/成员查找）。修后
+`index $pages 0` = 首页、`index $pages 2` = C，字符串键行为不变。
+
+同一对象的两条取值路径（`[i]` 与 `index`）从此一致——此前的差异是
+"下标语法可用、`index` 函数恒 null"。
+
+### B. 集合方法的返回形态：`ToPageSequence`（引擎，已验证）
+
+修正上一节 C 的判据。`site.regular_pages.by_lastmod.size` = 5 与裸数组指纹一致 →
+说明 Scriban **确实会**自动调用零必填参数的函数成员（`PagesByLastmodFunction`），
+真正的问题是它的返回值是裸 `ScriptArray`——上面没有 `reverse`/`bydate`/`groupbydate`
+成员，于是 `.ByLastmod.Reverse` 取到 null。
+
+**修法**：`PageListFunctions.cs` 里排序/分组/截取族（`ByDate`/`ByTitle`/`ByWeight`/
+`ByLength`/`ByLastmod`/`ByParam`/`Related`/`Reverse`/`Limit`、`GroupBy` 与
+`GroupByDate` 的内层 `Pages`）改用新的 `ToPageSequence()`，即渲染器的
+`SharedPageSequence()`（与 `.Pages`/`site.regular_pages` 同型）。这与全局函数侧
+早已采用的 `PageSeqResult` 是同一原则：**页面集合的派生仍是页面集合**。
+
+修后实测：`X.by_lastmod.reverse | len` 0 → 5；
+`(index $pages.ByLastmod.Reverse 0)` 由 null → 页面（fixit RSS 的最后一个错误消失）。
+
+**转换器侧**：上一轮为本障碍写的"链中间段 → 全局函数 + 显式调用"改写**已撤回**——
+引擎修好后自然链形态即可用，转换器保持最小（该改写只覆盖 `FieldExpr` 路径，
+对 fixit 的变量基链本就无效，留着是净负担）。
+
+### C. 三处 Hugo 语义对齐（Hugo v0.166 实测对照，已验证）
+
+同一内容集（4 篇文章 + 首页，distinct date/lastmod），Hugo 与 Flint 逐项对照：
+
+| 项 | Hugo v0.166 实测 | Flint 修前 | Flint 修后 |
+|---|---|---|---|
+| `.Site.RegularPages` | 4 条（仅 kind=page，不含首页） | 5 条（判据 `Type != "section"` 放过 kind=home 的首页） | 4 条 |
+| `.ByDate` / `.ByLastmod` 顺序 | 升序（旧→新；`[…].Reverse` 才是新→旧） | 降序 | 升序 |
+| `transform.XMLEscape` | 未实现（fixit 的 rss.xml 报函数未找到） | 实体转义 + 丢弃非法 XML 字符 | 已实现 |
+
+- `RegularPages` 判据改为 `Kind == "page"`（home/section/taxonomy/term 全部排除）；
+  站点级分页回退（`PaginatorPages`/`PaginatorTotalPages`）同用该集合。
+- `ByDate`/`ByLastmod` 改升序：两处 `OrderByDescending` → `OrderBy`。
+  `ByWeight`/`ByTitle`（升序）、`ByLength`（降序）本已正确。
+- `transform.XMLEscape`：新增全局 `xml_escape`/`xmlEscape`（命名空间表按全局名
+  查找实现，故必须有全局侧），语义按 Hugo 实测——`&`/`<`/`>`/`"`/`'` →
+  `&amp;`/`&lt;`/`&gt;`/`&#34;`/`&#39;`，`\t`/`\n`/`\r` → `&#x9;`/`&#xA;`/`&#xD;`，
+  非法 XML 字符（如 U+0001）**丢弃**而非替换。
+
+对照结果：同一组六项探针（页数、默认序、`.ByDate`、`.ByDate.Reverse`、
+`.ByLastmod`、`index …ByLastmod.Reverse 0`）Flint 与 Hugo **逐字一致**。
+
+### D. 追加三处修复（同轮，均有探针证据）
+
+| 项 | Hugo v0.166 实测 | Flint 修前 | 修后 |
+|---|---|---|---|
+| `apply SEQ "FUNC" ARGS` | 函数名是**字符串**，`"."` 为元素占位（无占位时元素不传入：`apply $s "upper" "x"` → X,X） | 形参是 `Func<object,object>` → 主题传字符串时 Scriban 绑定抛 "Unable to convert type `string` to `Func<Object, Object>`" | 自定义函数对象 `ApplyFunction`：名字解析 + 占位替换 |
+| `relLangURL`（命名空间 `urls.RelLangURL`） | `/x1`（相对 URL，带语言前缀） | **恒等桩**：`x1`（与走真实现的 `relURL` 不一致） | 复用 `RelUrl`/`AbsUrl`（与 `relURL`/`absURL` 同一实现） |
+| 主题根 `hugo.toml` 的 `[params]` | 合并为主题默认值（站点覆盖它） | 未读取 → FixIt 的 `[params.author]` 丢失，主题自校验报 46 处错误 | `ThemeParamsMerger` 增读主题根配置文件（优先级：`config/_default/params.*` > 主题 `hugo.toml` > `theme.toml`） |
+
+`apply` 实现要点（两处踩坑，均在代码注释留证）：名字查找需**归一化兜底**——
+主题把函数名当字符串传（`default "relLangURL"`），转换器无从改写，故按"去下划线 +
+小写"比较（`relLangURL` → `rel_lang_url`、`htmlEscape` → `html_escape`）；
+调用必须走 `ScriptFunctionCall.Call`（Scriban 自己的调用入口）而非直接 `Invoke`——
+直接调用时 `params` 形参不展开，`printf "<%s>" .` 拿到的是"格式串当返回值"的兜底结果。
+
+### E. `if` 的真值语义：窄修 + 引擎侧待办
+
+探针：`{{ if 0 }}` / `{{ if "" }}` / `{{ if [] }}` 在 Flint **全部为真**，Hugo 全为假
+（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
+`{{- if len $errors -}}`（`$errors` 为空数组）在 Hugo 不进入分支、在 Flint 进入 →
+`errorf` 触发 → 构建失败。
+
+影响面：`{{ if len X }}` 是 Hugo 主题的高频写法（"非空才渲染"），当前一律为真
+（多渲染空块，通常在输出层不致命，但分支语义与 Hugo 相反）。
+
+**本轮已做（转换器窄修）**：`TemplateConverter` 的 `if` / `else if` 条件若**整段**
+是 `len EXPR`，改写为 `(len EXPR) > 0`——与 Hugo 语义等价，影响面限于该形态。
+FixIt 的 deprecation 误报随之消失（46 → 0）。
+
+**未做（引擎侧，下一轮）**：`TemplateContext.ToBool` 是虚方法（Scriban 文档明示
+"Can be overridden"），可派生 Flint 上下文实现 Hugo 真值：`0`/`""`/空集合为假。
+风险点：**页面对象是 ScriptObject（可枚举）**，若按"空集合为假"处理会把页面/站点
+判为假 → 需以 `IFlintNonDataObject` 标记（第九节引入的不透明投影接口）显式豁免为真。
+复合条件（`and`/`or`/`not` 内嵌 `len`）的同类问题也在这一层解决。
+
+### F. FixIt 现状（剩余为组件级缺口，非本批修复项）
+
+配置/参数/真值三处修完后，FixIt 的错误从 46 处降到 2 类，且都属主题的**组件化特性**：
+
+| 诊断 | 根因 |
+|---|---|
+| `partial 未找到: _partials/_funcs/get-page-images` | FixIt 把功能拆成 Hugo **模块组件**（主题根的 `apps/`），`_funcs/*` 由 `[module] imports` 挂载；Flint 尚无模块挂载层，按空输出降级 |
+| `Icon src is missing:`（`plugin/icon.html` 的 errorf） | 图标资源解析走 `assets/`+资源管线，Flint 侧未命中；Hugo 侧命中故不报 |
+
+两者都在 Flint 的诊断里以 error 级记录 → 构建退出码非 0（Hugo 侧 exit 0）。
+放入"模块挂载 / 资源管线"专项，与真值语义一样属**特性级**而非本批的语义级修复。
+
+### G. 本轮教训
+
+1. **"未被调用"与"返回形态不对"要分开验证**：上一节把 `…bydate.reverse | len` = 0
+   读成"链中不调用"，实际是"调用了、但返回的裸数组没成员"。用 `.size` / `.count`
+   做**类型指纹**（LazyPageList 有 count、裸数组只有 size）即可一次分辨。
+2. **插桩优于穷举探针**：`index` 的形态判定在模板层不可观测，一行门控打印
+   （target 类型 + 三个 `is` 判定）比五个探针更快定位；用完即删，不留痕迹。
+3. **同对象的取值路径要塞一致**：`$pages[0]` 可用而 `index $pages 0` 恒 null
+   是"实现分支顺序"暴露给用户的形态，属于接口不一致而非模板作者的错。
+4. **判据要回 Hugo 复核**：`Type != "section"` 与"升序/降序"都是实现期的猜测，
+   用本机 Hugo v0.166 花两分钟即可证伪——本轮三处对齐全部来自这样的对照。
+5. **主题侧的错误信息可能是"配置装配问题"而非模板问题**：FixIt 的
+   `site.Params.author must be a map` 查了三层（引擎 params 投影 ✔、主题校验模板 ✔、
+   站点配置 ✔），最后是**平台侧**（矩阵脚本把 `Flint.toml` 在追加主题参数前复制）
+   与**主题默认值合并缺失**两个原因叠加——对齐 Hugo 的配置来源层级才能除根。
+
+
