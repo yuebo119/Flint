@@ -29,8 +29,8 @@ public sealed class PageTemplateCandidatesTests
             Section = "posts"
         });
 
-        // type 与 section 相同时重复级被去重
-        Assert.Equal(["posts/single", "single", "all"], Names(levels));
+        // type 与 section 相同时重复级被去重（page 等价名同样只出现一次）
+        Assert.Equal(["posts/single", "posts/page", "single", "page", "all"], Names(levels));
     }
 
     [Fact]
@@ -46,7 +46,11 @@ public sealed class PageTemplateCandidatesTests
         var names = Names(levels);
         // type 目录级先于 section 目录级（对齐 Hugo：type 在 section 之前）
         Assert.True(names.IndexOf("blog/single") < names.IndexOf("posts/single"));
-        Assert.Equal(["blog/single", "posts/single", "single", "all"], names);
+        // kind 等价名 `page`：Hugo v0.166 实测 layouts/page.html 可渲染普通页，
+        // 故每级 single 之后补同名 page（fixit 只有根级 page.html，缺这级会整站找不到模板）
+        Assert.Equal(
+            ["blog/single", "blog/page", "posts/single", "posts/page", "single", "page", "all"],
+            names);
     }
 
     [Fact]
@@ -60,7 +64,9 @@ public sealed class PageTemplateCandidatesTests
         });
 
         // layout 为"优先提示"：{section}/{layout} 先于 {section}/single
-        Assert.Equal(["posts/wide", "posts/single", "wide", "single", "all"], Names(levels));
+        Assert.Equal(
+            ["posts/wide", "posts/single", "posts/page", "wide", "single", "page", "all"],
+            Names(levels));
     }
 
     [Fact]
@@ -151,8 +157,8 @@ public sealed class PageTemplateCandidatesTests
     {
         var levels = PageTemplateCandidates.Build(new PageTemplateQuery { Kind = "page" });
 
-        // 根级内容页（Section 为空）只产出单页链
-        Assert.Equal(["single", "all"], Names(levels));
+        // 根级内容页（Section 为空）只产出单页链（含 kind 等价名 page）
+        Assert.Equal(["single", "page", "all"], Names(levels));
     }
 }
 

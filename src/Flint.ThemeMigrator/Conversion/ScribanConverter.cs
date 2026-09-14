@@ -77,7 +77,20 @@ internal sealed class ScribanConverter(
         "printf", "fmt.Printf",
         "errorf", "fmt.Errorf", "warnf", "fmt.Warnf",
         "erroridf", "fmt.Erroridf", "warnidf", "fmt.Warnidf",
-        "i18n", "lang.Translate"
+        "i18n", "lang.Translate",
+        // 正则/裁剪族（Hugo v0.166 管道形态实测确认"值在末位"）：
+        //   replaceRE PATTERN REPLACEMENT INPUT · findRE PATTERN INPUT [LIMIT] ·
+        //   findRESubmatch PATTERN INPUT [LIMIT] ·
+        //   strings.Trim/TrimLeft/TrimRight CUTSET STRING ·
+        //   strings.TrimPrefix PREFIX STRING · strings.TrimSuffix SUFFIX STRING
+        // 漏掉它们的后果：`$content | replaceRE "<table(.*?)>" …` 被拼成
+        // `replace_re $content …`，**页面正文落到模式位** →
+        // "Invalid pattern '<!-- end-chunk -->…'"（monochrome 实测 4 处）
+        "replaceRE", "replace_re",
+        "findRE", "find_re",
+        "findRESubmatch", "find_re_submatch",
+        "strings.Trim", "strings.TrimLeft", "strings.TrimRight",
+        "strings.TrimPrefix", "strings.TrimSuffix"
     };
 
     /// <summary>
@@ -239,7 +252,14 @@ internal sealed class ScribanConverter(
             // **首参**——直接沿用会变成 partial(X, "name")，模板名拿到一个字典
             //（LoveIt home.html 实测："文件名、目录名或卷标语法不正确:
             //  '...\layouts\{Content: "", Ruby: null, ...}'"）。
-            // 故此处显式改写为函数调用形态，把左值放回末位
+            // 故此处显式改写为函数调用形态，把左值放回末位。
+            // **同一"值在末位"家族**（Hugo v0.166 实测确认参数序）：
+            //   replaceRE PATTERN REPLACEMENT INPUT、findRE PATTERN INPUT [LIMIT]、
+            //   strings.Trim CUTSET STRING、strings.TrimPrefix PREFIX STRING、
+            //   strings.TrimSuffix SUFFIX STRING …
+            // 它们都比 Scriban 的管道少一个"值在首位"的假设，直接拼 `|` 会把
+            // **页面正文当成模式**：monochrome 的 `$content | replaceRE "<table(.*?)>" …`
+            // 实测报 "Invalid pattern '<!-- end-chunk -->…'"（正文被当正则）
             if (acc is not null && cmd.Operands.Count > 0
                 && cmd.Operands[0] is Parsing.IdentifierExpr pid2
                 && pid2.Name is "partial" or "partialCached" or "include" or "includeCached")
@@ -264,6 +284,7 @@ internal sealed class ScribanConverter(
                 acc = callRes.Text + " " + ParenthesizeIfNeeded(acc);
                 continue;
             }
+
 
             var r = ConvertCommand(cmd, scope, isPipeSegment: i > 0, resourceContext);
             if (r.Kind != ConversionKind.Equivalent)
