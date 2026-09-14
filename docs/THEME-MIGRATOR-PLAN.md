@@ -2518,3 +2518,41 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
   探测：`page.param "x" | default 3` 得到的不是"调用结果的兜底"，说明管道被解析进
   调用实参（`page.param ("x" | default 3)`）。这一条要修在转换器（对"调用结果参与管道"
   的形态补括号）或引擎（`param` 的缺失值语义），与 `.Type` 一起做专项
+---
+
+## 三十六、产物语义再对齐：内置 partial、Scratch 累加与「值在末位」族（2026-09-14 第二十一轮）
+
+### A. 本轮修复（均有 Hugo v0.166 实测或探针佐证）
+
+| # | 问题 | 证据 | 修法 |
+|---|---|---|---|
+| 1 | `hugo.Sites` 恒空数组 | `hugo.Sites.Default.Home.RelPermalink` 报 null 成员（hugo-book 的
+|   |  | links/home.html） | 新增惰性站点集合对象（`Default/First/Last/index 0` → 当前站点） |
+| 2 | 值返回型 partial 走文本通道 | `partialcached` 的调用点 `$pages.Next` 报 function not found | 值返回型一律 `partialValue`（含 partialCached） |
+| 3 | `Scratch.Add` 首次值包装成列表 | `$localData.Add "totalWordCount" .WordCount` 后 `div (list) 1000.0` 报“数学函数收到的参数值类型不接受” | 首次 Add **原样存入**（Hugo 实测：数字 5+7=12、字符串 a+b=ab、切片展平 [1 2 3]） |
+| 4 | `Store.Get` 取出的页面列表丢方法族 | `$pages.Next` / `$l.first` 取不到 | 取出时回包装成页面序列（覆盖 ScriptArray 与 IList） |
+| 5 | 管道 `X \| dict "K"` 键值颠倒 | `X \| dict "Some"` 直接沿用 Scriban 管道 → `dict X "Some"`（键值反） | `dict` 加入「值在末位」族（改写为 `dict "Some" X`） |
+| 6 | `index` 不在「值在末位」族 | `$index \| add -1 \| index $paginator.Pages` 参数颠倒 → null | 加入 `index`（改写为 `index $pages (add $index -1)`） |
+| 7 | 内置 partial `_funcs/get-page-images` 缺失 | FixIt 的 twitter-cards 报 partial 未找到 | 补内置实现（front matter `images` → 图片对象列表，走值通道） |
+| 8 | `.IsAncestor`/`.IsDescendant` 未实现 | hugo-book 的 menu-filetree 报 function not found | 新增页面方法（按 URL 段判定；home 是所有非 home 页的祖先） |
+| 9 | 页面对象 `.GetPage` 只查常规页 | `.GetPage "docs"` 找不到 section（主题随后 errorf） | 渲染入口登记全量站点页面，`GetPage` 调用时读取 |
+| 10 | 站点级分页器缺 `pagers` 等成员 | 内置 pagination 模板报 “Object `paginator.pagers` is null” | 与页面级同型（复用 `BuildPaginatorObjectCore`） |
+| 11 | 裸 `.Page` 在 dict 上下文语义错 | `(slice .Page)` 收进绑定对象自身 → 元素不是页面 | 改为 `(page.page ?? page)`（dict 有 Page 键取它，否则页面自身） |
+
+### B. 本轮试改后**回退**的项（各带决定性问题）
+
+- **`section.html` 入候选链**：加上后 fixit 的 section 页正确改用主题模板（95 → 2000+ 字节，
+  fixit 构建转为通过），但 `even` 的 `_default/section.html` 随之启用，而它依赖 **Go 的惰性 `or`**
+  （`{{ if or (eq $index 0) (ne ($lastElement.Date.Format "2006") $thisYear) }}`，首轮 `$index=0` 时
+  `index $paginator.Pages -1` 为 nil）——Scriban 的 `||` 是**急切求值**，nil 接收者的 `.Date` 直接抛错。
+  探针确认：`{{ if (1 == 1) || (nil.Date) }}` 在 Flint 报错、Hugo 正常。要一并解决需
+  ① 让实参位的 `?.` 不被 `FixNilSafeCalls` 降级为普通点（探针显示 `$x.Date` 在 `date.to_string`
+  实参位仍被降级），或 ② 给出 `or`/`and` 的惰性等价改写。两项都属于「条件求值语义」，建议单独一轮
+- **`.Type` = 所属 section 名** 与 **`site.Params.mainSections` 自动计算**（见上一节）：两者联动，
+  单独上任何一项都会让 ananke 命中另一条候选链或执行到未验证分支而构建失败
+
+### C. 最终矩阵（21 主题，本轮修复后）
+
+Hugo 侧 21/21 通过；Flint 侧 20/21 通过（fixit 的 section 页仍回退内置模板，
+根因即 B 的第一条），`对称=1`（页面集合与 Hugo 完全一致）12 个；
+`Flint.Core.Tests` 927 通过、`Flint.ThemeMigrator.Tests` 70 通过。

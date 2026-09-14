@@ -225,9 +225,23 @@ internal sealed class ThemeMigrator
     /// 扫描含 {{ return }} 的 partial（返回任意类型者需走 partialValue 机制）。
     /// 返回规范化名集合（与 ScribanConverter.CanonicalPartialName 同规则）
     /// </summary>
+    /// <summary>
+    /// Hugo **内置**（embedded）返回值型 partial：主题文件里没有它们，但调用点同样
+    /// 需要走 partialValue 通道才能拿到对象（Hugo 的 `_funcs/get-page-images` 返回
+    /// 页面图片切片，FixIt 的 twitter-cards 用 `index $images 0` 取首图）
+    /// </summary>
+    private static readonly string[] BuiltinValueReturningPartials =
+    [
+        "_funcs/get-page-images"
+    ];
+
     internal static HashSet<string> ScanValueReturningPartials(string sourceRoot)
     {
         var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var builtin in BuiltinValueReturningPartials)
+        {
+            result.Add(builtin);
+        }
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.html", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(sourceRoot, file).Replace((char)92, '/');

@@ -1848,6 +1848,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ["schema"] = BuildSchemaTemplate(),
             ["twitter_cards"] = BuildTwitterCardsTemplate(),
             ["google_analytics"] = "",
+            // Hugo 内置的图片切片 partial（FixIt 的 twitter-cards 用它取首图）：
+            // 从 front matter `images` 构造，写入**值通道**并 ret——用 text 通道的调用点
+            // 得到空串（`index "" 0` 为 nil，与"没有图片"等价），用 partialValue 的调用点
+            // 拿到切片
+            ["_funcs/get-page-images"] = BuildPageImagesTemplate(),
             ["disqus"] = ""
         };
 
@@ -1883,6 +1888,24 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// 5 槽页码窗口居中于当前页，首末页与前后页按条件渲染。
     /// 原始字符串字面量（内含大量 {{ }} 与引号，逐字可读优于拼接/转义）
     /// </summary>
+    /// <summary>
+    /// Hugo 内置 <c>_funcs/get-page-images</c> 的最小等价：把 front matter
+    /// <c>images</c> 映射成图片对象列表（Permalink/RelPermalink），写入值通道
+    /// </summary>
+    private static string BuildPageImagesTemplate()
+    {
+        return """
+{{- $images = [] -}}
+{{- $front = page?.params?.images -}}
+{{- if $front -}}
+{{- for $img in as_list $front -}}
+{{- $images = $images | append (dict "Permalink" (abs_url $img) "RelPermalink" $img) -}}
+{{- end -}}
+{{- end -}}
+{{- __partial_ret_set "__partial_ret__funcs/get-page-images" $images }}{{ ret -}}
+""";
+    }
+
     private static string BuildPaginationTemplate()
     {
         return """

@@ -76,9 +76,16 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
                 // 集合方法族缺失（hugo-book 的 `$scratch.Add "BookPages" (slice .Page)`
                 // → `$pages.Next page` 报 "The function `$pages.Next` was not found"）。
                 // 与 where/append 等内置同口径：页面序列的派生仍是页面序列
-                if (v is System.Collections.Generic.IReadOnlyList<object?> list && list.Count > 0)
+                // ScriptArray / List<object?> 都要覆盖：首次 Add 原样存入的切片是
+                // ScriptArray（实现 IList<object>），只认 IReadOnlyList 会漏
+                if (v is System.Collections.Generic.IList<object?> list && list.Count > 0)
                 {
-                    return ScribanTemplateRenderer.RewrapPageSequence(null, list) ?? v;
+                    var items = new List<object?>(list.Count);
+                    foreach (var item in list)
+                    {
+                        items.Add(item);
+                    }
+                    return ScribanTemplateRenderer.RewrapPageSequence(null, items) ?? v;
                 }
                 return v;
             }
@@ -100,32 +107,15 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
         {
             if (!_values.TryGetValue(key, out var current) || current is null)
             {
-                // 首次 Add：包成序列。Hugo 的 Scratch.Add **展平序列实参**——
-                // 探测实证（v0.166）：`Add "l" (slice 1 2)` + `Add "l" (slice 3)`
-                // → len=3、first=1（元素逐个追加，不是嵌套一层）。
-                // 主题据此收集页面列表（hugo-book 的 `$scratch.Add "BookPages" (slice .Page)`），
-                // 不展平时拿到的是"列表的列表"，集合方法族与索引全失效。
-                // 字符串拼接只在已有值与新值都是字符串时发生（见下方 string 分支）
-                var fresh = new List<object?>();
-                if (value is string)
-                {
-                    fresh.Add(value);
-                }
-                else if (value is not null && IsAppendableSequence(value))
-                {
-                    foreach (var item in (System.Collections.IEnumerable)value)
-                    {
-                        fresh.Add(item);
-                    }
-                }
-                else if (value is not null)
-                {
-                    fresh.Add(value);
-                }
-                _values[key] = fresh;
-                return fresh;
+                // 首次 Add：**原样存入**。Hugo v0.166 实测：数字 5+7=12、字符串
+                // "a"+"b"="ab"、切片 (slice 1)+(slice 2 3)=[1 2 3]——即"首个值直接成为
+                // 当前值，后续 Add 按类型累加"。此前包成单元素列表，使数值求和/字符串
+                // 拼接分支永不触发（FixIt 的 section.html 用
+                // `$localData.Add "totalWordCount" .WordCount` 求总字数，包成列表后
+                // `div (list) 1000.0` 报"数学函数收到的参数值类型（不接受）: List<Object>"）
+                _values[key] = value;
+                return value;
             }
-
             switch (current)
             {
                 case string s when value is string:
