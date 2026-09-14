@@ -88,6 +88,17 @@ internal sealed class ScribanConverter(
         "errorf", "fmt.Errorf", "warnf", "fmt.Warnf",
         "erroridf", "fmt.Erroridf", "warnidf", "fmt.Warnidf",
         "i18n", "lang.Translate",
+        // dict：Go 的 `dict KEY VALUE …` 键在前，管道左值补**末位值**
+        //（`X | dict "Some"` = `dict "Some" X`）——Scriban 管道把左值放首参，
+        // 直接沿用会产出 `{X: "Some"}`（键值颠倒）。FixIt 的 section.html 标题行
+        // `.Section | dict "Some" | T "allSome"` 实测：此前整条链判不支持 →
+        // 模板预检失败 → 文档列表页回退内置模板（95 字节）
+        "dict", "collections.Dictionary",
+        // index：Go 的 `index SET INDEX…` 值在末位（`$index | add -1 | index
+        // $paginator.Pages` = `index $paginator.Pages (add $index -1)`）——
+        // 直接沿用 Scriban 管道会产出 `index (add …) $pages`（参数颠倒）→ null，
+        // `$lastElement.Date` 报 for a null object（even 的 section.html 实测）
+        "index",
         // 正则/裁剪族（Hugo v0.166 管道形态实测确认"值在末位"）：
         //   replaceRE PATTERN REPLACEMENT INPUT · findRE PATTERN INPUT [LIMIT] ·
         //   findRESubmatch PATTERN INPUT [LIMIT] ·
@@ -391,11 +402,19 @@ internal sealed class ScribanConverter(
                 // 而 `page?.publish_date?.format` 形态会被 Scriban 当作函数名
                 // → "function not found"（LoveIt 实测）
                 var dateTailPlain = ToSnakePath(feSnake[..^".format".Length]);
-                var dateRecv = dateTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase)
-                    ? "site" + dateTailPlain[".site".Length..]
-                    : scope.Count > 0
-                        ? scope[^1] + dateTailPlain
-                        : "page" + dateTailPlain;
+                string dateRecv;
+                if (dateTailPlain.StartsWith(".site", StringComparison.OrdinalIgnoreCase))
+                {
+                    dateRecv = "site" + dateTailPlain[".site".Length..];
+                }
+                else if (scope.Count > 0)
+                {
+                    dateRecv = scope[^1] + dateTailPlain;
+                }
+                else
+                {
+                    dateRecv = "page" + dateTailPlain;
+                }
                 var fmtArgsFe = new List<string>();
                 foreach (var a in operands.Skip(1))
                 {
@@ -1181,8 +1200,11 @@ internal sealed class ScribanConverter(
     }
 
     /// <summary>dict k1 v1 k2 v2 → { k1: v1, k2: v2 }</summary>
-    private ConversionResult ConvertDict(List<Parsing.Expr> args, IReadOnlyList<string> scope)
+    private ConversionResult ConvertDict(
+        List<Parsing.Expr> args, IReadOnlyList<string> scope)
     {
+        // 管道段里的 `dict` 由 PipeValueLastFunctions 改写为"键在前、值（管道左值）
+        // 在末位"的显式调用，故这里仍是"奇数即不支持"（顺序错位比报错更危险）
         if (args.Count % 2 != 0)
         {
             Diagnostics.Add($"dict 参数数为奇数（{args.Count}）");
@@ -1221,6 +1243,7 @@ internal sealed class ScribanConverter(
                     keyText = k.Text;
                     break;
             }
+
 
             var v = ConvertExpr(args[i + 1], scope, false);
             if (v.Kind == ConversionKind.Unsupported)
