@@ -1256,6 +1256,15 @@ public sealed partial class ScribanTemplateRenderer
         // 故该 Store 在整次构建内被所有页面看到——与 Hugo .Site.Store 语义一致）
         var siteStore = new PageStoreObject();
 
+        // .Site.MainSections：配置值优先，否则按 Hugo 语义取常规页的 section 名集合
+        object siteMainSections = site.Params.TryGetValue("mainSections", out var msParam)
+            ? msParam
+            : site.RegularPages
+                .Select(p => p.Section)
+                .Where(sec => !string.IsNullOrEmpty(sec))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
         // 依赖跟踪站点对象：site.* 成员访问被记录为 data:site.* 依赖键（T4.1）
         // site.home：home 页的页面对象（Hugo 语义；主题用 .Site.Home.RelPermalink 等）。
         // 惰构建 + 共享缓存——无 home 页时返回 null（主题通常配合 ?. 或 with 使用）
@@ -1298,6 +1307,15 @@ public sealed partial class ScribanTemplateRenderer
             ["Store"] = siteStore,
             ["scratch"] = siteStore,
             ["Scratch"] = siteStore,
+
+            // .Site.MainSections（Hugo 的站点方法）：配置值优先（[params] mainSections），
+            // 否则按 Hugo 语义取常规页出现的 section 名。缺它时
+            // `where … "Section" "in" site.main_sections` 过滤条件落空 →
+            // 主题拿到空列表（FixIt 的 init/global.html：site.store 里的
+            // mainSectionPages 为空 → footer 的 $pages.Prev 报错）
+            ["main_sections"] = siteMainSections,
+            ["MainSections"] = siteMainSections,
+            ["mainsections"] = siteMainSections,
 
             // Hugo 兼容别名
             ["Title"] = site.Title,
@@ -1467,26 +1485,6 @@ public sealed partial class ScribanTemplateRenderer
                     SetValue(snake, this[key], false);
                 }
             }
-            // **下划线拼写别名**：折叠形全是小写，泛化的 snake_case 转换无从插入下划线
-            // （bypublishdate → bypublishdate），故按 Hugo 方法名逐项列表。
-            // 缺哪种拼写都不会报错、只会静默取空——monochrome 的
-            // `$pages.by_publish_date?.reverse` 实测把整段列表清空
-            foreach (var (pascal, collapsed, snake) in PageMethodSpellings)
-            {
-                if (!ContainsKey(collapsed))
-                {
-                    continue;
-                }
-                var value = this[collapsed];
-                if (!ContainsKey(pascal))
-                {
-                    SetValue(pascal, value, false);
-                }
-                if (!ContainsKey(snake))
-                {
-                    SetValue(snake, value, false);
-                }
-            }
             SetValue("groupbypublishdate", new PagesGroupByDateFunction(pages), false);
             SetValue("group_by_publish_date", new PagesGroupByDateFunction(pages), false);
             SetValue("indexof", new PagesIndexOfFunction(pages), false);
@@ -1500,6 +1498,31 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("Count", pages.Count, false);
             SetValue("Length", pages.Count, false);
             SetValue("Len", pages.Count, false);
+
+            // **拼写别名放在构造函数末尾**：必须在本类全部注册之后运行，
+            // 否则后段注册的成员拿不到别名（`prev`/`next`/`indexof` 在 groupby 之后注册，
+            // FixIt 的 `$pages.Prev page` 因此报 "The function `$pages.Prev` was not found"）。
+            // 另注：`prev`/`next` 的 snake 形态（prev_in_section/next_in_section）在 Hugo 里
+            // 是**页面方法**（无参，返回相邻页），与集合方法同形不同义——故这两条只注册
+            // PascalCase 别名，不注册 snake 形态，避免把页面方法名指向集合函数
+            foreach (var (pascal, collapsed, snake) in PageMethodSpellings)
+            {
+                if (!ContainsKey(collapsed))
+                {
+                    continue;
+                }
+                var spellingValue = this[collapsed];
+                if (!ContainsKey(pascal))
+                {
+                    SetValue(pascal, spellingValue, false);
+                }
+                if (!string.Equals(snake, collapsed, StringComparison.Ordinal) &&
+                    !snake.Contains("_in_section", StringComparison.Ordinal) &&
+                    !ContainsKey(snake))
+                {
+                    SetValue(snake, spellingValue, false);
+                }
+            }
         }
 
         // IList<ScriptObject> 实现 - 用于 Scriban 的 len 过滤器

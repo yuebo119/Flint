@@ -338,6 +338,14 @@ internal sealed partial class TemplateConverter(
                 }
                 _blockStack.Add(("define", null));
                 _definedBlocks.Add("blk_" + SanitizeIdent(name));
+                // 块体用 `capture`（立即求值）而非 `func`（延迟求值）。
+                // 曾试产 `func` 以对齐 Hugo 的求值顺序（baseof 外层先跑、块体在使用点求值），
+                // 实测**不可行**：Scriban 的 func 体看不到文件顶层变量
+                //（`{{ $v = "OUTER" }}{{ func f }}{{ $v }}{{ end }}{{ f }}` → 空；
+                //  而 page/site 全局可见），而多个主题的子模板块体引用了顶层变量
+                //（narrow 的 archives.html、github-style 的 list.html 实测回归）。
+                // 代价：块体求值早于 baseof 外层副作用（FixIt 的 init 链写 site.store
+                // 晚于块体读取）——该差异记录在 docs/THEME-MIGRATOR-PLAN.md 第三十二节
                 return Wrap("capture blk_" + SanitizeIdent(name), trimL, trimR);
             }
 
