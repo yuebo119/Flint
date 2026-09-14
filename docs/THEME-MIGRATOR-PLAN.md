@@ -2235,3 +2235,51 @@ monochrome 的 single.html 出现 `Index was outside the bounds of the array`、
 
 **当前终态**（本轮收尾）：21 主题 19 通过 / 2 失败——fixit 剩 1 处（`.Config.limit` 之外的
 rss 链）、narrow 剩 1 处（本节）；两者都是**单点**问题，且都已定位到具体构造与判据。
+
+## 三十三、第十二批：嵌套作用域链与调用形态的合法化（2026-09-14 第十八轮）
+
+### A. `?.` 链 + 实参的合法形态（转换器，已验证）
+
+Scriban 对"nil 安全链 + 实参"的支持是**有限**的，探针实测边界：
+
+| 形态 | 结果 |
+|---|---|
+| `page?.get_page ""`（单段 + 调用） | 可用 |
+| `$x?.date.to_string "2006"`（多段 + 调用） | The function … was not found |
+| `(index $a 0)?.title "x"`（括号接收者 + 调用） | 同上 |
+
+故 `FixNilSafeCalls` 扩展为**扫描整条链**后判定：链后跟实参、且（接收者是括号表达式 或 链 ≥2 段）→
+把该链的 `?.` 全部降级为普通点 ✔。修掉 FixIt 的
+`(index $pages?.by_lastmod?.reverse 0)?.lastmod.format "…"`。
+
+**关键修正**：第一版把"链后跟实参"一律当调用目标 → 把
+`num_ge page?.config?.limit 1` 里的链也降级了（它其实是**前一个函数的实参**），
+抹掉了 nil 容错 ✗。加入**调用位置判据**后修复：链的起始位置前面若是
+标识符/`)`/`]`/引号，说明本链是别的调用/表达式的延续（实参位）→ 保留 `?.`；
+前面是行首/`(`/`|`/运算符/`=` 才是调用位置 → 降级 ✔。
+
+### B. `FieldExpr` 基的链式段也 nil 安全（转换器，已验证）
+
+`.A.B.C` 的解析形态视词法而变（单个 FieldExpr 或 ChainExpr + FieldExpr 基），
+此前只有后者对链段用普通点 → **同一条路径在不同形态下产出不同**
+（`if ge .Config.limit 1` 走 ChainExpr → 普通点 → 最小配置下抛 null 成员错；
+而 `first .Config.limit` 走无参分支 → nil 安全）。统一为 nil 安全；
+调用形态由 A 的规则在 Wrap 阶段降级 ✔。
+
+### C. Scriban 不在**成员链**中自动调用函数值成员（发现，未修）
+
+实测：`site.pages.bydate | len` = 4（能出数是因为 Scriban 内建 `len` 自身触发调用），
+而 `site.pages.bydate.reverse | len` = 0、`site.pages?.bydate?.reverse | len` = 0、
+`reverse (site.pages.bydate) | len` = 0；显式调用括号 `site.pages.bydate()` ✔ 可用。
+
+这是 FixIt 最后一个错误的根因：`(index $pages.ByLastmod.Reverse 0).Lastmod.Format "…"`
+——中间段 `ByLastmod` 不被调用 → `.Reverse` 取到 null。
+
+**已试方案（引擎侧，未验证完成即回退）**：为页面集合的方法成员加"链中透明"包装
+（成员未命中时零参调用自身、把结果还原成页面集合再查成员）。实现到一半发现需要
+同时改动 4 处（包装类 + 集合重建工厂 + 访问级别 + LazyPageList 注册后包装），
+且首次验证未生效，按"未验证即回退"的纪律撤回，避免把未验证的引擎行为留在主干。
+
+**剩余 1 处（fixit 的 RSS）**：需要（a）引擎的链中透明，或（b）转换器在链中间段
+命中集合方法名时产出显式调用（`X.by_lastmod()`——探针已确认该形态可调用 ✔）。
+方案 (b) 影响面小、可作为下一轮首选。

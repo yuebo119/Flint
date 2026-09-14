@@ -168,28 +168,105 @@ internal sealed partial class TemplateConverter(
                 i++;
                 continue;
             }
-            // 判据：接收者是**括号表达式**（`)?.name`）——它只可能是"对调用结果取成员"，
-            // 其后随实参即**调用**形态，Scriban 不支持 `(x)?.f ARG`（整体当函数名）。
-            // 不按"深度 0"判定：转换器自己会把表达式包进 `as_list (…)` 等括号里，
-            // 那样就会漏掉（yinyang 的 `range (where …).GroupByDate "2006"` 实测）
-            if (i > 0 && actionText[i - 1] == ')' && ch == '?' &&
-                i + 1 < actionText.Length && actionText[i + 1] == '.')
+            // nil 安全链 + 实参 = **调用**形态：Scriban **只支持单段** `x?.f ARG`。
+            // 实测边界（探针）：
+            //   `page?.get_page ""`            → 可用（单段 + 调用）
+            //   `$x?.date.to_string "2006"`    → "The function … was not found"（多段）
+            //   `(index $a 0)?.title "x"`      → 同上（括号接收者）
+            // 故扫出整条链后判定：若其后确实跟实参，且【接收者是括号表达式】或【链有 ≥2 段】，
+            // 就把链上的 `?.` 全部降级为 `.`（Hugo 对 nil 接收者做方法调用同样报错，
+            // 语义一致；这条规则覆盖 FixIt 的
+            // `(index $pages?.by_lastmod?.reverse 0)?.lastmod.format "…"`）
+            if (ch == '?' && i + 1 < actionText.Length && actionText[i + 1] == '.')
             {
-                var memberStart = i + 2;
-                var memberEnd = ReadWordEnd(actionText, memberStart);
-                var member = actionText[memberStart..memberEnd];
-                var k = memberEnd;
-                while (k < actionText.Length && char.IsWhiteSpace(actionText[k]))
+                var recvIsParen = i > 0 && actionText[i - 1] == ')';
+                // 扫描链：?.(word)(  (?|.) (word) )*
+                var segCount = 0;
+                var chainEnd = i + 2;
+                while (true)
                 {
-                    k++;
-                }
-                if (member.Length > 0 && k < actionText.Length && IsArgumentStart(actionText[k]))
-                {
-                    var word = ReadWord(actionText, k);
-                    if (word.Length == 0 || !NotArgumentKeywords.Contains(word, StringComparer.Ordinal))
+                    var wordEnd = ReadWordEnd(actionText, chainEnd);
+                    if (wordEnd == chainEnd)
                     {
-                        sb.Append('.').Append(member);
-                        i = memberEnd;
+                        break;
+                    }
+                    segCount++;
+                    chainEnd = wordEnd;
+                    // 段间分隔符：普通点，或下一个 nil 安全点
+                    if (chainEnd < actionText.Length && actionText[chainEnd] == '.')
+                    {
+                        chainEnd++;
+                        continue;
+                    }
+                    if (chainEnd + 1 < actionText.Length && actionText[chainEnd] == '?' &&
+                        actionText[chainEnd + 1] == '.')
+                    {
+                        chainEnd += 2;
+                        continue;
+                    }
+                    break;
+                }
+
+                // **调用位置判据**：链后跟实参**不足以**判定它是"调用目标"——
+                // `num_ge page?.config?.limit 1` 里链是**前一个函数的实参**，
+                // 降级会抹掉 nil 容错（FixIt 的 `.Config.limit` 实测）。
+                // 故再看链的**起始位置**前面是什么：前面是标识符/`)`/`]`/引号/点
+                // 说明本链是别的调用/表达式的延续（实参位）→ 保留 `?.`；
+                // 前面是行首/`(`/`|`/运算符/`=` 才是调用位置 → 降级。
+                var chainStart = i;
+                if (recvIsParen)
+                {
+                    var d2 = 0;
+                    while (chainStart > 0)
+                    {
+                        chainStart--;
+                        if (actionText[chainStart] == ')')
+                        {
+                            d2++;
+                        }
+                        else if (actionText[chainStart] == '(')
+                        {
+                            if (--d2 <= 0)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    while (chainStart > 0 &&
+                           (char.IsLetterOrDigit(actionText[chainStart - 1]) ||
+                            actionText[chainStart - 1] is '_' or '$'))
+                    {
+                        chainStart--;
+                    }
+                }
+                var prevNonWs = chainStart;
+                while (prevNonWs > 0 && char.IsWhiteSpace(actionText[prevNonWs - 1]))
+                {
+                    prevNonWs--;
+                }
+                var prevChar = prevNonWs > 0 ? actionText[prevNonWs - 1] : (char)0;
+                var atCallPosition = prevChar == (char)0 ||
+                    prevChar is '(' or '|' or '=' or '+' or '-' or '*' or '/' or '!' or ',' or ':' ||
+                    prevChar == 34 || prevChar == (char)39;
+
+                if (segCount > 0 && (recvIsParen || segCount >= 2) && atCallPosition)
+                {
+                    var afterWs = chainEnd;
+                    while (afterWs < actionText.Length && char.IsWhiteSpace(actionText[afterWs]))
+                    {
+                        afterWs++;
+                    }
+                    var nextChar = afterWs < actionText.Length ? actionText[afterWs] : (char)0;
+                    var word = nextChar != (char)0 ? ReadWord(actionText, afterWs) : "";
+                    var isCall = nextChar != (char)0 && IsArgumentStart(nextChar) &&
+                        (word.Length == 0 || !NotArgumentKeywords.Contains(word, StringComparer.Ordinal));
+                    if (isCall)
+                    {
+                        sb.Append(actionText[i..chainEnd].Replace("?.", ".", StringComparison.Ordinal));
+                        i = chainEnd;
                         continue;
                     }
                 }

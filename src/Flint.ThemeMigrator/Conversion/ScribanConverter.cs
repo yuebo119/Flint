@@ -1487,6 +1487,8 @@ internal sealed class ScribanConverter(
                         && !raw.Contains(".Params.", StringComparison.OrdinalIgnoreCase)
                         && !raw.EndsWith(".Params", StringComparison.OrdinalIgnoreCase)
                         && MapChainMethod("page" + ToSnakePath(raw)) is not null;
+                    {
+                    }
                     if (_map.MapPath(raw) is null && !isMethodTarget)
                     {
                         // 显式根判定基于**首段**（`.Site` → site 根）：链式段用 `?.` 后，
@@ -1631,8 +1633,15 @@ internal sealed class ScribanConverter(
                 // `(.Scratch.Get "params").share` / `$posts.paginate` /
                 // `(site.GetPage X).Layout`（LoveIt/PaperMod 实测）。
                 // ParenExpr 转换后自带括号（`(f a b)`），故索引为 `?.` 而非 `.?`
+                // **FieldExpr 基也 nil 安全**：`.A.B.C` 的解析形态视词法而变（可能是单个
+                // FieldExpr，也可能是 ChainExpr+FieldExpr 基），此前只有后者走普通点 →
+                // 同一条路径在不同形态下产出不同（`if ge .Config.limit 1` 走 ChainExpr →
+                // `page.config.limit` 普通点，最小配置下抛 null 成员错；而
+                // `first .Config.limit` 走无参分支 → `page?.config?.limit` ✔）。
+                // Hugo 对缺失中间层返回 nil，故统一 nil 安全；调用形态由
+                // FixNilSafeCalls 在 Wrap 阶段降级为普通点
                 var nilSafeBase = c.Base is Parsing.ParenExpr or Parsing.VariableExpr
-                    or Parsing.CallExpr;
+                    or Parsing.CallExpr or Parsing.FieldExpr;
                 var sb = new StringBuilder(baseR.Text);
                 for (var fi = 0; fi < c.Fields.Count; fi++)
                 {
