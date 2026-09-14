@@ -1090,10 +1090,22 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 {
                     merged[key] = ctxObj[key];
                 }
-                merged["store"] = store;
-                merged["Store"] = store;
-                merged["scratch"] = store;
-                merged["Scratch"] = store;
+                // dict **自带** store/scratch 键时不注入调用者的 store：Hugo 语义下
+                // `.Scratch` 指传入 dict 的那个键（hugo-book 的
+                // `dict "Scratch" $scratch "Page" $page` 递归收集章节页），覆盖它会让
+                // 写入落到调用者的 store 上、传出的集合恒空（调用点 `$pages.Next page`
+                // 报 "The function `$pages.Next` was not found" 实测）。大小写一并判定——
+                // 迁移产物用 `page.scratch`（小写）访问 `.Scratch`
+                var dictOwnsStore = merged.Keys.Any(k =>
+                    k.Equals("store", StringComparison.OrdinalIgnoreCase) ||
+                    k.Equals("scratch", StringComparison.OrdinalIgnoreCase));
+                if (!dictOwnsStore)
+                {
+                    merged["store"] = store;
+                    merged["Store"] = store;
+                    merged["scratch"] = store;
+                    merged["Scratch"] = store;
+                }
                 AddKeyCaseAliases(merged);
                 AddPageMethodFamily(merged, pageObject);
                 MergePageMembers(merged, ctxObj);

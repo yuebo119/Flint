@@ -2479,16 +2479,22 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
     多动作串会被 Wrap 再包一层 `{{ }}`，Scriban 当对象字面量而预检失败——实测踩过）
 
   效果：hugo-book 的**结构相似度 20.1% → 99.6%**（内容全部回来），预检失败 3 → 0。
-  剩余阻塞（已定位到具体一行）：`_partials/book-menu-recurse.html` 迁移成
-  `{{ page.scratch.add "BookPages" ([page]) }}`——源模板是 **dot 上下文**
-  （`{{ .Scratch.Add "BookPages" (slice .Page) }}`，`.` 是调用点传的 dict
-  `dict "Scratch" $scratch "Page" $page`）。转换器把 dot 一律落到 `page.`，
-  于是写入的是**页面自己的** scratch，而 `menu-section-pages` 读的是传入的
-  `newScratch` → 取回空列表 → 调用点 `$pages.Next page` 报
-  "The function `$pages.Next` was not found"。
-  修法方向：识别"以 dict 调用、且 dict 键被 dot 访问"的 partial（跨文件扫描
-  调用点的 dict 键），把该 partial 内的 `.Key`/`$.Key` 改写成 dict 键访问
-  （引擎侧的"dict 键并入绑定对象、dict 优先"机制已存在，缺的是转换器侧的定向改写）
+  剩余阻塞（已用探针把链条逐段验证，定位到两处，后者未修）：
+  1. 【已修】引擎偏 dict 绑定覆盖了调用者传入的 `Scratch`：`ScribanTemplateRenderer`
+     在"dict + store"路径里无条件 `merged["Scratch"] = store`（调用者的 store），
+     把 `dict "Scratch" $scratch` 的实参顶掉 → 递归收集写入的是调用者的 store，
+     传出的集合恒空。改为 **dict 自带 store/scratch 键时不注入**（大小写一并判定，
+     迁移产物用 `page.scratch` 小写访问 `.Scratch`）。探针验证：嵌套 dict 传
+     scratch + `page.scratch.add` + 值返回通道 → `partialValue` 取回页面序列、
+     `.first`/`.next` 均可用
+  2. 【未修】`{{ .Page }}` 在 dict 上下文里被转换器一律映射为 `page`（"页面上下文
+     的 .Page 就是自己"的特例），而 hugo-book 的递归是
+     `dict "Scratch" $scratch "Page" .`——`.Page` 应是**dict 的那个键**。
+     于是 `[page]` 收集进 scratch 的是"绑定对象自身"而非子页面，元素不是页面对象 →
+     回包装判定失败 → `$pages.Next` 仍报 function not found。
+     修法方向：把 `.Page`/`.Params` 这类特例限定在"dot 确实是页面"的 partial
+     （跨文件看调用点是 `.` 还是 dict），dict 上下文中一律按 dict 键访问
+     （引擎侧 dict 键并入绑定对象的机制已具备，`page.page` 即可取到 dict 的 Page）
 - `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
   （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
 - FixIt 的模块组件挂载（`_funcs/*`）与图标资源解析
