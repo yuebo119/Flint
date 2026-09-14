@@ -1400,6 +1400,21 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
+    /// **页面序列对象**：集合方法（<c>.ByDate</c>/<c>.Reverse</c>/<c>.Limit</c> 等）
+    /// 结果的返回形态，与 <c>.Pages</c>/<c>site.regular_pages</c> 同型，
+    /// 故结果上仍可继续调用方法族（Hugo 语义：页面集合的派生仍是页面集合）。
+    /// </summary>
+    /// <remarks>
+    /// 早期这些方法返回裸 <c>ScriptArray</c>，丢掉了方法族——链式用法
+    /// <c>.ByLastmod.Reverse</c> 静默得到 null（FixIt RSS 实测：
+    /// <c>(index $pages.ByLastmod.Reverse 0).LastMod</c> 报 "for a null object"；
+    /// 根因是 Scriban 在成员链中会**自动调用**零必填参数的函数成员，
+    /// 返回的裸数组上没有 <c>reverse</c> 成员）。
+    /// </remarks>
+    internal static ScriptObject SharedPageSequence(IReadOnlyList<FlintPageContext> pages) =>
+        GetSharedPageList(pages);
+
+    /// <summary>
     /// Hugo Pages 方法族的**三种拼写**：PascalCase（Hugo 文档与模板的原始写法
     /// <c>.ByDate</c>）、折叠形（转换器一条归一化路径产出 <c>bydate</c>）、
     /// 下划线形（另一条路径产出 <c>by_date</c>）。

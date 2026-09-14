@@ -476,6 +476,40 @@ internal sealed class ScribanConverter(
             return ConvertExpr(first, scope, isPipeSegment);
         }
 
+        // **复杂接收者的 `.Format "fmt"`**：转入 date.to_string。
+        // 简单接收者的 .Format 由"字段 + 参数"分支处理；接收者是链/括号表达式时
+        // 走不到那里，此前被容错拼接成 `<chain>.lastmod.format "fmt"`——
+        // 而 `.format` 不是值成员而是转换器概念，Flint 里对应 date.to_string
+        //（FixIt 的 RSS：`(index $pages.ByLastmod.Reverse 0).LastMod.Format "Mon, …"`）
+        if (operands.Count >= 2
+            && operands[0] is Parsing.ChainExpr chainFmt
+            && chainFmt.Fields.Count > 0
+            // 末字段可能是合并形态（词法把 `.LastMod.Format` 当一个字段）→ 按后缀判定
+            && chainFmt.Fields[^1].EndsWith(".Format", StringComparison.OrdinalIgnoreCase)
+            && operands[1] is Parsing.LiteralExpr fmtLit)
+        {
+            // 剥掉末字段里的 `.Format` 后缀（为空则丢弃该字段，否则保留前段作接收者）
+            var fmtTail = chainFmt.Fields[^1][..^".Format".Length];
+            var recvFields = chainFmt.Fields.Take(chainFmt.Fields.Count - 1).ToList();
+            if (fmtTail.Length > 0)
+            {
+                recvFields.Add(fmtTail);
+            }
+            var recvExpr = recvFields.Count == 0
+                ? (Parsing.Expr)chainFmt.Base
+                : new Parsing.ChainExpr(chainFmt.Base, recvFields);
+            var recvConv = ConvertExpr(recvExpr, scope, false);
+            if (recvConv.Kind != ConversionKind.Unsupported)
+            {
+                // 格式化串是**字符串字面量**（不能走 ParenthesizeIfNeeded，否则带空格/逗号的
+                // Go 格式串会被当表达式加括号）
+                return new ConversionResult(
+                    $"date.to_string {ParenthesizeIfNeeded(recvConv.Text)} " +
+                    "\"" + GoDateFormatConverter.Convert(fmtLit.Unquoted) + "\"",
+                    ConversionKind.Equivalent);
+            }
+        }
+
         // 多操作数但首个非标识符：Go 里非法形态，容错拼接
         var texts = new List<string>();
         foreach (var o in operands)

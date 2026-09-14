@@ -312,13 +312,31 @@ internal sealed partial class TemplateConverter(
         }
     }
 
+    /// <summary>
+    /// 条件里的整段 <c>len X</c> 显式化（Hugo 真值语义的窄修）：
+    /// Hugo 的 <c>if len X</c> 判"非空"，而 Scriban 中数字 0 为**真**
+    /// （探针实测 <c>{{ if 0 }}</c> = 真、<c>{{ if "" }}</c> = 真），
+    /// 原样迁移会让"空集合才渲染"的块照样进入——FixIt 的
+    /// <c>{{ if len $errors }}</c> 因此误报 errorf，构建失败。
+    /// 只改**整段**条件是 <c>len X</c> 的形态（改为 <c>(len X) &gt; 0</c>）；
+    /// 复合条件（and/or/not 内嵌 len）的同类问题属引擎真值语义，
+    /// 记入 docs/THEME-MIGRATOR-PLAN.md 第三十四节 E
+    /// </summary>
+    private static string HugoTruthyCondition(string cond)
+    {
+        var trimmed = cond.Trim();
+        return trimmed.StartsWith("len ", StringComparison.Ordinal)
+            ? $"({trimmed}) > 0"
+            : cond;
+    }
+
     private string ConvertKeyword(KeywordBody kb, List<string> scope, string trimL, string trimR)
     {
         switch (kb.Name)
         {
             case "if":
             {
-                var cond = ConvertPipelineText(kb.Pipeline, scope);
+                var cond = HugoTruthyCondition(ConvertPipelineText(kb.Pipeline, scope));
                 _blockStack.Add(("if", null));
                 return Wrap($"if {cond}", trimL, trimR);
             }
@@ -342,7 +360,7 @@ internal sealed partial class TemplateConverter(
                 // else if 带管道
                 if (kb.Pipeline is { Commands.Count: > 0 })
                 {
-                    var cond = ConvertPipelineText(kb.Pipeline, scope);
+                    var cond = HugoTruthyCondition(ConvertPipelineText(kb.Pipeline, scope));
                     return Wrap($"else if {cond}", trimL, trimR);
                 }
                 return Wrap("else", trimL, trimR);
