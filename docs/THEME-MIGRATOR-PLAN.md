@@ -2142,3 +2142,96 @@ Hugo v0.166 探针实测：`.Markup "home"` 返回内容作用域对象，
    方案候选：转换器把块体改产为 Scriban `func` 并把函数作为命名参数传给 baseof，
    引擎在"命名参数为函数时按需调用"（引擎侧一个小特性），即可让块体在 baseof 的
    使用点求值——顺序与 Hugo 一致。
+
+## 三十二、第十一批：块体延迟求值、Site.MainSections 与拼写别名顺序（2026-09-14 第十七轮）
+
+目标是收掉 fixit 的 4 处（3 处 `$pages.Prev` + 1 处 `.Config.limit`）。四处都指向
+**引擎语义**而不是主题写法问题，逐个实测定位后修掉。
+
+### A. 块体延迟求值（`capture` → `func`）：**试过，已回退**
+
+Hugo 的顺序：先跑 baseof 外层（`{{ partial "init/index.html" . }}` 这类副作用），
+到 `{{ block "main" . }}` 位置才求值子模板的 `define` 体。转换器把块体产成
+`capture blk_x`——求值提前到文件开头，于是 baseof 里 init 链写下的 `site.store`
+在块体读取时还不存在（FixIt 的 `$pages.Prev`）。
+
+Scriban 的 `func` 看似正好合用（打印函数值自动调用：实测
+`{{ func f }}BODY{{ end }}{{ f }}` → `BODY`），于是改产 `{{ func blk_x }}…{{ end }}` 试跑。
+**全量矩阵判为回归**：github-style 出现 `Index was outside the bounds of the array`、
+narrow 的 `page.pages.groupbydate` 报 null。
+
+**根因（探针实测）**：**Scriban 的 `func` 体看不到文件顶层变量**——
+`{{ $v = "OUTER" }}{{ func g }}{{ $v }}{{ end }}{{ g }}` 输出为空，
+而 `page`/`site` 全局在 func 内可见（`{{ func f }}{{ page.title }}{{ end }}` 正常）。
+多个主题的子模板块体引用了顶层变量（narrow/github-style 实测），
+故 `func` 与 `capture` 之间是**真实取舍**：
+`func` 顺序正确但丢失顶层作用域，`capture` 作用域正确但求值提前。
+
+**本轮决定回退到 `capture`**：顺序差异只影响"baseof 外层副作用 → 块体读取"这一条链
+（当前仅 fixit 命中），而作用域差异会让多个主题直接失败。后续若要两全，
+需要引擎侧让块体函数携带外层作用域（例如把顶层变量作为 func 参数传入），
+或在 `include` 的命名参数上做按需求值——两者都属于引擎级特性，另行评估。
+
+### B. `.Site.MainSections`（缺失的站点 API）
+
+诊断显示 `INIT-STORE n=0`：init 链确实跑了，但它算出的页面列表是空的——
+因为 `where … "Section" "in" site.main_sections` 里的 **`site.main_sections` 不存在**
+（Hugo 的 `.Site.MainSections`）。补该成员：配置值优先，否则按 Hugo 语义取
+常规页的 section 名集合。修后 `INIT-STORE n=5` ✔ 列表正确。
+
+### C. 拼写别名的注册顺序（我上一轮引入的缺陷）
+
+上一轮的三拼写别名循环被放在构造函数**中段**，而 `prev`/`next`/`indexof` 在其后注册
+→ 它们拿不到 `Prev`/`Next` 别名 → `{{ $pages.Prev page }}` 报
+"The function `$pages.Prev` was not found"。把循环移到构造函数末尾（全部注册之后）。
+**教训**：别名/派生注册必须放在"全部原始注册之后"，否则漏掉的就是后段那批。
+
+### D. 无参字段链的"末段方法名"降级规则：按**接收者**收窄
+
+转换器有一条规则：无参字段链的**末段命中已知集合方法名**时整条降级为普通点
+（为"`?.` 会让 Scriban 把 `page?.x` 当函数名"的实测兜底，Stack/LoveIt 曾命中），
+只放行路径里含 `.Params.` 的数据袋。FixIt 的 `.Config.limit` 里 `limit` 是**用户数据键**
+（`params.feed.limit` 经 dict 传给 partial）→ 被当成方法目标 → `page.config.limit` 普通点链
+→ 最小配置下 `params.feed` 缺失时抛 "Cannot get the member … for a null object"
+（Hugo 侧返回 nil、`ge nil 1` 为假，不报错）。
+
+**修法（按接收者判定）**：只有接收者段名确实是页面集合成员
+（`pages`/`regular_pages`/`all_pages`/`sections`/`translations`/…）时才沿用降级规则，
+其余一律 nil 安全。三种形态实测：
+
+| 源码 | 产出 |
+|---|---|
+| `.Config.limit`（数据键） | `page?.config?.limit` |
+| `.Pages.ByDate`（集合方法） | `page.pages.by_date`（保持原行为） |
+| `.Site.Pages.Limit` | `site.pages.limit`（保持原行为） |
+
+### E. 一次被"陈旧二进制"污染的判读（教训）
+
+本节 A/D 两处改动我都曾用全量矩阵判回归并回退。**其中至少 github-style 的
+`Index was outside the bounds of the array` 是误判**：回退转换器源码后我只重建了
+Flint.Cli，**没有重建 Flint.ThemeMigrator**，而矩阵用的是 `Flint.ThemeMigrator.exe`
+——于是矩阵仍在跑"回退前"的迁移产物，读出来的失败被错误归因到新改动上。
+重建两个工程后 github-style 与 narrow 立即恢复（页数/最大页与上一轮完全一致）。
+
+**教训（工具链层面）**：Flint 有两个可执行产物（CLI 负责渲染、ThemeMigrator 负责迁移），
+**任何一侧的行为变更都必须同时重建两者**再跑矩阵；否则矩阵的判读不可信。
+本节 A 的结论（`func` 体内看不到顶层变量）是探针实测的**语义事实**，与判读污染无关；
+D 的"全量放宽"则从未在干净环境下被验证——按接收者收窄的版本已通过矩阵验证。
+
+### F. 带参数调用形态的作用域接收者：**试过，已回退**（narrow 仍 1 处未支持）
+
+`{{ range .Pages.GroupByDate "2006" }}` 内再写 `{{ range .Pages.GroupByDate "2006-01" }}`：
+Hugo 里内层的 `.` 是**外层分组对象**（`.Key`/`.Pages`），故内层 `.Pages` 取分组内的页面。
+转换器只有"无参字段链"分支套用作用域变量，**带参数的调用形态一律用 page 根**
+→ 内层产出 `page.pages.groupbydate "2006-01"`，归档页（普通页）的 `page.pages` 为 null
+→ "Cannot get the member … for a null object"（narrow 的 archives.html，1 处）。
+
+我把"字段+参数"分支也改成套用 `scope[^1]`（实测嵌套 range 产出
+`$__it0.pages.groupbydate "2006-01"` ✔ 形式正确），但**全量矩阵判为回归**：
+monochrome 的 single.html 出现 `Index was outside the bounds of the array`、页数 103→89。
+该分支的接收者语义比"无参字段链"复杂（除 range/with 之外还涉及资源上下文与页面方法链），
+统一替换会打翻既有的正确映射。故**回退**，narrow 的这 1 处暂不支持，
+并在代码处留注释说明"试过、矩阵判回归"。
+
+**当前终态**（本轮收尾）：21 主题 19 通过 / 2 失败——fixit 剩 1 处（`.Config.limit` 之外的
+rss 链）、narrow 剩 1 处（本节）；两者都是**单点**问题，且都已定位到具体构造与判据。

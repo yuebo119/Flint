@@ -428,6 +428,13 @@ internal sealed class ScribanConverter(
             // Console 的 `.Page.Resources` 同因，实测）
             var isPageRoot = fe.Path.StartsWith(".Page", StringComparison.OrdinalIgnoreCase)
                 && (fe.Path.Length == ".Page".Length || fe.Path[".Page".Length] == '.');
+            // 【曾试】把"字段+参数"的接收者也套用作用域变量（scope[^1]）以修 narrow 的
+            // 嵌套 range（内层 `.Pages` 属外层分组对象）。全量矩阵判为回归：
+            // monochrome 的 single.html 出现 IndexOutOfRange、页数 103→89——
+            // 该分支的接收者语义比"无参字段链"复杂（`with`/`range` 之外还有
+            // 资源上下文与页面方法链），统一替换会打翻既有正确映射。
+            // 结论：**只保留无参字段链的作用域替换**；带参数形态的嵌套作用域
+            // 暂不支持（narrow 的 archives.html 内层仍用 page 根，见第三十二节 F）
             var feMapped = isSiteRoot
                 ? "site" + ToSnakePath(fe.Path[".Site".Length..])
                 : isPageRoot
@@ -1455,7 +1462,28 @@ internal sealed class ScribanConverter(
                     // `.Site.Params.list.paginate` 的 paginate）是普通字段不是方法——
                     // 若误判为方法就走非 nil 安全路径，链上中间层为 null 时抛
                     // "Cannot get the member ... for a null object"（LoveIt 实测）
-                    var isMethodTarget = raw.Contains('.', StringComparison.Ordinal)
+                    // 末段命中已知集合方法名时**整条降级为普通点**：它们是函数调用目标，
+                    // `?.` 会让 Scriban 把 `page?.x` 当函数名（Stack/LoveIt 实测）。
+                    // 例外：路径穿过 `.Params` 的是**数据袋**，同名末段是普通字段。
+                    // 【曾试放宽为"一律 nil 安全"以修 FixIt 的 `.Config.limit`，
+                    //   全量矩阵判为回归：github-style 出现 IndexOutOfRange、
+                    //   narrow 的 `page.pages.groupbydate` 报 null——该规则是必需的】
+                    // 末段命中集合方法名时降级为普通点，**但仅在接收者确实是页面集合成员**时：
+                    // 该规则原意是防"`?.` 会被 Scriban 当函数名"（Stack/LoveIt 实测），
+                    // 而按名字全局降级会误伤**用户数据键**——FixIt 的 `.Config.limit`
+                    // （params.feed 里的数据键）被当成集合方法 → 产出 `page.config.limit`
+                    // 普通点链 → 最小配置下 params.feed 缺失即抛 "…for a null object"
+                    //（Hugo 返回 nil、`ge nil 1` 为假）。故改为按**接收者段名**判定：
+                    // pages/regular_pages/all_pages/sections/translations 这类才是集合
+                    var pathSegs = raw.TrimStart('.').Split('.', StringSplitOptions.RemoveEmptyEntries);
+                    var receiverSeg = pathSegs.Length >= 2 ? pathSegs[^2] : "";
+                    var isCollectionReceiver = receiverSeg is
+                        "pages" or "Pages" or "regular_pages" or "RegularPages"
+                        or "all_pages" or "AllPages" or "site_pages" or "SitePages"
+                        or "sections" or "Sections" or "translations" or "Translations"
+                        or "subsections" or "Subsections";
+                    var isMethodTarget = isCollectionReceiver
+                        && raw.Contains('.', StringComparison.Ordinal)
                         && !raw.Contains(".Params.", StringComparison.OrdinalIgnoreCase)
                         && !raw.EndsWith(".Params", StringComparison.OrdinalIgnoreCase)
                         && MapChainMethod("page" + ToSnakePath(raw)) is not null;
