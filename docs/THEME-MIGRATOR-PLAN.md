@@ -2465,10 +2465,21 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
 - 回归防护：`Flint.Core.Tests` 927 通过（分类链与 E2E fixture 断言按 Hugo 实测更新）、
   `Flint.ThemeMigrator.Tests` 70 通过
 
-**仍未对齐**（下一轮，均为"主题特定分页触发"）：
+**仍未对齐**（下一轮）：
 
-- `hugo-book` 等 5-6 个主题的列表页在 Hugo 下会分页，但其模板里既无 `.Paginate`
-  也无 `.Paginator`（疑似 Hugo 内部/嵌入分页助手触发）——需再定位触发源
+- **同名 `define` 提取冲突（hugo-book 类"命名模板式"主题，已定位根因）**：
+  这类主题不用 Hugo 的 `block`/baseof 继承，而是 `baseof.html` 里
+  `{{ template "main" . }}` + 每个页面模板各自 `{{ define "main" }}`（hugo-book:
+  54 个 define、0 个 block）。迁移器把简单名 define 提取为独立 partial 时**按名字
+  定路径**（`_partials/main.html`）→ 多文件同名互相覆盖，最后写入者胜：实测
+  `posts/list.html` 与 `term.html` 的分页列表体全丢，`_partials/main.html` 只剩
+  `book.html` 的正文模板，所有页面渲染同一个 main。
+  修法方向：提取路径带上**来源文件**作用域（如 `_partials/posts-list__main.html`），
+  并把 baseof 的 `{{ template "main" . }}` 改写成"按当前页面模板名解析"的形式
+  （引擎已有 partial 查找与页面模板信息，需评估是否暴露给模板侧）
+- **hugo-book 等 5-6 个主题的分页触发源**：其列表页在 Hugo 下分页，但模板模板链上
+  的 `posts/list.html` 内容被上一条 bug 吞掉 → 分页标记自然也没建立；修好上一条后
+  再复测（`{{ range sort .Paginator.Pages }}` 正是触发点）
 - `.Paginate <显式集合>`：Hugo 按传入集合分页，Flint 目前仍按当前页 `Pages` 分页
   （`PagePaginateFunction` 的已知限制，需把传入集合回传给站点侧的页数计算）
 
