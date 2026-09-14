@@ -134,13 +134,15 @@ public sealed class PageAwareLookupE2ETests : IDisposable
     [Fact]
     public async Task 分类页Data对象提供词条与内容页()
     {
-        // 缺陷 4 端到端：terms.html 迭代 page.Data.pages 曾报 null 对象
+        // 缺陷 4 端到端：分类列表页迭代 page.Data.pages 曾报 null 对象。
+        // 模板名与 Hugo v0.166 一致：kind=taxonomy（/tags/）→ taxonomy.html，
+        // kind=term（/tags/alpha/）→ term.html（旧版把两者写反，见 2026-09-14 轮）
         Write("Flint.toml", "baseURL = \"https://example.com/\"\ntitle = \"T\"\n");
         Write(Path.Combine("layouts", "_default", "single.html"), "S {{ page.title }}");
-        Write(Path.Combine("layouts", "_default", "terms.html"),
+        Write(Path.Combine("layouts", "_default", "taxonomy.html"),
             "TERMS s={{ page.data.singular }} p={{ page.data.plural }} " +
             "{{ for t in page.data.pages }}[{{ t.title }}@{{ t.rel_permalink }}]{{ end }}");
-        Write(Path.Combine("layouts", "_default", "taxonomy.html"),
+        Write(Path.Combine("layouts", "_default", "term.html"),
             "TERMPAGE {{ for x in pages }}{{ x.title }};{{ end }}");
         Write(Path.Combine("content", "posts", "one.md"),
             "---\ntitle: One\ndate: 2026-01-01\ntags: [\"alpha\"]\n---\nb");

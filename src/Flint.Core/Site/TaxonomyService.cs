@@ -316,21 +316,28 @@ public sealed class TaxonomyPageGenerator
         foreach (var (taxonomyName, terms) in taxonomies.Taxonomies)
         {
             var (singular, plural) = _taxonomyService.GetTaxonomyNames(taxonomyName);
-            // 生成分类列表页
+            // 生成分类列表页：**词条集合**按 pagerSize 分页（Hugo 实测：/tags/ 的
+            // .Paginator 切词条页 → 产出 /tags/page/2/；此前只产 1 页，缺分页页）
             var listPermalink = _taxonomyService.GenerateTaxonomyListPermalink(taxonomyName);
-            pages.Add(new TaxonomyPageInfo
+            var listTotalPages = _paginationService.CalculateTotalPages(terms.Count, pageSize);
+            for (var listPageNum = 1; listPageNum <= listTotalPages; listPageNum++)
             {
-                TaxonomyName = taxonomyName,
-                TaxonomySingular = singular,
-                TaxonomyPlural = plural,
-                TermName = null,
-                PageType = TaxonomyPageType.TaxonomyList,
-                Permalink = listPermalink,
-                Terms = terms,
-                Pages = null,
-                PageNumber = 1,
-                TotalPages = 1
-            });
+                pages.Add(new TaxonomyPageInfo
+                {
+                    TaxonomyName = taxonomyName,
+                    TaxonomySingular = singular,
+                    TaxonomyPlural = plural,
+                    TermName = null,
+                    PageType = TaxonomyPageType.TaxonomyList,
+                    Permalink = listPageNum == 1
+                        ? listPermalink
+                        : $"{listPermalink?.TrimEnd('/')}/page/{listPageNum}/",
+                    Terms = terms,
+                    Pages = null,
+                    PageNumber = listPageNum,
+                    TotalPages = listTotalPages
+                });
+            }
 
             // 为每个术语生成页面
             foreach (var term in terms)

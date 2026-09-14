@@ -521,6 +521,32 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
+    /// 本次构建中被模板调用过 <c>.Paginate</c> 的列表页 URL。
+    /// Hugo 的分页页由**模板调用**驱动：探测实证（v0.166）home 模板不调用
+    /// <c>.Paginate</c> 时站点不产出 <c>/page/2/</c>，而列表模板调用时产出
+    /// <c>/page/1/</c>（跳转页）+ <c>/page/2..N/</c>。故分页页产出前先看是否有标记。
+    /// 并发渲染下用并发字典；站点渲染开始时经 <see cref="ResetPaginateTracking"/> 清空
+    /// （用静态状态是因为页面对象工厂与分页函数都是静态路径，拿不到渲染器实例）
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, byte> PaginatedListUrls = new(StringComparer.Ordinal);
+
+    /// <summary>标记某列表页被模板分页（由 <c>.Paginate</c> 调用触发）</summary>
+    internal static void NotePaginateInvoked(string? relPermalink)
+    {
+        if (!string.IsNullOrEmpty(relPermalink))
+        {
+            PaginatedListUrls[relPermalink] = 0;
+        }
+    }
+
+    /// <summary>该列表页是否被模板分页过</summary>
+    internal static bool WasPaginateInvoked(string relPermalink) =>
+        PaginatedListUrls.ContainsKey(relPermalink);
+
+    /// <summary>清空分页标记（站点渲染开始时调用，避免跨构建串味）</summary>
+    internal static void ResetPaginateTracking() => PaginatedListUrls.Clear();
+
+    /// <summary>
     /// 依赖记录中的顶层模板：逻辑名 + 物理路径（内置回退模板无文件，只记逻辑名）。
     /// 只记逻辑名会被依赖注册的文件过滤丢弃，导致覆盖注册后顶层模板变化反查不到页面
     /// </summary>
