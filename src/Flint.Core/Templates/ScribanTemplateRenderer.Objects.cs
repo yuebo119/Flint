@@ -790,7 +790,9 @@ public sealed partial class ScribanTemplateRenderer
     /// .Site.GetPage / .Page.GetPage：按路径或 (kind, 名) 查页。
     /// 未命中返回 null（Hugo 语义；主题通常用 with 包裹）
     /// </summary>
-    internal sealed class GetPageFunction(IReadOnlyList<FlintPageContext> pages)
+    internal sealed class GetPageFunction(
+        IReadOnlyList<FlintPageContext> pages,
+        string? languagePrefix = null)
         : Scriban.Runtime.IScriptCustomFunction
     {
         public object? Invoke(Scriban.TemplateContext context, Scriban.Syntax.ScriptNode? callerContext,
@@ -821,15 +823,37 @@ public sealed partial class ScribanTemplateRenderer
             }
             else
             {
-                // 路径形态：归一后比对 RelPermalink
+                // 路径形态：归一后比对 RelPermalink；多语言站点再比一次"剥掉语言前缀"的形态——
+                // Hugo 的 .Site.GetPage 按**当前语言的内容根**解析路径，主题写
+                // `"/about"` 而页面 RelPermalink 是 `"/en/about/"`，只比全路径必然落空
+                //（monochrome 的 states.html：`.Site.GetPage .Params.balloon_resources`
+                // （值 "/about"）返回 null → "$res.resources for a null object"）
                 var path = a0.Trim('/');
                 found = pages.FirstOrDefault(p =>
                     p.RelPermalink.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) ||
                     p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true ||
+                    MatchesIgnoringLanguagePrefix(p, path) ||
                     (path.Length == 0 && p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)));
             }
 
             return found is null ? null : CreatePageObject(found);
+        }
+
+        /// <summary>
+        /// 语言前缀无关的路径匹配：站点语言为 <paramref name="languagePrefix"/>（如 "en"）时，
+        /// 页面 RelPermalink <c>"/en/about/"</c> 应能命中查询路径 <c>"about"</c>
+        /// </summary>
+        private bool MatchesIgnoringLanguagePrefix(FlintPageContext page, string path)
+        {
+            if (languagePrefix is not { Length: > 0 } lang || path.Length == 0)
+            {
+                return false;
+            }
+            var rel = page.RelPermalink.Trim('/');
+            return rel.Length > lang.Length + 1 &&
+                   rel.StartsWith(lang, StringComparison.OrdinalIgnoreCase) &&
+                   rel[lang.Length] == '/' &&
+                   rel[(lang.Length + 1)..].Equals(path, StringComparison.OrdinalIgnoreCase);
         }
 
         public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
@@ -1242,8 +1266,8 @@ public sealed partial class ScribanTemplateRenderer
             // （Ananke/Stack 实测）。签名兼容两种形态：
             //   GetPage "/posts"            按路径
             //   GetPage "section" "posts"   按 kind + 名
-            ["get_page"] = new GetPageFunction(site.Pages),
-            ["GetPage"] = new GetPageFunction(site.Pages),
+            ["get_page"] = new GetPageFunction(site.Pages, site.Language),
+            ["GetPage"] = new GetPageFunction(site.Pages, site.Language),
             ["language"] = site.Language,
             ["pages"] = lazyPages,
             ["regular_pages"] = lazyRegularPages,
@@ -1350,6 +1374,44 @@ public sealed partial class ScribanTemplateRenderer
         return SharedPageLists.GetValue(pages, static p => new LazyPageList(p));
     }
 
+    /// <summary>
+    /// Hugo Pages 方法族的**三种拼写**：PascalCase（Hugo 文档与模板的原始写法
+    /// <c>.ByDate</c>）、折叠形（转换器一条归一化路径产出 <c>bydate</c>）、
+    /// 下划线形（另一条路径产出 <c>by_date</c>）。
+    /// </summary>
+    /// <remarks>
+    /// 两种差异都要覆盖：
+    /// 1. **不忽略下划线**——`by_date` 与 `bydate` 是两个不同的键；
+    /// 2. **区分大小写**——Scriban 的 ScriptObject 成员字典按 Ordinal 比较，
+    ///    `SetValue("bydate")` 后访问 `.ByDate` 取到 null（实测：`site.pages.ByDate`
+    ///    返回空而 `site.pages.bydate` 正常）。此前只注册折叠形，主题写 Hugo 原始
+    ///    PascalCase 时**静默拿到空集合**（FixIt 的 footer.html `$pages.Prev`
+    ///    报 "The function `$pages.Prev` was not found"）。
+    /// 既有先例：LazyPageList 早就为计数注册了 count/Count/length/Length 等变体，
+    /// 这里把同一做法推广到整个方法族
+    /// </remarks>
+    private static readonly (string Pascal, string Collapsed, string Snake)[] PageMethodSpellings =
+    [
+        ("ByDate", "bydate", "by_date"),
+        ("ByPublishDate", "bypublishdate", "by_publish_date"),
+        ("ByExpiryDate", "byexpirydate", "by_expiry_date"),
+        ("ByLastmod", "bylastmod", "by_lastmod"),
+        ("ByTitle", "bytitle", "by_title"),
+        ("ByLinkTitle", "bylinktitle", "by_link_title"),
+        ("ByWeight", "byweight", "by_weight"),
+        ("ByLength", "bylength", "by_length"),
+        ("ByParam", "byparam", "by_param"),
+        ("GroupBy", "groupby", "group_by"),
+        ("GroupByDate", "groupbydate", "group_by_date"),
+        ("GroupByPublishDate", "groupbypublishdate", "group_by_publish_date"),
+        ("IndexOf", "indexof", "index_of"),
+        ("Prev", "prev", "prev_in_section"),
+        ("Next", "next", "next_in_section"),
+        ("Related", "related", "related"),
+        ("Reverse", "reverse", "reverse"),
+        ("Limit", "limit", "limit")
+    ];
+
     private sealed class LazyPageList : ScriptObject, IEnumerable<ScriptObject>, IList<ScriptObject>
     {
         private readonly IReadOnlyList<FlintPageContext> _pages;
@@ -1381,9 +1443,43 @@ public sealed partial class ScribanTemplateRenderer
             // 一条产出折叠形（groupbydate）、一条产出下划线形（group_by_publish_date，
             // monochrome 的 list.html 实测 "The function `page?.pages?.group_by_publish_date`
             // was not found" 20 处）。Scriban 成员查找不区分大小写但**不**忽略下划线，
-            // 故两种拼写都要注册
-            SetValue("group_by", new PagesGroupByFunction(pages), false);
-            SetValue("group_by_date", new PagesGroupByDateFunction(pages), false);
+            // 故两种拼写都要注册。
+            // 这里**系统化**补齐：遍历已注册成员，为折叠形补 snake_case 形态
+            //（bypublishdate → by_publish_date）——手写别名必漏，而漏掉的形态不报错、
+            //  只是静默返回空（monochrome 的 _partials/list.html
+            //  `$pages.by_publish_date?.reverse` 实测：整段列表被静默清空）
+            foreach (var key in Keys.ToList())
+            {
+                if (key.Length == 0)
+                {
+                    continue;
+                }
+                var snake = ToSnakeCaseKey(key);
+                if (!string.Equals(snake, key, StringComparison.Ordinal) && !ContainsKey(snake))
+                {
+                    SetValue(snake, this[key], false);
+                }
+            }
+            // **下划线拼写别名**：折叠形全是小写，泛化的 snake_case 转换无从插入下划线
+            // （bypublishdate → bypublishdate），故按 Hugo 方法名逐项列表。
+            // 缺哪种拼写都不会报错、只会静默取空——monochrome 的
+            // `$pages.by_publish_date?.reverse` 实测把整段列表清空
+            foreach (var (pascal, collapsed, snake) in PageMethodSpellings)
+            {
+                if (!ContainsKey(collapsed))
+                {
+                    continue;
+                }
+                var value = this[collapsed];
+                if (!ContainsKey(pascal))
+                {
+                    SetValue(pascal, value, false);
+                }
+                if (!ContainsKey(snake))
+                {
+                    SetValue(snake, value, false);
+                }
+            }
             SetValue("groupbypublishdate", new PagesGroupByDateFunction(pages), false);
             SetValue("group_by_publish_date", new PagesGroupByDateFunction(pages), false);
             SetValue("indexof", new PagesIndexOfFunction(pages), false);

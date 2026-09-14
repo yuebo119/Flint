@@ -69,14 +69,32 @@ internal sealed class FileTemplateLoader : ITemplateLoader
             if (hasExplicitPartialsPrefix)
             {
                 var relRest = StripPartialsPrefix(templateName);
-                called.Add(relRest);
-                called.Add(relRest + ".html");
+                // **仅当剥离前缀后仍是"带目录的相对路径"**时才与调用者目录组合。
+                // 裸文件名绝不能组合——那会命中调用者自身：stack 的
+                // `_partials/comments/provider/disqus.html` 内写
+                // `{{ partial "disqus.html" . }}`，Hugo 里这个短名解析到**内置模板**
+                // `_internal/disqus.html`，而"调用者目录 + disqus.html"恰好是它自己
+                // → 200 层自递归（"partial 嵌套深度超过 200：疑似 partial 互相递归"）
+                if (relRest.Contains('/', StringComparison.Ordinal) ||
+                    relRest.Contains((char)92, StringComparison.Ordinal))
+                {
+                    called.Add(relRest);
+                    called.Add(relRest + ".html");
+                }
             }
             foreach (var root in Roots)
             {
                 foreach (var form in called)
                 {
                     var candidate = Path.Combine(root, callerRelativeDir, form);
+                    // 自解析兜底：候选就是调用者文件本身时跳过（与上一层的裸名保护同理）
+                    if (callerSpan.FileName is { Length: > 0 } callerFile &&
+                        string.Equals(
+                            Path.GetFullPath(candidate), Path.GetFullPath(callerFile),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
                     if (File.Exists(candidate))
                     {
                         return candidate;

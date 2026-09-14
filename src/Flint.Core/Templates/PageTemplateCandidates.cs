@@ -159,11 +159,17 @@ public static class PageTemplateCandidates
 
         add(Join(type, query.Layout));
         add(Join(type, "single"));
+        // kind 等价名 `page`：Hugo v0.166 实测 layouts/page.html 可渲染普通页
+        //（fixit 没有 _default/，普通页模板就是根级 page.html——缺这一级时
+        //  /about/、/docs/getting-started/ 报 "模板未找到"，9 处）
+        add(Join(type, "page"));
         // type 与 section 相同时以下两级会被去重（常见：content/posts/ 且无显式 type）
         add(Join(section, query.Layout));
         add(Join(section, "single"));
+        add(Join(section, "page"));
         add(query.Layout);
         add("single");
+        add("page");
     }
 
     /// <summary>

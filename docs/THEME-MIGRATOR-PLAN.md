@@ -1994,3 +1994,78 @@ Hugo 的全局 `page` 与 dot 分叉。修它需要引入独立的"当前页"全
 并让转换器区分"dot 成员"与"Hugo 全局 page 成员"两处来源。
 **本轮未做**：需要先确认 Hugo 侧 `page` 全局的确切可用范围（是否有版本/作用域限制），
 再决定是在引擎侧加全局还是在转换器侧改写，属下一轮的设计级改动。
+
+## 三十、第九批：Hugo 语义的四处细化（2026-09-14 第十五轮）
+
+本轮把 stack 与 monochrome 从"失败"推到"通过"，并把 fixit 的剩余障碍定位到两处
+**设计级**问题（不在本轮修，理由见末节）。
+
+### A. 模板加载器的自解析（stack：11 处越界 + 自递归，一次修掉）
+
+`_partials/comments/provider/disqus.html` 里写 `{{ partial "disqus.html" . }}`。
+Hugo 里这个短名解析到**内置模板** `_internal/disqus.html`；而 Flint 的加载器有
+"相对调用者目录"的候选回退，把 `_partials/disqus` 剥前缀成 `disqus.html` 后
+与调用者目录组合，**正好命中调用者自己** → 200 层自递归。
+
+修法两道保险：
+1. 剥前缀后的名字**只有仍是"带目录的相对路径"**时才与调用者目录组合；
+2. 候选等于调用者文件的物理路径时跳过。
+
+副作用消除：`partialValue` 调用点上报的 11 处 "Index was outside the bounds of the
+array" 全部消失（它们是自递归的下游症状），stack 整站通过（18 页/311KB）。
+
+### B. `in` / `seq` 的参数语义（monochrome）
+
+- `in`：Hugo 的签名是 `in SET ITEM`（集合在前），Flint 历史实现是 (item, set)，
+  且把"集合当 needle、字符串当 haystack"→ `in $validFormats $format` 恒 false，
+  主题误报 "The 'format' … is invalid" 21 次。改为**按类型自适应**：恰有一侧是集合
+  → 集合即 SET；两侧同类 → 按 Hugo 顺序（第一个是 SET）。
+- `seq`：Hugo 支持 1/2/3 参（`seq LAST` / `seq FIRST LAST` / `seq FIRST INCREMENT LAST`），
+  Flint 注册成三参严格形参 → 两参调用报 "Invalid number of arguments 2 …
+  expecting 3"（8 处）。改用 params 收参后按个数分派。
+
+### C. 管道"值在末位"家族补全（monochrome：正文被当成正则）
+
+Hugo 的 `X | f A B` == `f A B X`（值在**末位**），Scriban 的 `|` 注入**首位**。
+转换器早有 `PipeValueLastFunctions` 折叠机制（partial/printf/FromString…），
+但漏了正则与裁剪族，于是 `$content | replaceRE "<table(.*?)>" …` 被拼成
+`replace_re $content …`——**页面正文落到模式位**，报 "Invalid pattern '<!-- end-chunk -->…'"。
+
+按 Hugo v0.166 管道形态实测补入：`replaceRE` / `findRE` / `findRESubmatch` /
+`strings.Trim{,Left,Right}` / `strings.TrimPrefix` / `strings.TrimSuffix`
+（同批探针确认 `strings.Substr` 是"值在首"，**不**可并入）。
+
+### D. 页面集合的方法族：三拼写 + 变换保族（monochrome / fixit）
+
+两条独立的语义缺口：
+
+1. **三拼写**：Scriban 的 ScriptObject 成员字典按 Ordinal 比较，`SetValue("bydate")`
+   之后访问 `.ByDate` 得到 null（实测 `site.pages.ByDate` 为空、`.bydate` 正常）。
+   转换器的两条归一化路径只产出折叠形与下划线形，而**主题手写的是 Hugo 文档的
+   PascalCase**。故按 Hugo 方法名逐项注册三种拼写（ByDate / bydate / by_date …），
+   与 LazyPageList 早已存在的 count/Count/length/Length 做法一致。
+2. **变换保族**：`where` 已让结果保留 Pages 方法族，但 `union` / `uniq` / `reverse` /
+   `first` / `last` / `after` / `sort` / `shuffle` / `slice` / `complement` /
+   `intersect` 仍返回普通列表。FixIt 的 `init/global.html` 把
+   `where … | union (where …)` 的结果存进 `site.store`，footer 取出后调 `$pages.Prev`
+   → "The function `$pages.Prev` was not found"。统一走 `PageSeqResult`。
+
+同时补 `GetPage` 的**语言前缀解析**（Hugo 的 `.Site.GetPage` 按当前语言的内容根解析：
+主题写 `"/about"` 而页面 RelPermalink 是 `"/en/about/"`，monochrome 的 states.html
+因此拿到 null → "$res.resources for a null object"）与页面模板候选的 **kind 等价名
+`page`**（Hugo v0.166 实测 `layouts/page.html` 可渲染普通页；fixit 没有 `_default/`，
+普通页模板就是根级 `page.html`，缺这级时 /about/、/docs/… 报模板未找到）。
+
+### E. fixit 的两处**设计级**障碍（本轮未修）
+
+1. **block 求值顺序**：Hugo 先跑 baseof 外层（含 `partial "init/global"` 这类副作用），
+   到 block 位置才求值子模板内容；而转换器把子模板的块体 `capture` 在文件开头
+   （`{{ capture blk_content }}…{{ end }}{{ include "baseof.html" … }}`），
+   **求值早于 baseof**。FixIt 的 `site.store.set "mainSectionPages"` 在后、读取在前
+   → `$pages` 为 null。"延迟块求值"需要引擎支持"命名参数为函数时按需调用"。
+2. **Hugo 的 `page` 全局**：窗口内 `.` 是传入的 dict、`page` 是全局当前页；
+   Flint 用 `page` 同时承担两者。FixIt 的 `$Resources := .Resources | default page.Resources`
+   因此取空。修它要先确认 Hugo 侧 `page` 全局的确切作用域与版本范围，再决定
+   引擎侧引入独立全局，还是转换器侧改写两处来源。
+
+两者都属"改动会波及全体主题"的设计决策，故先记录现象、判据与候选方案，不在本轮动手。

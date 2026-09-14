@@ -673,7 +673,7 @@ public sealed partial class BuiltinTemplateFunctions
             if (b == null)
                 return a;
             var bSet = b.ToHashSet();
-            return a.Where(x => !bSet.Contains(x));
+            return PageSeqResult(a, a.Where(x => !bSet.Contains(x)));
         });
 
         // intersect - 交集
@@ -681,7 +681,7 @@ public sealed partial class BuiltinTemplateFunctions
         {
             if (a == null || b == null)
                 return Enumerable.Empty<object>();
-            return a.Intersect(b);
+            return PageSeqResult(a, a.Intersect(b));
         });
 
         // union - 并集
@@ -691,12 +691,14 @@ public sealed partial class BuiltinTemplateFunctions
                 return b ?? Enumerable.Empty<object>();
             if (b == null)
                 return a;
-            return a.Union(b);
+            return PageSeqResult(a, a.Union(b));
         });
 
         // uniq - 去重
         obj.Import("uniq", (IEnumerable<object>? collection) =>
-            collection?.Distinct() ?? Enumerable.Empty<object>());
+            collection is null
+                ? Enumerable.Empty<object>()
+                : PageSeqResult(collection, collection.Distinct()));
 
         // shuffle - 随机排序
         obj.Import("shuffle", (IEnumerable<object>? collection) =>
@@ -710,12 +712,14 @@ public sealed partial class BuiltinTemplateFunctions
                 int j = rng.Next(i + 1);
                 (list[i], list[j]) = (list[j], list[i]);
             }
-            return list;
+            return PageSeqResult(collection, list);
         });
 
         // reverse - 反转
         obj.Import("reverse", (IEnumerable<object>? collection) =>
-            collection?.Reverse() ?? Enumerable.Empty<object>());
+            collection is null
+                ? Enumerable.Empty<object>()
+                : PageSeqResult(collection, collection.Reverse()));
 
         // sort - 排序
         // sort - 单参（Hugo `sort SEQ`）或带键（`sort SEQ KEY` / `sort SEQ KEY ORDER`）。
@@ -737,12 +741,12 @@ public sealed partial class BuiltinTemplateFunctions
             if (string.IsNullOrEmpty(key))
             {
                 var byDefault = collection.OrderBy(SortKeyOf, StringComparer.Ordinal);
-                return (desc ? byDefault.Reverse() : byDefault).Cast<object>().ToList();
+                return PageSeqResult(a[0], (desc ? byDefault.Reverse() : byDefault).Cast<object>());
             }
 
             var sorted = collection.OrderBy(
                 x => SortKeyOf(GetMember(x, key)), StringComparer.Ordinal);
-            return (desc ? sorted.Reverse() : sorted).Cast<object>().ToList();
+            return PageSeqResult(a[0], (desc ? sorted.Reverse() : sorted).Cast<object>());
         });
 
         // group - 分组
@@ -804,15 +808,47 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // seq - 生成序列
-        obj.Import("seq", (int start, int end, int? step) =>
+        // seq - 数字序列。**Hugo 支持 1/2/3 参三种形态**：
+        //   seq LAST · seq FIRST LAST · seq FIRST INCREMENT LAST
+        // 此前注册为 (int, int, int?) —— Scriban 对委托形参不做"可省略"处理，
+        // 两参调用直接报 "Invalid number of arguments 2 passed to seq … expecting 3"
+        //（monochrome 的 inline/pagination/default.html 实测 8 处），
+        // 故改用 params 收参后按个数分派（与 slicestr / find_re 同一处理方式）
+        obj.Import("seq", (params object?[] a) =>
         {
-            var s = step ?? 1;
-            if (s == 0)
+            if (a.Length == 0)
+            {
                 return Enumerable.Empty<int>();
-            if (s > 0)
-                return Enumerable.Range(0, (end - start) / s + 1).Select(i => start + i * s);
+            }
+            int first;
+            int last;
+            var step = 1;
+            if (a.Length == 1)
+            {
+                first = 1;
+                last = ToInt(a[0]);
+            }
+            else if (a.Length == 2)
+            {
+                first = ToInt(a[0]);
+                last = ToInt(a[1]);
+            }
             else
-                return Enumerable.Range(0, (start - end) / (-s) + 1).Select(i => start + i * s);
+            {
+                first = ToInt(a[0]);
+                step = ToInt(a[1]);
+                last = ToInt(a[2]);
+            }
+            if (step == 0)
+            {
+                return Enumerable.Empty<int>();
+            }
+            var count = step > 0
+                ? (last - first) / step + 1
+                : (first - last) / (-step) + 1;
+            return count <= 0
+                ? Enumerable.Empty<int>()
+                : Enumerable.Range(0, count).Select(i => first + i * step);
         });
 
         // range - 生成范围
@@ -822,7 +858,24 @@ public sealed partial class BuiltinTemplateFunctions
         // 是序列时按元素）。形参用 object? 不用 IEnumerable——严格形参会被
         // Scriban 首个重载绑定，把 `in page.kind "term"`（haystack 为字符串）
         // 打成 "Unable to convert type `string` to `IEnumerable<Object>`"（Stack 实测）
-        obj.Import("in", (object? item, object? collection) => InSeq(item, collection));
+        obj.Import("in", (object? a, object? b) =>
+        {
+            // **参数序按 Hugo 语义自适应**：Hugo 的签名是 `in SET ITEM`（集合在前），
+            // Flint 历史实现是 (item, set)——主题与转换器两侧两种顺序都会出现，靠类型定方向：
+            //   恰有一侧是集合 → 集合即 SET，另一侧是 ITEM
+            //   两侧同类（两个字符串 / 两个字典）→ 按 Hugo 顺序：第一个是 SET
+            //（monochrome 的 `in $validFormats $format`：集合在前，历史实现把集合当
+            //  needle、"default" 当 haystack → 恒 false → 误报 format 非法 21 次）
+            if (IsCollection(a) && !IsCollection(b))
+            {
+                return ContainsIn(a, b);
+            }
+            if (IsCollection(b) && !IsCollection(a))
+            {
+                return ContainsIn(b, a);
+            }
+            return ContainsIn(a, b);
+        });
 
         // apply - 应用函数到每个元素
         obj.Import("apply", (IEnumerable<object>? collection, Func<object, object>? func) =>
@@ -1647,6 +1700,19 @@ public sealed partial class BuiltinTemplateFunctions
             : (a, ToInt(b));
 
     /// <summary>in：needle 是否在 haystack 中（Hugo in 语义，字符串按子串、集合按元素）</summary>
+    /// <summary>
+    /// SET 是否包含 ITEM（Hugo <c>in</c> 的判定）：字符串按子串、字典按键、
+    /// 其余序列按元素（元素比较沿用 ToString 归一，与 InSeq 同口径）
+    /// </summary>
+    private static bool ContainsIn(object? set, object? item) => set switch
+    {
+        null => false,
+        System.Collections.IDictionary map => map.Keys.Cast<object?>()
+            .Any(k => string.Equals(k?.ToString(), item?.ToString(), StringComparison.Ordinal)),
+        string text => text.Contains(item?.ToString() ?? "", StringComparison.Ordinal),
+        _ => ToList(set).Any(x => string.Equals(x?.ToString(), item?.ToString(), StringComparison.Ordinal))
+    };
+
     private static bool InSeq(object? needle, object? haystack)
     {
         if (haystack is string text)
@@ -1703,8 +1769,9 @@ public sealed partial class BuiltinTemplateFunctions
         {
             return new List<object?>();
         }
-        return fromEnd ? list.Skip(Math.Max(0, list.Count - count)).ToList()
-                       : list.Take(count).ToList();
+        return fromEnd
+            ? PageSeqResult(seq, list.Skip(Math.Max(0, list.Count - count)))
+            : PageSeqResult(seq, list.Take(count));
     }
 
     /// <summary>
@@ -1788,7 +1855,7 @@ public sealed partial class BuiltinTemplateFunctions
             var len = args.Length >= 3 && args[2] is not null
                 ? ToInt(args[2])
                 : list.Count - start;
-            return SliceSeq(list, start, len);
+            return PageSeqResult(args[0], ToList(SliceSeq(list, start, len)));
         }
 
         var arr = new ScriptArray();
@@ -1807,7 +1874,7 @@ public sealed partial class BuiltinTemplateFunctions
             return args.Length == 1 ? args[0] ?? new List<object?>() : new List<object?>();
         }
         var (seq, count) = SplitSeqCount(args[0], args[1]);
-        return ToList(seq).Skip(Math.Max(0, count)).ToList();
+        return PageSeqResult(seq, ToList(seq).Skip(Math.Max(0, count)));
     }
 
     /// <summary>
@@ -1943,6 +2010,19 @@ public sealed partial class BuiltinTemplateFunctions
         System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
         _ => [v]
     };
+
+    /// <summary>
+    /// 集合变换结果归一：源是页面集合时，结果**仍是页面集合**（带 Pages 方法族）。
+    /// Hugo 里 where/union/first/reverse/uniq/sort… 的结果都是 Pages，主题会在其上
+    /// 继续调用 .Prev/.Next/.ByDate；只对 where 做归一是不够的——
+    /// FixIt 的 init/global.html 把 `where … | union (where …)` 的结果存进 site.store，
+    /// 由 footer.html 取出后调 `$pages.Prev`，实测报 "The function `$pages.Prev` was not found"
+    /// </summary>
+    private static object PageSeqResult(object? source, IEnumerable<object?> items)
+    {
+        var list = items.ToList();
+        return ScribanTemplateRenderer.RewrapPageSequence(source, list) ?? (object)list;
+    }
 
     /// <summary>
     /// 归一为 (Key, Value) 对序列（Hugo 双变量 range 语义）：映射 → (键, 值)、
