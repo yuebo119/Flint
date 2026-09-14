@@ -754,8 +754,12 @@ internal sealed partial class TemplateConverter(
         }
 
         var head = t[..sp];
-        // 头部标识符（函数名）才需要括号；管道表达式分段处理
-        if (!head.All(c => char.IsLetterOrDigit(c) || c is '_' or '.'))
+        // 头部标识符（函数名，或带 `$` 的**变量成员调用**）才需要括号；管道表达式分段处理。
+        // `$` 必须放行：`{{ return $scratch.get "BookPages" }}` 这类变量成员调用不加括号时，
+        // Scriban 把实参绑到外层函数（`__partial_ret_set "k" $scratch.get "BookPages"`
+        // → 存进通道的是 get 函数本身），调用点据 token 取页面集合时报
+        // "The function `$pages.Next` was not found"（hugo-book 的 prev-next.html 实测）
+        if (!head.All(c => char.IsLetterOrDigit(c) || c is '_' or '.' or '$'))
         {
             return t;
         }

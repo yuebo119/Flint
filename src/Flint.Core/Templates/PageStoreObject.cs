@@ -100,11 +100,25 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
         {
             if (!_values.TryGetValue(key, out var current) || current is null)
             {
-                // 首次 Add：包成单元素序列。Hugo Scratch.Add 语义是"收集"——
-                // 序列化初值后，后续 Add 走列表追加；字符串拼接只在
-                // 已有值为字符串且新值也为字符串时发生（见下方 string 分支）
+                // 首次 Add：包成序列。Hugo 的 Scratch.Add **展平序列实参**——
+                // 探测实证（v0.166）：`Add "l" (slice 1 2)` + `Add "l" (slice 3)`
+                // → len=3、first=1（元素逐个追加，不是嵌套一层）。
+                // 主题据此收集页面列表（hugo-book 的 `$scratch.Add "BookPages" (slice .Page)`），
+                // 不展平时拿到的是"列表的列表"，集合方法族与索引全失效。
+                // 字符串拼接只在已有值与新值都是字符串时发生（见下方 string 分支）
                 var fresh = new List<object?>();
-                if (value is not null)
+                if (value is string)
+                {
+                    fresh.Add(value);
+                }
+                else if (value is not null && IsAppendableSequence(value))
+                {
+                    foreach (var item in (System.Collections.IEnumerable)value)
+                    {
+                        fresh.Add(item);
+                    }
+                }
+                else if (value is not null)
                 {
                     fresh.Add(value);
                 }
@@ -118,11 +132,13 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
                     // 已有值为字符串且新值也是字符串 → 拼接（Hugo 语义）
                     _values[key] = s + value;
                     return _values[key];
+                // 追加时同样展平序列实参（Hugo 语义，同上）：页面对象/内部投影/字符串
+                // 不是序列，按单值追加
                 case List<object?> list:
-                    list.Add(value);
+                    AppendFlattened(list, value);
                     return list;
                 case ScriptArray arr:
-                    arr.Add(value);
+                    AppendFlattened(arr, value);
                     return arr;
                 default:
                     if (IsNumeric(current) && IsNumeric(value))
@@ -135,6 +151,32 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
                     return nl;
             }
         }
+    }
+
+    /// <summary>是否"可展平的序列"：页面对象、内部投影、字符串都不是</summary>
+    private static bool IsAppendableSequence(object? value) => value switch
+    {
+        null or string => false,
+        IFlintNonDataObject => false,
+        ScribanTemplateRenderer.LazyPageObject => false,
+        ScriptArray => true,
+        System.Collections.IList => true,
+        System.Collections.Generic.IList<Scriban.Runtime.ScriptObject> => true,
+        System.Collections.Generic.IEnumerable<object?> => true,
+        _ => false
+    };
+
+    private static void AppendFlattened(System.Collections.IList target, object? value)
+    {
+        if (value is not null && IsAppendableSequence(value))
+        {
+            foreach (var item in (System.Collections.IEnumerable)value)
+            {
+                target.Add(item);
+            }
+            return;
+        }
+        target.Add(value);
     }
 
     /// <summary>Delete KEY</summary>
