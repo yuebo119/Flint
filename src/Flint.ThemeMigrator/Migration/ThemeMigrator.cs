@@ -80,7 +80,18 @@ internal sealed class ThemeMigrator
         var valueReturning = ScanValueReturningPartials(sourceRoot);
         summary.GlobalDiagnostics.Add($"返回值型 partial: {valueReturning.Count} 个");
         var namedTemplates = ScanNamedTemplates(sourceRoot);
+        // 槽位命名模板（多文件同名 define）：hugo-book 类主题的 baseof 定义默认体
+        // 并用 `{{ template "main" . }}` 调用，各页面模板用同名 define **覆盖**。
+        // 它们不能按名字提取到同一个 partial（会互相覆盖，实测 posts/list.html 的
+        // 分页列表体被 book.html 的正文体顶掉、全部页面渲染同一个 main），
+        // 故从提取集合剔除，改走"就地 capture + 调用点条件输出"的槽位机制
+        var slotNames = ScanMultiDefinedNames(sourceRoot);
+        namedTemplates.ExceptWith(slotNames);
         summary.GlobalDiagnostics.Add($"命名模板（define + template 调用）: {namedTemplates.Count} 个");
+        if (slotNames.Count > 0)
+        {
+            summary.GlobalDiagnostics.Add($"槽位命名模板（多文件同名 define）: {slotNames.Count} 个");
+        }
 
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
         {
@@ -126,8 +137,14 @@ internal sealed class ThemeMigrator
             var selfNamedExtracted = inlinePartials.Any(ip =>
                 ip.RelativePath.Contains(
                     InlinePartialExtractor.NamedTemplateSelfSuffix, StringComparison.Ordinal));
+            // rel 相对**主题根**（如 "layouts/baseof.html"），故两种形态都认
+            var normalizedRel = rel.Replace((char)92, '/');
+            var isBaseTemplate =
+                normalizedRel.Equals("baseof.html", StringComparison.OrdinalIgnoreCase) ||
+                normalizedRel.Equals("layouts/baseof.html", StringComparison.OrdinalIgnoreCase);
             var result = ConvertTemplate(
-                rel, remainingText, valueReturning, selfPartial, baseofAvailable, selfNamedExtracted);
+                rel, remainingText, valueReturning, selfPartial, baseofAvailable, selfNamedExtracted,
+                slotNames, isBaseTemplate);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -186,7 +203,9 @@ internal sealed class ThemeMigrator
         IReadOnlySet<string>? valueReturning = null,
         string? selfPartialName = null,
         bool baseofAvailable = false,
-        bool selfNamedTemplateExtracted = false)
+        bool selfNamedTemplateExtracted = false,
+        IReadOnlySet<string>? slotNames = null,
+        bool isBaseTemplate = false)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -195,7 +214,8 @@ internal sealed class ThemeMigrator
         var parts = parser.Parse();
 
         var converter = new TemplateConverter(
-            _map, valueReturning, selfPartialName, baseofAvailable, selfNamedTemplateExtracted);
+            _map, valueReturning, selfPartialName, baseofAvailable, selfNamedTemplateExtracted,
+            slotNames, isBaseTemplate);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);
@@ -245,6 +265,51 @@ internal sealed class ThemeMigrator
     ///      <c>template "X" ctx</c> 调用 → 必须提为独立 partial 文件（Scriban 无此机制）
     /// 本方法返回第 2 类的名字集合（20/20 流行主题都使用该机制，hugo-book 55 处）
     /// </summary>
+    /// <summary>
+    /// 扫描**多文件同名**的简单名 define（"槽位"命名模板）：
+    /// hugo-book 类主题的 baseof 定义 <c>main/toc/footer</c> 等默认体并用
+    /// <c>{{ template "main" . }}</c> 调用，各页面模板以同名 define 覆盖。
+    /// 这类名字不能提取成单一 partial（互相覆盖），调用点也需按"覆盖优先、
+    /// 默认兜底"的条件输出处理。
+    /// </summary>
+    internal static HashSet<string> ScanMultiDefinedNames(string sourceRoot)
+    {
+        var owners = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.html", SearchOption.AllDirectories))
+        {
+            string text;
+            try
+            {
+                text = File.ReadAllText(file);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(
+                    text, @"\{\{-?\s*define\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            {
+                var name = m.Groups[1].Value;
+                if (name.Contains('/', StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (!owners.TryGetValue(name, out var set))
+                {
+                    owners[name] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                }
+                set.Add(Path.GetFullPath(file));
+            }
+        }
+
+        return owners.Where(kv => kv.Value.Count > 1)
+            .Select(kv => kv.Key)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
     internal static HashSet<string> ScanNamedTemplates(string sourceRoot)
     {
         var defined = new HashSet<string>(StringComparer.Ordinal);

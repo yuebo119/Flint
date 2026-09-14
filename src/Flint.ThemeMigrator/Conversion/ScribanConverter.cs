@@ -1283,7 +1283,12 @@ internal sealed class ScribanConverter(
         // `partial "function/camel-case-keys.html" $value` 因此把页面对象当输入
         var canonical = CanonicalPartialName(nameExpr);
         var isValueReturning = _valueReturning is not null && _valueReturning.Contains(canonical);
-        if (!isCached && isValueReturning)
+        // 值返回型 partial 一律走 partialValue（**含 partialCached**）：Hugo 的
+        // partialCached 同样支持 `{{ return ... }}` 返回对象，而 Flint 的
+        // partialcached 走文本通道 → 调用点拿到字符串后 `.Next`/`.Prev` 等集合方法
+        // 报 "The function `$pages.Next` was not found"（hugo-book 的
+        // _partials/docs/prev-next.html 实测）。代价：值返回型丢失缓存（仅性能）
+        if (isValueReturning)
         {
             var isDotValueCtx = args.Count <= 1 || args[1] is Parsing.DotExpr
                 or Parsing.FieldExpr { Path: "." };

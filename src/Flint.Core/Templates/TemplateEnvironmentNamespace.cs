@@ -105,7 +105,11 @@ public sealed partial class BuiltinTemplateFunctions
                 ["MarkupScope"] = "page",
                 ["markup_scope"] = "page"
             },
-            ["Sites"] = new ScriptArray()
+            // hugo.Sites（Hugo 的站点集合）：单语言站点即"只含本站"，
+            // `.Default`/`.First`/`.Last`/`index 0` 都指本站——站点对象渲染期才装配，
+            // 且 hugo 对象在多渲染间共享（不能就地改写），故成员在访问时按上下文解析
+            ["Sites"] = new HugoSitesObject(),
+            ["sites"] = new HugoSitesObject()
         };
         root.TrySetValue(null, default, "hugo", hugo, readOnly: true);
 
@@ -125,6 +129,48 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 timeObj.TrySetValue(null, default, "ParseDuration", (string? s) => s ?? "", readOnly: true);
             }
+        }
+    }
+}
+
+/// <summary>
+/// <c>hugo.Sites</c>：Hugo 的站点集合。Flint 目前单语言单站点，故集合只含本站，
+/// <c>.Default</c>/<c>.First</c>/<c>.Last</c>/<c>index 0</c> 全部解析为当前站点对象。
+/// 站点对象在渲染期装配（且共享的 hugo 对象不能就地改写），因此这里按上下文惰性取
+/// <c>site</c> 全局——hugo-book 的 <c>_partials/docs/links/home.html</c> 用
+/// <c>hugo.Sites.Default.Home.RelPermalink</c>，此前报 "for a null object"
+/// </summary>
+internal sealed class HugoSitesObject : ScriptObject, IFlintNonDataObject
+{
+    public override bool TryGetValue(
+        Scriban.TemplateContext? context, Scriban.Parsing.SourceSpan span, string member, out object? value)
+    {
+        switch (member)
+        {
+            case "Default" or "default" or "First" or "first" or "Last" or "last" or "0":
+                value = ResolveSite(context);
+                return true;
+            case "Len" or "len" or "Count" or "count":
+                value = 1;
+                return true;
+        }
+        return base.TryGetValue(context, span, member, out value);
+    }
+
+    /// <summary>从渲染上下文取 <c>site</c> 全局（无上下文/未装配时返回 null）</summary>
+    private static object? ResolveSite(Scriban.TemplateContext? context)
+    {
+        if (context is null)
+        {
+            return null;
+        }
+        try
+        {
+            return context.Evaluate(new Scriban.Syntax.ScriptVariableGlobal("site"));
+        }
+        catch (Scriban.Syntax.ScriptRuntimeException)
+        {
+            return null;
         }
     }
 }
