@@ -2069,3 +2069,53 @@ Hugo 的 `X | f A B` == `f A B X`（值在**末位**），Scriban 的 `|` 注入
    引擎侧引入独立全局，还是转换器侧改写两处来源。
 
 两者都属"改动会波及全体主题"的设计决策，故先记录现象、判据与候选方案，不在本轮动手。
+
+## 三十一、第十批：`page` 全局与 dot 的分离（2026-09-14 第十六轮）
+
+### A. Hugo 的 `page` 是独立于 dot 的全局（探针实测）
+
+| 上下文 | `.`（dot） | `page`（全局） |
+|---|---|---|
+| 布局 | 当前页 | 当前页 |
+| partial 传 dict | **dict**（`.Title` 空） | **仍是当前页** |
+| partial 传 page | 该页 | 该页 |
+
+FixIt 的 `plugin/image.html` 写 `{{ $Resources := .Resources | default page.Resources }}`——
+`.Resources` 取传入 dict 的键，`page.Resources` 取**当前页**的资源。
+Flint 此前用 `page` 同时承担 dot（迁移产物把 `.X` 统一成 `page.x`）与全局页，
+两者在"dict 上下文的 partial"里相互覆盖 → `$Resources` 为 null →
+"Cannot get the member `$Resources.getmatch` for a null object"。
+
+**修法（引擎 + 转换器）**：
+- 引擎在四个上下文注册 `__page`：页面渲染（= 当前页）、partial 显式上下文 overlay
+  （**固定为调用者的当前页**，不随 dot 改变）、render hook、短代码（与 page 同值——
+  短代码阶段的页面上下文尚未接线，见 T2.2）；
+- 转换器把**源码写的** `page` / `Page` / `page.X` 转到 `__page`，
+  而 dot 派生（`.X` → `page.x`、`$` → `page`）保持不变。
+
+### B. `$.Site.X.Y` 的切片 off-by-one（既有缺陷，本轮暴露）
+
+方法接收者映射里 `head[".Site".Length..]` 少算一位（真实前缀是 `$.Site`，6 字符），
+`$.Site.Store.Set` 因此产出 `sitee.store.set`（多一个 `e`）→
+"Cannot get the member `sitee.store` for a null object"（FixIt 的 base/paginator.html）。
+`.Page` 分支同源同修。
+
+### C. `.Markup FORMAT`（Hugo v0.146+ 内容作用域）
+
+Hugo v0.166 探针实测：`.Markup "home"` 返回内容作用域对象，
+`.Render.Summary.Text` 给出该作用域下的**摘要 HTML**。FixIt 的 summary.html 用它
+按输出格式渲染摘要。Flint 新增 `page.markup`：
+
+```
+{ render: { content, plain, summary: { text, plain } }, format }
+```
+
+**已知差异（已写入代码注释）**：Flint 直接给出页面既有的摘要/正文渲染结果，
+不会把 `hugo.Context.MarkupScope` 切到 `"home"`——主题里
+`ne hugo.Context.MarkupScope "home"` 的 markdown 钩子分支因此走"非 home"形态
+（首页摘要里的交互组件不降级为静态形态）。只影响摘要呈现细节，不影响构建与内容完整性。
+
+### D. fixit 进度与剩余
+
+12 页 → **15 页**，错误 9 → **4**：3 处 `$pages.Prev`（block 求值顺序，见第三十节 E）
++ 1 处 rss.html 的 `page.config.limit`。

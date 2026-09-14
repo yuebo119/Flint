@@ -412,3 +412,66 @@ public sealed class PagesNextPrevFunction(IReadOnlyList<FlintPageContext> pages,
         return null;
     }
 }
+
+/// <summary>
+/// <c>.Markup FORMAT</c>（Hugo v0.146+）：按输出格式返回**内容渲染作用域**。
+/// </summary>
+/// <remarks>
+/// Hugo v0.166 实测：<c>.Markup "home"</c> 返回内容作用域对象（内部类型
+/// cachedContentScope），<c>.Render</c> 取渲染结果、<c>.Render.Summary.Text</c>
+/// 取该作用域下的摘要 HTML（探针实测输出 <c>&lt;p&gt;body &lt;strong&gt;bold&lt;/strong&gt; text&lt;/p&gt;</c>）。
+/// 主题用法（FixIt 的 summary.html）：<c>with .Markup "home" → with .Render →
+/// dict "Content" .Summary.Text …</c>，即"首页摘要按 home 作用域渲染"。
+/// </remarks>
+/// <remarks>
+/// **已知差异**：Flint 在此直接给出页面既有的摘要/正文渲染结果，
+/// 不会把 <c>hugo.Context.MarkupScope</c> 切到 "home"——
+/// 主题里 <c>ne hugo.Context.MarkupScope "home"</c> 的 markdown 钩子分支
+/// 因此走"非 home"形态（摘要中的交互组件不会被降级为静态形态）。
+/// 该差异只影响首页摘要的呈现细节，不影响构建与页面内容完整性。
+/// </remarks>
+public sealed class PageMarkupFunction(FlintPageContext page)
+    : Scriban.Runtime.IScriptCustomFunction
+{
+    public object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
+        ScriptArray arguments, ScriptBlockStatement? blockStatement)
+    {
+        var summaryText = page.Summary ?? "";
+        var render = new ScriptObject
+        {
+            ["content"] = page.Content ?? "",
+            ["Content"] = page.Content ?? "",
+            ["plain"] = page.Plain ?? "",
+            ["Plain"] = page.Plain ?? "",
+            ["summary"] = new ScriptObject
+            {
+                ["text"] = summaryText,
+                ["Text"] = summaryText,
+                ["plain"] = page.Plain ?? "",
+                ["Plain"] = page.Plain ?? ""
+            }
+        };
+        render["Summary"] = render["summary"];
+        return new ScriptObject
+        {
+            ["render"] = render,
+            ["Render"] = render,
+            // 作用域标识（Hugo 里用于区分输出格式；主题据此取不同渲染结果）
+            ["format"] = arguments.Count > 0 ? arguments[0]?.ToString() ?? "" : "",
+            ["Format"] = arguments.Count > 0 ? arguments[0]?.ToString() ?? "" : ""
+        };
+    }
+
+    public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context, ScriptNode? callerContext,
+        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+        new(Invoke(context, callerContext, arguments, blockStatement));
+
+    public int RequiredParameterCount => 0;
+    public int ParameterCount => 1;
+    public Scriban.Runtime.ScriptVarParamKind VarParamKind => Scriban.Runtime.ScriptVarParamKind.Direct;
+    public Type ReturnType => typeof(object);
+    public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index)
+        => new(typeof(string), "format");
+    public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo
+        => new(typeof(object), "scope");
+}
