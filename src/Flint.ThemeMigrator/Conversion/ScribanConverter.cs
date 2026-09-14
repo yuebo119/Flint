@@ -39,6 +39,16 @@ internal sealed class ScribanConverter(
     /// <summary>partialValue 的 Store 键前缀（与引擎侧 ScribanTemplateRenderer 一致）</summary>
     internal const string RetKeyPrefix = "__partial_ret_";
 
+    /// <summary>
+    /// 源码写 `page` / `Page` 时产出的**全局当前页**根名（引擎同名全局）。
+    /// Hugo 实测（v0.166）：以 dict 调用 partial 时 `.` 是 dict，而 `page` 仍是当前页
+    /// （`{{ .Resources | default page.Resources }}` 这类写法依赖它）；
+    /// Flint 用 `page` 承担 dot 语义（迁移产物把 `.X` 统一成 `page.x`），
+    /// 故源码侧 `page` 必须走另一个名字，否则两者相互覆盖
+    /// （FixIt 的 plugin/image.html 实测 "$Resources.getmatch for a null object"）
+    /// </summary>
+    internal const string GlobalPageRoot = "__page";
+
     /// <summary>转换诊断（降级/不支持项）</summary>
     public List<string> Diagnostics { get; } = [];
 
@@ -955,19 +965,22 @@ internal sealed class ScribanConverter(
         {
             // `$.Page` 与裸 `$` 都指当前页；`$.Site` 指站点
             "$.Site" or "site" => "site",
-            "$.Page" or "$" or "." or "page" => "page",
+            "$.Page" or "$" or "." => "page",
+            "page" or "Page" => GlobalPageRoot,
             "$.Site.RegularPages" => "site.regular_pages",
             "$.Site.Pages" => "site.pages",
             _ when head.StartsWith("$.Site.", StringComparison.Ordinal) =>
-                "site" + ToSnakePath(head[".Site".Length..]),
+                // 切片长度须含 `$.` 前缀（6 字符）：head[".Site".Length..] 少算一位，
+                // `$.Site.Store.Set` 会产出 `sitee.store.set`（FixIt 的 base/paginator.html 实测）
+                "site" + ToSnakePathNilSafe(head["$.Site".Length..]),
             // `$.Page.GetTerms` / `$.GetTerms`：`$.X` 的 X 是页面成员，须剥掉
             // `$.` 前缀再映射（此前 head[1..] 产出 `.GetTerms` → page.get_terms 正常，
             // 但 `$.Page.X` 形态会产出 `page.page.x`——此处统一走 Page 剥除）
             _ when head.StartsWith("$.Page.", StringComparison.Ordinal) =>
-                "page" + ToSnakePath(head[".Page".Length..]),
+                "page" + ToSnakePathNilSafe(head["$.Page".Length..]),
             _ when head.StartsWith("$.", StringComparison.Ordinal) ||
                    head.StartsWith('.') =>
-                "page" + ToSnakePath(head.StartsWith('.') ? head : head[1..]),
+                "page" + ToSnakePathNilSafe(head.StartsWith('.') ? head : head[1..]),
             _ => head
         };
 
@@ -1107,7 +1120,10 @@ internal sealed class ScribanConverter(
         return root switch
         {
             "site" or "Site" => "site" + restSafe,
-            "page" or "Page" => "page" + restSafe,
+            // 源码写的 `page.X` 是 Hugo 的**全局当前页**（不是 dot）：partial 以 dict
+            // 调用时 `.` 是 dict 而 `page` 仍是当前页（Hugo v0.166 实测）。
+            // Flint 用 `page` 承担 dot，故源码侧 page 走独立全局 `__page`
+            "page" or "Page" => GlobalPageRoot + restSafe,
             _ => null
         };
     }
@@ -1548,7 +1564,9 @@ internal sealed class ScribanConverter(
                         return new ConversionResult(mappedId, ConversionKind.Equivalent);
                     }
                 }
-                return new ConversionResult(id.Name, ConversionKind.Equivalent);
+                return id.Name is "page" or "Page"
+                    ? new ConversionResult(GlobalPageRoot, ConversionKind.Equivalent)
+                    : new ConversionResult(id.Name, ConversionKind.Equivalent);
 
             case Parsing.ParenExpr p:
             {
@@ -1639,6 +1657,31 @@ internal sealed class ScribanConverter(
     /// 字段路径转 snake：.Params.Title → .params.title；.Title → .title。
     /// 连续大写（.URL）整体小写
     /// </summary>
+    /// <summary>
+    /// <see cref="ToSnakePath"/> 的 **nil 安全**形态：首段之后的段间用 <c>?.</c>。
+    /// Hugo 对缺失中间层返回 nil（宽容），Scriban 的普通点链遇 null 抛
+    /// "Cannot get the member … for a null object"。链式方法接收者此前走普通点
+    ///（FixIt 的 `.Config.limit` 在最小配置下 `params.feed` 缺失 → 报错；
+    ///  `$.Site.Store.Set` 同族）
+    /// </summary>
+    private static string ToSnakePathNilSafe(string path)
+    {
+        var snake = ToSnakePath(path);
+        var sb = new StringBuilder(snake.Length + 8);
+        for (var i = 0; i < snake.Length; i++)
+        {
+            if (snake[i] == '.' && i > 0)
+            {
+                sb.Append("?.");
+            }
+            else
+            {
+                sb.Append(snake[i]);
+            }
+        }
+        return sb.ToString();
+    }
+
     private static string ToSnakePath(string path)
     {
         var sb = new StringBuilder();
@@ -1693,7 +1736,8 @@ internal sealed class ScribanConverter(
             // 那里才有实际内容（hugo 对象的 data 字段未由构建入口填充，实测为空）
             "hugo" => "site",
             "site" => "site",
-            "page" or "$" => "page",
+            "page" => GlobalPageRoot,
+            "$" => "page",
             _ => null
         };
         if (root is null)

@@ -206,6 +206,13 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("section", page.Section, false);
             SetValue("table_of_contents", page.TableOfContents, false);
             SetValue("plain", page.Plain, false);
+            // .Markup FORMAT（Hugo v0.146+ 的内容渲染作用域）：返回对象带
+            // `.Render.Summary.Text` / `.Render.Content` 等，主题在"摘要按输出格式渲染"
+            // 场景使用（FixIt 的 summary.html：`with .Markup "home"` → `with .Render`
+            // → `dict "Content" .Summary.Text`）。缺此成员时报
+            // "The function `page?.markup` was not found"
+            SetValue("markup", new PageMarkupFunction(page), false);
+            SetValue("Markup", new PageMarkupFunction(page), false);
             SetValue("raw_content", page.RawContent, false);
             // B4：Hugo .File.* 方法族（主题常用 .File.Path / .File.ContentBaseName）
             SetValue("file", BuildFileObject(page.SourcePath), false);

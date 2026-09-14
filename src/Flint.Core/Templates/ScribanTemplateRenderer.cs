@@ -75,7 +75,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     pageLike[key] = shortcodeGlobals[key];
                 }
             }
-            context.PushGlobal(new ScriptObject { ["page"] = pageLike, ["Page"] = pageLike });
+            context.PushGlobal(new ScriptObject
+            {
+                ["page"] = pageLike,
+                ["Page"] = pageLike,
+                // 短代码阶段的页面上下文尚未接线（pageContext 传 null），
+                // 故与 page 同值：迁移产物里的 `__page.X` 至少不因缺名字报错
+                ["__page"] = pageLike
+            });
             context.PushGlobal(BuildPartialGlobals(pageLike));
         };
     }
@@ -615,6 +622,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         globals["scratch"] = hookStore;
         globals["page"] = pageLike;
         globals["Page"] = pageLike;
+        globals["__page"] = pageLike;
 
         var context = new Scriban.TemplateContext
         {
@@ -1070,7 +1078,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         var overlay = new ScriptObject
         {
             ["page"] = effective,
-            ["Page"] = effective
+            ["Page"] = effective,
+            // 显式 dict 上下文只改 dot；`__page` 始终指向调用者的当前页
+            //（Hugo：partial 内 `page` 是当前页，`.` 才是传入的 dict）
+            ["__page"] = pageObject,
         };
         // 返回值通道的 store 必须随 overlay 一起可见：ResolveStore 读的是
         // CurrentGlobal（最顶层），overlay 一压就把下层 globals 里的
@@ -1916,6 +1927,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         var globals = new ScriptObject
         {
             ["page"] = pageObject,
+            // 全局当前页（与 dot 解耦）：Hugo 的 `page` 在 partial 以 dict 调用时
+            // 仍是当前页，而 `.` 是 dict。迁移产物把源码 `page.X` 转到本名
+            ["__page"] = pageObject,
             ["site"] = siteObject,
             // Hugo .Pages 语义：term 页为词条页面列表（per-page 独立包装）；
             // 未设置时回落全站 regular_pages——复用站点级共享包装，同一列表只转换一次
