@@ -1986,6 +1986,18 @@ public sealed partial class BuiltinTemplateFunctions
             case long l when l is >= int.MinValue and <= int.MaxValue:
                 index = (int)l;
                 return true;
+            // 浮点/十进制也算（Scriban 的算术可能产出 double）：`index $pages (add $i -1)`
+            // 的键若是 double 会漏到这里之外 → 走成员查找 → 恒 null
+            //（even 的 section.html 用 `index $paginator.Pages (add $index -1)` 取前一项）
+            case double d when d is >= int.MinValue and <= int.MaxValue:
+                index = (int)d;
+                return true;
+            case float f when f is >= int.MinValue and <= int.MaxValue:
+                index = (int)f;
+                return true;
+            case decimal m when m is >= int.MinValue and <= int.MaxValue:
+                index = (int)m;
+                return true;
             case string s when int.TryParse(s, System.Globalization.NumberStyles.Integer,
                 System.Globalization.CultureInfo.InvariantCulture, out var parsed):
                 index = parsed;

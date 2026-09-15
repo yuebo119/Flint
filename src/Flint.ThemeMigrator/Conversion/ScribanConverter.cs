@@ -618,7 +618,11 @@ internal sealed class ScribanConverter(
 
         if (name is "and" or "or")
         {
-            var op = name == "and" ? "&&" : "||";
+            // Go 的 and/or 是**惰性**短路，Scriban 的 &&/|| 是急切求值——
+            // 直接映射会打掉"靠短路保护 nil"的写法（even 的 section.html：
+            // `{{ if or (eq $index 0) (ne ($lastElement.Date.Format "2006") $thisYear) }}`
+            // 首轮 index 取到 -1 → nil 的 `.Date` 在急切求值下抛错）。
+            // 用**分支惰性**的三元表达，见 LazyLogical
             var parts = new List<string>();
             foreach (var a in args)
             {
@@ -629,7 +633,7 @@ internal sealed class ScribanConverter(
                 }
                 parts.Add(r.Text);
             }
-            return new ConversionResult("(" + string.Join($" {op} ", parts) + ")", ConversionKind.Equivalent);
+            return new ConversionResult(LazyLogical(name, parts), ConversionKind.Equivalent);
         }
 
         if (name == "not")
@@ -1120,9 +1124,14 @@ internal sealed class ScribanConverter(
             texts.Add(r.Text);
         }
 
+        if (fn is "and" or "or")
+        {
+            // 与 ConvertCall 同口径：惰性短路（Go）↔ 分支惰性三元（Scriban）
+            return new ConversionResult(LazyLogical(fn, texts), ConversionKind.Equivalent);
+        }
+
         var op = fn switch
         {
-            "and" => "&&", "or" => "||",
             "eq" => "==", "ne" => "!=", "gt" => ">", "ge" => ">=", "lt" => "<", "le" => "<=",
             _ => "&&"
         };
@@ -1200,6 +1209,31 @@ internal sealed class ScribanConverter(
     }
 
     /// <summary>dict k1 v1 k2 v2 → { k1: v1, k2: v2 }</summary>
+    /// <summary>
+    /// Go 的 <c>and</c>/<c>or</c> 是**惰性**短路（Go 1.18 起 and/or 短路），
+    /// 而 Scriban 的 <c>&amp;&amp;</c>/<c>||</c> 是**急切**求值——直接映射会打掉
+    /// "靠短路保护 nil"的写法（even 的 <c>section.html</c>：
+    /// <c>{{ if or (eq $index 0) (ne ($lastElement.Date.Format "2006") $thisYear) }}</c>，
+    /// 首轮 <c>index $pages -1</c> 为 nil，急切求值下 <c>.Date</c> 抛
+    /// "Cannot get the member … for a null object"）。
+    /// 用 Scriban 的**三元**表达（探针确认其分支是惰性的）：
+    /// <c>or A B …</c> → <c>(A) ? true : ((B) ? true : false)</c>；
+    /// <c>and A B …</c> → <c>(A) ? ((B) ? true : false) : false</c>。
+    /// 条件语境只看真值，故取布尔（Go 的"首个真值/末值"取值差异只在赋值语境可见，
+    /// 实测主题里没有这种用法）
+    /// </summary>
+    private static string LazyLogical(string fn, IReadOnlyList<string> parts)
+    {
+        var acc = fn == "and" ? "true" : "false";
+        for (var i = parts.Count - 1; i >= 0; i--)
+        {
+            acc = fn == "and"
+                ? $"({parts[i]}) ? ({acc}) : false"
+                : $"({parts[i]}) ? true : ({acc})";
+        }
+        return acc;
+    }
+
     private ConversionResult ConvertDict(
         List<Parsing.Expr> args, IReadOnlyList<string> scope)
     {
