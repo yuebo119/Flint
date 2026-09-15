@@ -549,16 +549,24 @@ public sealed class PageContext
 
     /// <summary>
     /// 以指定分页器派生一个页面实例（C1 分页多页）：浅拷贝全部字段，
-    /// Paginator 绑定为该 pager，RelPermalink/Permalink/Pages 指向该页
+    /// Paginator 绑定为该 pager，Permalink/RelPermalink 指向该页
     /// （第 1 页即列表页自身 URL，与分页前一致）。
-    /// 页面对象在构建内共享，分页实例必须是独立对象——不得原地修改共享实例
+    /// 页面对象在构建内共享，分页实例必须是独立对象——不得原地修改共享实例。
+    ///
+    /// <para>
+    /// <b>Pages 保持全集</b>：Hugo v0.166 实测（3 篇文章、pagerSize=2）——
+    /// <c>tp=2 pagesLen=3 pagerItems=2</c>，`/page/2/` 上同样是 `pagesLen=3 pagerItems=1`：
+    /// 当前页切片只在 <c>.Paginator.Pages</c>，<c>.Pages</c> 始终是列表页的完整集合。
+    /// 此前把 Pages 换成当前页切片，使"段页按 .Pages 过滤/计数"的主题（papermod 的
+    /// `union .RegularPages .Sections`、各类 `where .Pages …`）看到被截断的集合——
+    /// 3 篇文章的段页只报 2 篇，`/posts/page/2/` 因此永不生成（门禁④报不对称）
+    /// </para>
     /// </summary>
     public PageContext WithPaginator(PaginatorView paginator, string baseUrl)
     {
         var rel = paginator.URL;
-        // Hugo 语义：pager 页面的 .Pages 即该页切片
         return Clone(
-            baseUrl.TrimEnd('/') + rel, rel, paginator.Pages, paginator);
+            baseUrl.TrimEnd('/') + rel, rel, Pages, paginator);
     }
 
     /// <summary>共享浅拷贝实现：仅 Permalink/RelPermalink/Pages/Paginator 可变</summary>

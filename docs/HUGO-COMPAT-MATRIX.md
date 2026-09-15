@@ -200,3 +200,22 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 4. **断言带证据来源**：测试注释里写清"实测了什么、用什么手法"，便于下轮复核。
 5. **[推断] 要标注**：未逐项实测的部分（如字面 `taxonomy/` 目录级的 `terms` 位置）
    在代码注释与本清单里标 `[推断]`，不得写成实测结论。
+
+### J. 分页后 `.Pages` 保持全集（本轮第五项修复）
+
+Hugo v0.166 实测（3 篇文章、`pagerSize = 2`）：分页页上的 `.Pages` **仍是完整集合**，
+当前页切片只在 `.Paginator.Pages`：
+
+```
+首页/列表第 1 页: tp=2  pagesLen=3  pagerItems=2   regular=3
+      第 2 页: tp=2  pagesLen=3  pagerItems=1   regular=3
+```
+
+Flint 的 `PageContext.WithPaginator` 曾把 `.Pages` 换成当前页切片（注释写"pager 页面的
+.Pages 即该页切片"，与实测不符）——于是"段页按 `.Pages` 过滤/计数"的主题看到被截断的
+集合（papermod 的 `union .RegularPages .Sections` 得到 2 篇而非 3 篇），`/posts/page/2/`
+永不生成 → 门禁④报不对称。改为保留全集后 papermod 恢复对称（24/24）。
+
+另外 `.Paginate <空集合>` 必须是"空分页器"而不是"回落到本页 Pages"：
+blog-awesome 的列表页调用 `.Paginate (where .Pages "Section" "blog")`（过滤结果为空），
+回落会让 3 篇文章按 2 分页、多出 `/page/2/`。空序列现按合法（空）集合处理并登记。

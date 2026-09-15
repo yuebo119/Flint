@@ -530,8 +530,15 @@ public sealed partial class ScribanTemplateRenderer
             // 都以它为准）。旧实现丢弃实参、恒按当前页 Pages → 主题传
             // site.RegularPages 时页数与列表内容都不是 Hugo 的样子
             //（papermod/m10c 的 home 用 `.Paginate $pages`，实测页数不一致）
-            var items = ResolvePageArgument(arguments.Count > 0 ? arguments[0] : null)
-                        ?? page.Pages ?? [];
+            //
+            // **空集合也算显式集合**：blog-awesome 的列表页调用
+            // `.Paginate (where .Pages "Section" "blog")`——过滤结果为空，Hugo 得到
+            // "空分页器"（1 页、无 /page/2/），而"回落本页 Pages"会按 3 篇文章分页
+            // → 多出 /page/2/（门禁④报不对称）
+            IReadOnlyList<FlintPageContext> explicitItems = [];
+            var hasExplicitCollection =
+                arguments.Count > 0 && TryResolvePageCollection(arguments[0], out explicitItems);
+            var items = hasExplicitCollection ? explicitItems : page.Pages ?? [];
 
             // **显式页大小**：Hugo 的 `.Paginate $pages N` 第二参覆盖站点 pagerSize
             //（v0.166 实测：站点 pagerSize=2、3 篇文章时 `.Paginate $ps 6` → TotalPages=1，
@@ -545,8 +552,9 @@ public sealed partial class ScribanTemplateRenderer
             }
 
             // 集合与**实际生效的页大小**一并登记：站点侧据此生成 /page/N/
-            //（只记集合会让页数按站点配置算，与模板用的尺寸不一致）
-            if (items.Count > 0)
+            //（只记集合会让页数按站点配置算，与模板用的尺寸不一致；
+            //  显式空集合也要登记，否则站点侧回落本页 Pages 又多出页）
+            if (hasExplicitCollection || items.Count > 0)
             {
                 ScribanTemplateRenderer.NotePaginateCollection(page.RelPermalink, items, size);
             }
@@ -581,16 +589,19 @@ public sealed partial class ScribanTemplateRenderer
             Scriban.Runtime.ScriptVarParamKind.Direct;
         public Type ReturnType => typeof(object);
         /// <summary>
-        /// 把实参还原成页面集合（页面序列 / 页面对象列表）；不是页面集合时返回 null
-        /// （调用方回落到当前页 <c>Pages</c>）。元素不是页面对象即判否——
-        /// 混入字符串的普通列表不该被当成页面集合分页
+        /// 把实参还原成页面集合（页面序列 / 页面对象列表）。**空序列算合法集合**
+        /// （Hugo：`.Paginate <空集合>` = 空分页器，只 1 页）；序列里混入非页面元素
+        /// 时返回 false（调用方回落到当前页 <c>Pages</c>）——普通字符串列表不该被
+        /// 当成页面集合分页
         /// </summary>
-        private static IReadOnlyList<FlintPageContext>? ResolvePageArgument(object? argument)
+        private static bool TryResolvePageCollection(
+            object? argument, out IReadOnlyList<FlintPageContext> items)
         {
             switch (argument)
             {
                 case FlintPageContext single:
-                    return [single];
+                    items = [single];
+                    return true;
                 case System.Collections.IEnumerable seq and not string:
                     var pages = new List<FlintPageContext>();
                     foreach (var item in seq)
@@ -601,12 +612,15 @@ public sealed partial class ScribanTemplateRenderer
                         }
                         else
                         {
-                            return null;
+                            items = [];
+                            return false;
                         }
                     }
-                    return pages.Count > 0 ? pages : null;
+                    items = pages;
+                    return true;
                 default:
-                    return null;
+                    items = [];
+                    return false;
             }
         }
 
