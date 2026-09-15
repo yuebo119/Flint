@@ -1,4 +1,4 @@
-# Flint 主题迁移工具：最优方案（实测论证版 · v2）
+﻿# Flint 主题迁移工具：最优方案（实测论证版 · v2）
 
 > 2026-09-10。本方案所有关键数字均来自**可复现的实测**，含本轮新增的原型实验闭环。
 > 标注：[事实]可复现 · [推断]逻辑推导 · [假设]待验证。
@@ -2696,6 +2696,15 @@ Add 都往页面吐文本（`{{ $s.add "n" 5 }}` 输出 `5`）。改为返回空
 3. 站点级 `/page/N/` 的生成改用**模板实际生效的尺寸**（注册表记录 尺寸+集合），
    此前只记集合、页数按 `config.Paginate` 算，与模板分页结果不一致。
 
+4. **分页后 `.Pages` 保持全集**：Hugo 实测 `tp=2 pagesLen=3 pagerItems=2`——
+   当前页切片只在 `.Paginator.Pages`；`WithPaginator` 此前换成切片，使段页的
+   `union .RegularPages .Sections` 少一篇、`/posts/page/2/` 不生成（papermod）。
+5. **`.Paginate <空集合>` = 空分页器**：blog-awesome 传 `(where .Pages "Section" "blog")`
+   得空集，回落本页 Pages 会多出 `/page/2/`。
+
 另：`.Type` 语义切换牵动的**同一类**问题在 `PageStoreObject`/查找链之外还波及分页——
 定位手法同前（先单变量隔离出 `.Type`，再对迁移器/引擎分别 A/B），
 纸面结论见 `docs/HUGO-COMPAT-MATRIX.md` 第二、三节。
+
+**本轮收口数据**：21 主题矩阵 Hugo 21/21、Flint 21/21、门禁④对称 **18/21**（基线 14/21，
+新增 clarity/even/papermod/stack，无丢失）；Core 972 + Migrator 84 全绿。
