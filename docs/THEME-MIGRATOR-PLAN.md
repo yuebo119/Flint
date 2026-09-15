@@ -2556,3 +2556,61 @@ Hugo 全为假（`if false` / `if nil` 两侧一致）。这解释了 FixIt 的
 Hugo 侧 21/21 通过；Flint 侧 20/21 通过（fixit 的 section 页仍回退内置模板，
 根因即 B 的第一条），`对称=1`（页面集合与 Hugo 完全一致）12 个；
 `Flint.Core.Tests` 927 通过、`Flint.ThemeMigrator.Tests` 70 通过。
+---
+
+## 三十七、条件求值语义专项：惰性 and/or、default 空值判据（2026-09-14 第二十二轮）
+
+### A. 惰性 `and`/`or`（已修，21/21 达成）
+
+Go 1.18 起 `and`/`or` **短路**，而 Scriban 的 `&&`/`||` **急切**求值——直接映射会打掉
+"靠短路保护 nil"的写法。探针证据：`{{ if (1 == 1) || (nil.Date) }}` 在 Flint 报错、
+Hugo 正常；`{{ if (1 == 1) ? true : (nil.Date) }}` 在 Flint 通过（**三元的分支是惰性的**）。
+
+修法：用三元表达惰性（`ConvertCall` 与管道折叠两条路径同改）：
+`or A B …` → `(A) ? true : ((B) ? true : false)`；
+`and A B …` → `(A) ? ((B) ? true : false) : false`（条件语境只看真值）。
+
+### B. `default` 的空值判据（已修）
+
+Hugo v0.166 实测：`default 3 ""` / `default 3 0` / `default 3 (slice)` 都取 3，
+而 `default 3 false` **保留 false**——与 `if` 的真值判定刻意不同。Flint 此前只判 null，
+使"配置里写了空串"不再兜底（ananke 的 `$.Param "recent_posts_number" | compare.Default 3`
+拿到 "" → `math.add "" 1` 报 "Object must be of type Int32"）。
+新增 `IsEmptyForDefault`（nil/空串/数值 0/空集合为空；false 与页面对象不算空）。
+
+### C. `index` 的数值键（已修）
+
+`index` 的整数键判定补上 double/float/decimal：Scriban 算术可能产出 double
+（`index $pages (add $index -1)`），漏判会落到成员查找恒 null（even 的 section.html）。
+
+### D. `.Type`/`mainSections` 的联动项：阻塞点已隔离（未修）
+
+注入 `site.Params.mainSections` 后 ananke 从"页面通过"变为"构建失败"，逐步隔离得到**精确**结论：
+
+- 注入本身正确（`DBG` 打印确认 `site.params.main_sections` = 3、`$section_count` = 5、
+  `$n_posts` = 3 都正常；`default` 空值判据修好后 `$n_posts` 由空变 3）
+- 真正报错的是同一文件里**另一行**：`{{ if compare.Ge $section_count (math.add $n_posts 1) }}`
+  这条**整行未被转换**（原样保留 Go 文本）→ Scriban 把 `compare.Ge $section_count (math.add …)`
+  当函数调用解析 → "Object must be of type Int32"
+- 逐项探针（迁移器 fixtures，逐条单跑）：
+
+| fixture | 迁移结果 |
+|---|---|
+| `{{ if (gt 3 1) }}` | 转换 ✔（`num_gt 3 1`） |
+| `{{ if (eq 3 1) }}` | 转换 ✔（`(3 == 1)`） |
+| `{{ if (len (slice 1)) }}` | 转换 ✔（`len ([1])`） |
+| `{{ if compare.Ge 5 (add 3 1) }}` | **原样保留** ✗ |
+| `{{ if (add 3 1) }}` | 原样保留（`add` 已是 Flint 全局，无害） |
+
+即：**普通条件转换正常**，但**调用目标是带点的命名空间函数**（`compare.Ge`）且带括号实参时，
+整行落到"未转换"路径。本轮为此把 `compare.*`/`math.*` 映射进 MigrationMap，并在"含点标识符"
+分支加了函数映射优先——**未生效**（说明该形态的 AST 不是与会话中预想的 `IdentifierExpr`+实参），
+故按"未验证即回退"的纪律**未保留为结论**，仅记录映射（语义等价、矩阵无回归）。
+
+下一步（一项聚焦任务）：转储该形态的 Go 解析 AST（一个小 fixture + 解析器单测），按实际节点类型
+在条件/调用转换处补上映射；随后 `.Type`（section 语义）与 `site.Params.mainSections` 自动计算
+可一并启用（两者都依赖这类模板先能正常转换）。
+
+在此之前维持现状：**21 主题全部通过**（`section.html` 候选链、惰性 and/or、`default` 空值判据、
+数值索引键均已落地），`.Type` 与 mainSections 两项不启用——单独上任何一项都会让 ananke 的
+未转换行被执行到而报错。
