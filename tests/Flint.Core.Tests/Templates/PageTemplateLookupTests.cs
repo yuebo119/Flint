@@ -30,7 +30,12 @@ public sealed class PageTemplateCandidatesTests
         });
 
         // type 与 section 相同时重复级被去重（page 等价名同样只出现一次）
-        Assert.Equal(["posts/single", "posts/page", "single", "page", "all"], Names(levels));
+        Assert.Equal(
+            [
+                "posts/page", "posts/single", "_default/page", "page",
+                "_default/single", "single", "_default/all", "all"
+            ],
+            Names(levels));
     }
 
     [Fact]
@@ -45,11 +50,14 @@ public sealed class PageTemplateCandidatesTests
 
         var names = Names(levels);
         // type 目录级先于 section 目录级（对齐 Hugo：type 在 section 之前）
-        Assert.True(names.IndexOf("blog/single") < names.IndexOf("posts/single"));
-        // kind 等价名 `page`：Hugo v0.166 实测 layouts/page.html 可渲染普通页，
-        // 故每级 single 之后补同名 page（fixit 只有根级 page.html，缺这级会整站找不到模板）
+        Assert.True(names.IndexOf("blog/page") < names.IndexOf("posts/page"));
+        // kind 等价名 `page` 在 `single` 之前（Hugo v0.166 逐级淘汰实测：
+        // posts/page → posts/single → _default/page → page → _default/single → single）
         Assert.Equal(
-            ["blog/single", "blog/page", "posts/single", "posts/page", "single", "page", "all"],
+            [
+                "blog/page", "blog/single", "posts/page", "posts/single",
+                "_default/page", "page", "_default/single", "single", "_default/all", "all"
+            ],
             names);
     }
 
@@ -63,23 +71,19 @@ public sealed class PageTemplateCandidatesTests
             Section = "posts"
         });
 
-        // layout 为"优先提示"：{section}/{layout} 先于 {section}/single
+        // layout 为"优先提示"：{section}/{layout} 先于 {section}/page|single；
+        // 根级同样 layout 先于 kind 名（Hugo v0.166 隔离对探：`_default/foo.html` 胜 `foo.html`）
         Assert.Equal(
-            ["posts/wide", "posts/single", "posts/page", "wide", "single", "page", "all"],
+            [
+                "posts/wide", "posts/page", "posts/single",
+                "_default/wide", "wide",
+                "_default/page", "page", "_default/single", "single", "_default/all", "all"
+            ],
             Names(levels));
     }
 
     [Fact]
-    public void 首页候选链_含home与list且index在前()
-    {
-        var levels = PageTemplateCandidates.Build(new PageTemplateQuery { Kind = "home" });
-
-        // home.html 是一级标准名（此前缺失导致首页渲染为空）
-        Assert.Equal(["index", "home", "list", "all", "single"], Names(levels));
-    }
-
-    [Fact]
-    public void section候选链_字面section目录在_default之后()
+    public void section候选链与Hugo逐级淘汰实测一致()
     {
         var levels = PageTemplateCandidates.Build(new PageTemplateQuery
         {
@@ -88,11 +92,40 @@ public sealed class PageTemplateCandidatesTests
         });
 
         var names = Names(levels);
+        // 顺序来源：Hugo v0.166 逐级淘汰实测（十个候选各写一个标记，逐个删掉胜出者再看下一个），
+        // 结果为 posts/section → posts/list → section/section → section/list →
+        // _default/section → section → _default/list → list → _default/all → all。
+        // 裸名的 `_default/` 形态**排在根形态之前**（隔离探针逐一验证 section/list/all/home/foo）。
+        // 末尾 `single` 是 Flint 的兼容兜底（Hugo 无此级，见 Build 注释），不参与对齐
         Assert.Equal(
-            ["posts/section", "posts/list", "section/section", "section/list", "list", "all", "single"],
+            [
+                "posts/section", "posts/list", "section/section", "section/list",
+                "_default/section", "section", "_default/list", "list",
+                "_default/all", "all", "_default/single", "single"
+            ],
             names);
         // 页面自身 section 目录优先于字面 layouts/section/ 目录
         Assert.True(names.IndexOf("posts/list") < names.IndexOf("section/list"));
+        // 裸名的两形态成对相邻，`_default/` 在前
+        Assert.True(names.IndexOf("_default/section") < names.IndexOf("section"));
+        Assert.True(names.IndexOf("_default/list") < names.IndexOf("list"));
+    }
+
+    [Fact]
+    public void 首页候选链_含home与list且index在前()
+    {
+        var levels = PageTemplateCandidates.Build(new PageTemplateQuery { Kind = "home" });
+
+        // home.html 是一级标准名（此前缺失导致首页渲染为空）；
+        // 顺序与形态均按 Hugo v0.166 逐级淘汰实测：`_default/home` → `_default/index`
+        // → `home` → `index` → `_default/list` → `list` → `_default/all` → `all`
+        // （`home` 在每个形态内都优先于 `index`）
+        Assert.Equal(
+            [
+                "_default/home", "_default/index", "home", "index",
+                "_default/list", "list", "_default/all", "all", "_default/single", "single"
+            ],
+            Names(levels));
     }
 
     [Fact]
@@ -105,12 +138,21 @@ public sealed class PageTemplateCandidatesTests
         });
 
         var names = Names(levels);
-        // taxonomy/term 必须留给内置模板兜底，不得落到 single（会截胡内置列表模板）
-        Assert.DoesNotContain("single", names);
-        Assert.Equal("categories/term", names[0]);
-        Assert.Contains("term", names);
-        Assert.Contains("taxonomy", names);
-        Assert.Contains("list", names);
+        // term 页完整链（Hugo v0.166 逐级淘汰实测）：{taxonomy}/term → {taxonomy}/list
+        // → term/term → term/list → taxonomy/term → _default/taxonomy → _default/term
+        // → term → _default/list → list → _default/all → all
+        // 末尾无 single 兜底（只有 home/section 有，见 Build 注释）
+        Assert.Equal(
+            [
+                "categories/term", "categories/list", "term/term", "term/list",
+                "taxonomy/term", "_default/taxonomy", "_default/term", "term",
+                "_default/list", "list", "_default/all", "all"
+            ],
+            names);
+        // `taxonomy`（根级）与 `terms` 对 term 页**不是候选**（隔离探针确证），
+        // 只有 `_default/` 形态的 taxonomy 参与
+        Assert.DoesNotContain("taxonomy", names);
+        Assert.DoesNotContain("terms", names);
     }
 
     [Fact]
@@ -123,10 +165,16 @@ public sealed class PageTemplateCandidatesTests
         });
 
         var names = Names(levels);
-        // Hugo v0.166：kind=taxonomy（/tags/）优先 taxonomy.html，terms.html 是旧名（次之）
-        Assert.Equal("tags/taxonomy", names[0]);
-        Assert.Contains("terms", names);
-        Assert.Contains("taxonomy", names);
+        // Hugo v0.166 逐级淘汰实测：同形态内 **terms 优先于 taxonomy**（旧名在前），
+        // 且根级 terms.html 不是候选（只有 `_default/terms` 与根级 taxonomy.html）
+        Assert.Equal(
+            [
+                "tags/terms", "tags/taxonomy", "tags/list",
+                "taxonomy/terms", "taxonomy/taxonomy", "taxonomy/list",
+                "_default/terms", "_default/taxonomy", "taxonomy",
+                "_default/list", "list", "_default/all", "all"
+            ],
+            names);
         Assert.DoesNotContain("single", names);
     }
 
@@ -158,8 +206,10 @@ public sealed class PageTemplateCandidatesTests
     {
         var levels = PageTemplateCandidates.Build(new PageTemplateQuery { Kind = "page" });
 
-        // 根级内容页（Section 为空）只产出单页链（含 kind 等价名 page）
-        Assert.Equal(["single", "page", "all"], Names(levels));
+        // 根级内容页（Section 为空）只产出单页链（含 kind 等价名 page，且 page 在 single 之前）
+        Assert.Equal(
+            ["_default/page", "page", "_default/single", "single", "_default/all", "all"],
+            Names(levels));
     }
 }
 

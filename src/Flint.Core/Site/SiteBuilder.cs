@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 站点构建器实现（编排主体：字段/构造/BuildAsync；方法群按聚合拆分于同目录 partial 文件：
 // SiteBuilder.Tree.cs 树装配+cascade+PageContext、SiteBuilder.Incremental.cs 增量、
 // SiteBuilder.Render.cs 渲染调度、SiteBuilder.Output.cs 输出写入）
@@ -145,7 +145,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // kind 分派（home→index）已让树版 home 页（带完整 front matter/params）
             // 渲染 index.html；此处再手建一份会与树版写同一路径，
             // 且兜底页缺 front matter 数据，失败反而误报 HOME001 使构建假失败
-            if (!pageContexts.Any(p => p.Type == "home"))
+            if (!pageContexts.Any(p => p.Kind == "home"))
             {
                 var homePage = await GenerateHomePageAsync(
                     siteContext, config, options, errors, cancellationToken);

@@ -1,0 +1,202 @@
+# Hugo 兼容差异清单（常驻对照表）
+
+> 用途：把"Go 模板 / Hugo 引擎"与"Flint 渲染器"之间的**语义差异**逐类登记在案——
+> 每类都写明 Hugo 的真实语义、Flint 当前处理、证据来源与**可执行回归**的位置。
+> 新增差异必须在本文件登记并配回归测试；差异修复后不得删行，只能改状态（防重犯）。
+>
+> 证据基准：**Hugo v0.166.0 extended**（`tools/hugo-bin/hugo.exe`）+ Scriban 7.4.0。
+> 文中"实测"均指探针脚本的真实输出，脚本形态见文末「探针方法」。
+> 与 `THEME-MIGRATOR-PLAN.md` 的关系：那份是**逐轮施工日志**（按批次记录做了什么），
+> 本文是**按差异类别组织的常驻清单**（现状 + 证据 + 回归位置）。
+
+## 一、类别总览
+
+| # | 类别 | Hugo 语义 | Flint 处理 | 回归测试 |
+|---|------|-----------|-----------|----------|
+| A | 真值判定 | 数字 0 / 空串 / 空集合 / nil / false **为假** | `FlintScribanContext.ToBool` 覆盖 Scriban 默认真值 | `HugoTemplateTruthinessTests`（16 例） |
+| B | `and`/`or` | **惰性短路**且**返回操作数本身** | 转换器产出取值三元链（分支惰性） | `MigratorTests.逻辑函数转惰性取值/取值or保留操作数/取值and返回首个假值否则末值`、`HugoCompatSemanticsTests.取值三元链与Hugo一致/惰性等价形态不触碰未取分支` |
+| C | `default` 空值判据 | `""`/`0`/空集合取兜底；`false` **保留** | `IsEmptyForDefault`（与"真值"刻意不同） | `HugoCompatSemanticsTests.Default的判据与Hugo一致` |
+| D | `index` 数值键 | 列表下标接受整数（含变量与算术结果） | `SeqIndex` 先判数值键再走字典分支 | `HugoCompatSemanticsTests.Index的数值键可用` |
+| E | `Scratch.Add` | 首个值原样存、后续按类型累加；**无返回值** | `AddValue` + `StoreFunction.AddAnd` 返回空串 | `EngineCapabilityTests.Add按Hugo语义累加/Add不产出文本`、`HugoCompatSemanticsTests.ScratchAdd按Hugo语义累加/Scratch里的页面列表可继续取值` |
+| E′ | `lt`/`le`/`gt`/`ge` 跨类型比较 | 数值类型互通（int vs double）、数字串被强制、非数字串按类型序排在数值**之前** | `CompareHugo`（`lt/le/gt/ge` 与 `num_*` 共用一套） | `HugoCompatSemanticsTests.比较函数按Hugo语义跨类型/比较函数不再抛Int32装箱异常` |
+| F | 管道参数序 | `X \| f A` = `f A X`（左值作**末参**） | `PipeValueLastFunctions` + `FoldWithLeft` 反序 | `PipeAndParserRegressionTests.管道左值作末参改写为显式调用/管道比较方向与Hugo一致/管道逻辑取值方向与Hugo一致` |
+| G | 模板查找顺序 | 五类 kind 各有确定候选序（见第三节） | `PageTemplateCandidates.Build*` 按实测序产出 | `PageTemplateLookupTests`（候选链 + 分层解析） |
+| H | 页面集合与分页产物 | `.Pages`/`.RegularPages` 默认日期降序；`ByDate` 升序；分页由模板调用驱动 | `SiteBuilder.Tree` + `PageListFunctions` + 分页注册表 | `PageCollectionAndParamsTests`、`PageAwareLookupE2ETests` |
+| I | 分页尺寸来源 | **`[pagination] pagerSize`**（v0.128+；顶层 `paginate` 被忽略）；`.Paginate $pages N` 的第二参覆盖站点值，且 `/page/N/` 的生成也按该尺寸 | `ConfigParser` 读新键（旧键兜底）+ `PagePaginateFunction` 解析第二参 + 注册表把尺寸传到站点级生成 | `HugoCompatSemanticsTests.Paginate显式页大小生效/显式尺寸时每页内容按该尺寸切` |
+
+## 二、本轮（第二十三轮）新增/修正的四项
+
+### B. `and`/`or` 既惰性又**取值**
+
+此前产出布尔常量（`(A) ? true : ((B) ? true : false)`），只在条件语境正确；
+**赋值语境会丢值**——21 主题语料里有 74 处 `{{ $x := or A B }}` 形态
+（stack 的 `$site_author`、PaperMod 的 `$title`、FixIt 的 `$source`、
+`$title := or .Attributes.title ""` 等），那些变量此前拿到字符串 `"true"`。
+
+Hugo v0.166 实测：
+
+| 表达式 | 结果 |
+|---|---|
+| `or "" 0` | `0`（全假 → **末值**） |
+| `or "a" "b"` | `a` |
+| `or 0 ""` | 空串 |
+| `and "a" "b"` | `b` |
+| `and 1 0 2` | `0`（首个假值） |
+| `and "a" "b" "c"` | `c`（全真 → 末值） |
+| `if (or (eq 1 1) (div 1 0))` | `T`（**短路**，未触已达分支） |
+| `if (or (eq 1 2) (div 1 0))` | **报错**（前项为假 → 逐项求值到 `div 1 0`） |
+
+修法：三元链保留取值语义，被选中的操作数文本重复一次
+（Scriban 只求值被选中的分支，故副作用不重复）：
+`or A B …` → `(A) ? (A) : ((B) ? (B) : C)`；
+`and A B …` → `(A) ? ((B) ? C : (B)) : (A)`。
+错误行为也随之对齐：`or false (div 1 0)` 仍报错（与 Hugo 相同）。
+
+### B′. 管道形态的方向
+
+管道左值作末参，故 `X | or Y` = `or Y X`。实测（顺序敏感形态才测得出方向）：
+`1 | gt 2` → `true`（= `gt 2 1`）、`"A" | or "B"` → `"B"`、`"A" | and "B"` → `"A"`。
+此前按 `(左 op 右)` 拼接 → `1 | gt 2` 产出 `(1 > 2)`（`false`），方向做反。
+21 主题语料里没有 `| gt/ge/lt/le` 写法（`eq`/`ne` 可交换，方向无影响），
+故属潜伏错误，本轮一并修正。
+
+### E. `Scratch.Add` 的返回值
+
+Hugo 的 `Add`/`Set`/`Delete` 无返回值 → 模板里 `{{ $s.Add "k" v }}` 渲染为空。
+Flint 此前 `Add` 返回存入值，使每个"只调用不接收"的 Add 都往页面吐文本
+（`{{ $s.add "n" 5 }}` 实测输出 `5`）。已改为返回空串（`Set`/`Delete` 早已如此）。
+
+### E′. 比较函数的跨类型语义（已修：解除了 `.Type`/mainSections 的引擎侧阻塞）
+
+`lt`/`le`/`gt`/`ge` 曾用 `IComparable.CompareTo`。装箱的 `Int32` 与 `Double` 相比时
+`int.CompareTo(object)` 抛 **"Object must be of type Int32"**——而这正是 ananke
+`home.html(26,13)` 那行未转换代码 `{{ if compare.Ge $section_count (math.add $n_posts 1) }}`
+的报错来源（`math.add` 产出 double）。引擎侧探针：
+
+| 表达式 | 修前 | 修后 |
+|---|---|---|
+| `{{ compare.Ge 5 4 }}` | `true` | `true` |
+| `{{ compare.Ge 5 (math.add 3 1) }}` | **报错 Int32** | `true` |
+| `{{ $x = math.add 3 1 }}{{ compare.Ge 5 $x }}` | **报错 Int32** | `true` |
+| `{{ num_ge 5 (math.add 3 1) }}` | `true`（走宽容实现） | `true` |
+
+改为统一的 `CompareHugo`（`lt/le/gt/ge` 与 `num_*` 共用），Hugo v0.166 实测语义：
+
+| 表达式 | 结果 | 规则 |
+|---|---|---|
+| `lt 1 2.5` / `ge 3 3.0` / `ge 3 3.5` | `true` / `true` / `false` | 两侧可数值化 → 数值比较 |
+| `gt "5" 0` | `true` | 数字串被强制成数值 |
+| `lt "B" 3` / `gt "B" 3` | `true` / `false` | 非数字串 **< 数值**（类型序） |
+| `lt "a" "b"` | `true` | 两侧非数字 → 序号比较 |
+| `eq 5 5.0` / `eq 1 "1"` | `false` / `false` | `eq`/`ne` 不做数值强转 |
+
+### I. 分页（本轮修复三项，均以 Hugo v0.166 探针为准）
+
+1. **配置键改名**：Hugo v0.128+ 用 `[pagination] pagerSize`，**顶层 `paginate` 已被忽略**
+   （实测：顶层 `paginate = 2` + 3 篇文章 → 单页 `n=1`、无 `/page/2/`；
+   `[pagination] pagerSize = 2` → `n=2`）。Flint 现读新键、旧键兜底、默认 10。
+2. **`.Paginate $pages N` 的第二参**：显式页大小覆盖站点值（实测 `n=1` vs 不带第二参 `n=2`）。
+   loveit 的 home 传主题配置 `params.home.posts.paginate = 6`（主题 `hugo.toml` 的
+   `[params]` 合并进站点——Flint 的 `ThemeParamsMerger` 已实现该合并，本轮验证其必要性）。
+3. **站点级 `/page/N/` 的生成要按模板实际用的尺寸**：注册表从"只记集合"改为
+   "集合 + 尺寸"，否则页数按站点配置算，与模板分页结果不一致（表现为多出一页）。
+
+### G. 模板查找顺序（逐级淘汰实测）
+
+方法：把候选文件全部建出、内容写成自己的相对路径，构建后读输出得知胜出者，
+删掉胜者重跑——如此得到**完整序**而非单点比较。
+
+**首页（kind=home）**
+
+```
+_default/home → _default/index → home → index → _default/list → list → _default/all → all
+```
+
+`home` 在**每个形态内**都优先于 `index`（隔离对探：`home.html` 胜 `index.html`）。
+
+**段页（kind=section，section=posts）**
+
+```
+posts/section → posts/list → section/section → section/list
+→ _default/section → section → _default/list → list → _default/all → all
+```
+
+**普通页（kind=page，section=posts）**
+
+```
+posts/page → posts/single → _default/page → page → _default/single → single
+→ _default/all → all
+```
+
+`page`（kind 等价名）在**每个位置**都优先于 `single`。
+
+**taxonomy 列表页（kind=taxonomy，/tags/）**
+
+```
+tags/terms → tags/taxonomy → tags/list
+→ taxonomy/terms → taxonomy/taxonomy → taxonomy/list
+→ _default/terms → _default/taxonomy → taxonomy → _default/list → list → _default/all → all
+```
+
+两处反直觉但实测确凿：同形态内 **`terms` 优先于 `taxonomy`**（`_default/terms.html`
+胜 `_default/taxonomy.html`——even 主题两文件俱全）；**根级 `terms.html` 不是候选**
+（只有 `_default/terms` 与根级 `taxonomy.html` 是）——hugo-coder / xmin 只有根级
+`terms.html`，Hugo 对 /tags/ 报 "found no layout file for kind taxonomy"。
+
+**term 词条页（kind=term，/tags/词条/）**
+
+```
+tags/term → tags/list → term/term → term/list → taxonomy/term
+→ _default/taxonomy → _default/term → term → _default/list → list → _default/all → all
+```
+
+字面 `term/` 目录级**排在** `taxonomy/` 字面目录级之前；`_default/taxonomy` 先于
+`_default/term`（kind 名让位）。**不是**候选的：`{taxonomy}/terms`、
+`{taxonomy}/taxonomy`、`taxonomy/list`、`_default/terms`、根级 `taxonomy.html`、
+根级 `terms.html`（隔离对探：只放 `taxonomy.html` 时 Hugo 报
+"no layout file for kind term"）。
+
+**两条跨 kind 的通用规则**
+
+1. **裸名**（无斜杠）的 `_default/` 形态先于根形态——`_default/section.html` >
+   `section.html`、`_default/list.html` > `list.html`、`_default/all.html` > `all.html`、
+   `_default/foo.html`（`layout: foo`）> `foo.html`，逐对隔离验证。
+2. 候选级顺序（specificity）先于站点/主题根序，站点与主题的 `layouts/` 交错查找。
+
+21 主题语料里**没有任何裸名同时具备两种形态**，故规则 1 对现有主题零影响；
+它只在"主题同时提供两种形态"时改变结果（Hugo 选 `_default/` 那个）。
+
+## 三、已知未支持 / 有意的差异| 项 | 状态 | 说明 |
+|---|---|---|
+| `.Type` 的 section 语义 | **已对齐** | `/` → `page`、`/posts/` → `posts`、`/tags/x/` → `tags`、`/about/` → `page`、front matter `type` 覆盖；实现 = `Metadata.Type ?? (Section 非空 ? Section : "page")` |
+| `site.Params.mainSections` 默认值 | **已对齐** | 常规页最多的段（单元素）；并列取字典序最小；全根级页时为空；显式 `[params] mainSections` 优先 |
+| `{{ if compare.Ge 5 (math.add 3 1) }}` 形态 | **引擎已可用，转换器仍不映射** | 该行在迁移产物里**原样保留**（未转换），但引擎现按 Hugo 语义求值（`CompareHugo`），不再是阻塞；转换器侧的命名空间函数映射仍是待办 |
+| `single` 兜底级（home/section） | Flint 扩展 | Hugo 无此级；仅服务"只有 single.html 的极简站点"，排在 `all` 之后 |
+| `Scratch.Get` 取回的页面列表带方法族 | Flint 超集 | Hugo 下 `.First` 之类在 Scratch 取出后渲染为空；Flint 多给一层方法族，不冲突 |
+| `page.terms`（分类页） | Flint 扩展 | Hugo v0.166 的 /tags/ 页**没有** `.Terms`（实测报 "can't evaluate field Terms"），词条在 `.Pages` 里；Flint 两个都提供 |
+| 分页 `/page/N/` 的产生 | 已对齐 | 仅在模板真的调用 `.Paginate`/`.Paginator` 时产出（Hugo 同） |
+| `SitemapOptions/FeedOptions.ExcludedTypes` | 按 `.Type` 过滤 | 即 front matter type 或段名（Hugo 的 `.Type` 语义）；不是 kind 名 |
+
+## 四、探针方法（复现指南）
+
+三种手法，按"要回答什么问题"选用：
+
+1. **单行 fixture**：改 `layouts/index.html`（或对应 kind 的模板）为一行表达式，
+   `hugo --quiet --destination <tmp>` 后读产物。用于求值语义
+   （真值、`and`/`or` 返回值、`default` 判据、`Scratch` 累加、`index` 键类型）。
+   表达式出错的场景**保留 stderr**——`div 1 0` 这类"该报错就报错"的行为也是差异项。
+2. **隔离对探**：候选池里只留两个文件（内容=自己的路径），构建读输出来判先后。
+   用于形态优先级（`_default/x` vs `x`、`home` vs `index`）。
+3. **逐级淘汰**：全部候选建出 → 构建 → 读输出得到胜者 → 删胜者 → 重复。
+   用于完整候选序（五类 kind 的表就是这样得到的）。注意产物路径要对得上
+   kind（`/tags/` vs `/tags/x/`，写错会得到"看起来像另一类页面"的假结果）。
+
+## 五、维护规则
+
+1. **先探针后改码**：任何"对齐 Hugo"的改动必须先有探针输出，期望值不得凭推理写。
+2. **删不掉的行**：本清单的行只改状态（已修/未修/超集），不删除——被修过的差异重犯过。
+3. **每条差异配回归**：新登记的差异必须同时落在某个测试类里（表内"回归测试"列），
+   否则视为未登记。
+4. **断言带证据来源**：测试注释里写清"实测了什么、用什么手法"，便于下轮复核。
+5. **[推断] 要标注**：未逐项实测的部分（如字面 `taxonomy/` 目录级的 `terms` 位置）
+   在代码注释与本清单里标 `[推断]`，不得写成实测结论。

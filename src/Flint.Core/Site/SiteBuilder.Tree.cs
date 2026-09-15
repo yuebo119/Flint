@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 树装配聚合：内容扫描/解析/过滤、页面树装配、cascade 合并、PageContext 构建
 
 using System.Collections.Concurrent;
@@ -314,7 +314,7 @@ public sealed partial class SiteBuilder
         // section 为其下全部常规页（descendant，等价 Hugo .RegularPages；
         // 直接子级为主的站点与 Hugo .Pages 结果一致）
         var regularByKey = ordered
-            .Where(e => e.Page.Type is not ("home" or "section"))
+            .Where(e => e.Page.Kind is not ("home" or "section"))
             .ToList();
         var regular = regularByKey.Select(e => e.Page).ToList();
 
@@ -322,17 +322,17 @@ public sealed partial class SiteBuilder
         // section 页集合（Hugo 的 .Sections）：与 .Pages 同阶段装配，随页面对象流动。
         // 主题按层级遍历站点结构（techdoc 的 open-menu 用 site.home.sections.by_weight）
         var allSections = ordered
-            .Where(e => e.Page.Type == "section")
+            .Where(e => e.Page.Kind == "section")
             .ToList();
         foreach (var (key, page) in ordered)
         {
-            if (page.Type == "home")
+            if (page.Kind == "home")
             {
                 // Hugo 语义：home 的 .Pages 是**顶层子页 + 顶层 section**（不含深层页面）。
                 // 实测（Hugo v0.166）：content/docs/guide/getting-started.md 不进 home.Pages，
                 // 故 home 的分页页数也据此（此前用全部常规页 → 多出 /page/2/、/page/3/）
                 var homeChildren = ordered
-                    .Where(e => e.Page.Type is "page" or "section" &&
+                    .Where(e => e.Page.Kind is "page" or "section" &&
                                 !e.Key.Contains('/', StringComparison.Ordinal))
                     .Select(e => e.Page)
                     .ToList();
@@ -343,7 +343,7 @@ public sealed partial class SiteBuilder
                         .Select(e => e.Page)
                         .ToList()));
             }
-            else if (page.Type == "section")
+            else if (page.Kind == "section")
             {
                 var prefix = key + "/";
                 var sectionPages = regularByKey
@@ -750,6 +750,8 @@ public sealed partial class SiteBuilder
             }
         }
 
+        var sectionName = SectionOfKind(relPermalink);
+
         return new PageContext
         {
             Title = title,
@@ -769,12 +771,17 @@ public sealed partial class SiteBuilder
             // _index.md 归一为 branch 节点后必须产出 section 语义（list 模板、IsList），
             // 此前用 "page" 兜底致真实 section 页走 single 模板
             //
-            // 【待办】Hugo 的 .Type 是**所属 section 名**（`where … "Type" "in"
-            // mainSections` 靠它过滤），本轮试改为 section 语义后模板查找链随之变化：
-            // ananke 的 home 命中另一条候选链并触发内置分页模板的整数索引错误。
-            // 该改动影响面跨"模板解析 + Type 过滤"两侧，需单独一轮验证后再上；
-            // 现回退到 kind 语义，见 docs/THEME-MIGRATOR-PLAN.md 第三十六节
-            Type = content.Metadata.Type ?? nodeKind ?? "page",
+            // **.Type = section 名**（Hugo v0.166 实测，与 .Section 同值）：
+            //   /                → page（无 section）
+            //   /posts/          → posts（段页）
+            //   /tags/、/tags/x/ → tags（taxonomy / term）
+            //   /posts/a/        → posts（普通页取**顶层**段名）
+            //   /docs/guide/g/   → docs（嵌套取顶层，不是 "guide"）
+            //   /about/          → page（根级页无段名）
+            //   front matter type: custom → custom（显式声明覆盖）
+            // 主题按 `.Type` 过滤（`where … "Type" "in" site.Params.mainSections`）依赖它；
+            // 此前用 kind 名（home/section/taxonomy），上述过滤全部落空
+            Type = content.Metadata.Type ?? (sectionName.Length > 0 ? sectionName : "page"),
             // 模板查找链维度（A 组）：kind 来自树节点类型（用户 type 不覆盖它），
             // DeclaredType 只记 front matter 显式声明——两者分离后候选链才能既让
             // Ananke 的 type:page 命中 layouts/page/single.html，又不让普通页误命中

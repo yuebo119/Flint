@@ -294,7 +294,11 @@ public sealed class StoreFunction(PageStoreObject store, StoreOp op) : Scriban.R
         {
             StoreOp.Set => SetAnd(Arg(0), ArgObj(1)),
             StoreOp.Get => store.Get(Arg(0)),
-            StoreOp.Add => store.AddValue(Arg(0), ArgObj(1)),
+            // Add 与 Set/Delete 同口径：**返回空串**。Hugo 的 Scratch.Add 是
+            // `func (c *Scratch) Add(...)`（无返回值）→ 模板里 `{{ $s.Add "k" v }}`
+            // 渲染为空；此前返回存入值，使每个"只调用不接收"的 Add 都往页面里
+            // 吐一段文本（`{{ $s.add "n" 5 }}` 实测输出 "5"）
+            StoreOp.Add => AddAnd(Arg(0), ArgObj(1)),
             StoreOp.Delete => DeleteAnd(Arg(0)),
             StoreOp.SetInMap => SetInMapAnd(Arg(0), Arg(1), ArgObj(2)),
             StoreOp.DeleteInMap => DeleteInMapAnd(Arg(0), Arg(1)),
@@ -302,6 +306,12 @@ public sealed class StoreFunction(PageStoreObject store, StoreOp op) : Scriban.R
             StoreOp.Values => store.Values,
             _ => null
         };
+    }
+
+    private object? AddAnd(string key, object? value)
+    {
+        store.AddValue(key, value);
+        return "";
     }
 
     private object? SetAnd(string key, object? value)

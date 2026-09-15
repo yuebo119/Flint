@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 输出写入聚合：输出目录清理、资源处理、sitemap/feed、文件写入与输出路径计算
 
 using System.Collections.Concurrent;
@@ -195,7 +195,7 @@ public sealed partial class SiteBuilder
             || disabled.Contains("RSS", StringComparer.OrdinalIgnoreCase)
             || !OutputFormats.Includes(config.Outputs.Home, "rss");
 
-        var homePage = pages.FirstOrDefault(p => p.Type == "home") ?? pages.FirstOrDefault();
+        var homePage = pages.FirstOrDefault(p => p.Kind == "home") ?? pages.FirstOrDefault();
 
         // 生成 Sitemap（主题兼容批次二 #9：站点/主题 sitemap 模板存在时覆盖内置生成器）
         if (!sitemapDisabled)

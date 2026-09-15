@@ -227,15 +227,39 @@ public sealed class PageStoreTests
     }
 
     [Fact]
-    public void Add对序列追加()
+    public void Add按Hugo语义累加()
     {
-        // Hugo Scratch.Add 用于收集序列（主题实测：$.Scratch.Add "index" (dict ...)）
-        var s = new PageStoreObject();
-        Call(s, "add", "list", "first");
-        Call(s, "add", "list", "second");
-        var arr = Call(s, "get", "list") as System.Collections.IEnumerable;
+        // 首个值**原样存入**，后续按类型累加（Hugo v0.166 实测：
+        // 数字 5+7=12、字符串 "a"+"b"="ab"、切片 (slice 1)+(slice 2 3) = [1 2 3]）。
+        // 旧断言假设"首个值包成单元素列表"，那是 hugo-book 场景的过度泛化
+        var nums = new PageStoreObject();
+        Call(nums, "add", "n", 5);
+        Call(nums, "add", "n", 7);
+        Assert.Equal(12d, Call(nums, "get", "n"));
+
+        var strs = new PageStoreObject();
+        Call(strs, "add", "t", "a");
+        Call(strs, "add", "t", "b");
+        Assert.Equal("ab", Call(strs, "get", "t"));
+
+        // 序列收集：实参用切片（主题写法 `$.Scratch.Add "index" (slice .Page)`）
+        var list = new PageStoreObject();
+        Call(list, "add", "l", new Scriban.Runtime.ScriptArray { "first" });
+        Call(list, "add", "l", new Scriban.Runtime.ScriptArray { "second" });
+        var arr = Call(list, "get", "l") as System.Collections.IEnumerable;
         Assert.NotNull(arr);
         Assert.Equal(["first", "second"], arr!.Cast<object?>().ToArray());
+    }
+
+    [Fact]
+    public void Add不产出文本()
+    {
+        // Hugo 的 Scratch.Add/Set/Delete 无返回值 → 模板里 `{{ $s.Add "k" v }}`
+        // 渲染为空。此前 Add 返回存入值，每个"只调用不接收"的 Add 都会往页面吐文本
+        var s = new PageStoreObject();
+        Assert.Equal("", Call(s, "add", "n", 5));
+        Assert.Equal("", Call(s, "set", "n", 6));
+        Assert.Equal("", Call(s, "delete", "n"));
     }
 
     [Fact]

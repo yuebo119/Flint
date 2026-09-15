@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // Sitemap 生成器实现
 
 using System.Text;
@@ -110,7 +110,8 @@ public sealed class SitemapGenerator
             return false;
         }
 
-        // 排除特定类型
+        // 排除特定类型：按 `.Type` 过滤（Hugo 语义：front matter `type` 优先，
+        // 否则为所属段名——故 "posts" 排除整段、"hidden" 排除标记了 type: hidden 的页）
         if (_options.ExcludedTypes.Contains(page.Type ?? ""))
         {
             return false;

@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 增量聚合：增量构建主流程、全局 identity 判定、taxonomy 签名
 
 using System.Collections.Concurrent;
@@ -198,7 +198,7 @@ public sealed partial class SiteBuilder
                 var renderSet = new List<PageContext>();
                 foreach (var context in allPageContexts)
                 {
-                    if (context.Type is "section" or "home" ||
+                    if (context.Kind is "section" or "home" ||
                         (context.SourcePath is not null &&
                          changedPathSet.Contains(context.SourcePath)))
                     {
@@ -219,7 +219,7 @@ public sealed partial class SiteBuilder
                         changedFiles.Where(f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase)),
                         StringComparer.OrdinalIgnoreCase);
                     var fastRenderSet = renderSet
-                        .Where(c => c.Type is "section" or "home" ||
+                        .Where(c => c.Kind is "section" or "home" ||
                                     MatchesPreferredUrl(c, preferred) ||
                                     // 内容变化页始终渲染：其 URL 浏览器可能从未访问过，
                                     // 不豁免会导致 HTML 旧而 taxonomy/sitemap 新的不一致

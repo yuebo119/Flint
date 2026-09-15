@@ -846,9 +846,14 @@ public bool TemplateExists(string templateName) => false;
     [Fact]
     public async Task BuildAsync_term与taxonomy页应注入词条数据供模板枚举()
     {
-        // 默认主题模板 term.html 用 page.pages 枚举词条页面、taxonomy.html 用
-        // page.terms 枚举词条——PageContext 缺这两个成员时（回归形态）
-        // 词条/分类页渲染为空列表（端到端冒烟发现的回归）
+        // 词条页用 page.pages 枚举词条页面、分类页用 page.terms 枚举词条——
+        // PageContext 缺这两个成员时（回归形态）词条/分类页渲染为空列表
+        //（端到端冒烟发现的回归）
+        //
+        // 模板文件的选型依据 Hugo v0.166 逐级淘汰实测：`_default/term.html` 只服务
+        // 词条页，分类页要用 `_default/terms.html`——若这里放 `_default/taxonomy.html`，
+        // Hugo 会让**词条页**也走它（`_default/taxonomy` 排在 `_default/term` 之前），
+        // 两个 kind 的断言就分不开了
         var contentDir = Path.Combine(_testDir, "content");
         await File.WriteAllTextAsync(Path.Combine(contentDir, "post-one.md"),
             "---\ntitle: Post One\ntags: [alpha]\n---\nOne");
@@ -859,7 +864,7 @@ public bool TemplateExists(string templateName) => false;
             Path.Combine(_testDir, "layouts", "_default", "term.html"),
             "T={{ for p in page.pages }}[{{ p.title }}]{{ end }}");
         await File.WriteAllTextAsync(
-            Path.Combine(_testDir, "layouts", "_default", "taxonomy.html"),
+            Path.Combine(_testDir, "layouts", "_default", "terms.html"),
             "X={{ for t in page.terms }}({{ t.name }}:{{ t.count }}){{ end }}");
 
         var builder = CreateRealContentSiteBuilder();

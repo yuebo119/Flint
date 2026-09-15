@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // RSS/Atom Feed 生成器实现
 
 using System.Text;
@@ -253,6 +253,7 @@ public sealed class FeedGenerator
     {
         return pages
             .Where(p => !p.Draft || _options.IncludeDrafts)
+            // 按 `.Type` 过滤（Hugo 语义：front matter `type` 优先，否则段名）
             .Where(p => !_options.ExcludedTypes.Contains(p.Type ?? ""))
             .OrderByDescending(p => p.Date)
             .Take(_options.MaxItems)
