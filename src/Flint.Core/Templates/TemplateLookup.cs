@@ -108,7 +108,9 @@ public sealed class TemplateLookup
 
             for (var rootOrder = 0; rootOrder < _roots.Length; rootOrder++)
             {
-                // 同根内根形态优先于 _default 兜底形态
+                // 同一候选级内：直接形态优先于 `_default/` 兜底形态。
+                // 裸名的两级顺序（`_default/{name}` 在 `{name}` 之前）由
+                // PageTemplateCandidates.Build 的候选表给出，这里只管级内形态顺序
                 if (index.TryGetValue(PathKey(rootOrder, relative + ".html"), out var direct))
                 {
                     return direct;

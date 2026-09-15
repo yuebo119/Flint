@@ -2620,3 +2620,82 @@ Hugo v0.166 实测：`default 3 ""` / `default 3 0` / `default 3 (slice)` 都取
 在此之前维持现状：**21 主题全部通过**（`section.html` 候选链、惰性 and/or、`default` 空值判据、
 数值索引键均已落地），`.Type` 与 mainSections 两项不启用——单独上任何一项都会让 ananke 的
 未转换行被执行到而报错。
+
+> **后续（第二十三轮，见第三十八节）**：上表的"阻塞"已解除——根因不在转换器，而在引擎：
+> `compare.Ge` 收到 `double` 时 `int.CompareTo(object)` 抛 "Object must be of type Int32"。
+> 修掉比较函数的跨类型语义后，`.Type`（section 名）与 `site.Params.mainSections`
+> 已按 Hugo 实测规则启用，ananke 该行不再报错。
+
+## 三十八、第二十三轮：差异清单化（A）· 门禁④结构化（B）· 两处阻塞破解（C）
+
+本轮按"A 差异类别清单 → B 对比器 → C 啃 .Type/mainSections 与条件调用"的顺序推进，
+详情见常驻清单 `docs/HUGO-COMPAT-MATRIX.md`（每类差异 = Hugo 语义 + Flint 处理 + 证据 + 回归位置）。
+
+### A1. `and`/`or` 的**取值语义**（此前只产出布尔，赋值语境丢值）
+
+Hugo v0.166 实测：`or "" 0` → `0`、`or "a" "b"` → `a`、`or 0 ""` → 空串、`and "a" "b"` → `b`、
+`and 1 0 2` → `0`、`and "a" "b" "c"` → `c`；且**短路仍生效**（`if (or (eq 1 1) (div 1 0))` 不报错，
+而 `or false (div 1 0)` **报错**——与 Go 一致）。
+
+21 主题语料里 74 处 `{{ $x := or A B }}` 依赖取值（stack 的 `$site_author`、PaperMod 的 `$title`、
+FixIt 的 `$source`、`$title := or .Attributes.title ""` 等）——旧产出 `(A) ? true : ((B) ? true : false)`
+会让这些变量变成字符串 `"true"`。改为取值三元链：
+`or A B …` → `(A) ? (A) : ((B) ? (B) : C)`；`and A B …` → `(A) ? ((B) ? C : (B)) : (A)`。
+
+### A2. 管道方向的**反序**修正
+
+Go 管道左值作**末参**：`1 | gt 2` = `gt 2 1` = true、`"A" | or "B"` = `or "B" "A"` = "B"。
+`FoldWithLeft` 此前按 `(左 op 右)` 拼接，方向反了（语料里无 `| gt/ge/lt/le` 写法，属潜伏错误）。
+
+### A3. `Scratch.Add` 的**返回值**
+
+Hugo 的 `Add`/`Set`/`Delete` 无返回值；Flint 的 `Add` 曾返回存入值 → 每个"只调用不接收"的
+Add 都往页面吐文本（`{{ $s.add "n" 5 }}` 输出 `5`）。改为返回空串。
+
+### A4. 模板查找顺序（五类 kind 全部逐级淘汰实测）
+
+方法与结果见 `docs/HUGO-COMPAT-MATRIX.md` 第二节 G。要点：
+`page` 优先于 `single`；**裸名**的 `_default/` 形态先于根形态；taxonomy 列表页同形态内
+`terms` 先于 `taxonomy`、且根级 `terms.html` **不是**候选；term 页的字面 `term/` 目录级排在
+`taxonomy/` 之前、`_default/taxonomy` 先于 `_default/term`；home 页 `home` 先于 `index`
+（两形态不成对相邻）。语料里没有任何裸名同时具备两种形态 → 该批修正对现有主题零影响。
+
+### B. 门禁④：从相似度分数升级为**结构化元素差异**
+
+新增 `Validation/ElementDiff.cs`：元素签名（`tag.class…`，class 排序归一）多重集差 →
+逐页"缺什么/多什么" → 主题级聚合（差量 + 涉及页面数）。报告与 `SUMMARY` 都带上
+`missing=`/`extra=`，`--report` 里列出 top-N 签名与最差页面表。配套 `ElementDiffTests`（8 例，
+含变异探针：已知缺一个元素必须报出该签名）。
+
+### C. `.Type` = section 名 + `mainSections` 默认计算（解除阻塞）
+
+**根因不在转换器**：ananke 那行 `{{ if compare.Ge $section_count (math.add $n_posts 1) }}` 未转换，
+但引擎侧执行时报 "Object must be of type Int32"——`lt/le/gt/ge` 用 `IComparable.CompareTo`，
+装箱 `Int32` 与 `Double` 相比时抛异常（`math.add` 产出 double）。改为统一的 `CompareHugo`
+（数值互通、数字串强制、非数字串按类型序排前、`eq/ne` 不强转）后该行正常工作。
+
+随后按 Hugo v0.166 实测启用两项：
+
+- `.Type`：`/` → `page`、`/posts/` → `posts`、`/tags/`、`/tags/x/` → `tags`、
+  `/posts/a/` → `posts`（顶层段名，嵌套页也取顶层）、`/about/` → `page`、
+  front matter `type: custom` → `custom`。实现即 `Type = Metadata.Type ?? (Section 非空 ? Section : "page")`。
+- `site.Params.mainSections` / `site.MainSections` 默认值：**常规页最多的段**（单元素），
+  并列取字典序最小，全为根级页时为空；显式 `[params] mainSections` 优先。
+
+**内部 8 处 `.Type` 误用同步改为 `.Kind`**（Output/Builder/Render/Incremental/Tree×4）——
+它们此前把 `.Type` 当 kind 用（`Type == "home"` 之类），语义切换后会全部失效。
+`SitemapOptions/FeedOptions.ExcludedTypes` 保持按 `.Type` 过滤（Hugo 语：front matter type 或段名）。
+
+### C′. 分页三处修复（本轮实测发现，均由 Hugo 探针定性）
+
+1. `[pagination] pagerSize` 取代顶层 `paginate`（v0.128+；后者被 Hugo **忽略**）——
+   否则 Flint 按旧键分页、Hugo 按默认 10 分页，页数天然不一致。
+2. `.Paginate $pages N` 的**第二参**（显式页大小）此前被丢弃：loveit 的 home 用
+   `$.Paginate $pages $posts.paginate`（主题 `hugo.toml` 里 `params.home.posts.paginate = 6`），
+   Flint 按站点 2 分页 → 多出 `/page/2/`（Hugo 无）→ loveit 由"对称"变"不对称"。
+3. 站点级 `/page/N/` 的生成改用**模板实际生效的尺寸**（注册表记录 尺寸+集合），
+   此前只记集合、页数按 `config.Paginate` 算，与模板分页结果不一致。
+
+另：`.Type` 语义切换牵动的**同一类**问题在 `PageStoreObject`/查找链之外还波及分页——
+定位手法同前（先单变量隔离出 `.Type`，再对迁移器/引擎分别 A/B），
+纸面结论见 `docs/HUGO-COMPAT-MATRIX.md` 第二、三节。

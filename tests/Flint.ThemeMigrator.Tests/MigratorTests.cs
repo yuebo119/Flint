@@ -146,11 +146,33 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
-    public void 逻辑函数转中缀()
+    public void 逻辑函数转惰性取值()
     {
+        // Go 的 and/or 既**惰性短路**又**返回操作数本身**（Hugo v0.166 实测：
+        // `and "a" "b"` → "b"、`and 1 0 2` → 0、`and "a" "b" "c"` → "c"、
+        // `or "" 0` → 0、`or "a" "b"` → "a"），故产出**取值三元链**：
+        // 急切求值的 `&&`/`||` 会打掉"靠短路保护 nil"的写法，
+        // 而只产出布尔常量会让赋值语境的 74 处 `$x := or A B` 拿到 "true"
         var result = Convert("{{ and .Draft (not .Title) }}");
-        Assert.Contains("&&", result, StringComparison.Ordinal);
         Assert.Contains("!(page.title)", result, StringComparison.Ordinal);
+        Assert.Contains("? ", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("&&", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 取值or保留操作数而非布尔()
+    {
+        // `or A B` → `(A) ? (A) : (B)`：A 真取 A、否则取 B（Hugo `or "a" "b"` → "a"）
+        var result = Convert("{{ $t := or \"a\" \"b\" }}");
+        Assert.Contains("(\"a\") ? (\"a\") : (\"b\")", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 取值and返回首个假值否则末值()
+    {
+        // `and A B` → `(A) ? (B) : (A)`（Hugo `and 1 0 2` → 0、`and "a" "b"` → "b"）
+        var result = Convert("{{ $t := and \"a\" \"b\" }}");
+        Assert.Contains("(\"a\") ? (\"b\") : (\"a\")", result, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -565,6 +587,25 @@ public sealed class PipeAndParserRegressionTests
         // PaperMod：`X | printf "content=%q"` → printf "content=%q" X
         var result = Convert("{{ .Title | printf \"%s\" }}");
         Assert.Contains("printf \"%s\" page.title", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 管道比较方向与Hugo一致()
+    {
+        // Go 管道把左值追加为**末参**：`1 | gt 2` = gt(2, 1) = true（Hugo v0.166 实测）。
+        // 旧实现按 `(左 op 右)` 拼接 → 产出 `(1 > 2)`（false），方向反了。
+        // 21 主题语料里没有 `| gt/ge/lt/le` 写法，故这属于潜伏错误（eq/ne 可交换不受影响）
+        Assert.Contains("(2 > 1)", Convert("{{ 1 | gt 2 }}"), StringComparison.Ordinal);
+        Assert.Contains("(2 < 1)", Convert("{{ 1 | lt 2 }}"), StringComparison.Ordinal);
+        Assert.Contains("(2 >= 1)", Convert("{{ 1 | ge 2 }}"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 管道逻辑取值方向与Hugo一致()
+    {
+        // `"A" | or "B"` = or("B", "A") → 首个真值 = "B"；`"A" | and "B"` → 全真取末值 = "A"
+        Assert.Contains("(\"B\") ? (\"B\") : (\"A\")", Convert("{{ \"A\" | or \"B\" }}"), StringComparison.Ordinal);
+        Assert.Contains("(\"B\") ? (\"A\") : (\"B\")", Convert("{{ \"A\" | and \"B\" }}"), StringComparison.Ordinal);
     }
 
     [Fact]

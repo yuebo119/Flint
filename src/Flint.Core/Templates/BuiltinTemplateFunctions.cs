@@ -1374,21 +1374,16 @@ public sealed partial class BuiltinTemplateFunctions
         // ne - 不相等（Hugo 双参语义；可变参数形态 Hugo 未定义，取首两个）
         obj.Import("ne", (object? a, object? b) => !Equals(a, b));
 
-        // lt - 小于
-        obj.Import("lt", (IComparable? a, IComparable? b) =>
-            a != null && b != null && a.CompareTo(b) < 0);
-
-        // le - 小于等于
-        obj.Import("le", (IComparable? a, IComparable? b) =>
-            a != null && b != null && a.CompareTo(b) <= 0);
-
-        // gt - 大于
-        obj.Import("gt", (IComparable? a, IComparable? b) =>
-            a != null && b != null && a.CompareTo(b) > 0);
-
-        // ge - 大于等于
-        obj.Import("ge", (IComparable? a, IComparable? b) =>
-            a != null && b != null && a.CompareTo(b) >= 0);
+        // lt / le / gt / ge - 比较（Hugo v0.166 实测语义）
+        //
+        // 必须走**跨类型比较**而不是 `IComparable.CompareTo`：装箱的 Int32 与 Double
+        // 相比时 `int.CompareTo(object)` 抛 "Object must be of type Int32"
+        //（实测：`{{ compare.Ge 5 (math.add 3 1) }}` 报错、`{{ compare.Ge 5 4 }}` 正常——
+        //  `math.add` 产出 double；ananke 的 home.html 就死在这一行）
+        obj.Import("lt", (object? a, object? b) => CompareHugo(a, b) < 0);
+        obj.Import("le", (object? a, object? b) => CompareHugo(a, b) <= 0);
+        obj.Import("gt", (object? a, object? b) => CompareHugo(a, b) > 0);
+        obj.Import("ge", (object? a, object? b) => CompareHugo(a, b) >= 0);
 
         // and - 逻辑与
         obj.Import("and", (params bool[] values) => values.All(v => v));
@@ -2213,14 +2208,53 @@ public sealed partial class BuiltinTemplateFunctions
     /// 宽容比较（Hugo 语义）：两侧都能解析为数值时按数值比较，
     /// 否则按 Ordinal 字符串比较——不抛类型异常
     /// </summary>
-    private static int CompareNumeric(object? a, object? b)
+    /// <summary>
+    /// Hugo 的比较语义（v0.166 探针实测），lt/le/gt/ge 与 num_* 共用：
+    /// 1. 两侧都能数值化（数值类型、bool → 0/1、**数字串**）→ 按数值比：
+    ///    `lt 1 2.5` → true、`ge 3 3.0` → true、`gt "5" 0` → true
+    ///    （数字串必须被强制，Clarity 的 `$value > 0` 依赖它）；
+    /// 2. 一侧数值化、另一侧不能 → **数值 &gt; 非数字串**：`lt "B" 3` → true、`gt "B" 3` → false；
+    /// 3. 两侧都不能数值化 → 序号比较（Go 的 `&lt;` 是字节序）：`lt "a" "b"` → true；
+    /// 4. nil 排在所有值之前。
+    /// 不能用 <c>IComparable.CompareTo</c>：装箱的 Int32 与 Double 相比时
+    /// <c>int.CompareTo(object)</c> 抛 "Object must be of type Int32"
+    /// （实测：`compare.Ge 5 (math.add 3 1)` 报错、`compare.Ge 5 4` 正常——`math.add` 产出 double；
+    /// ananke 的 home.html 就死在这一行）
+    /// </summary>
+    private static int CompareHugo(object? a, object? b)
     {
-        if (TryNum(a, out var na) && TryNum(b, out var nb))
+        if (a is null && b is null)
+        {
+            return 0;
+        }
+        if (a is null)
+        {
+            return -1;
+        }
+        if (b is null)
+        {
+            return 1;
+        }
+
+        var an = TryNum(a, out var na);
+        var bn = TryNum(b, out var nb);
+        if (an && bn)
         {
             return na.CompareTo(nb);
         }
-        return string.CompareOrdinal(a?.ToString() ?? "", b?.ToString() ?? "");
+        if (an != bn)
+        {
+            return an ? 1 : -1;
+        }
+        return string.CompareOrdinal(a.ToString(), b.ToString());
     }
+
+    private static bool IsNumericValue(object? v) =>
+        v is bool or int or long or double or float or decimal or short or byte or sbyte
+            or uint or ulong or ushort;
+
+    /// <summary>数值比较：与 <see cref="CompareHugo"/> 同口径（Hugo 的比较语义只有一套）</summary>
+    private static int CompareNumeric(object? a, object? b) => CompareHugo(a, b);
 
     private static bool TryNum(object? v, out double num)
     {

@@ -30,7 +30,21 @@ internal sealed record DiffGateResult(
     int CommonPages,
     double AverageStructuralSimilarity,
     double AverageTextCoverage,
-    IReadOnlyList<(string Page, double Structural, double Text)> PerPage);
+    IReadOnlyList<(string Page, double Structural, double Text)> PerPage,
+    IReadOnlyList<ElementSignatureCount> TopMissingElements,
+    IReadOnlyList<ElementSignatureCount> TopExtraElements,
+    IReadOnlyList<PageElementDiff> WorstPages)
+{
+    /// <summary>缺元素总量（聚合后）</summary>
+    public int MissingTotal => TopMissingElements.Sum(m => m.Delta);
+
+    /// <summary>多元素总量（聚合后）</summary>
+    public int ExtraTotal => TopExtraElements.Sum(m => m.Delta);
+
+    /// <summary>逐页差异为空的构造（门禁未跑时的占位）</summary>
+    public static DiffGateResult Empty { get; } = new(
+        true, [], [], 0, 0, 0, [], [], [], []);
+}
 
 /// <summary>门禁执行器</summary>
 internal static class Gates
@@ -94,15 +108,30 @@ internal static class Gates
         var common = hugoPages.Keys.Intersect(flintPages.Keys, StringComparer.Ordinal).OrderBy(k => k).ToList();
 
         var perPage = new List<(string, double, double)>();
+        var pageDiffs = new List<PageElementDiff>();
         foreach (var page in common)
         {
             var hugoText = Normalize(ReadText(hugoPages[page]));
             var flintText = Normalize(ReadText(flintPages[page]));
             perPage.Add((page, StructuralSimilarity(hugoText, flintText), TextCoverage(hugoText, flintText)));
+            // 结构化元素差：把标量分数落到"缺什么/多什么"（同一份文本，无需二次读盘）
+            var missingTokens = MissingWords(hugoText, flintText);
+            pageDiffs.Add(ElementDiff.Build(page, ElementDiff.SignatureCounts(hugoText), ElementDiff.SignatureCounts(flintText))
+                with { MissingTextTokens = missingTokens });
         }
 
         var avgStructural = perPage.Count == 0 ? 0 : perPage.Average(p => p.Item2);
         var avgText = perPage.Count == 0 ? 0 : perPage.Average(p => p.Item3);
+
+        // 主题级聚合：最多 20 条签名差 + 缺得最多的 20 个页面
+        var topMissing = ElementDiff.Aggregate(pageDiffs, missing: true, topN: 20);
+        var topExtra = ElementDiff.Aggregate(pageDiffs, missing: false, topN: 20);
+        var worst = pageDiffs
+            .Where(d => d.Missing.Count > 0 || d.Extra.Count > 0)
+            .OrderByDescending(d => d.MissingTotal)
+            .ThenBy(d => d.Page, StringComparer.Ordinal)
+            .Take(20)
+            .ToList();
 
         // 对称：**必须有共有页面**且无单侧页面。
         // 空对比（两侧都 0 页，通常因构建失败）不算对称——否则"构建失败"会被
@@ -112,7 +141,22 @@ internal static class Gates
         var symmetric = common.Count > 0 && effectiveOnlyHugo.Count == 0 && onlyFlint.Count == 0;
 
         return new DiffGateResult(
-            symmetric, onlyHugo, onlyFlint, common.Count, avgStructural, avgText, perPage);
+            symmetric, onlyHugo, onlyFlint, common.Count, avgStructural, avgText, perPage,
+            topMissing, topExtra, worst);
+    }
+
+    /// <summary>Hugo 侧出现而 Flint 侧缺失的文本词（前 20，供"文案丢失"定位）</summary>
+    private static IReadOnlyList<string> MissingWords(string hugo, string flint)
+    {
+        var hw = System.Text.RegularExpressions.Regex
+            .Matches(hugo, @"[A-Za-z]{4,}")
+            .Select(m => m.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        var fw = System.Text.RegularExpressions.Regex
+            .Matches(flint, @"[A-Za-z]{4,}")
+            .Select(m => m.Value)
+            .ToHashSet(StringComparer.Ordinal);
+        return hw.Where(w => !fw.Contains(w)).OrderBy(w => w, StringComparer.Ordinal).Take(20).ToList();
     }
 
     private static Dictionary<string, string> EnumeratePages(string root)
@@ -237,6 +281,56 @@ internal static class Gates
         sb.AppendLine($"- 平均结构相似度: {diff.AverageStructuralSimilarity * 100:F1}%");
         sb.AppendLine($"- 平均文本覆盖度: {diff.AverageTextCoverage * 100:F1}%");
         sb.AppendLine();
+
+        // 结构化差异：相似度只能说明"像不像"，这一节说明"差在哪"（可直接执行）
+        sb.AppendLine("### 结构化元素差异（缺什么 / 多什么）");
+        sb.AppendLine();
+        if (diff.TopMissingElements.Count == 0 && diff.TopExtraElements.Count == 0)
+        {
+            sb.AppendLine("两侧元素签名多重集完全一致。");
+        }
+        else
+        {
+            if (diff.TopMissingElements.Count > 0)
+            {
+                sb.AppendLine($"**缺元素**（Hugo 有、Flint 缺，共 {diff.MissingTotal} 处）:");
+                foreach (var m in diff.TopMissingElements)
+                {
+                    sb.AppendLine($"- `{ElementDiff.Describe(m)}`");
+                }
+                sb.AppendLine();
+            }
+
+            if (diff.TopExtraElements.Count > 0)
+            {
+                sb.AppendLine($"**多元素**（Flint 多出，共 {diff.ExtraTotal} 处）:");
+                foreach (var e in diff.TopExtraElements)
+                {
+                    sb.AppendLine($"- `{ElementDiff.Describe(e)}`");
+                }
+                sb.AppendLine();
+            }
+
+            if (diff.WorstPages.Count > 0)
+            {
+                sb.AppendLine("| 页面 | 缺元素（前 3） | 多元素（前 3） | 缺文本词（前 3） |");
+                sb.AppendLine("|---|---|---|---|");
+                foreach (var p in diff.WorstPages)
+                {
+                    var miss = p.Missing.Count == 0
+                        ? "—"
+                        : string.Join("、", p.Missing.Take(3).Select(m => $"`{m.Signature}`×{m.Delta}"));
+                    var extra = p.Extra.Count == 0
+                        ? "—"
+                        : string.Join("、", p.Extra.Take(3).Select(e => $"`{e.Signature}`×{e.Delta}"));
+                    var words = p.MissingTextTokens.Count == 0
+                        ? "—"
+                        : string.Join("、", p.MissingTextTokens.Take(3));
+                    sb.AppendLine($"| `{p.Page}` | {miss} | {extra} | {words} |");
+                }
+                sb.AppendLine();
+            }
+        }
 
         if (diff.PerPage.Count > 0)
         {

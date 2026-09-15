@@ -129,6 +129,24 @@ if (verifySite is not null)
             Console.WriteLine($"  仅 Hugo: {diffResult.OnlyInHugo.Count} / 仅 Flint: {diffResult.OnlyInFlint.Count}");
             Console.WriteLine($"  平均结构相似度: {diffResult.AverageStructuralSimilarity * 100:F1}%");
             Console.WriteLine($"  平均文本覆盖度: {diffResult.AverageTextCoverage * 100:F1}%");
+            // 结构化差异（可执行信息）：直接列出最常见的"缺元素/多元素"
+            if (diffResult.TopMissingElements.Count > 0)
+            {
+                Console.WriteLine("  缺元素（Hugo 有、Flint 缺）:");
+                foreach (var m in diffResult.TopMissingElements.Take(10))
+                {
+                    Console.WriteLine($"    - {ElementDiff.Describe(m)}");
+                }
+            }
+
+            if (diffResult.TopExtraElements.Count > 0)
+            {
+                Console.WriteLine("  多元素（Flint 多出）:");
+                foreach (var e in diffResult.TopExtraElements.Take(10))
+                {
+                    Console.WriteLine($"    - {ElementDiff.Describe(e)}");
+                }
+            }
         }
     }
 }
@@ -136,7 +154,7 @@ if (verifySite is not null)
 if (reportPath is not null)
 {
     var extra = diffResult is not null || buildResult is not null
-        ? Gates.FormatReport(diffResult ?? new DiffGateResult(true, [], [], 0, 0, 0, []), buildResult)
+        ? Gates.FormatReport(diffResult ?? DiffGateResult.Empty, buildResult)
         : "";
     WriteReport(reportPath, summary, source, target, extra);
     Console.WriteLine($"\n报告: {reportPath}");
@@ -150,7 +168,10 @@ Console.WriteLine(
     (buildResult is not null ? $" build={(buildResult.Success ? 1 : 0)}" : "") +
     (diffResult is not null ? $" symmetric={(diffResult.Symmetric ? 1 : 0)}" +
         $" struct={diffResult.AverageStructuralSimilarity * 100:F1}" +
-        $" text={diffResult.AverageTextCoverage * 100:F1}" : ""));
+        $" text={diffResult.AverageTextCoverage * 100:F1}" +
+        // 结构化差异的两项计数：`missing=` 缺元素处数、`extra=` 多元素处数
+        // （0 即元素签名完全一致；非 0 时上面已列出具体签名）
+        $" missing={diffResult.MissingTotal} extra={diffResult.ExtraTotal}" : ""));
 
 // 退出码：预检失败=2；构建失败=3；产物不对称=4；全通过=0
 if (summary.ParseFailures > 0)

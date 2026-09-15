@@ -532,16 +532,43 @@ public sealed partial class ScribanTemplateRenderer
             //（papermod/m10c 的 home 用 `.Paginate $pages`，实测页数不一致）
             var items = ResolvePageArgument(arguments.Count > 0 ? arguments[0] : null)
                         ?? page.Pages ?? [];
-            if (items.Count > 0)
+
+            // **显式页大小**：Hugo 的 `.Paginate $pages N` 第二参覆盖站点 pagerSize
+            //（v0.166 实测：站点 pagerSize=2、3 篇文章时 `.Paginate $ps 6` → TotalPages=1，
+            //  不带第二参 → 2）。loveit 的 home 就是 `$.Paginate $pages $posts.paginate`
+            //（主题配置 params.home.posts.paginate = 6）——旧实现忽略第二参，让
+            // 3 篇文章按 2 分页 → 多出 /page/2/（Hugo 无），门禁④报不对称
+            var size = pageSize > 0 ? pageSize : 10;
+            if (arguments.Count > 1 && TryExplicitSize(arguments[1]) is > 0 and var explicitSize)
             {
-                ScribanTemplateRenderer.NotePaginateCollection(page.RelPermalink, items);
+                size = explicitSize;
             }
 
-            var size = pageSize > 0 ? pageSize : 10;
+            // 集合与**实际生效的页大小**一并登记：站点侧据此生成 /page/N/
+            //（只记集合会让页数按站点配置算，与模板用的尺寸不一致）
+            if (items.Count > 0)
+            {
+                ScribanTemplateRenderer.NotePaginateCollection(page.RelPermalink, items, size);
+            }
+
             var pager = PaginatorView.Create(items, 1, size,
                 string.IsNullOrEmpty(page.RelPermalink) ? "/" : page.RelPermalink, paginatePath);
             return BuildPaginatorObject(pager);
         }
+
+        /// <summary>`.Paginate` 第二参（页大小）：接受数值与数字串，其它形态返回 null</summary>
+        private static int? TryExplicitSize(object? argument) => argument switch
+        {
+            int i => i,
+            long l => (int)l,
+            double d => (int)d,
+            float f => (int)f,
+            decimal m => (int)m,
+            short s => s,
+            byte b => b,
+            string str when int.TryParse(str, out var parsed) => parsed,
+            _ => null
+        };
 
         public ValueTask<object?> InvokeAsync(Scriban.TemplateContext context,
             Scriban.Syntax.ScriptNode? callerContext, Scriban.Runtime.ScriptArray arguments,
@@ -1376,14 +1403,11 @@ public sealed partial class ScribanTemplateRenderer
         // 故该 Store 在整次构建内被所有页面看到——与 Hugo .Site.Store 语义一致）
         var siteStore = new PageStoreObject();
 
-        // .Site.MainSections：配置值优先，否则按 Hugo 语义取常规页的 section 名集合
+        // .Site.MainSections / .Site.Params.mainSections：配置值优先，否则按 Hugo
+        // 默认规则计算（见 DefaultMainSections）
         object siteMainSections = site.Params.TryGetValue("mainSections", out var msParam)
             ? msParam
-            : site.RegularPages
-                .Select(p => p.Section)
-                .Where(sec => !string.IsNullOrEmpty(sec))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            : DefaultMainSections(site);
 
         // 依赖跟踪站点对象：site.* 成员访问被记录为 data:site.* 依赖键（T4.1）
         // site.home：home 页的页面对象（Hugo 语义；主题用 .Site.Home.RelPermalink 等）。
@@ -1412,7 +1436,7 @@ public sealed partial class ScribanTemplateRenderer
             ["paginator"] = BuildPaginatorObject(site),
             ["config"] = site.Config,
             ["data"] = site.Data,
-            ["params"] = BuildParamsObject(site.Params),
+            ["params"] = BuildParamsObjectWithMainSections(site, siteMainSections),
             ["build_date"] = site.BuildDate,
             ["last_change"] = site.LastChange,
             ["is_multilingual"] = site.IsMultiLingual,
@@ -1486,6 +1510,38 @@ public sealed partial class ScribanTemplateRenderer
             obj["main_sections"] = mainSections;
         }
         return obj;
+    }
+
+    /// <summary>
+    /// Hugo 的 <c>mainSections</c> 默认值（v0.166 探针实测）：**常规页最多的那个段**，
+    /// 单元素列表；并列时取字典序最小的段名；一个段都没有（全是根级页）时为空列表。
+    ///   posts 2 / docs 1 → posts      posts 2 / docs 2 → docs（并列取小）
+    ///   posts 3 / docs 2 → posts      aaa 1 / zzz 1   → aaa
+    ///   只有 /about/      → 空
+    /// 配置里显式写了 <c>[params] mainSections</c> 则以配置为准（调用点处理）。
+    /// </summary>
+    private static List<string> DefaultMainSections(FlintSiteContext site)
+    {
+        var bySection = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in site.RegularPages)
+        {
+            if (!string.IsNullOrEmpty(page.Section))
+            {
+                bySection[page.Section] = bySection.TryGetValue(page.Section, out var n) ? n + 1 : 1;
+            }
+        }
+
+        if (bySection.Count == 0)
+        {
+            return [];
+        }
+
+        var best = bySection
+            .OrderByDescending(kv => kv.Value)
+            .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+            .First()
+            .Key;
+        return [best];
     }
 
     private static ScriptObject BuildParamsObject(IReadOnlyDictionary<string, object>? source)

@@ -5,19 +5,23 @@
 // - Resolve：纯名字匹配（partial / render hook / 视图等无页面上下文场景），
 //   根序优先正确（站点 partial 覆盖主题 partial）。
 // - 本文件的候选链：页面布局查找需要 kind/type/section/layout 维度，
-//   候选级顺序即 specificity，级内站点优先，同根内根形态优先于 _default 形态。
+//   候选级顺序即 specificity，级内站点优先；**裸名**的两形态顺序为
+//   `_default/{name}` → `{name}`（Hugo v0.166 实测，见 Build 内的 Add）
 //
 // Hugo 语义（官方 lookup-order + templatedescriptor.go）：
 // 1. distance（候选路径具体度）是第一判据，站点/主题根序是第二判据；
 // 2. 站点与主题 layout 目录 interleave 查找（不是先穷尽站点再找主题）；
-// 3. `_default/` 是兜底形态，与同名根形态同级（v0.146+ 由 TrimPrefix 归一）。
+// 3. 裸名的两个形态成对相邻，`_default/` 形态在前；带斜杠的名字没有该形态。
 
 namespace Flint.Core.Templates;
 
 /// <summary>
 /// 候选级：一个逻辑模板名 + 是否允许 <c>_default/</c> 兜底形态。
-/// 同根内先探根形态（<c>{root}/{name}.html</c>）后探兜底形态
-/// （<c>{root}/_default/{name}.html</c>），对齐"根形态优先于 _default 形态"契约。
+/// 裸名会由 <see cref="PageTemplateCandidates.Build"/> 展开成
+/// <c>_default/{name}</c>（在前）+ <c>{name}</c>（在后）两级，
+/// 与 Hugo v0.166 的实测顺序一致；级内仍先探直接形态再探兜底形态
+/// （对 <c>_default/{name}</c> 级而言，兜底形态 <c>_default/_default/{name}</c> 不存在，
+/// 属无害空探）。
 /// </summary>
 public readonly record struct TemplateCandidate(string Name, bool AllowDefaultForm = true);
 
@@ -100,6 +104,24 @@ public static class PageTemplateCandidates
             }
 
             normalized += suffix;
+            // **裸名**的 `_default/` 形态优先于根形态（Hugo v0.166 逐对隔离实测：
+            // `_default/section.html` > `section.html`、`_default/list.html` > `list.html`、
+            // `_default/all.html` > `all.html`、`_default/home.html` > `home.html`/`index.html`、
+            // `_default/foo.html`（layout: foo）> `foo.html`）。
+            // 只在**两种形态同时存在**时才改变结果（同一个名字的两个形态原本相邻，
+            // 把兜底形态提前一位不影响它与其它名字的相对顺序）——21 主题语料里
+            // 没有任何裸名同时具备两种形态，故对现有主题零影响。
+            // 带斜杠的名字（如 `posts/section`）没有 `_default` 形态，保持原样
+            if (!normalized.Contains('/'))
+            {
+                AddLevel("_default/" + normalized);
+            }
+
+            AddLevel(normalized);
+        }
+
+        void AddLevel(string normalized)
+        {
             if (!seen.Add(normalized))
             {
                 return;
@@ -158,34 +180,51 @@ public static class PageTemplateCandidates
         var section = query.Section;
 
         add(Join(type, query.Layout));
-        add(Join(type, "single"));
-        // kind 等价名 `page`：Hugo v0.166 实测 layouts/page.html 可渲染普通页
-        //（fixit 没有 _default/，普通页模板就是根级 page.html——缺这一级时
-        //  /about/、/docs/getting-started/ 报 "模板未找到"，9 处）
+        // kind 等价名 `page`：Hugo v0.166 实测 `layouts/page.html` 可渲染普通页
+        //（fixit 没有 `_default/`，普通页模板就是根级 page.html——缺这一级时
+        //  /about/、/docs/getting-started/ 报 "模板未找到"，9 处），
+        // 且 `page` **优先于** `single`（逐级淘汰实测：posts/page → posts/single →
+        // _default/page → page → _default/single → single → _default/all → all）
         add(Join(type, "page"));
+        add(Join(type, "single"));
         // type 与 section 相同时以下两级会被去重（常见：content/posts/ 且无显式 type）
         add(Join(section, query.Layout));
-        add(Join(section, "single"));
         add(Join(section, "page"));
+        add(Join(section, "single"));
+        // 裸名 "page"/"single" 各展开为 `_default/{name}` + `{name}`，顺序即实测所得
         add(query.Layout);
-        add("single");
         add("page");
+        add("single");
     }
 
     /// <summary>
-    /// 首页。Hugo 候选链：index → home → list
-    /// （index 为旧式标准名，home 为 v0.146+ 标准名，list 为最终兜底）
+    /// 首页。Hugo v0.166 逐级淘汰实测（八个候选逐个删胜出者）：
+    /// <c>_default/home</c> → <c>_default/index</c> → <c>home</c> → <c>index</c>
+    /// → <c>_default/list</c> → <c>list</c> → <c>_default/all</c> → <c>all</c>。
+    /// 注意 `home` 在**每个形态内**都优先于 `index`（隔离对探：`home.html` 胜
+    /// `index.html`、`_default/home.html` 胜 `_default/index.html`），
+    /// 且 `_default/` 形态先于同名的根形态
     /// </summary>
     private static void BuildHome(PageTemplateQuery query, Action<string?> add)
     {
         var type = query.EffectiveType;
-        add(Join(type, query.Layout));
-        add(Join(type, "index"));
-        add(Join(type, "home"));
-        add(Join(type, "list"));
+        // type 级候选只在显式声明 type 时产出：`Join(null, x)` 会退化成裸名 x，
+        // 与下面的裸名级重复（首页通常无 section，type 为 null）
+        if (!string.IsNullOrEmpty(type))
+        {
+            add(Join(type, query.Layout));
+            add(Join(type, "home"));
+            add(Join(type, "index"));
+            add(Join(type, "list"));
+        }
         add(query.Layout);
-        add("index");
+        // 显式 `_default/` 级：实测顺序里两形态**不成对相邻**（`_default/index` 在
+        // 根 `home` 之前），故逐级写出，裸名 "home"/"index" 的兜底形态会被上面的
+        // 显式级去重（`seen`）
+        add("_default/home");
+        add("_default/index");
         add("home");
+        add("index");
         add("list");
     }
 
@@ -214,56 +253,69 @@ public static class PageTemplateCandidates
         add(Join("section", "list"));
 
         add(query.Layout);
-        add("list");
         // **kind 名 `section.html`**（Hugo 0.146+ 的命名，与 page.html/home.html 同族）：
         // 主题只提供 `layouts/section.html` 时（FixIt 的 section 页由该模板渲染）候选链
         // 必须有它，否则整类页面回退内置列表模板（docs/posts 只剩 95/143 字节）。
         // 前置条件已满足：`and`/`or` 的**惰性**等价（分支惰性三元）由转换器保证——
         // even 的 `_default/section.html` 依赖 Go 的短路来跳过 nil 接收者的 `.Date`
+        // 位置由 Hugo v0.166 逐级淘汰实测确定：`section.html`（含 `_default/` 形态）
+        // 排在 `list.html` 之前——同样都是 `_default/section` → `section` →
+        // `_default/list` → `list` → `_default/all` → `all`
         add("section");
+        add("list");
     }
 
     /// <summary>
-    /// taxonomy 列表页（词条索引）。Hugo 候选链：
-    /// {taxonomy}/taxonomy → {taxonomy}/terms → {taxonomy}/list
-    /// → taxonomy/taxonomy → taxonomy/terms → taxonomy/list
-    /// → {layout} → taxonomy → terms → list
-    ///
-    /// 顺序依据（Hugo v0.166 实测，真实主题 ananke）：/tags/ 在同时存在
-    /// taxonomy.html 与 terms.html 时渲染 **taxonomy.html**——0.146 起
-    /// kind=taxonomy 的新名字是 taxonomy.html，terms.html 是旧名（优先级低）
+    /// taxonomy 列表页（词条索引，如 /tags/）。Hugo v0.166 逐级淘汰实测
+    /// （十二个候选逐个删胜出者）：
+    /// <c>{taxonomy}/terms</c> → <c>{taxonomy}/taxonomy</c> → <c>{taxonomy}/list</c>
+    /// → <c>taxonomy/taxonomy</c> → <c>taxonomy/list</c>
+    /// → <c>_default/terms</c> → <c>_default/taxonomy</c> → <c>taxonomy</c>（根）
+    /// → <c>_default/list</c> → <c>list</c> → <c>_default/all</c> → <c>all</c>。
+    /// 两点与直觉相反但实测确凿：
+    /// 1. `terms` 在同形态内**优先于** `taxonomy`（旧名反而在前，隔离对探复现：
+    ///    `_default/terms.html` 胜 `_default/taxonomy.html`——even 主题两文件俱全）；
+    /// 2. 根级 `terms.html` **不是**候选（仅 `taxonomy.html` 是；hugo-coder/xmin
+    ///    只有根级 terms.html，Hugo 对 /tags/ 报 "found no layout file for
+    ///    kind taxonomy" 并回落到 `_default/list.html`）
     /// </summary>
     private static void BuildTaxonomy(PageTemplateQuery query, Action<string?> add)
     {
         var taxonomy = query.Taxonomy;
 
         add(Join(taxonomy, query.Layout));
-        add(Join(taxonomy, "taxonomy"));
         add(Join(taxonomy, "terms"));
+        add(Join(taxonomy, "taxonomy"));
         add(Join(taxonomy, "list"));
 
+        // 字面 `taxonomy/` 目录级：实测仅 taxonomy/taxonomy 与 taxonomy/list 两项，
+        // 其余按同形态内 terms 在前的次序镜像（[推断]，未逐项淘汰）
         add(Join("taxonomy", query.Layout));
-        add(Join("taxonomy", "taxonomy"));
         add(Join("taxonomy", "terms"));
+        add(Join("taxonomy", "taxonomy"));
         add(Join("taxonomy", "list"));
 
         add(query.Layout);
+        add("_default/terms");
+        add("_default/taxonomy");
         add("taxonomy");
-        add("terms");
         add("list");
     }
 
     /// <summary>
-    /// term 词条页。Hugo 候选链：
-    /// {taxonomy}/term → {taxonomy}/list → {taxonomy}/taxonomy
-    /// → term/term → term/list → term/taxonomy
-    /// → taxonomy/term → taxonomy/list → taxonomy/taxonomy
-    /// → {layout} → term → list → taxonomy
-    ///
-    /// 顺序依据（Hugo v0.166 实测，真实主题 ananke）：/tags/<词条>/ 在同时存在
-    /// taxonomy.html 与 list.html 时渲染 **list.html**——0.146 起 kind=term 的新名字
-    /// 是 term.html，taxonomy.html 让位；主题依赖 list.html 的 .Paginator 才会分页，
-    /// 选错模板会让词条页丢失列表与 /page/N/（实测 ananke 词条页内容为空）
+    /// term 词条页（如 /tags/词条/）。Hugo v0.166 逐级淘汰实测（十三个候选，
+    /// 逐个删胜出者）：
+    /// <c>{taxonomy}/term</c> → <c>{taxonomy}/list</c> → <c>term/term</c>
+    /// → <c>term/list</c> → <c>taxonomy/term</c> → <c>_default/taxonomy</c>
+    /// → <c>_default/term</c> → <c>term</c>（根） → <c>_default/list</c> → <c>list</c>
+    /// → <c>_default/all</c> → <c>all</c>。
+    /// 三处容易猜错的地方（均有探针）：
+    /// 1. 字面 `term/` 目录级**排在** `taxonomy/` 字面目录级之前；
+    /// 2. `_default/taxonomy` 先于 `_default/term`（kind 名让位：term 页仍可由
+    ///    taxonomy.html 渲染）；
+    /// 3. **不是**候选的：`{taxonomy}/terms`、`{taxonomy}/taxonomy`、
+    ///    `taxonomy/list`、`_default/terms`、根级 `taxonomy.html`、根级 `terms.html`
+    ///    （隔离对探：只放 `taxonomy.html` 时 Hugo 报 "no layout file for kind term"）
     /// </summary>
     private static void BuildTerm(PageTemplateQuery query, Action<string?> add)
     {
@@ -272,22 +324,19 @@ public static class PageTemplateCandidates
         add(Join(taxonomy, query.Layout));
         add(Join(taxonomy, "term"));
         add(Join(taxonomy, "list"));
-        add(Join(taxonomy, "taxonomy"));
 
         add(Join("term", query.Layout));
         add(Join("term", "term"));
         add(Join("term", "list"));
-        add(Join("term", "taxonomy"));
 
         add(Join("taxonomy", query.Layout));
         add(Join("taxonomy", "term"));
-        add(Join("taxonomy", "list"));
-        add(Join("taxonomy", "taxonomy"));
 
         add(query.Layout);
+        add("_default/taxonomy");
+        add("_default/term");
         add("term");
         add("list");
-        add("taxonomy");
     }
 
     /// <summary>目录与名字拼接；任一段为空返回 null（由调用方 Add 过滤）</summary>

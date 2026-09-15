@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 渲染调度聚合：短代码注册、依赖注册、站点上下文、页面/首页/分类页渲染
 
 using System.Collections.Concurrent;
@@ -273,7 +273,7 @@ public sealed partial class SiteBuilder
         var paginatedLists = new List<(PageContext Page, IReadOnlyList<PageContext> Items, int TotalPages)>();
         foreach (var page in pages)
         {
-            if ((page.Type is "home" or "section") && config.Paginate > 0)
+            if ((page.Kind is "home" or "section") && config.Paginate > 0)
             {
                 var items = page.Pages ?? [];
                 var totalPages = Math.Max(1,
@@ -406,12 +406,14 @@ public sealed partial class SiteBuilder
                 continue;
             }
 
-            // 模板给 .Paginate 传了**显式集合**时以它为准（Hugo 语义）：
-            // 分页页数与每页内容都按该集合切片（papermod/m10c 的 home 实测）
-            var items = ScribanTemplateRenderer.GetPaginateCollection(listPage.RelPermalink)
-                        ?? defaultItems;
+            // 模板给 .Paginate 传了**显式集合/页大小**时以它为准（Hugo 语义）：
+            // 分页页数与每页内容都按该集合与尺寸切片（papermod/m10c 的 home 实测；
+            // loveit 的 home 传 `$posts.paginate`=6，按站点 2 算会多出 /page/2/）
+            var registration = ScribanTemplateRenderer.GetPaginateCollection(listPage.RelPermalink);
+            var items = registration?.Items ?? defaultItems;
+            var pageSize = registration is { Size: > 0 } ? registration.Size : config.Paginate;
             var totalPages = Math.Max(1,
-                (int)Math.Ceiling(items.Count / (double)Math.Max(1, config.Paginate)));
+                (int)Math.Ceiling(items.Count / (double)Math.Max(1, pageSize)));
 
             var firstPagePath = $"{listPage.RelPermalink.TrimEnd('/')}/{config.PaginatePath}/1/";
             results.Add(new RenderedPage
@@ -424,7 +426,7 @@ public sealed partial class SiteBuilder
             for (var pageNumber = 2; pageNumber <= totalPages; pageNumber++)
             {
                 var pager = PaginatorView.Create(
-                    items, pageNumber, config.Paginate,
+                    items, pageNumber, pageSize,
                     listPage.RelPermalink, config.PaginatePath);
                 extraTargets.Add(listPage.WithPaginator(pager, config.BaseURL));
             }

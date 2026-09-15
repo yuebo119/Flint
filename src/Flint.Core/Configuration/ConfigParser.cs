@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 配置解析器实现（AOT 兼容）
 
 using System.Globalization;
@@ -216,6 +216,7 @@ public static partial class ConfigParser
 
     private static SiteConfig ConvertDictToConfig(Dictionary<string, object> dict)
     {
+        var paginationDict = GetDictObject(dict, "pagination") ?? [];
         return new SiteConfig
         {
             BaseURL = GetDictString(dict, "baseURL") ?? GetDictString(dict, "baseurl") ?? "http://localhost:1313/",
@@ -225,8 +226,15 @@ public static partial class ConfigParser
             BuildDrafts = GetDictBool(dict, "buildDrafts") ?? GetDictBool(dict, "builddrafts") ?? false,
             BuildFuture = GetDictBool(dict, "buildFuture") ?? GetDictBool(dict, "buildfuture") ?? false,
             BuildExpired = GetDictBool(dict, "buildExpired") ?? GetDictBool(dict, "buildexpired") ?? false,
-            Paginate = GetDictInt(dict, "paginate") ?? 10,
-            PaginatePath = GetDictString(dict, "paginatePath") ?? GetDictString(dict, "paginatepath") ?? "page",
+            // 分页大小：Hugo v0.128+ 改用 `[pagination] pagerSize`，顶层 `paginate`
+            // **已被忽略**（v0.166 实测：顶层 `paginate = 2` 时 3 篇文章仍单页 n=1、
+            // 不产出 /page/2/；写成 `[pagination] pagerSize = 2` 才是 n=2）。
+            // 故新键优先、旧键兜底（老站点配置仍可用），默认 10（与 Hugo 同）
+            Paginate = GetDictInt(paginationDict, "pagerSize") is > 0 and var pagerSize
+                ? pagerSize
+                : GetDictInt(dict, "paginate") ?? 10,
+            PaginatePath = GetDictString(paginationDict, "path")
+                ?? GetDictString(dict, "paginatePath") ?? GetDictString(dict, "paginatepath") ?? "page",
             EnableGitInfo = GetDictBool(dict, "enableGitInfo") ?? GetDictBool(dict, "enablegitinfo") ?? false,
             EnableInlineShortcodes = GetDictBool(dict, "enableInlineShortcodes")
                 ?? GetDictBool(dict, "enableinlineshortcodes") ?? false,

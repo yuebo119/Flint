@@ -1113,7 +1113,15 @@ internal sealed class ScribanConverter(
     private ConversionResult FoldWithLeft(
         string fn, IEnumerable<Parsing.Expr> rightArgs, string left, IReadOnlyList<string> scope)
     {
-        var texts = new List<string> { left };
+        // Go 的管道把左值追加为**末参**（`X | f A B` = `f A B X`），故左值排在
+        // 右侧参数之后。Hugo v0.166 实测（顺序敏感的形态才能测出方向）：
+        //   `1 | gt 2`     → true   （即 gt 2 1 = 2 > 1）
+        //   `"A" | or "B"` → "B"    （即 or "B" "A" = 首个真值 = "B"）
+        //   `"A" | and "B"`→ "A"    （即 and "B" "A" = 全真取末值 = "A"）
+        // 此前的 `(左 op 右)` 顺序把 gt/ge/lt/le 与 and/or 的**方向做反**：
+        // `1 | gt 2` 会产出 `(1 > 2)`（false，Hugo 为 true）。21 主题语料里没有
+        // `| gt/ge/lt/le` 写法（eq/ne 可交换，方向无影响），故反序对语料无回归风险
+        var texts = new List<string>();
         foreach (var a in rightArgs)
         {
             var r = ConvertExpr(a, scope, false);
@@ -1123,6 +1131,7 @@ internal sealed class ScribanConverter(
             }
             texts.Add(r.Text);
         }
+        texts.Add(left);
 
         if (fn is "and" or "or")
         {
@@ -1135,9 +1144,6 @@ internal sealed class ScribanConverter(
             "eq" => "==", "ne" => "!=", "gt" => ">", "ge" => ">=", "lt" => "<", "le" => "<=",
             _ => "&&"
         };
-
-        // Go 语义：`x | or y` 等价 `or y x`（管道值作**末参**）——
-        // 参数序对比较函数无影响，对 and/or 也无影响（可结合）
         return new ConversionResult("(" + string.Join($" {op} ", texts) + ")", ConversionKind.Equivalent);
     }
 
@@ -1216,20 +1222,37 @@ internal sealed class ScribanConverter(
     /// <c>{{ if or (eq $index 0) (ne ($lastElement.Date.Format "2006") $thisYear) }}</c>，
     /// 首轮 <c>index $pages -1</c> 为 nil，急切求值下 <c>.Date</c> 抛
     /// "Cannot get the member … for a null object"）。
-    /// 用 Scriban 的**三元**表达（探针确认其分支是惰性的）：
-    /// <c>or A B …</c> → <c>(A) ? true : ((B) ? true : false)</c>；
-    /// <c>and A B …</c> → <c>(A) ? ((B) ? true : false) : false</c>。
-    /// 条件语境只看真值，故取布尔（Go 的"首个真值/末值"取值差异只在赋值语境可见，
-    /// 实测主题里没有这种用法）
+    /// 用 Scriban 的**三元**表达（探针确认其分支是惰性的）。
+    ///
+    /// <para>
+    /// 取值语义：Go 的 and/or 返回**操作数本身**，不是布尔（Hugo v0.166 实测：
+    /// <c>or "" 0</c> → <c>0</c>；<c>or "a" "b"</c> → <c>a</c>；<c>or 0 ""</c> → 空串；
+    /// <c>and "a" "b"</c> → <c>b</c>；<c>and 1 0 2</c> → <c>0</c>；<c>and "a" "b" "c"</c> → <c>c</c>）。
+    /// 故产出"首个真值/首个假值，否则末值"的三元链：
+    /// <c>or A B …</c> → <c>(A) ? (A) : ((B) ? (B) : C)</c>；
+    /// <c>and A B …</c> → <c>(A) ? ((B) ? C : (B)) : (A)</c>。
+    /// 此前产出布尔常量（<c>? true : …</c>），赋值语境会丢值——21 主题语料里
+    /// 有 74 处 <c>{{ $x := or A B }}</c> 形态（stack 的 <c>$site_author</c>、
+    /// PaperMod 的 <c>$title</c>、FixIt 的 <c>$source</c> 等），那些变量会变成
+    /// 字符串 "true"。条件语境（<c>if</c>/<c>with</c>）两者等价：
+    /// 三元结果再走 FlintScribanContext 的 Go 真值判定。
+    /// 代价：被选中的操作数文本重复一次（Scriban 只求值被选中的分支，
+    /// 故副作用不重复，仅纯表达式的求值次数增加一次）。
+    /// </para>
     /// </summary>
     private static string LazyLogical(string fn, IReadOnlyList<string> parts)
     {
-        var acc = fn == "and" ? "true" : "false";
-        for (var i = parts.Count - 1; i >= 0; i--)
+        if (parts.Count == 0)
+        {
+            return fn == "and" ? "true" : "false";
+        }
+
+        var acc = parts[^1];
+        for (var i = parts.Count - 2; i >= 0; i--)
         {
             acc = fn == "and"
-                ? $"({parts[i]}) ? ({acc}) : false"
-                : $"({parts[i]}) ? true : ({acc})";
+                ? $"({parts[i]}) ? ({acc}) : ({parts[i]})"
+                : $"({parts[i]}) ? ({parts[i]}) : ({acc})";
         }
         return acc;
     }

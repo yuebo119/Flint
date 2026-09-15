@@ -551,24 +551,29 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
-    /// 模板传给 <c>.Paginate</c> 的**显式集合**（Hugo 语义：按传入集合分页）。
+    /// 模板传给 <c>.Paginate</c> 的**显式集合与页大小**（Hugo 语义：按传入集合与尺寸分页）。
     /// 站点侧据此计算分页页数与每页内容，而不是照当前页 <c>Pages</c> 切片
     /// </summary>
-    private static readonly ConcurrentDictionary<string, IReadOnlyList<Flint.Core.Abstractions.PageContext>> PaginateCollections = new(StringComparer.Ordinal);
+    /// <param name="Items">显式集合（Hugo 的 `.Paginate $pages` 第一参）</param>
+    /// <param name="Size">显式页大小（`.Paginate $pages N` 第二参）；未给时为 0 → 用站点配置</param>
+    internal sealed record PaginateRegistration(
+        IReadOnlyList<Flint.Core.Abstractions.PageContext> Items, int Size);
 
-    /// <summary>登记显式分页集合</summary>
+    private static readonly ConcurrentDictionary<string, PaginateRegistration> PaginateCollections = new(StringComparer.Ordinal);
+
+    /// <summary>登记显式分页集合与页大小</summary>
     internal static void NotePaginateCollection(
-        string? relPermalink, IReadOnlyList<Flint.Core.Abstractions.PageContext> items)
+        string? relPermalink, IReadOnlyList<Flint.Core.Abstractions.PageContext> items, int size = 0)
     {
         if (!string.IsNullOrEmpty(relPermalink))
         {
-            PaginateCollections[relPermalink] = items;
+            PaginateCollections[relPermalink] = new PaginateRegistration(items, size);
         }
     }
 
-    /// <summary>取显式分页集合（无则 null）</summary>
-    internal static IReadOnlyList<Flint.Core.Abstractions.PageContext>? GetPaginateCollection(string relPermalink) =>
-        PaginateCollections.TryGetValue(relPermalink, out var items) ? items : null;
+    /// <summary>取显式分页集合与页大小（无则 null）</summary>
+    internal static PaginateRegistration? GetPaginateCollection(string relPermalink) =>
+        PaginateCollections.TryGetValue(relPermalink, out var registration) ? registration : null;
 
     /// <summary>该列表页是否被模板分页过</summary>
     internal static bool WasPaginateInvoked(string relPermalink) =>
