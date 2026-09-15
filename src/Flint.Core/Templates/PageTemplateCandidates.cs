@@ -215,13 +215,12 @@ public static class PageTemplateCandidates
 
         add(query.Layout);
         add("list");
-        // 【待办】kind 名 `section.html`（Hugo 0.146+ 的命名，与 page.html/home.html 同族）
-        // 暂不入链：加上后 fixit 的 section 页正确改用主题模板（95 → 2000+ 字节），
-        // 但 even 的 `_default/section.html` 随之被启用，其模板依赖 **Go 的惰性 or**
-        //（`{{ if or (eq $index 0) (ne ($lastElement.Date.Format "2006") $thisYear) }}`，
-        //  首轮 $index=0 时 `index $paginator.Pages -1` 为 nil）——Scriban 的 `||` 是
-        // 急切求值，nil 接收者的 `.Date` 直接抛错。要一起解决：①转换器让实参位的
-        // `?.` 不被降级为普通点 ②或者给出 or/and 的惰性等价写法。见第三十六节
+        // **kind 名 `section.html`**（Hugo 0.146+ 的命名，与 page.html/home.html 同族）：
+        // 主题只提供 `layouts/section.html` 时（FixIt 的 section 页由该模板渲染）候选链
+        // 必须有它，否则整类页面回退内置列表模板（docs/posts 只剩 95/143 字节）。
+        // 前置条件已满足：`and`/`or` 的**惰性**等价（分支惰性三元）由转换器保证——
+        // even 的 `_default/section.html` 依赖 Go 的短路来跳过 nil 接收者的 `.Date`
+        add("section");
     }
 
     /// <summary>
