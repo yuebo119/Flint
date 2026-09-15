@@ -2607,6 +2607,12 @@ Hugo v0.166 实测：`default 3 ""` / `default 3 0` / `default 3 (slice)` 都取
 分支加了函数映射优先——**未生效**（说明该形态的 AST 不是与会话中预想的 `IdentifierExpr`+实参），
 故按"未验证即回退"的纪律**未保留为结论**，仅记录映射（语义等价、矩阵无回归）。
 
+补充（同轮复测）：`default` 空值判据修复后**再次**注入 `mainSections`，ananke 仍失败且
+错误与位置完全相同（`home.html(26,13)` "Object must be of type Int32"）——说明阻塞确实在
+该行的**求值**而非 `$n_posts` 的取值（DBG 已确认 `$n_posts` = 3）。
+引擎侧探针：`{{ math.add 3 1 }}` ✔、`{{ compare.Ge 5 $x }}` ✔、`{{ compare.Ge 5 (4) }}` ✔，
+但 `{{ compare.Ge 5 (math.add 3 1) }}` 与"先赋值再比较"两步形态均**无输出**——
+即"Scriban 空格调用 + 括号实参"的嵌套组合是缺口（Hugo/Go 侧该写法合法）。
 下一步（一项聚焦任务）：转储该形态的 Go 解析 AST（一个小 fixture + 解析器单测），按实际节点类型
 在条件/调用转换处补上映射；随后 `.Type`（section 语义）与 `site.Params.mainSections` 自动计算
 可一并启用（两者都依赖这类模板先能正常转换）。
