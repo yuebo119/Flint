@@ -1676,6 +1676,16 @@ internal sealed class ScribanConverter(
                 // 无参数场景下它是"数据引用"而非"函数调用"
                 if (id.Name.Contains('.', StringComparison.Ordinal))
                 {
+                    // **带点的函数名**（compare.Ge / math.add / path.Join …）优先查函数映射：
+                    // 它们走"含点标识符"分支，此前只当作**路径**处理（MapIdentifierPath 返回
+                    // null 时原样保留）→ 命名空间调用从未被映射成全局函数，而命名空间成员
+                    // 在**括号内**用空格实参会被 Scriban 误解析
+                    //（`compare.Ge $sc (math.add $np 1)` 报 "Object must be of type Int32"，ananke 实测）
+                    if (_map.HasFunction(id.Name))
+                    {
+                        return new ConversionResult(_map.MapFunction(id.Name), ConversionKind.Equivalent);
+                    }
+
                     // 站点数据路径（hugo.Data.x / site.Data.x）：**段名保持原样**，
                     // 仅首段归一 + 全部 nil 安全。数据文件的键是作者定义的
                     // （Stack 的 data/external.toml 用 `[PhotoSwipe]`/`Style` 驼峰），

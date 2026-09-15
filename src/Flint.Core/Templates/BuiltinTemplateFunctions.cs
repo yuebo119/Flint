@@ -1405,11 +1405,17 @@ public sealed partial class BuiltinTemplateFunctions
         // 两参形态服务于管道：Scriban 的 `|` 把左值注入**首参**，故
         // `X | default Y` → (X, Y) → 取 X 若非空，否则 Y（与 Hugo 管道语义一致）；
         // 非管道形态 `default Y X` 的参数顺序由转换器重排（见 ScribanConverter）
+        // default VALUE FALLBACK（Hugo 语义：**空值**取兜底）。空值判据见
+        // IsEmptyForDefault —— 与 `if` 的真值判定**不同**：Hugo v0.166 实测
+        // `default 3 ""` / `default 3 0` / `default 3 (slice)` 都取 3，
+        // 而 `default 3 false` 保留 false。此前只判 null，使"配置里写了空串"的
+        // 场景不再兜底（ananke 的 `$.Param "recent_posts_number" | compare.Default 3`
+        // 拿到 "" → `math.add "" 1` 报 "Object must be of type Int32"）
         obj.Import("default", (params object?[] a) => a.Length switch
         {
             0 => null,
             1 => a[0],
-            _ => a[0] ?? a[1]
+            _ => IsEmptyForDefault(a[0]) ? a[1] : a[0]
         });
 
         // cond - 条件表达式
@@ -1925,6 +1931,34 @@ public sealed partial class BuiltinTemplateFunctions
     /// index：Hugo 双语义——集合按整数下标取值，映射按字符串键取值。
     /// 越界/缺键返回 null（Hugo 宽容语义），不再抛 ArgumentOutOfRange
     /// </summary>
+    /// <summary>
+    /// <c>default</c> 的"空值"判据（Hugo v0.166 实测）：<c>nil</c> / 空串 / 数值 0 /
+    /// 空集合为"空"→ 取兜底；<c>false</c> **不算空**（原样返回）。
+    /// 与 <c>if</c> 的真值判定刻意分开——那里 false 是假值
+    /// </summary>
+    internal static bool IsEmptyForDefault(object? value) => value switch
+    {
+        null => true,
+        string s => s.Length == 0,
+        sbyte v => v == 0,
+        byte v => v == 0,
+        short v => v == 0,
+        ushort v => v == 0,
+        int v => v == 0,
+        uint v => v == 0,
+        long v => v == 0,
+        ulong v => v == 0,
+        float v => v == 0,
+        double v => v == 0,
+        decimal v => v == 0,
+        bool => false,
+        ScribanTemplateRenderer.LazyPageObject => false,
+        IFlintNonDataObject => false,
+        System.Collections.ICollection c => c.Count == 0,
+        System.Collections.IEnumerable e => !e.Cast<object?>().Any(),
+        _ => false
+    };
+
     private static object? SeqIndex(object?[] args)
     {
         if (args.Length < 2)

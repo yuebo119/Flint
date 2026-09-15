@@ -107,6 +107,21 @@ internal sealed class MigrationMap
             ("duration", "duration"), ("unix", "unix"),
             // URL / 路径
             ("absURL", "abs_url"), ("relURL", "rel_url"), ("absLangURL", "abs_lang_url"),
+            // **命名空间调用 → Flint 全局函数**（语义一致的一族）：命名空间成员在
+            // **括号内**用空格调用形态会被 Scriban 误解析——`compare.Ge 5 (math.add 3 1)`
+            // 报 "Object must be of type Int32"（`compare.Ge 5 (4)` 与顶层
+            // `math.add 3 1` 都正常，故是"括号 + 命名空间 + 空格实参"的组合问题，
+            // ananke 的 `compare.Ge $section_count (math.add $n_posts 1)` 实测）。
+            // 全局函数形态在括号内正常（`(index $pages 0)` 长期可用）
+            ("compare.Eq", "eq"), ("compare.Ne", "ne"), ("compare.Ge", "ge"),
+            ("compare.Gt", "gt"), ("compare.Le", "le"), ("compare.Lt", "lt"),
+            ("compare.Default", "default"), ("compare.Conditional", "cond"),
+            ("math.Add", "add"), ("math.Sub", "sub"), ("math.Mul", "mul"),
+            ("math.Div", "div"), ("math.Mod", "mod"), ("math.Max", "max"),
+            ("math.Min", "min"), ("math.Floor", "floor"), ("math.Ceil", "ceil"),
+            ("math.Round", "round"), ("math.Pow", "pow"), ("math.Sqrt", "sqrt"),
+            ("math.Abs", "abs"), ("math.Log", "log"), ("math.Sum", "sum"),
+            ("math.Product", "product"), ("math.Rand", "rand"),
             ("relLangURL", "rel_lang_url"), ("path.Join", "path_join"),
             ("path.Base", "path_base"), ("path.Dir", "path_dir"), ("path.Ext", "path_ext"),
             // 编码/哈希
