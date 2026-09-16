@@ -440,7 +440,12 @@ public sealed partial class ScribanTemplateRenderer
             if (member is "paginator" or "Paginator")
             {
                 ScribanTemplateRenderer.NotePaginateInvoked(_page.RelPermalink);
-                value = _paginatorValue;
+                // 模板自己调过 `.Paginate` 时，Hugo 的 `.Paginator` 返回**那一次创建**的
+                // 分页器（`.Paginate` 会改写该页的 paginator）；只有模板没调过才用
+                // 构建期预绑定的隐式分页器。两者集合可能不同（stack 的 home：模板传空集
+                // → 1 页；隐式 = 站点常规页 → 3 页），混用会渲染出指向未产出页的链接
+                var registered = ScribanTemplateRenderer.GetPaginatePager(_page.RelPermalink);
+                value = registered is not null ? BuildPaginatorObject(registered) : _paginatorValue;
                 return true;
             }
 
@@ -586,6 +591,8 @@ public sealed partial class ScribanTemplateRenderer
             var currentPageNumber = bound?.PageNumber ?? 1;
 
             var pager = PaginatorView.Create(items, currentPageNumber, size, baseRel, paginatePath);
+            // 登记：后续对 `page.paginator` 的读取要返回这一个（Hugo 语义）
+            ScribanTemplateRenderer.NotePaginatePager(page.RelPermalink, pager);
             return BuildPaginatorObject(pager);
         }
 
