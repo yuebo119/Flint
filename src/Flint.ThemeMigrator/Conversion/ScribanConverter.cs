@@ -775,8 +775,11 @@ internal sealed class ScribanConverter(
                 $"date.to_string {recvText} {string.Join(" ", fmtArgs)}", ConversionKind.Equivalent);
         }
 
-        // fmt.Printf：Flint 的 printf 不支持反引号原始串与 Go 动词，
-        // 降级为 string.format 风格（保留参数，格式串原样）
+        // fmt.Printf / printf：Flint 的 printf 现已按 **Go fmt 语义**实现
+        //（%v 复合值、%q 转义、%T、宽度/精度、缺参标记，见 Templates/GoPrintf.cs），
+        // 故此处的改写是**保形**的——格式串与实参原样传入即可。
+        // 唯一差异在字符串字面量的形态：Go 双引号串与 Scriban 双引号串的转义规则
+        // 一致（`\"`/`\\`），转换器已按 LiteralExpr 正常处理
         if (name is "fmt.Printf" or "printf")
         {
             var printfArgs = new List<string>();
@@ -790,8 +793,7 @@ internal sealed class ScribanConverter(
                 printfArgs.Add(r);
             }
             return new ConversionResult(
-                "printf " + string.Join(" ", printfArgs), ConversionKind.Downgraded,
-                "printf 格式串按 Go 语义传入（Flint 用 .NET 格式化，差异已标注）");
+                "printf " + string.Join(" ", printfArgs), ConversionKind.Equivalent);
         }
 
         if (name is "return")

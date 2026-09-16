@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // Go template 语法树与递归下降解析器
 //
 // Go template 的语法特性（关键简化）：
@@ -148,6 +148,17 @@ internal sealed class GoTemplateParser
                     break;
                 case TokenType.LeftDelim:
                     parts.Add(ParseAction());
+                    break;
+                // 短代码调用块：Hugo 只在**内容**里支持该语法，layouts 里 Hugo 自己报
+                // `unexpected "<" in command`。这里**原样保留**并留诊断——此前按动作解析
+                // 会把 `<`/`>`/`%` 悄悄吃掉，产出 `{{ sc x "1" }}body{{ sc }}` 这类
+                // 静默损坏（不报错、不保留原文）
+                case TokenType.ShortcodeCall:
+                    _diagnostics.Add(
+                        $"行 {t.Line}: 短代码调用语法（layouts 内 Hugo 自身也不支持：" +
+                        "unexpected \"<\" in command）——原文保留");
+                    Next();
+                    parts.Add(new TextPart(t.Value));
                     break;
                 default:
                     // 动作外出现非文本 token：容错跳过（记录诊断）

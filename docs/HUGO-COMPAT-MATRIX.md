@@ -313,3 +313,26 @@ github-style / techdoc / xmin 为 0。
    clarity 失去对称；改为空串后两者恢复。`%v`/`%T` 与 Go 一致（`<nil>`）。
 
 回归见 `GoPrintfTests`（期望值全部来自 Hugo v0.166 探针）。
+
+### N. 语法覆盖面探针（回答"能否 100% 转换"）
+
+语料 100% 只说明"21 个主题用到的语法能转"，不等于"Hugo 全语法能转"。为此另造一组
+**语法覆盖面探针**（`/tmp/hp`，10 个模板文件、159 个表达式）：控制流（if/else if/with/
+with-else/range 带 index/continue/break/seq）、变量（`:=`/`=`/`$`/作用域）、函数族
+（strings/collections/compare/math/path/urls/transform/crypto/encoding/hash/time/i18n/
+templates.Exists）、资源管线（GetMatch/ByType/FromString/Copy/Concat/ExecuteAsTemplate/
+Minify/Fingerprint）、Scratch/Store/SetInMap、safe* 系列、短代码模板与渲染钩子
+（`_markup/render-codeblock.html`）、define/block/template/partial/partialCached、
+页面方法族（Kind/Type/Section/.File./GetPage/GetTerms/TableOfContents/Sections…）。
+
+结果：**不支持 0、预检失败 0（探针集内）**，仅 1 条诊断来自**故意写错**的模板——
+Hugo 自己在 layouts 里也不接受短代码调用（`{{< … >}}` → `unexpected "<" in command`），
+Flint 现在**原样保留 + 记诊断**（此前会把定界符吃掉：`{{< sc x="1" >}}body{{< /sc >}}`
+→ `{{ sc x "1" }}body{{ sc }}`，属静默损坏；探针集里该文件仍报 1 处 Scriban 预检失败，
+这是**正确**的——那份模板在 Hugo 下同样无法渲染）。
+
+同时修掉一条**过时注记**：迁移器对 `printf` 打"Flint 用 .NET 格式化，差异已标注"的降级
+标记，而引擎侧已按 Go fmt 语义实现（见 M 节），故该形态改判为**保形**（Equivalent）——
+21 主题的降级数因此从 1102 降到 **718**（差额全部来自 printf 去标记：fixit 236→77、
+blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表格，均为等价改写或
+转换期不可静态校验（动态 partial 名）。
