@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // hugo.* 环境对象与 time.* 补充（Hugo 0.146+ 命名空间）
 //
 // hugo.* 是常量对象（Version/Environment/IsProduction 等），零成本；
@@ -81,8 +81,12 @@ public sealed partial class BuiltinTemplateFunctions
             ["is_multihost"] = env.IsMultihost,
             ["WorkingDir"] = env.WorkingDir,
             ["working_dir"] = env.WorkingDir,
-            ["Generator"] = $"Flint {env.Version}",
-            ["generator"] = $"Flint {env.Version}",
+            // hugo.Generator：Hugo 返回的是**整段 meta 标签**（不是版本串）——
+            // 主题写 `{{ hugo.Generator }}` 直接输出 `<meta name="generator" content="Hugo x.y">`。
+            // 此前只返回版本串 → 审计里 100 页缺 meta[generator]。
+            // 品牌名用 Flint（如实标识，不冒充 Hugo —— 值与 Hugo 不同属有意差异）
+            ["Generator"] = $"<meta name=\"generator\" content=\"Flint {env.Version}\">",
+            ["generator"] = $"<meta name=\"generator\" content=\"Flint {env.Version}\">",
             ["BuildDate"] = DateTimeOffset.UtcNow,
             ["build_date"] = DateTimeOffset.UtcNow,
             ["CommitHash"] = "",

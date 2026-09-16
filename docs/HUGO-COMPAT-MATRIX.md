@@ -362,3 +362,49 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 
 **仍未覆盖**：视觉/交互验收（外观、CSS 生效、JS 交互、响应式），以及每个主题的
 `grep -c` 级结构相似度只有约 50%——内容在（文本覆盖 78–97%），标记结构差异明显。
+
+### P. "所有主题正常运行"的三阶段方案与实施
+
+**结论先行**：页面集合层面已达成 **21/21 与 Hugo 完全一致**（此前 18/21），
+结构性元素差异也定位到系统性缺口并修掉一批。方案分三阶段：
+
+#### 阶段 1：页面集合对齐（已完成，21/21）
+
+五处根因（均以 Hugo v0.166 探针定性）：
+
+1. **首页 `.Pages`/`.Sections` 恒为空**：树节点 key 是 `/posts`、`/about`（带前导斜杠），
+   而首页子级判定写 `!key.Contains('/')` → 一级节点全被排除。此前所有站点的首页
+   `.Pages` 都是 0（Hugo 3）——凡首页用 `.Pages` 列文章的主题都缺整个列表区
+2. **树装配单遍**：父节点拿到"尚未装配 Pages"的子 section（`site.home.sections[*].pages`
+   恒为空、而 `site.pages` 里同名 section 有 3 条）→ 主题按 `.Sections`/`.Pages`
+   递归遍历站点结构时出错甚至触发递归上限（techdoc 的 prev/next 导航树）。
+   改为**按层级降序装配 + 按原顺序产出**
+3. **隐式分页器的集合 = RegularPages**（Hugo 实测：home 只读 `.Paginator` 时
+   `TotalNumberOfElements` = 站点全部常规页、`TotalPages` = 3，而 `.Pages` 只有 3 条中
+   的"顶层子页 + 顶层 section"）→ m10c/monochrome 少产 `/page/2`、`/page/3`
+4. **分类列表页 `.Pages` 是全集**（Hugo 实测 /tags/ 的 `.Pages` = 全部词条页，当前页切片
+   只在 pager）→ clarity/stack 的 `range (.Paginate .Pages).Pages` 少算页数；
+   同时 `/page/N/` 的产出改为以**模板实际分页的集合**为准（hugo-paper 的
+   `union .RegularPages .Sections` 在 /tags/ 上是空集 → 只产 page/1）
+5. **taxonomy 页 `.RegularPages` = 空**（Hugo 实测）
+
+迁移器侧两处：**自名命名模板的递归调用**要落到提取出的 `<name>__named` 文件
+（否则 wrapper↔named 互相调用 → techdoc "partial 嵌套深度超过 200"）；
+**空白模板按原文保留**（Hugo 对 0 字节 404 模板不产出，而对 0 字节 single/partial 照用）。
+
+#### 阶段 2：结构性元素差异审计（进行中）
+
+方法：对 21 个主题逐页做元素签名多重集差（`scripts/audit-elements.py`，
+与门禁④的 ElementDiff 同口径），按"涉及页面数"排序 —— 得到的是**系统性**缺口而非
+单页噪声。审计出的头部缺口与处置：
+
+| 缺口 | 涉及页数 | 性质 | 处置 |
+|---|---|---|---|
+| 缺 `meta[og:locale]` | 240 | 引擎：内置 opengraph 模板缺该行 | 已补（Hugo 内部模板逐行对齐） |
+| 缺 `meta[generator]` | 100 | 引擎：`hugo.Generator` 只返回版本串，Hugo 返回**整段 meta 标签** | 已修（品牌名如实用 Flint） |
+| 缺 `meta[article:section/tag/published_time/modified_time]` | 56/45/42/44 | 引擎：内置 opengraph 缺常规页的 article:* 组 | 已补 |
+| 多 `meta[og:description]`/`twitter:description`/`description` | 96/82/32 | 引擎：空值仍输出标签（Hugo 空描述整条省略） | 已改为条件输出 |
+| 缺/多 `a`、`span`、`div`、`li`、`p` 等 | 30–90 | 模板级（各主题自己的标记差异） | 逐主题个案，不属系统缺口 |
+
+阶段 3（视觉验收）：用浏览器对 Hugo 与 Flint 产物逐主题截图对比（外观/CSS/交互），
+以及链接可达性冒烟——需真实浏览器环境，尚未执行。
