@@ -533,11 +533,113 @@ public class HugoCompatSemanticsTests : IDisposable
             Pages = [child1, child2]
         };
         var all = new[] { section, child1, child2 };
+        // 断言说明：**有序比较**（gt/lt/ge/le）按集合长度（Hugo 探针），而 **eq 不参与长度换算**
+        // ——`eq .Pages 1` 在 Hugo 里就是 false（集合与数字类型不同，探针实测），
+        // 故 eq2 期望 false。`len` 用精确长度 2：页面集合继承 Scriban 的 ScriptObject，
+        // 而 ScriptObject 自身实现 ICollection（Count = **成员数 56**）——判定顺序错了会拿到 56
         Assert.Equal(
-            "gt=true lt=false len=2",
+            "gt=true lt=false len=2 eq2=false gt2=false",
             await RenderFor(
                 section, all,
-                "gt={{ gt page.pages 0 }} lt={{ lt page.pages 0 }} len={{ page.pages | len }}"));
+                "gt={{ gt page.pages 0 }} lt={{ lt page.pages 0 }} len={{ page.pages | len }}" +
+                " eq2={{ eq page.pages 2 }} gt2={{ gt page.pages 2 }}"));
+    }
+
+    /// <summary>
+    /// **分组分页**（`.Paginate (.Pages.GroupByDate "2006")`）：Hugo v0.166 探针（5 篇文章
+    /// 跨 2024/2025、pagerSize=2）——<c>TotalNumberOfElements</c> = 5（切的是底层页面）、
+    /// <c>TotalPages</c> = 3、第 1 页 <c>PageGroups</c> = <c>[2025:2]</c>、
+    /// 第 2 页 = <c>[2025:1][2024:1]</c>（跨组的页在两个组里各出现一次）。
+    /// blowfish 的 list.html 用它渲染"按年分组的文章列表"
+    /// </summary>
+    [Fact]
+    public async Task 分组分页的PageGroups()
+    {
+        var section = SectionWithDatedChildren(out var all);
+        const string Tmpl =
+            "{{ $p = page.paginate (page.pages.groupbydate \"2006\") 2 }}" +
+            "tne={{ $p.total_number_of_elements }} tp={{ $p.total_pages }}" +
+            "{{ for $g in as_list ($p.page_groups) }}[{{ $g.key }}:{{ $g.pages | len }}]{{ end }}";
+
+        Assert.Equal("tne=5 tp=3[2025:2]", await RenderFor(section, all, Tmpl));
+    }
+
+    /// <summary>第 2 页的分组：跨组的页在两个组里各出现一次（Hugo 探针 <c>[2025:1][2024:1]</c>）</summary>
+    [Fact]
+    public async Task 分组分页第二页跨组()
+    {
+        var section = SectionWithDatedChildren(out var all);
+        var page2 = new PageContext
+        {
+            Title = section.Title,
+            Content = "",
+            Permalink = section.Permalink,
+            RelPermalink = "/posts/page/2/",
+            Date = section.Date,
+            Tags = [],
+            Categories = [],
+            WordCount = 0,
+            ReadingTime = TimeSpan.Zero,
+            Kind = "section",
+            Pages = section.Pages,
+            Paginator = new PaginatorView
+            {
+                AllItems = section.Pages!,
+                PageNumber = 2,
+                PageSize = 2,
+                BaseRelPermalink = "/posts/",
+                PaginatePath = "page"
+            }
+        };
+        const string Tmpl =
+            "{{ $p = page.paginate (page.pages.groupbydate \"2006\") 2 }}" +
+            "{{ for $g in as_list ($p.page_groups) }}[{{ $g.key }}:{{ $g.pages | len }}]{{ end }}";
+        Assert.Equal("[2025:1][2024:1]", await RenderFor(page2, all, Tmpl));
+    }
+
+    /// <summary>夹具：5 篇文章跨两个年份（与探针同构，日期降序即分页顺序）</summary>
+    private static PageContext SectionWithDatedChildren(out PageContext[] all)
+    {
+        var dates = new[]
+        {
+            new DateTimeOffset(2025, 1, 5, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2025, 1, 3, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2024, 1, 4, 0, 0, 0, TimeSpan.Zero),
+            new DateTimeOffset(2024, 1, 2, 0, 0, 0, TimeSpan.Zero)
+        };
+        var children = dates
+            .Select((date, index) => new PageContext
+            {
+                Title = $"P{index + 1}",
+                Content = "",
+                Permalink = $"https://example.com/posts/p{index + 1}/",
+                RelPermalink = $"/posts/p{index + 1}/",
+                Date = date,
+                Tags = [],
+                Categories = [],
+                WordCount = 1,
+                ReadingTime = TimeSpan.FromMinutes(1),
+                Kind = "page",
+                Section = "posts"
+            })
+            .ToArray();
+        var section = new PageContext
+        {
+            Title = "帖子",
+            Content = "",
+            Permalink = "https://example.com/posts/",
+            RelPermalink = "/posts/",
+            Date = new DateTimeOffset(2025, 1, 5, 0, 0, 0, TimeSpan.Zero),
+            Tags = [],
+            Categories = [],
+            WordCount = 0,
+            ReadingTime = TimeSpan.Zero,
+            Kind = "section",
+            Pages = children
+        };
+        all = [section, .. children];
+        return section;
     }
 
     [Fact]

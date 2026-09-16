@@ -180,6 +180,53 @@ public sealed class PaginatorView
     /// <summary>分页路径段（对齐 Hugo paginatePath，默认 page）</summary>
     public required string PaginatePath { get; init; }
 
+    /// <summary>
+    /// **分组边界**（Hugo 的 <c>.Paginate (.Pages.GroupByDate "2006")</c> 形态）：
+    /// 分组键 + 该组的项目数，按扁平化顺序排列。分页切的是**底层页面**，
+    /// 而 <c>.PageGroups</c> 要把当前页的切片**按原分组重新切分**。
+    /// 探针（Hugo v0.166，5 篇文章跨 2 年、pagerSize=2）：<c>TotalNumberOfElements</c>=5、
+    /// <c>TotalPages</c>=3、第 1 页 <c>PageGroups</c>=<c>[2025:2]</c>、
+    /// 第 2 页 = <c>[2025:1][2024:1]</c>（跨组的页会同时出现两个组）
+    /// </summary>
+    public IReadOnlyList<PaginatorGroupBoundary>? GroupBoundaries { get; init; }
+
+    /// <summary>当前页的**分组视图**（无分组边界时为空，对齐 Hugo：非分组分页的 PageGroups 为空）</summary>
+    public IReadOnlyList<PaginatorPageGroup> PageGroups
+    {
+        get
+        {
+            if (GroupBoundaries is null || GroupBoundaries.Count == 0)
+            {
+                return [];
+            }
+
+            var slice = Pages;
+            var skip = (Math.Max(1, Math.Min(PageNumber, TotalPages)) - 1) * PageSize;
+            var groups = new List<PaginatorPageGroup>();
+            var offset = 0;
+            foreach (var boundary in GroupBoundaries)
+            {
+                var groupStart = offset;
+                var groupEnd = offset + boundary.Count;
+                offset = groupEnd;
+
+                // 与当前切片求交：跨组的页会在两个组里各出现一次（Hugo 同）
+                var from = Math.Max(groupStart, skip);
+                var to = Math.Min(groupEnd, skip + slice.Count);
+                if (to <= from)
+                {
+                    continue;
+                }
+
+                groups.Add(new PaginatorPageGroup(
+                    boundary.Key,
+                    slice.Skip(from - skip).Take(to - from).ToList()));
+            }
+
+            return groups;
+        }
+    }
+
     private IReadOnlyList<PageContext>? _currentSlice;
 
     /// <summary>当前页的项目切片</summary>
@@ -236,7 +283,19 @@ public sealed class PaginatorView
         PageNumber = Math.Max(1, Math.Min(pageNumber, TotalPages)),
         PageSize = PageSize,
         BaseRelPermalink = BaseRelPermalink,
-        PaginatePath = PaginatePath
+        PaginatePath = PaginatePath,
+        GroupBoundaries = GroupBoundaries
+    };
+
+    /// <summary>带分组边界的副本（`.Paginate` 传入分组集合时用）</summary>
+    public PaginatorView WithGroupBoundaries(IReadOnlyList<PaginatorGroupBoundary> boundaries) => new()
+    {
+        AllItems = AllItems,
+        PageNumber = PageNumber,
+        PageSize = PageSize,
+        BaseRelPermalink = BaseRelPermalink,
+        PaginatePath = PaginatePath,
+        GroupBoundaries = boundaries
     };
 
     /// <summary>首页 pager（对齐 Hugo .Paginator.First）</summary>
@@ -292,6 +351,12 @@ public sealed class PaginatorView
         };
     }
 }
+
+/// <summary>分组分页的**边界**：组键 + 该组项目数（按扁平化顺序）</summary>
+public readonly record struct PaginatorGroupBoundary(string Key, int Count);
+
+/// <summary>分组分页的**一组**：组键 + 该组在当前页里的页面</summary>
+public sealed record PaginatorPageGroup(string Key, IReadOnlyList<PageContext> Pages);
 
 /// <summary>
 /// 页面上下文

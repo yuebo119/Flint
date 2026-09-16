@@ -35,6 +35,8 @@
 | S′ | 值打印（`{{ value }}`） | Go 的 fmt 默认：时间 → `2026-01-15 00:00:00 +0000 UTC`、字典 → `map[k:v …]`（键排序）、列表 → `[a b c]`、nil → `<nil>` | `FlintScribanContext.ObjectToString` 覆盖（页面对象与引擎内部投影不套用，避免把页面集合印成 map） | `HugoCompatSemanticsTests`（值打印经主题回归：github-style 的 `{{ time .Date }}`、hugo-coder 的 `{{ .Site.Params.author }}`） |
 | T′ | i18n 文件格式 | Hugo 支持 `.toml`/`.yaml`/`.json`（blowfish 等主题用 YAML） | `Translations` 按扩展名分派（TOML 走 Tomlyn、YAML 走 SharedYaml、JSON 走 System.Text.Json），统一归一后摊平 | `I18nTests.Load_YAML与JSON形态应被加载` |
 | U′ | 嵌套 partial 的上下文 | partial 不带参数时以**调用方的 dot** 渲染 | 转换器在 **partial 体内**把 dot 上下文显式传出（`partial "x" page`）——Flint 的 partial 不带上下文取渲染页而非调用方 dot | `MigratorTests`（partial 上下文回归）+ 主题回归：blowfish 卡片日期 |
+| V′ | 分组分页 `.Paginate (.Pages.GroupByDate …)` | 切的是**底层页面**，`PageGroups` 把当前页切片**按原分组重新切分**（探针：tne=5、tp=3、第 1 页 `[2025:2]`、第 2 页 `[2025:1][2024:1]`） | 识别分组形状（元素带 `key`/`pages`）→ 摊平参与分页 + 记分组边界；`PaginatorView.PageGroups` 按边界与切片求交 | `HugoCompatSemanticsTests.分组分页的PageGroups/分组分页第二页跨组` |
+| W′ | 槽位默认体的位置 | Go 的 `define` 是**解析期**注册（用在前、定义在后也生效） | baseof 的槽位默认体**上提到文件最前**（Scriban 的 capture 是顺序赋值，就地 capture 会让兜底拿到空值） | `MigratorTests.槽位默认体上提到文件最前` |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -567,6 +569,24 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十、分组分页、集合计数的接口判定、槽位默认体的位置（本轮三项）**。
+
+- **分组分页**：`.Paginate (.Pages.GroupByDate "2006")` 是 blowfish 列表页的写法。
+  Hugo 探针（5 篇跨 2 年、pagerSize=2）：`TotalNumberOfElements` = 5（切的是**底层页面**，
+  不是组数）、`TotalPages` = 3、第 1 页 `PageGroups` = `[2025:2]`、第 2 页 = `[2025:1][2024:1]`
+  （跨组的页在两个组里各出现一次）。此前 `page_groups` 不存在 → 分组列表整段为空。
+- **集合计数的接口判定顺序**：页面集合（LazyPageList）继承 Scriban 的 ScriptObject，
+  而 ScriptObject 自身实现 `System.Collections.ICollection`（`Count` = **成员数 56**）——
+  先判 ICollection 会把集合长度算成成员数（`gt .Pages 0` 侥幸为真、`eq .Pages 2` 恒假）。
+  修法：**页面集合接口（`IList<ScriptObject>`/`IEnumerable<ScriptObject>`）先判**，
+  非泛型兜底排除 ScriptObject。另据探针：`eq` **不参与**长度换算（`eq .Pages 1` 恒 false），
+  只有有序比较（gt/lt/ge/le）按长度。
+- **槽位默认体上提**：hugo-book 的 baseof 里 `{{ template "menu-container" . }}` 在文件开头、
+  `{{ define "menu-container" }}` 在末尾；Go 的 define 是解析期注册，而转换把 define
+  就地 capture 成 `__def_X`（Scriban 顺序赋值）→ 用在前拿到空值 → **侧边菜单/toc/header
+  全部不渲染**。修法：baseof 的槽位默认体统一提到文件最前。
+  hugo-book 结构相似度 38.8 → **43.9**、文本 80.0 → **86.9**。
 
 **十九、集合比较、值打印、i18n 文件格式、嵌套 partial 上下文（同一轮的四项）**。
 

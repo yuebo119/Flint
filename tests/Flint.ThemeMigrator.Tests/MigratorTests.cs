@@ -421,6 +421,27 @@ public sealed class ParserConverterTests
         Assert.DoesNotContain("page", result, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 槽位默认体**上提到文件最前**（hugo-book 的 baseof 形态）：`{{ template "X" . }}`
+    /// 出现在 `{{ define "X" }}` 之前时，就地 capture 的 `__def_X` 尚未赋值 →
+    /// 兜底拿到空值（侧边菜单/toc/header 全部不渲染，实测）。Go 的 define 是解析期注册
+    /// </summary>
+    [Fact]
+    public void 槽位默认体上提到文件最前()
+    {
+        var parts = new GoTemplateParser(
+            new GoTemplateLexer("{{ template \"menu\" . }}\n{{ define \"menu\" }}M{{ end }}").Tokenize()).Parse();
+        var converter = new TemplateConverter(
+            MigrationMap.CreateDefault(),
+            slotNames: new HashSet<string>(StringComparer.Ordinal) { "menu" },
+            isBaseTemplate: true);
+        var result = converter.Convert(parts);
+        var captureIndex = result.IndexOf("capture __def_menu", StringComparison.Ordinal);
+        var useIndex = result.IndexOf("blk_menu ?? __def_menu", StringComparison.Ordinal);
+        Assert.True(captureIndex >= 0, $"应产出兜底 capture，实际：{result}");
+        Assert.True(useIndex > captureIndex, $"capture 应在使用点之前，实际：{result}");
+    }
+
     [Fact]
     public void 变量接收者的Format保留引号()
     {
