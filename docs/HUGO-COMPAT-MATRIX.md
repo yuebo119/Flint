@@ -23,7 +23,7 @@
 | G | 模板查找顺序 | 五类 kind 各有确定候选序（见第三节） | `PageTemplateCandidates.Build*` 按实测序产出 | `PageTemplateLookupTests`（候选链 + 分层解析） |
 | H | 页面集合与分页产物 | `.Pages`/`.RegularPages` 默认日期降序；`ByDate` 升序；分页由模板调用驱动 | `SiteBuilder.Tree` + `PageListFunctions` + 分页注册表 | `PageCollectionAndParamsTests`、`PageAwareLookupE2ETests` |
 | I | 分页尺寸来源 | **`[pagination] pagerSize`**（v0.128+；顶层 `paginate` 被忽略）；`.Paginate $pages N` 的第二参覆盖站点值，且 `/page/N/` 的生成也按该尺寸 | `ConfigParser` 读新键（旧键兜底）+ `PagePaginateFunction` 解析第二参 + 注册表把尺寸传到站点级生成 | `HugoCompatSemanticsTests.Paginate显式页大小生效/显式尺寸时每页内容按该尺寸切` |
-| I′ | `.Ancestors` 祖先链 | 由**真实容器页**（`section`/`taxonomy`）构成、**最近祖先在前、home 在末位**；不产页的合成目录与 pager 段不入链 | `BuildAncestorsObject` 按 URL 前缀从全站页集里挑容器页 + 追加 home；返回页面集合（`.Reverse` 可用） | `HugoCompatSemanticsTests.祖先链跳过不产页的合成目录/祖先链跳过分页段/home页祖先链为空/词条页祖先含分类列表页/祖先链Reverse给出面包屑顺序` |
+| I′ | 树导航四件套：`.Ancestors`/`.Parent`/`.CurrentSection`/`.FirstSection` | 由**真实容器页**（`section`/`taxonomy`）构成、**最近祖先在前、home 在末位**；不产页的合成目录与 pager 段不入链；容器页的 `CurrentSection` 是自己、`FirstSection` 是最外层 section | `LazyPageObject.ContainerChain` 按 URL 前缀从全站页集里挑容器页 + 追加 home（`.Ancestors` 返回页面集合，`.Reverse` 可用），三个单项成员在同一链上取值 | `HugoCompatSemanticsTests.祖先链跳过不产页的合成目录/祖先链跳过分页段/home页祖先链为空/词条页祖先含分类列表页/祖先链Reverse给出面包屑顺序/父级与所属顶级section按Hugo语义` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -178,6 +178,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | 分页 `/page/N/` 的产生 | 已对齐 | 仅在模板真的调用 `.Paginate`/`.Paginator` 时产出（Hugo 同） |
 | `SitemapOptions/FeedOptions.ExcludedTypes` | 按 `.Type` 过滤 | 即 front matter type 或段名（Hugo 的 `.Type` 语义）；不是 kind 名 |
 | `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
+| `.Parent`/`.CurrentSection`/`.FirstSection` | **已对齐** | 三者与 `.Ancestors` 同源（同一条容器链）：`Parent` = 链首（home 页为 nil）；容器页（section/taxonomy/term/home）的 `CurrentSection` 是自己，内容页取最近的 section，根级页落到 home；`FirstSection` 是最外层 section（term 页为分类列表页）。此前 `.CurrentSection` 是**按段名拼的假对象**（取不到 `.RegularPages`/`.GetPage`，嵌套段的 URL 也错），ananke 的 `section-link.html`/`summary.html` 正依赖它 |
 
 ## 四、探针方法（复现指南）
 

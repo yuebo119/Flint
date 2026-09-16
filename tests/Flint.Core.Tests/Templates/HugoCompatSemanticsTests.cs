@@ -363,6 +363,75 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal("[首页|home|/]N=1", sectionHtml);
     }
 
+    /// <summary>
+    /// .Parent / .CurrentSection / .FirstSection：同一棵树上的三种投影，**探针值逐行锁定**
+    /// （Hugo v0.166，站点 = home + /posts/（有 _index.md）+ /docs/ + /docs/guide/（有）
+    /// + /docs/noindex/（**无** _index.md）+ /tags/ + /tags/x/ + 根级页 /p/）：
+    /// <code>
+    /// 页面                     .Parent        .CurrentSection  .FirstSection
+    /// /                        nil            自身(home)        自身(home)
+    /// /docs/                   home           自身(docs)        自身(docs)
+    /// /docs/guide/             /docs/         自身(guide)       /docs/
+    /// /docs/guide/deep/        /docs/guide/   /docs/guide/      /docs/
+    /// /docs/noindex/deep2/     /docs/         /docs/            /docs/
+    /// /tags/                   home           自身(Tags)        自身(Tags)
+    /// /tags/x/                 /tags/         自身(term)        /tags/
+    /// /posts/a/                /posts/        /posts/           /posts/
+    /// /p/                      home           home              home
+    /// </code>
+    /// 关键点：① 不产页的合成目录（docs/noindex）不入链，其下页面的父级是**上一层真实
+    /// section**；② 容器页（section/taxonomy/term/home）的 CurrentSection 是**自己**；
+    /// ③ FirstSection 是**最外层** section（/docs/guide/ 的是 /docs/ 而非自己），
+    /// term 页的最外层容器是分类列表页。
+    /// </summary>
+    [Fact]
+    public async Task 父级与所属顶级section按Hugo语义()
+    {
+        var home = Node("首页", "/", "home");
+        var posts = Node("帖子区", "/posts/", "section");
+        var post = Node("帖子A", "/posts/a/", "page");
+        var docs = Node("文档区", "/docs/", "section");
+        var guide = Node("指南区", "/docs/guide/", "section");
+        var deep = Node("深页", "/docs/guide/deep/", "page");
+        var deep2 = Node("深页2", "/docs/noindex/deep2/", "page");
+        var tax = Node("Tags", "/tags/", "taxonomy");
+        var term = Node("X", "/tags/x/", "term");
+        var root = Node("根页", "/p/", "page");
+        var all = new[] { home, posts, post, docs, guide, deep, deep2, tax, term, root };
+
+        // 与迁移产物同形的写法：`with .X` 归一为 `$v = page.x; if $v`（Scriban 无裸 `.x`）
+        const string Tmpl =
+            "{{ $p = page.parent; if $p }}P:[{{ $p.title }}|{{ $p.rel_permalink }}]{{ else }}P:{{ end }}" +
+            "{{ $c = page.current_section; if $c }} C:[{{ $c.title }}|{{ $c.rel_permalink }}]{{ else }} C:{{ end }}" +
+            "{{ $f = page.first_section; if $f }} F:[{{ $f.title }}|{{ $f.rel_permalink }}]{{ else }} F:{{ end }}";
+
+        Assert.Equal("P: C:[首页|/] F:[首页|/]", await RenderFor(home, all, Tmpl));
+        Assert.Equal(
+            "P:[首页|/] C:[文档区|/docs/] F:[文档区|/docs/]",
+            await RenderFor(docs, all, Tmpl));
+        Assert.Equal(
+            "P:[文档区|/docs/] C:[指南区|/docs/guide/] F:[文档区|/docs/]",
+            await RenderFor(guide, all, Tmpl));
+        Assert.Equal(
+            "P:[指南区|/docs/guide/] C:[指南区|/docs/guide/] F:[文档区|/docs/]",
+            await RenderFor(deep, all, Tmpl));
+        Assert.Equal(
+            "P:[文档区|/docs/] C:[文档区|/docs/] F:[文档区|/docs/]",
+            await RenderFor(deep2, all, Tmpl));
+        Assert.Equal(
+            "P:[首页|/] C:[Tags|/tags/] F:[Tags|/tags/]",
+            await RenderFor(tax, all, Tmpl));
+        Assert.Equal(
+            "P:[Tags|/tags/] C:[X|/tags/x/] F:[Tags|/tags/]",
+            await RenderFor(term, all, Tmpl));
+        Assert.Equal(
+            "P:[帖子区|/posts/] C:[帖子区|/posts/] F:[帖子区|/posts/]",
+            await RenderFor(post, all, Tmpl));
+        Assert.Equal(
+            "P:[首页|/] C:[首页|/] F:[首页|/]",
+            await RenderFor(root, all, Tmpl));
+    }
+
     /// <summary>祖先链是**页面集合**：可继续调用方法族（主题写 <c>.Ancestors.Reverse</c>
     /// 做面包屑——narrow 的 breadcrumb.html 实测），顺序为 home → … → 父级</summary>
     [Fact]
