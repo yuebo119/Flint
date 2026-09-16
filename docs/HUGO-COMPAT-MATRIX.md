@@ -37,6 +37,9 @@
 | U′ | 嵌套 partial 的上下文 | partial 不带参数时以**调用方的 dot** 渲染 | 转换器在 **partial 体内**把 dot 上下文显式传出（`partial "x" page`）——Flint 的 partial 不带上下文取渲染页而非调用方 dot | `MigratorTests`（partial 上下文回归）+ 主题回归：blowfish 卡片日期 |
 | V′ | 分组分页 `.Paginate (.Pages.GroupByDate …)` | 切的是**底层页面**，`PageGroups` 把当前页切片**按原分组重新切分**（探针：tne=5、tp=3、第 1 页 `[2025:2]`、第 2 页 `[2025:1][2024:1]`） | 识别分组形状（元素带 `key`/`pages`）→ 摊平参与分页 + 记分组边界；`PaginatorView.PageGroups` 按边界与切片求交 | `HugoCompatSemanticsTests.分组分页的PageGroups/分组分页第二页跨组` |
 | W′ | 槽位默认体的位置 | Go 的 `define` 是**解析期**注册（用在前、定义在后也生效） | baseof 的槽位默认体**上提到文件最前**（Scriban 的 capture 是顺序赋值，就地 capture 会让兜底拿到空值） | `MigratorTests.槽位默认体上提到文件最前` |
+| X′ | `print` 的空格规则 | Go 的 `fmt.Sprint`：**相邻两个操作数都不是字符串**时才插空格（`print "a" "b"` = "ab"、`print 1 2` = "1 2"） | `GoSprint` 实现该规则；`println` 一律空格 + 换行 | `HugoCompatSemanticsTests.print按Go的fmtSprint空格规则` |
+| Y′ | `resources.Get` 的 `.Content`（SVG） | SVG 是**文本资源**，`.Content` 给符号表原文（主题据此内联图标） | 资源装载对 `.svg` 读文本（位图仍不读）；`TemplateResourceTests.Get读取SVG内容` | `TemplateResourceTests.Get读取SVG内容` + 主题回归：monochrome 图标 |
+| Z′ | `Scratch.SetInMap` 与 `Get` | `SetInMap MAP KEY VALUE` 之后 `Get MAP` 返回该**映射本身**（主题用它批量初始化参数再逐项读取） | `PageStoreObject.Get` 在扁平值表未命中时返回 `_maps` 里的映射（转 ScriptObject） | `PageStoreTests.SetInMap写入的映射可由Get读回` |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -569,6 +572,20 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十一、`print` 空格规则、SVG 资源内容、Store 映射读回（本轮三项）**。
+
+- **`print` 的空格规则**：Hugo 的 `print` 就是 Go 的 `fmt.Sprint`——**仅当相邻两个操作数
+  都不是字符串**时才插空格。此前一律空格连接 → monochrome 的
+  `print .Title " - " .Site.Title` 渲染成 `About  -  Matrix Site`（双空格）。
+- **SVG 是文本资源**：`resources.Get "…svg"` 的 `.Content` 要给符号表原文，主题据此
+  内联图标（monochrome 的 svg/feather.html + `findRESubmatch` 抽 `<symbol>`）。
+  此前 SVG 按图像处理 → Content 恒空 → 图标全渲染成空 `<svg>`。
+- **`Scratch.SetInMap` 与 `Get`**：`SetInMap MAP KEY VALUE` 之后 `Get MAP` 要返回该
+  **映射本身**；此前 `Get` 只看扁平值表 → 读回 null → monochrome 的 baseof 用
+  `SetInMap "params" …` 初始化的整串参数在 head.html 里全部取不到 →
+  opengraph/twitter_cards 头标签整段缺失。
+  monochrome 结构相似度 16.6 → **51.6**、文本 80.5 → **90.5**（三项叠加）。
 
 **二十、分组分页、集合计数的接口判定、槽位默认体的位置（本轮三项）**。
 

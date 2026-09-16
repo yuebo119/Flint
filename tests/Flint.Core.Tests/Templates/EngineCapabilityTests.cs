@@ -120,6 +120,10 @@ public sealed class TemplateResourceTests : IDisposable
         File.WriteAllText(Path.Combine(_dir, "css", "main.css"), "body { color : red }");
         File.WriteAllText(Path.Combine(_dir, "css", "extra.css"), ".x{color:blue}");
         File.WriteAllText(Path.Combine(_dir, "js", "app.js"), "var a = 1;");
+        Directory.CreateDirectory(Path.Combine(_dir, "icons"));
+        File.WriteAllText(
+            Path.Combine(_dir, "icons", "sprite.svg"),
+            "<svg><symbol id=\"a\"><line x1=\"1\"/></symbol></svg>");
     }
 
     public void Dispose()
@@ -137,6 +141,21 @@ public sealed class TemplateResourceTests : IDisposable
         Assert.Equal("css", r!.ResourceType);
         Assert.Equal("text/css", r.MediaType);
         Assert.Contains("color", r.Content);
+    }
+
+    /// <summary>
+    /// **SVG 是文本资源**：主题靠 `.Content` 取符号表做图标内联（monochrome 的
+    /// svg/feather.html：`resources.Get "lib/icns/…svg"` + `findRESubmatch` 抽 `&lt;symbol&gt;`）。
+    /// 此前 SVG 按图像处理 → Content 恒空 → 图标全渲染成空 &lt;svg&gt;（实测）
+    /// </summary>
+    [Fact]
+    public void Get读取SVG内容()
+    {
+        var p = new FileSystemResourceProvider("https://e.com", _dir);
+        var r = p.Get("icons/sprite.svg");
+        Assert.NotNull(r);
+        Assert.Equal("image", r!.ResourceType);
+        Assert.Contains("<symbol id=\"a\">", r.Content);
     }
 
     [Fact]
@@ -271,6 +290,23 @@ public sealed class PageStoreTests
         var vals = Call(s, "getsortedmapvalues", "m") as System.Collections.IEnumerable;
         Assert.NotNull(vals);
         Assert.Equal([1, 2], vals!.Cast<object?>().ToArray());
+    }
+
+    /// <summary>
+    /// <c>SetInMap MAP KEY VALUE</c> 之后 <c>Get MAP</c> 要返回该映射本身（Hugo Scratch 语义）：
+    /// monochrome 的 baseof 用它初始化一串参数、head.html 再
+    /// <c>(.Store.Get "params").enable_open_graph</c> 读取——此前 Get 只看扁平值表 →
+    /// 读回 null → 依赖这些参数的整段 head 内容（opengraph/twitter_cards）不渲染
+    /// </summary>
+    [Fact]
+    public void SetInMap写入的映射可由Get读回()
+    {
+        var s = new PageStoreObject();
+        Call(s, "setinmap", "params", "enable_open_graph", true);
+        var map = Call(s, "get", "params");
+        Assert.NotNull(map);
+        var obj = Assert.IsType<Scriban.Runtime.ScriptObject>(map);
+        Assert.Equal(true, obj["enable_open_graph"]);
     }
 
     [Fact]

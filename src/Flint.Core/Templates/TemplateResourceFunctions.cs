@@ -152,9 +152,13 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
     {
         try
         {
-            // 图像为二进制：不读文本内容（仅给路径与类型，宽度高度需解码时另作）
             var res = TemplateResource.Create(rel, "", BaseUrl);
-            if (res.IsImage)
+            // 位图是二进制：不读文本内容（仅给路径与类型）
+            // **SVG 例外**：它是文本资源，主题靠 `.Content` 取符号表做图标内联
+            //（monochrome 的 svg/feather.html：`resources.Get "lib/icns/…svg"` +
+            //  `findRESubmatch` 抽 `<symbol>` → 内联成 <line>/<path>；此前 SVG 被判为
+            //  图像 → Content 恒空 → 全部图标渲染成空 <svg>，实测）
+            if (res.IsImage && !rel.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
             {
                 return res;
             }
