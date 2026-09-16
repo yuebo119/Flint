@@ -489,13 +489,16 @@ public sealed partial class SiteBuilder
             }
 
             // 创建首页上下文
+            // **日期留零值**再派生（Hugo v0.166 探针：home/section/taxonomy/term 的
+            // `.Date`/`.Lastmod` 都是"后代页面里的最大日期"；此前写 DateTimeOffset.Now
+            // → 列表页页脚显示构建当天，techdoc 的 "Last updated on …" 实测）
             var pageContext = new PageContext
             {
                 Title = config.Title,
                 Content = "",
                 Permalink = config.BaseURL,
                 RelPermalink = "/",
-                Date = DateTimeOffset.Now,
+                Date = DateTimeOffset.MinValue,
                 Tags = [],
                 Categories = [],
                 WordCount = 0,
@@ -503,6 +506,7 @@ public sealed partial class SiteBuilder
                 Type = "home",
                 Kind = "home"
             };
+            pageContext = WithDerivedListDates(pageContext, siteContext.RegularPages, []);
 
             var context = new TemplateContext
             {
@@ -742,7 +746,9 @@ public sealed partial class SiteBuilder
                     Content = "",
                     Permalink = taxPage.Permalink ?? "/",
                     RelPermalink = relPermalink,
-                    Date = DateTimeOffset.Now,
+                    // 同 home/section：日期从自身集合派生（探针：taxonomy/term 页的
+                    // `.Date`/`.Lastmod` = 其页面集合里的最大日期）
+                    Date = DateTimeOffset.MinValue,
                     Tags = [],
                     Categories = [],
                     WordCount = 0,
@@ -782,6 +788,9 @@ public sealed partial class SiteBuilder
                         BaseRelPermalinkOf(taxPage),
                         config.PaginatePath)
                 };
+
+                // 分类页的派生日期（探针：taxonomy/term 的 .Date/.Lastmod = 集合内最大日期）
+                pageContext = WithDerivedListDates(pageContext, pageItems, []);
 
                 var context = new TemplateContext
                 {

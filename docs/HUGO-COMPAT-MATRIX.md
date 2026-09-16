@@ -40,6 +40,7 @@
 | X′ | `print` 的空格规则 | Go 的 `fmt.Sprint`：**相邻两个操作数都不是字符串**时才插空格（`print "a" "b"` = "ab"、`print 1 2` = "1 2"） | `GoSprint` 实现该规则；`println` 一律空格 + 换行 | `HugoCompatSemanticsTests.print按Go的fmtSprint空格规则` |
 | Y′ | `resources.Get` 的 `.Content`（SVG） | SVG 是**文本资源**，`.Content` 给符号表原文（主题据此内联图标） | 资源装载对 `.svg` 读文本（位图仍不读）；`TemplateResourceTests.Get读取SVG内容` | `TemplateResourceTests.Get读取SVG内容` + 主题回归：monochrome 图标 |
 | Z′ | `Scratch.SetInMap` 与 `Get` | `SetInMap MAP KEY VALUE` 之后 `Get MAP` 返回该**映射本身**（主题用它批量初始化参数再逐项读取） | `PageStoreObject.Get` 在扁平值表未命中时返回 `_maps` 里的映射（转 ScriptObject） | `PageStoreTests.SetInMap写入的映射可由Get读回` |
+| A″ | 列表页的派生日期 | home/section/taxonomy/term 未显式设置日期时，`.Date`/`.Lastmod` 取**后代页面里的最大日期**（子页无 lastmod 时用自己的 date 参与聚合） | `SiteBuilder.WithDerivedListDates` 在两阶段装配里聚合（home 在**路径段数**降序中排最后）；`.Lastmod` 缺省 = `.Date` | `PageAwareLookupE2ETests.列表页日期由后代派生` |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -572,6 +573,20 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十二、列表页的派生日期（含装配顺序的一个坑）**。Hugo v0.166 探针：home/section/
+taxonomy/term 未显式设置日期时，`.Date` = 后代页面里**最大**的 date、`.Lastmod` = 后代里
+最大的 lastmod（子页未设 lastmod 时用自己的 date 参与聚合）；都无后代则零值。
+Flint 此前给这些页填 `DateTimeOffset.Now`（显示构建当天）或留空 → techdoc 的
+"Last updated on …" 在列表页渲染成空、排序与 sitemap lastmod 也偏。
+
+同时修掉一个装配顺序的坑：两阶段的"深优先"排序原先按 **key 里的斜杠数**判层级，
+而 home 的 key 是 `"/"`（1 个斜杠）→ 与一级节点并列 → home 排到 `/docs`、`/posts`
+**之前**装配 → 派生日期的聚合读到尚未派生的子 section（home 的日期恒为零）。
+改为按**路径段数**判层级（`"/"` → 0）。
+
+相似度：monochrome 51.6→56.5、m10c 51.4→53.1、loveit 56.5→57.1、papermod 56.2→56.9、
+techdoc 34.6→35.0、even 59.3→59.6。
 
 **二十一、`print` 空格规则、SVG 资源内容、Store 映射读回（本轮三项）**。
 

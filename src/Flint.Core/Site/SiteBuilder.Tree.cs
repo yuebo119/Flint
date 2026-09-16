@@ -337,7 +337,7 @@ public sealed partial class SiteBuilder
         // 让每个 section 装配时能从表里取到已装配好的子 section；再按原顺序产出时
         // 从表里取（顺序语义不变：`ordered` 仍是日期降序）
         var assembled = new Dictionary<string, PageContext>(StringComparer.Ordinal);
-        foreach (var (key, page) in ordered.OrderByDescending(e => e.Key.Count(c => c == '/')))
+        foreach (var (key, page) in ordered.OrderByDescending(e => DepthOfKey(e.Key)))
         {
             if (page.Kind == "home")
             {
@@ -356,11 +356,12 @@ public sealed partial class SiteBuilder
                     .Select(e => assembled.TryGetValue(e.Key, out var assembledChild) ? assembledChild : e.Page)
                     .ToList();
                 // home 的直属 section 即一级 section 页（路径无 '/'）
-                assembled[key] = page.WithPages(homeChildren)
-                    .WithSections(allSections
-                        .Where(e => IsTopLevelKey(e.Key))
-                        .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
-                        .ToList());
+                var homeSections = allSections
+                    .Where(e => IsTopLevelKey(e.Key))
+                    .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
+                    .ToList();
+                assembled[key] = WithDerivedListDates(
+                    page.WithPages(homeChildren).WithSections(homeSections), homeChildren, homeSections);
             }
             else if (page.Kind == "section")
             {
@@ -375,7 +376,8 @@ public sealed partial class SiteBuilder
                                 e.Key.Count(c => c == '/') == key.Count(c => c == '/') + 1)
                     .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
                     .ToList();
-                assembled[key] = page.WithPages(sectionPages).WithSections(childSections);
+                var assembledSection = page.WithPages(sectionPages).WithSections(childSections);
+                assembled[key] = WithDerivedListDates(assembledSection, sectionPages, childSections);
             }
             else
             {
@@ -734,6 +736,47 @@ public sealed partial class SiteBuilder
     /// `.Sections`/`.Pages` 里若带上它，主题的导航遍历就会生成指向不存在目录的链接
     /// （narrow 的 <c>/docs/guide/</c> 实测——content/docs/guide/ 无 _index.md，Hugo 也不产该页）
     /// </summary>
+    /// <summary>
+    /// 列表页（home/section）的派生日期（Hugo v0.166 探针）：未显式设置时——
+    /// <c>.Date</c> = 后代页面中**最大**的 date、<c>.Lastmod</c> = 后代中最大的 lastmod
+    /// （子页自身未设 lastmod 时用其 date），没有后代则保持零值。
+    /// 主题在列表页页脚显示 "Last updated on …"（techdoc）、排序与 sitemap lastmod 都依赖它；
+    /// 此前列表页这两个字段恒空 → 渲染成 "Last updated on "（实测）
+    /// </summary>
+    private static PageContext WithDerivedListDates(
+        PageContext listPage,
+        IReadOnlyList<PageContext> pages,
+        IReadOnlyList<PageContext> sections)
+    {
+        var descendants = pages.Concat(sections).ToList();
+        if (descendants.Count == 0)
+        {
+            return listPage;
+        }
+
+
+        var date = listPage.Date != DateTimeOffset.MinValue
+            ? listPage.Date
+            : descendants.Where(d => d.Date != DateTimeOffset.MinValue)
+                .Select(d => d.Date)
+                .DefaultIfEmpty(DateTimeOffset.MinValue)
+                .Max();
+        var lastMod = listPage.LastMod
+            ?? descendants.Select(d => d.LastMod ?? d.Date)
+                .DefaultIfEmpty(DateTimeOffset.MinValue)
+                .Max();
+        return listPage.WithDates(date, lastMod);
+    }
+
+    /// <summary>
+    /// 树节点 key 的**层级**（按路径段数）：`"/"`（home）→ 0、`"/posts"` → 1、
+    /// `"/posts/third"` → 2。**不能用斜杠计数**——home 的 key 是 `"/"`（1 个斜杠），
+    /// 会与一级节点并列，导致 home 排在 `/docs`、`/posts` 之前被装配，派生日期聚合
+    /// 读到尚未派生的子 section（techdoc 的 home 日期恒为零，实测）
+    /// </summary>
+    private static int DepthOfKey(string key) =>
+        key.Split('/', StringSplitOptions.RemoveEmptyEntries).Length;
+
     private static bool IsNonProducingSynthesized(string key, PageContext page) =>
         string.IsNullOrEmpty(page.SourcePath) && key.Contains('/', StringComparison.Ordinal);
 
@@ -806,7 +849,9 @@ public sealed partial class SiteBuilder
             // 直接渲染 `01 Jan, 0001`（bearblog 实测两侧输出）。此前回落 DateTimeOffset.Now
             // → 每个无日期页都显示"构建当天"，与 Hugo 差一整段（页脚/卡片/opengraph 都受影响）
             Date = content.Metadata.Date ?? DateTimeOffset.MinValue,
-            LastMod = content.Metadata.LastMod,
+            // .Lastmod 缺省 = .Date（Hugo 语义：v0.166 探针——无 lastmod 的子页在列表页
+            // 的 lastmod 聚合里贡献自己的 date）
+            LastMod = content.Metadata.LastMod ?? content.Metadata.Date,
             Tags = content.Metadata.Tags,
             Categories = content.Metadata.Categories,
             Aliases = content.Metadata.Aliases,

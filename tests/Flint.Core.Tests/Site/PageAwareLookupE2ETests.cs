@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 页面感知查找 + 分类数据模型的端到端行为测试（A 组实施验收）。
 //
 // 覆盖四个实测确证的缺陷修复：
@@ -81,6 +81,40 @@ public sealed class PageAwareLookupE2ETests : IDisposable
 
         Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
         Assert.Contains("THEME-POSTS", Read(Path.Combine("posts", "a", "index.html")), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// **列表页的派生日期**（Hugo v0.166 探针）：home/section/taxonomy/term 的
+    /// `.Date`/`.Lastmod` 未显式设置时取**后代页面里的最大日期**（子页 2026-01-15 /
+    /// 2026-03-10 → 列表页两者都是 2026-03-10；子页无 lastmod 时用自己的 date 参与聚合）。
+    /// techdoc 的页脚 "Last updated on …" 依赖它；此前列表页这两个字段恒空。
+    /// 另一个坑：装配顺序按**路径段数**降序（home 的 key 是 "/"，按斜杠计数会与一级节点
+    /// 并列而排到它们之前 → 读到尚未派生的子节点）
+    /// </summary>
+    [Fact]
+    public async Task 列表页日期由后代派生()
+    {
+        Write("Flint.toml", "baseURL = \"https://example.com/\"\ntitle = \"T\"\n[taxonomies]\n  tag = \"tags\"\n");
+        Write(Path.Combine("content", "_index.md"), "---\ntitle: Home\n---\nbody");
+        Write(Path.Combine("content", "posts", "_index.md"), "---\ntitle: Posts\n---\nbody");
+        Write(Path.Combine("content", "posts", "a.md"), "---\ntitle: A\ndate: 2026-01-15\n---\nbody");
+        Write(Path.Combine("content", "posts", "b.md"),
+            "---\ntitle: B\ndate: 2026-03-10\ntags: [x]\n---\nbody");
+        const string Tpl =
+            "d={{ page.date | date.to_string \"2006-01-02\" }} m={{ page.lastmod | date.to_string \"2006-01-02\" }}";
+        Write(Path.Combine("layouts", "_default", "list.html"), Tpl);
+        Write(Path.Combine("layouts", "_default", "single.html"), "SINGLE");
+        Write(Path.Combine("layouts", "term", "term.html"), Tpl);
+        Write(Path.Combine("layouts", "taxonomy", "taxonomy.html"), Tpl);
+
+        var result = await BuildAsync();
+
+        Assert.True(result.Success, string.Join("; ", result.Errors.Select(e => e.Message)));
+        const string expected = "d=2026-03-10 m=2026-03-10";
+        Assert.Equal(expected, Read("index.html").Trim());
+        Assert.Equal(expected, Read(Path.Combine("posts", "index.html")).Trim());
+        Assert.Equal(expected, Read(Path.Combine("tags", "index.html")).Trim());
+        Assert.Equal(expected, Read(Path.Combine("tags", "x", "index.html")).Trim());
     }
 
     [Fact]

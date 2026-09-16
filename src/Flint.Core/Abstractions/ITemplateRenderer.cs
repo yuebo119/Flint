@@ -642,12 +642,22 @@ public sealed class PageContext
     }
 
     /// <summary>共享浅拷贝实现：仅 Permalink/RelPermalink/Pages/Paginator 可变</summary>
+    /// <summary>
+    /// 派生实例并覆盖**列表页的派生日期**（Hugo 的 section/home 日期规则）：
+    /// 未显式设置时取**后代页面的最大日期**（探针 v0.166：子页 2026-01-15/2026-03-10
+    /// → 列表页 date=lastmod=2026-03-10）
+    /// </summary>
+    public PageContext WithDates(DateTimeOffset date, DateTimeOffset? lastMod) =>
+        Clone(Permalink, RelPermalink, Pages, Paginator, null, date, lastMod);
+
     private PageContext Clone(
         string permalink,
         string relPermalink,
         IReadOnlyList<PageContext>? pages,
         PaginatorView? paginator,
-        IReadOnlyList<PageContext>? sections = null)
+        IReadOnlyList<PageContext>? sections = null,
+        DateTimeOffset? date = null,
+        DateTimeOffset? lastMod = null)
     {
         return new PageContext
         {
@@ -656,8 +666,8 @@ public sealed class PageContext
             Content = Content,
             Permalink = permalink,
             RelPermalink = relPermalink,
-            Date = Date,
-            LastMod = LastMod,
+            Date = date ?? Date,
+            LastMod = lastMod ?? LastMod,
             Tags = Tags,
             Aliases = Aliases,
             Categories = Categories,
