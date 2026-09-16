@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // Front Matter 解析器——读取部分：格式检测、分隔符扫描与三路解析
 // （从 FrontMatterParser.cs 按 partial 拆出）
 
@@ -248,7 +248,7 @@ public sealed partial class FrontMatterParser
     private static bool IsInlineArray(ReadOnlySpan<char> value)
     {
         return value[0] == '[' && value[^1] == ']' &&
-               value[1..^1].IndexOfAny(stackalloc[] { '[', ']', '{', '}' }) < 0;
+               value[1..^1].IndexOfAny(['[', ']', '{', '}']) < 0;
     }
 
     /// <summary>

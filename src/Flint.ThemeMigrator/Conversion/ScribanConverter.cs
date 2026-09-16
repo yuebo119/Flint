@@ -1510,12 +1510,20 @@ internal sealed class ScribanConverter(
         // _partials/docs/prev-next.html 实测）。代价：值返回型丢失缓存（仅性能）
         if (isValueReturning)
         {
+            // 上下文是 dot 时**照常传出**（转成 `page`）：dot 未必是页面——
+            // blowfish 的 `partial "functions/date.html" .` 里 dot 是**日期值**，
+            // 省略参数会让 partial 内的 `date.to_string page …` 把外层页面当日期 →
+            // 整段 `{{ i18n "article.date" … }}` 渲染为空（`<time>` 元素整个消失，实测）。
+            // dot 就是页面时传 `page` 与省略等价，故显式传递没有副作用
             var isDotValueCtx = args.Count <= 1 || args[1] is Parsing.DotExpr
                 or Parsing.FieldExpr { Path: "." };
             if (isDotValueCtx)
             {
                 return new ConversionResult(
-                    $"partialValue \"{PartialPathFor(nameExpr)}\"", ConversionKind.Equivalent);
+                    args.Count <= 1
+                        ? $"partialValue \"{PartialPathFor(nameExpr)}\""
+                        : $"partialValue \"{PartialPathFor(nameExpr)}\" page",
+                    ConversionKind.Equivalent);
             }
             var ctxValue = ConvertExpr(args[1], scope, false);
             if (ctxValue.Kind != ConversionKind.Unsupported &&
@@ -1546,6 +1554,23 @@ internal sealed class ScribanConverter(
                     $"partial \"{PartialPathFor(nameExpr)}\" {scope[^1]}", ConversionKind.Downgraded,
                     "partial 上下文参数以 page 绑定（with/range 块内 dot 语义等价）");
             }
+
+            // **partial 体内且源码显式写了 dot**：dot 未必是渲染页——它是调用方传进来的值
+            //（blowfish 的 article-link/simple.html：dot 是卡片对应的文章，而 Flint 的
+            //  `partial` 不带上下文时取**渲染页**而非调用方的 dot → 内层元信息 partial
+            //  拿到列表页 → 每张卡片的日期整段消失，实测）。
+            // 显式传 `page`：在 partial 体内它就是调用方的 dot ✓；页面模板里 dot 与 page
+            // 本就相等，故只在 partial 体内改形态。
+            // **仅限显式写 dot 的形态**（args.Count > 1）：`X | partial "y"` 的管道形态
+            // 里 args 只有名字，管道左值随后才附录到末尾——在这里插 `page` 会变成
+            // 两个上下文（fixit 的 `dict … | partial "plugin/icon.html"` 实测：
+            // 产出 `partial "…/icon" page (dict …)` → 图标名丢失 → 490 处 errorf）
+            if (SelfPartialName is not null && !isValueReturning && args.Count > 1)
+            {
+                return new ConversionResult(
+                    $"partial \"{PartialPathFor(nameExpr)}\" page", ConversionKind.Equivalent);
+            }
+
             return new ConversionResult(
                 $"{target} \"{PartialPathFor(nameExpr)}\"", ConversionKind.Equivalent);
         }

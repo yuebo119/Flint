@@ -392,6 +392,35 @@ public sealed class ParserConverterTests
         Assert.DoesNotContain("blk_posts", result, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// **partial 体内**的 dot 上下文要显式传出：Hugo 的 partial 不带参数时以调用方的 dot
+    /// 渲染，Flint 的 `partial` 不带上下文取的是**渲染页**——卡片 partial（dot = 文章）里
+    /// 再调元信息 partial 会拿到列表页（blowfish 的卡片日期整段消失，实测）
+    /// </summary>
+    [Fact]
+    public void partial体内的dot上下文显式传出()
+    {
+        var parts = new GoTemplateParser(
+            new GoTemplateLexer("{{ partial \"article-meta/basic.html\" . }}").Tokenize()).Parse();
+        var converter = new TemplateConverter(
+            MigrationMap.CreateDefault(), selfPartialName: "_partials/article-link/simple");
+        var result = converter.Convert(parts);
+        Assert.Contains("partial \"_partials/article-meta/basic\" page", result,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 页面模板内的dot上下文保持省略()
+    {
+        // 页面模板里 dot 与 page 本就相等：保持原形态（不引入无意义的参数）
+        var parts = new GoTemplateParser(
+            new GoTemplateLexer("{{ partial \"foo.html\" . }}").Tokenize()).Parse();
+        var converter = new TemplateConverter(MigrationMap.CreateDefault());
+        var result = converter.Convert(parts);
+        Assert.Contains("partial \"_partials/foo\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("page", result, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void 变量接收者的Format保留引号()
     {

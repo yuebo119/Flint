@@ -31,6 +31,10 @@
 | N′ | `i18n` 的复数选形与插值 | 键为**点分嵌套**；值是**复数子表**（`one`/`other`…）时按计数选形（`1 → one`、其余 `other`；**无计数 → other**）；值里的 `{{ .Count }}`/dict 键做插值，缺失渲染 `<no value>`；缺键输出空 | 加载端 `Translations.Flatten` 递归摊平为 `key.one`/`key.other`；引擎 `I18nFunction` 按计数选形 + 正则插值（2 参签名，第二参可为数字或 dict） | `I18nTests.Load_嵌套复数子表应摊平为点分键`、`HugoCompatSemanticsTests.I18n复数选形与插值`（断言值即探针值） |
 | O′ | 跨文件命名模板的 `block` | Hugo 的命名模板是**全局**的：`partials/` 里的 `{{ block "X" . }}` 渲染任何文件 `{{ define "X" }}` 的块体 | 迁移器扫描"partial 里的 block 指向别的 partial 的 define"，把块体提取为 `_partials/<名>__block.html` 并把 block 调用点改为 `partial`（默认体用 `if false` 吞掉） | `MigratorTests.跨文件block改为渲染提取出的块体` |
 | Q′ | 分类页的 `.Type` | `/tags/`（taxonomy 列表页）与 `/tags/x/`（term 页）的 `.Type` 都是**分类名**（`tags`），`.Kind` 才是 taxonomy/term（探针实测） | `SiteBuilder.Render` 的分类页构造改用 `taxPage.TaxonomyName`（此前写死 `"taxonomy"`，主题按 `.Type` 分支的列表渲染整段落空——github-style 的 posts.html 实测） | `PageCollectionAndParamsTests`（既有）+ 主题回归：github-style 的 `/categories/general/` 列表 |
+| R′ | 集合与数值的比较 | 集合按其**长度**参与比较（探针：`gt (slice 1 2) 0` = true、`eq .Pages 0` = false） | `CompareHugo` 先算 `CollectionCount`（集合判定在 ScriptObject 排除之前——页面集合是 `ScriptObject + IList`） | `HugoCompatSemanticsTests.集合与数值比较按长度/页面集合与数值比较按长度` |
+| S′ | 值打印（`{{ value }}`） | Go 的 fmt 默认：时间 → `2026-01-15 00:00:00 +0000 UTC`、字典 → `map[k:v …]`（键排序）、列表 → `[a b c]`、nil → `<nil>` | `FlintScribanContext.ObjectToString` 覆盖（页面对象与引擎内部投影不套用，避免把页面集合印成 map） | `HugoCompatSemanticsTests`（值打印经主题回归：github-style 的 `{{ time .Date }}`、hugo-coder 的 `{{ .Site.Params.author }}`） |
+| T′ | i18n 文件格式 | Hugo 支持 `.toml`/`.yaml`/`.json`（blowfish 等主题用 YAML） | `Translations` 按扩展名分派（TOML 走 Tomlyn、YAML 走 SharedYaml、JSON 走 System.Text.Json），统一归一后摊平 | `I18nTests.Load_YAML与JSON形态应被加载` |
+| U′ | 嵌套 partial 的上下文 | partial 不带参数时以**调用方的 dot** 渲染 | 转换器在 **partial 体内**把 dot 上下文显式传出（`partial "x" page`）——Flint 的 partial 不带上下文取渲染页而非调用方 dot | `MigratorTests`（partial 上下文回归）+ 主题回归：blowfish 卡片日期 |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -563,6 +567,25 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**十九、集合比较、值打印、i18n 文件格式、嵌套 partial 上下文（同一轮的四项）**。
+
+- **集合按长度比较**：`{{ if gt .Pages 0 }}` 是主题渲染列表区的开关（blowfish 的
+  list.html），而 Flint 的比较函数把集合落到字符串序比较 → 恒 false →
+  **整个文章列表区不渲染**。Hugo 探针：`gt (slice 1 2) 0` = true、`lt .Pages 0` = false、
+  `eq .Pages 0` = false，即**按长度**参与比较。
+- **值打印**：Go 的 `fmt` 默认格式——时间 `2026-01-15 00:00:00 +0000 UTC`、字典
+  `map[link:… name:Tester]`（键排序）、列表 `[a b c]`。Flint 此前给 .NET 默认
+  （`01/15/2026 00:00:00 +00:00`）与 Scriban 的 JSON 形态（`{name: "Tester", …}`），
+  主题直接 `{{ .Site.Params.author }}` / `{{ time .Date }}` 时整段不同
+  （hugo-coder/hugo-paper/github-style 实测）。
+- **i18n 文件格式**：Hugo 支持 `.toml`/`.yaml`/`.json`；Flint 只找 `.toml` →
+  blowfish 的 `i18n/en.yaml`（整个主题的文案）被忽略。blowfish 文本相似度
+  82.8 → **89.4**。
+- **嵌套 partial 的上下文**：Hugo 的 partial 不带参数时以**调用方的 dot** 渲染，
+  而 Flint 的 `partial` 不带上下文取的是**渲染页** → 卡片 partial（dot = 文章）里
+  再调元信息 partial（`{{ partial "article-meta/basic.html" . }}`）会拿到列表页 →
+  每张卡片的日期整段消失。修法：partial 体内的 dot 上下文显式传出（`partial "x" page`）。
 
 **十七、跨文件命名模板的 `block`（Hugo 的命名模板是全局的）**。`partials/` 下的文件里写
 `{{ block "posts" . }}{{ end }}`，而 `posts` 的 `{{ define }}` 在另一个 partial 里：
