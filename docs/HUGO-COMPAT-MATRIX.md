@@ -242,3 +242,35 @@ blog-awesome 的列表页调用 `.Paginate (where .Pages "Section" "blog")`（�
    term 页对词条值 Title 化但**保留连字符**（`/my-series/first-run/` → "First-Run"）。
    采用 Go `strings.Title` 语义（只大写"非字母数字之后的首字母"，其余原样）。
    此前两者都直接输出原名（`tags`/`alpha`）。
+
+### L. 转换器"不支持"清零（本轮第七项）——全语料体检结果
+
+体检方法：21 个主题逐个 `Flint.ThemeMigrator` 迁移 + `--report`，
+聚合 `SUMMARY` 的 `unsupported`/`downgraded` 与逐文件注记。
+
+| 项 | 修前 | 修后 |
+|---|---|---|
+| 不支持（原样保留 Go 文本 / 条件降为 false） | 22 处 | **0 处** |
+| 降级（转了但有已知语义差异） | 1102 处 | 1102 处（不变） |
+
+修掉的两类"不支持"：
+
+1. **Go 反引号原始串含 `"` / `\`**（12 处）：Go 原始串不做转义，Scriban 里反引号不是
+   字符串定界符 → 原样输出被结构检查拦下（"引号不平衡"）并整行回退成 Go 原文。
+   现转成 Scriban 双引号串并转义（`\`→`\`、`"`→`\"`、换行/制表 → `\n`/`\t`）。
+   例：`` `id="([^"]*)"` `` → `"id=\"([^\"]*)\""`；`` `\s+width="[^"]*"` `` → `"\s+width=\"[^\"]*\""`
+2. **管道形态 `X | not`**（10 处）：未折叠 → 产出 0 参 `not` → 条件回退成 `false`，
+   判断块被**静默丢弃**。现折叠为 `!(X)`（`X | not Y` 在 Hugo 下非法，保持不支持）
+
+**降级**仍是 1102 处，按注明细分五类（数值为表达式级计数；报告里按文件去重后 517 条）：
+
+| 类别 | 处数 | 语义缺口 |
+|---|---|---|
+| `partial` 上下文参数以 page 绑定 | 231+59 | `partial "x" (dict …)` 的 dot 语义——Flint 直接绑定该 dict，Hugo 亦如此，属**等价改写** |
+| `printf` 格式串按 Go 语义传入 | 145 | Go 的 `%q`/`%v` 等动词与 .NET 格式化不完全等价，运行时按 Go 语义解释 |
+| 内联 partial 提取为独立文件 | 38 | `{{ define }}` 提取成 partial 文件（结构变化，语义等价） |
+| 动态 partial 名（运行期解析） | 28+14 | `partial (printf …)` 目标名运行期才算得出，转换期无法静态校验 |
+| 资源上下文裸方法（补 `page.resources.`） | 2 | `with .Resources.ByType` 块内 `.GetMatch` 的隐式接收者显式化 |
+
+逐主题降级分布（前五）：fixit 236、blowfish 201、narrow 198、hugo-book 93、stack 81；
+github-style / techdoc / xmin 为 0。
