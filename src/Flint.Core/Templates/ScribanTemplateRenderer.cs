@@ -541,6 +541,21 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>登记当前构建的全量站点页面（站点渲染开始时调用）</summary>
     internal static void SetCurrentSitePages(IReadOnlyList<Flint.Core.Abstractions.PageContext> pages) => CurrentSitePages = pages;
 
+    /// <summary>
+    /// 当前构建的**站点对象**——页面对象上的 <c>.Site</c> 用它（Hugo 的 `.Site` 在任意
+    /// 页面上可用；迁移产物里的 `$page.Site.Params…` 形态会落到 `$page.site.params`）。
+    /// 与 <see cref="CurrentSitePages"/> 同一模式：页面对象按引用共享、构造时机不定，
+    /// 故由站点渲染入口统一登记
+    /// </summary>
+    private static Flint.Core.Abstractions.SiteContext? CurrentSite;
+
+    /// <summary>登记当前构建的站点对象（站点渲染开始时调用）</summary>
+    internal static void SetCurrentSite(Flint.Core.Abstractions.SiteContext site) => CurrentSite = site;
+
+    /// <summary>取当前构建的站点对象（未登记时为 null）</summary>
+    internal static ScriptObject? CurrentSiteObject() =>
+        CurrentSite is null ? null : CreateSiteObject(CurrentSite);
+
     /// <summary>标记某列表页被模板分页（由 <c>.Paginate</c> 调用触发）</summary>
     internal static void NotePaginateInvoked(string? relPermalink)
     {

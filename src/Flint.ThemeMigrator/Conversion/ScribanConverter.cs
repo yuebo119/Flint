@@ -874,6 +874,22 @@ internal sealed class ScribanConverter(
         // 转换期产出须与引擎注册名一致）
         if (name.Contains('.', StringComparison.Ordinal) || name.Contains('$', StringComparison.Ordinal))
         {
+            // `.IsZero`/`.Unix`：Hugo 是 time.Time 上的**值方法**，Flint 侧是引擎函数
+            //（date.is_zero / date.unix）——点号链上取不到值成员，裸转字段会静默取到空值，
+            // 于是 `{{ if not .Date.IsZero }}` 恒真：无日期页照样渲染日期
+            //（ananke/console/fixit/hugo-paper 等 24 处实测）
+            var dateMember = DateValueMethodName(name);
+            if (dateMember is not null)
+            {
+                var lastDot = name.LastIndexOf('.');
+                var memberTail = lastDot > 0 ? name[..lastDot] : "";
+                var memberRecv = memberTail.Length == 0 || memberTail == "$" || memberTail == "."
+                    ? "page"
+                    : MapIdentifierPath(memberTail) ?? memberTail;
+                return new ConversionResult(
+                    $"date.{dateMember} {memberRecv}", ConversionKind.Equivalent);
+            }
+
             var mapped = MapChainMethod(name);
             if (mapped is not null)
             {
@@ -1294,6 +1310,39 @@ internal sealed class ScribanConverter(
         return mappedRecv;
     }
 
+    /// <summary>
+    /// 路径末尾是否为"日期值方法"<c>.IsZero</c>/<c>.Unix</c>（Hugo 的 <c>time.Time</c> 成员），
+    /// 是则返回引擎函数名（<c>is_zero</c>/<c>unix</c>），否则 null。
+    /// 判定在 **snake 形**上做——源码侧是 PascalCase（<c>.IsZero</c>），
+    /// 转换器另一条路径产出小写（<c>.is_zero</c>）
+    /// </summary>
+    private static string? DateValueMethodName(string path)
+    {
+        var snake = ToSnakePath(path);
+        if (snake.EndsWith(".is_zero", StringComparison.OrdinalIgnoreCase))
+        {
+            return "is_zero";
+        }
+
+        return snake.EndsWith(".unix", StringComparison.OrdinalIgnoreCase) ? "unix" : null;
+    }
+
+    /// <summary>
+    /// 日期值方法（<c>.Format</c>/<c>.IsZero</c>/<c>.Unix</c>）的**接收者**：
+    /// `.Site.X` 换到 site 根、range 体内取最内层循环变量、否则页面根。
+    /// 返回的接收者用**普通点**（非 <c>?.</c>）——它要作引擎函数的实参，
+    /// 而 `page?.date?.format` 形态会被 Scriban 当作函数名（LoveIt 实测）
+    /// </summary>
+    private static string DateValueReceiver(string snakeTail, IReadOnlyList<string> scope)
+    {
+        if (snakeTail.StartsWith(".site", StringComparison.OrdinalIgnoreCase))
+        {
+            return "site" + snakeTail[".site".Length..];
+        }
+
+        return scope.Count > 0 ? scope[^1] + snakeTail : "page" + snakeTail;
+    }
+
     /// <summary>dict k1 v1 k2 v2 → { k1: v1, k2: v2 }</summary>
     /// <summary>
     /// Go 的 <c>and</c>/<c>or</c> 是**惰性**短路（Go 1.18 起 and/or 短路），
@@ -1574,6 +1623,48 @@ internal sealed class ScribanConverter(
                 // .Title → page.title；.Params.a → page.params.a
                 var raw = f.Path;
 
+                // `.Date.IsZero`/`.Lastmod.Unix`：Hugo 是 time.Time 上的**值方法**，
+                // Flint 侧是引擎函数（date.is_zero/date.unix）——裸转字段会得到
+                // `page?.date?.is_zero`（值成员取不到 → 静默空值），
+                // 于是 `{{ if not .Date.IsZero }}` 恒真：无日期页照样渲染日期
+                //（ananke/console/fixit/hugo-paper 等 24 处实测）
+                if (DateValueMethodName(raw) is { } valueMethod)
+                {
+                    var vmDot = raw.LastIndexOf('.');
+                    var vmTail = vmDot > 0 ? raw[..vmDot] : "";
+                    // 接收者**递归转换**：`?`/作用域根/.site 等规则由字段链自己的分支处理
+                    // （手写拼接会漏掉 `page?.date` 形态与 range 内的循环变量）
+                    ConversionResult vmRecv;
+                    if (vmTail.Length == 0)
+                    {
+                        vmRecv = new ConversionResult(
+                            scope.Count > 0 ? scope[^1] : "page", ConversionKind.Equivalent);
+                    }
+                    else if (!vmTail.Contains('.', StringComparison.Ordinal))
+                    {
+                        // 接收者是**裸标识符**（`now.Unix`：词法把 `now.Unix` 整段当一个
+                        // 字段路径）：直接映射标识符——再走字段链转换会因"无点路径"判为
+                        // 不支持，从而使整个改写**静默失效**（`{{ num_gt now.Unix 1 }}` 实测）
+                        vmRecv = new ConversionResult(
+                            MapIdentifierPath(vmTail) ?? vmTail, ConversionKind.Equivalent);
+                    }
+                    else
+                    {
+                        vmRecv = ConvertExpr(new Parsing.FieldExpr(vmTail), scope, false);
+                        if (vmRecv.Kind == ConversionKind.Unsupported)
+                        {
+                            return vmRecv;
+                        }
+                    }
+
+                    // **必须带括号**：`add .Lastmod.Unix X` 改写后是**两个 token**，
+                    // 不加括号会被外层函数当成两个实参（"Invalid number of arguments"
+                    // 或静默错算——fixit 的 recently-updated 实测构建失败）
+                    return new ConversionResult(
+                        $"(date.{valueMethod} {ParenthesizeIfNeeded(vmRecv.Text)})",
+                        ConversionKind.Equivalent);
+                }
+
                 // 块内裸点：range/with 作用域下 `.Field` 的接收者是**当前循环/上下文变量**，
                 // 而非 page。此前一律映射为 page.* —— 使 `{{ range .Pages }}{{ .Title }}`
                 // 产出 `page.title`（循环变量被忽略，渲染错误页面的标题）。
@@ -1788,6 +1879,18 @@ internal sealed class ScribanConverter(
                 // 无参数场景下它是"数据引用"而非"函数调用"
                 if (id.Name.Contains('.', StringComparison.Ordinal))
                 {
+                    // **带点的标识符**：`now.Unix` 这类"标识符基 + 值方法"的一条路径是
+                    // 词法把整段当一个标识符（不含前导点），转到字段链分支会因无点前缀
+                    // 判为不支持 → 改写静默失效（fixit 的 `add .Lastmod.Unix … now.Unix` 实测）
+                    if (DateValueMethodName(id.Name) is { } idMember)
+                    {
+                        var idDot = id.Name.LastIndexOf('.');
+                        var idBase = id.Name[..idDot];
+                        return new ConversionResult(
+                            $"(date.{idMember} {MapIdentifierPath(idBase) ?? idBase})",
+                            ConversionKind.Equivalent);
+                    }
+
                     // **带点的函数名**（compare.Ge / math.add / path.Join …）优先查函数映射：
                     // 它们走"含点标识符"分支，此前只当作**路径**处理（MapIdentifierPath 返回
                     // null 时原样保留）→ 命名空间调用从未被映射成全局函数，而命名空间成员
@@ -1846,6 +1949,41 @@ internal sealed class ScribanConverter(
 
             case Parsing.ChainExpr c:
             {
+                // `.Lastmod.Unix`/`now.Unix` 的**标识符基**形态：与 FieldExpr 分支同规则。
+                // Fields 存的是**不带点**的段（`["Unix"]`），拼接要自己补点
+                var chainBaseName = c.Base switch
+                {
+                    Parsing.IdentifierExpr chainId => chainId.Name,
+                    Parsing.VariableExpr chainVar => chainVar.Name,
+                    Parsing.DotExpr => "",
+                    _ => null
+                };
+                var chainFields = string.Join(".", c.Fields.Select(s => s.TrimStart('.')));
+                var chainPath = chainFields.Length == 0
+                    ? chainBaseName
+                    : chainBaseName + "." + chainFields;
+                if (chainPath is not null && DateValueMethodName(chainPath) is { } chainMember)
+                {
+                    var chainTail = chainPath[..chainPath.LastIndexOf('.')];
+                    // 接收者就是基标识符本身（`now.Unix` / `$x.Unix`）：直接映射基即可——
+                    // 再走一次字段链转换会因"无点路径"判为不支持而**静默放弃改写**
+                    //（`{{ num_gt now.Unix 1 }}` 实测）
+                    var chainRecv = chainTail.Length == 0
+                        ? new ConversionResult(
+                            scope.Count > 0 ? scope[^1] : "page", ConversionKind.Equivalent)
+                        : chainTail == chainBaseName
+                            ? new ConversionResult(
+                                MapIdentifierPath(chainBaseName) ?? chainBaseName,
+                                ConversionKind.Equivalent)
+                            : ConvertExpr(new Parsing.FieldExpr(chainTail), scope, false);
+                    if (chainRecv.Kind == ConversionKind.Equivalent)
+                    {
+                        return new ConversionResult(
+                            $"(date.{chainMember} {ParenthesizeIfNeeded(chainRecv.Text)})",
+                            ConversionKind.Equivalent);
+                    }
+                }
+
                 // base 为 $（Hugo 的页面上下文）：换根 + 路径映射
                 // （$.Site.RegularPages → site.regular_pages / $.Resources.GetMatch → page.resources.getmatch）
                 if (c.Base is Parsing.VariableExpr { Name: "$" })
