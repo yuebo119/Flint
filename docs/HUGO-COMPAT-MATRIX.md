@@ -457,3 +457,16 @@ home 用 `where .Site.RegularPages "Type" "in" .Site.Params.mainSections` 得到
 结果：clarity/stack 的坏链接清零，**全语料 Flint 独有坏引用从 31 类降到 3 类**
 （narrow 的 `/docs/guide/`、`/posts/page/` 与 fixit/hugo-coder 各 1 类），
 21 主题矩阵对称保持 21/21。
+
+#### 剩余坏引用（3 条，已定位未修）
+
+全语料审计后 Flint 独有的坏引用只剩 3 条（21 个主题、约 4000 个页面引用）：
+
+| 主题 | 链接 | 诊断 |
+|---|---|---|
+| hugo-coder | `/tags/page/2/page/2/` ×1 | 分页 URL 二次拼接——分类页分页页上的 pager 基准仍是"pager 页自身"（常规列表页的那处已修，分类页路径上还有一处未覆盖） |
+| narrow | `/posts/page/` ×1 | 链到分页根目录（Hugo 只产出 `/posts/page/1/`，不产出 `/posts/page/`） |
+| narrow | `/docs/guide/` ×1 | 链到**无 `_index.md` 的嵌套目录**（该目录在 Hugo 下同样不产出页面） |
+
+前两条同属"pager URL 拼接"族，第三条属"主题 nav 遍历时把合成目录当 section"。三条都不阻断
+使用（一次点击 404），但都是"Flint 生成了 Hugo 不会生成的链接"，故登记在此，留待下一轮定向修。
