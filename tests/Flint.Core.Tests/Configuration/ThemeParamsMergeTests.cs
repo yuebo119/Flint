@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 主题默认参数合并测试（主题系统 P1-2）：theme.toml [params] 作为默认值，站点深覆盖
 
 using AwesomeAssertions;
@@ -86,5 +86,24 @@ public sealed class ThemeParamsMergeTests : IDisposable
         // Assert
         config.Params["author"].Should().Be("only-site");
         config.Params.Count.Should().Be(1, "无主题时不引入任何默认参数");
+    }
+
+    [Fact]
+    public void 主题级taxonomies会合并且跳过Merge指令()
+    {
+        // Hugo 会把主题配置的 [taxonomies] 合并进站点配置（FixIt 的 hugo.toml 声明
+        // `collection = "collections"`，同段还有一行 `_merge = "shallow"`）。
+        // `_` 打头的是配置指令**不是分类名**——漏掉这条会让 `_merge = "shallow"`
+        // 变成名为 shallow 的分类（实测产出多余的 /shallow/ 页面）
+        var themeDir = Path.Combine(_testDir, "themes", "t1");
+        Directory.CreateDirectory(themeDir);
+        File.WriteAllText(Path.Combine(themeDir, "hugo.toml"),
+            "[taxonomies]\n_merge = \"shallow\"\ntag = \"tags\"\ncollection = \"collections\"\n");
+
+        var taxonomies = ThemeParamsMerger.ReadThemeRootConfigTaxonomies(themeDir);
+
+        Assert.NotNull(taxonomies);
+        Assert.Equal(["collection", "tag"], taxonomies.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        Assert.Equal("collections", taxonomies["collection"]);
     }
 }

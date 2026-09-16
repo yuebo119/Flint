@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 渲染调度聚合：短代码注册、依赖注册、站点上下文、页面/首页/分类页渲染
 
 using System.Collections.Concurrent;
@@ -609,7 +609,7 @@ public sealed partial class SiteBuilder
             return results;
         }
 
-        var taxonomyService = new TaxonomyService(config.BaseURL);
+        var taxonomyService = new TaxonomyService(config.BaseURL, TaxonomyService.FromConfigured(config.Taxonomies));
         var paginationService = new PaginationService(config.PaginatePath, config.Paginate);
         var generator = new TaxonomyPageGenerator(taxonomyService, paginationService);
 
@@ -700,7 +700,11 @@ public sealed partial class SiteBuilder
                     : taxPage.Pages ?? [];
                 var pageContext = new PageContext
                 {
-                    Title = taxPage.TermName ?? taxPage.TaxonomyName,
+                    // 标题按 Hugo 规则生成（TaxonomyService.HugoTitle 有探针依据）：
+                    // taxonomy 列表页 → 复数名（'-'→空格）Title 化；term 页 → 词条值 Title 化
+                    Title = isTaxonomyList
+                        ? TaxonomyService.HugoTitle(taxPage.TaxonomyPlural ?? taxPage.TaxonomyName, dashToSpace: true)
+                        : TaxonomyService.HugoTitle(taxPage.TermName ?? taxPage.TaxonomyName, dashToSpace: false),
                     Content = "",
                     Permalink = taxPage.Permalink ?? "/",
                     RelPermalink = relPermalink,

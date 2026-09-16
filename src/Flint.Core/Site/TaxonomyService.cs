@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 分类系统服务实现
 
 using System.Text.RegularExpressions;
@@ -13,6 +13,37 @@ namespace Flint.Core.Site;
 /// </summary>
 public sealed partial class TaxonomyService
 {
+    /// <summary>
+    /// 分类页标题（Hugo v0.166 实测）：
+    /// <list type="bullet">
+    /// <item>taxonomy 列表页：复数名把 <c>-</c> 换成空格后 Title 化——
+    /// <c>/tags/</c> → "Tags"、<c>/my-series/</c> → "My Series"</item>
+    /// <item>term 词条页：词条值**原样** Title 化（连字符保留）——
+    /// <c>/tags/alpha/</c> → "Alpha"、<c>/my-series/first-run/</c> → "First-Run"</item>
+    /// </list>
+    /// Title 化采用 Go <c>strings.Title</c> 的语义：只把"非字母数字之后的首字母"
+    /// 大写，其余字符原样保留（不做小写化、不按单词表处理）。
+    /// </summary>
+    /// <param name="name">taxonomy 复数名（列表页）或词条值（term 页）</param>
+    /// <param name="dashToSpace">是否先把连字符转空格（taxonomy 列表页为真）</param>
+    internal static string HugoTitle(string name, bool dashToSpace)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            return name;
+        }
+
+        var source = dashToSpace ? name.Replace('-', ' ') : name;
+        var sb = new System.Text.StringBuilder(source.Length);
+        var atWordStart = true;
+        foreach (var ch in source)
+        {
+            sb.Append(atWordStart && char.IsLetter(ch) ? char.ToUpperInvariant(ch) : ch);
+            atWordStart = !char.IsLetterOrDigit(ch);
+        }
+        return sb.ToString();
+    }
+
     private readonly Dictionary<string, TaxonomyConfig> _taxonomyConfigs;
     private readonly string _baseUrl;
 
@@ -41,7 +72,13 @@ public sealed partial class TaxonomyService
         foreach (var (taxonomyName, config) in _taxonomyConfigs)
         {
             var terms = BuildTaxonomyTerms(pages, taxonomyName, config);
-            taxonomies[taxonomyName] = terms;
+            // Hugo 实测：**没有词条的分类不产出任何页面**（声明了 [taxonomies]
+            // 但内容未使用的分类，/tags/ 这类目录不会出现——FixIt 的
+            // `collection = "collections"` 实测）。此前会产出空目录 → 与 Hugo 不对称
+            if (terms.Count > 0)
+            {
+                taxonomies[taxonomyName] = terms;
+            }
         }
 
         return new TaxonomyCollection { Taxonomies = taxonomies };
@@ -209,6 +246,50 @@ public sealed partial class TaxonomyService
     /// <summary>
     /// 获取默认分类配置
     /// </summary>
+    /// <summary>
+    /// 由站点配置构造分类注册表（Hugo v0.166 语义，实测）：
+    /// <list type="bullet">
+    /// <item>配置形如 <c>[taxonomies] series = "my-series"</c>——**键=单数名、值=复数名**；
+    /// 复数名同时是 front matter 字段名与 URL 段（内容里写 <c>my-series: [...]</c>，
+    /// 产出 <c>/my-series/</c>）</item>
+    /// <item>声明了 <c>[taxonomies]</c> 就**替换**默认的 tags/categories
+    ///（实测：只声明 <c>series = "my-series"</c> 时，即使页面有 tags，也不产出 /tags/）</item>
+    /// <item>未声明时用默认 tags/categories</item>
+    /// </list>
+    /// 此前构造点从不传配置，注册表恒为默认两项 → 自定义分类页**从不产出**
+    ///（探针：内容含 my-series/moods 时 Flint 只产出 tags/categories）
+    /// </summary>
+    /// <param name="configured">
+    /// 站点配置里的 [taxonomies]（键=单数、值=复数）。注意类型名冲突：
+    /// <see cref="Flint.Core.Configuration.TaxonomyConfig"/> 是**站点配置**（一个字典），
+    /// 而本命名空间下的 <see cref="TaxonomyConfig"/> 是**单个分类的描述符**——故此处写全名
+    /// </param>
+    public static Dictionary<string, TaxonomyConfig> FromConfigured(
+        Flint.Core.Configuration.TaxonomyConfig? configured)
+    {
+        if (configured?.Taxonomies is not { Count: > 0 } declared)
+        {
+            return GetDefaultTaxonomyConfigs();
+        }
+
+        var result = new Dictionary<string, TaxonomyConfig>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (singular, plural) in declared)
+        {
+            if (string.IsNullOrWhiteSpace(plural))
+            {
+                continue;
+            }
+            // 注册表按**复数**索引（= front matter 字段名 = URL 段）
+            result[plural] = new TaxonomyConfig
+            {
+                Singular = string.IsNullOrWhiteSpace(singular) ? plural : singular,
+                Plural = plural,
+                SortBy = TaxonomySortBy.Name
+            };
+        }
+        return result.Count > 0 ? result : GetDefaultTaxonomyConfigs();
+    }
+
     private static Dictionary<string, TaxonomyConfig> GetDefaultTaxonomyConfigs()
     {
         return new Dictionary<string, TaxonomyConfig>(StringComparer.OrdinalIgnoreCase)

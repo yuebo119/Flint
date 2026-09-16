@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 主题默认参数合并（主题系统 P1-2 + A1）：
 //   ① theme.toml 的 [params] 段（旧式元数据形态）
 //   ② config/_default/params.{toml,yaml,json}（Hugo 标准形态，优先级更高）
@@ -27,9 +27,15 @@ public static class ThemeParamsMerger
         // 多主题 defaults 层叠：从最后面的主题往前合并 defaults（前面的覆盖后面的），
         // 最终站点 DeepMerge 覆盖全部主题默认——对齐 Hugo theme 数组优先级
         var layered = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+        // 主题级 [taxonomies]：Hugo 会把主题配置的 [taxonomies] 合并进站点配置
+        //（FixIt 的 hugo.toml 声明 `collection = "collections"`）。站点**自己声明过**
+        // 则以站点为准（Hugo 的 `_merge = "shallow"` 语义：该段整体替换）；
+        // 多主题时按 theme 数组优先级取最先命中的那个（[推断]：逐主题深合并的边角态未实测）
+        Dictionary<string, string>? themeTaxonomies = null;
         foreach (var themeName in themeNames.Reverse())
         {
             var themeRoot = Path.Combine(sourcePath, "themes", themeName);
+            themeTaxonomies ??= ReadThemeRootConfigTaxonomies(themeRoot);
 
             // ① theme.toml 的 [params] 段（旧式元数据形态）
             var themeToml = Path.Combine(themeRoot, "theme.toml");
@@ -61,13 +67,49 @@ public static class ThemeParamsMerger
             }
         }
 
+        var effectiveTaxonomies = config.Taxonomies.Declared || themeTaxonomies is not { Count: > 0 }
+            ? config.Taxonomies
+            : new TaxonomyConfig { Taxonomies = themeTaxonomies, Declared = true };
+
         if (layered.Count == 0)
         {
-            return config;
+            return ReferenceEquals(effectiveTaxonomies, config.Taxonomies)
+                ? config
+                : RebuildWithParams(config, ToMutable(config.Params), effectiveTaxonomies);
         }
 
         var merged = DeepMerge(ToMutable(config.Params), layered);
-        return RebuildWithParams(config, merged);
+        return RebuildWithParams(config, merged, effectiveTaxonomies);
+    }
+
+    /// <summary>
+    /// 读取主题根 <c>hugo.toml</c>/<c>config.toml</c> 的 <c>[taxonomies]</c> 段
+    /// （键=单数、值=复数）。Hugo 合并主题配置时会带上该段，缺失时返回 null
+    /// </summary>
+    internal static Dictionary<string, string>? ReadThemeRootConfigTaxonomies(string themeRoot)
+    {
+        var section = ReadThemeRootConfigSection(themeRoot, "taxonomies");
+        if (section is null)
+        {
+            return null;
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in section)
+        {
+            // Hugo 的配置指令以 `_` 打头（如 `_merge = "shallow"`）——
+            // 它们**不是分类名**。漏掉这条会把 `shallow` 当成一个分类：
+            // FixIt 的 `[taxonomies] _merge = "shallow"` 实测产出多余的 /shallow/
+            if (key.StartsWith('_'))
+            {
+                continue;
+            }
+            if (value is string s && !string.IsNullOrWhiteSpace(s))
+            {
+                result[key] = s;
+            }
+        }
+        return result.Count > 0 ? result : null;
     }
 
     /// <summary>
@@ -75,7 +117,11 @@ public static class ThemeParamsMerger
     /// （Hugo 主题配置文件形态；主题组件可配置 params/menus/outputFormats/mediaTypes）。
     /// 该段不是表时返回 null
     /// </summary>
-    internal static Dictionary<string, object>? ReadThemeRootConfigParams(string themeRoot)
+    internal static Dictionary<string, object>? ReadThemeRootConfigParams(string themeRoot) =>
+        ReadThemeRootConfigSection(themeRoot, "params");
+
+    /// <summary>读取主题根配置文件（hugo.toml / config.toml）的指定段；缺失或非表返回 null</summary>
+    internal static Dictionary<string, object>? ReadThemeRootConfigSection(string themeRoot, string section)
     {
         foreach (var name in new[] { "hugo.toml", "config.toml" })
         {
@@ -88,9 +134,9 @@ public static class ThemeParamsMerger
             try
             {
                 var table = TryReadTomlTable(file);
-                if (table is not null && table.TryGetValue("params", out var raw) && raw is TomlTable paramsTable)
+                if (table is not null && table.TryGetValue(section, out var raw) && raw is TomlTable sectionTable)
                 {
-                    return ToPlainDictionary(paramsTable);
+                    return ToPlainDictionary(sectionTable);
                 }
             }
             catch (Exception ex) when (ex is IOException or Tomlyn.TomlException
@@ -267,7 +313,8 @@ public static class ThemeParamsMerger
     /// 重建携带合并后 Params 的 SiteConfig。
     /// 同步义务：SiteConfig 新增属性时需与本清单、EnvironmentOverrides 的重建块三处同步
     /// </summary>
-    private static SiteConfig RebuildWithParams(SiteConfig config, Dictionary<string, object> params_)
+    private static SiteConfig RebuildWithParams(
+        SiteConfig config, Dictionary<string, object> params_, TaxonomyConfig? taxonomies = null)
     {
         return new SiteConfig
         {
@@ -294,7 +341,7 @@ public static class ThemeParamsMerger
             PublishDir = config.PublishDir,
             ArchetypeDir = config.ArchetypeDir,
             Permalinks = config.Permalinks,
-            Taxonomies = config.Taxonomies,
+            Taxonomies = taxonomies ?? config.Taxonomies,
             Menus = config.Menus,
             Params = params_,
             Markup = config.Markup,

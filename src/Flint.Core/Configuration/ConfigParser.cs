@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 配置解析器实现（AOT 兼容）
 
 using System.Globalization;
@@ -367,7 +367,7 @@ public static partial class ConfigParser
             }
         }
 
-        return new TaxonomyConfig { Taxonomies = taxonomies };
+        return new TaxonomyConfig { Taxonomies = taxonomies, Declared = true };
     }
 
     private static MenuConfig ParseDictMenus(Dictionary<string, object> dict)
