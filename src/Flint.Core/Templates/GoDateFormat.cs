@@ -17,13 +17,29 @@ namespace Flint.Core.Templates;
 /// </remarks>
 public static class GoDateFormat
 {
+    /// <summary>
+    /// 时区缩写的占位标记：.NET 的自定义格式串**没有**时区缩写（只有 <c>zzz</c> 数字偏移），
+    /// 而 Go 的 <c>MST</c> 输出本地时区缩写。故先换成这个标记，格式化后在
+    /// <c>FormatHugoDate</c> 里替换为真实缩写（UTC / +0800 这类）
+    /// </summary>
+    public const string ZoneAbbrevMarker = "###TZ###";
+
     /// <summary>长模式优先（避免 "2006" 先于 "2006-01-02" 命中）</summary>
     private static readonly (string Go, string Net)[] Tokens =
     [
         ("2006-01-02T15:04:05Z07:00", "yyyy-MM-ddTHH:mm:sszzz"),
+        ("2006-01-02T15:04:05-07:00", "yyyy-MM-ddTHH:mm:sszzz"),
         ("2006-01-02T15:04:05Z", "yyyy-MM-ddTHH:mm:ss'Z'"),
         ("2006-01-02 15:04:05", "yyyy-MM-dd HH:mm:ss"),
-        ("Mon, 02 Jan 2006 15:04:05 MST", "ddd, dd MMM yyyy HH:mm:ss 'GMT'"),
+        // RFC1123 / RFC1123Z 与带时区缩写的形态（探针：`Mon, 02 Jan 2006 15:04:05 -0700`
+        // → "Tue, 10 Mar 2026 00:00:00 +0000"；`… MST` → "… UTC"）
+        ("Mon, 02 Jan 2006 15:04:05 -0700", "ddd, dd MMM yyyy HH:mm:ss zzz"),
+        ("Mon, 02 Jan 2006 15:04:05 Z0700", "ddd, dd MMM yyyy HH:mm:ss zzz"),
+        ("Mon, 02 Jan 2006 15:04:05 MST", "ddd, dd MMM yyyy HH:mm:ss " + ZoneAbbrevMarker),
+        ("Mon, 02 Jan 2006", "ddd, dd MMM yyyy"),
+        ("Mon, Jan 2, 2006", "ddd, MMM d, yyyy"),
+        ("Jan. 2, 2006", "MMM. d, yyyy"),
+        ("Jan. 02, 2006", "MMM. dd, yyyy"),
         ("Mon Jan 2 15:04:05 2006", "ddd MMM d HH:mm:ss yyyy"),
         ("Monday, January 2, 2006", "dddd, MMMM d, yyyy"),
         ("Mon, 02 Jan 2006", "ddd, dd MMM yyyy"),
@@ -46,6 +62,12 @@ public static class GoDateFormat
         ("01/02/2006", "MM/dd/yyyy"),
         ("02/01/2006", "dd/MM/yyyy"),
         ("2006/01/02", "yyyy/MM/dd"),
+        // 时区：数字偏移（.NET 的 zzz 带冒号；不带冒号的形态由 FormatHugoDate 后处理）
+        ("-07:00", "zzz"),
+        ("-0700", "zzz"),
+        ("Z07:00", "zzz"),
+        ("Z0700", "zzz"),
+        ("MST", ZoneAbbrevMarker),
         // 单 token（最短，最后匹配）
         ("2006", "yyyy"),
         ("01", "MM"),

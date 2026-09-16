@@ -2475,12 +2475,36 @@ public sealed partial class ScribanTemplateRenderer
         // 迁移期只能转字面量，跑起来时布局是字符串变量。不转则按 .NET 自定义格式解析，
         // 输出 `Januar26 2, 2006` 这类乱码（6 个主题的 <time> 文本实测）。
         // 判据用 Go 特征 token，已转换过的 .NET 串不会被二次转换
-        if (GoDateFormat.LooksLikeGoLayout(format))
+        var rawFormat = format;
+        if (GoDateFormat.LooksLikeGoLayout(format) || format.Contains("MST", StringComparison.Ordinal))
         {
             format = GoDateFormat.Convert(format);
         }
 
-        return dt.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+        var result = dt.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+
+        // 时区缩写：占位标记换成真实缩写（探针：`… MST` → "UTC"；非零偏移用 +0800 形态，
+        // 与 Go 对固定偏移区的打印一致）
+        if (result.Contains(GoDateFormat.ZoneAbbrevMarker, StringComparison.Ordinal))
+        {
+            result = result.Replace(
+                GoDateFormat.ZoneAbbrevMarker,
+                dt.Offset == TimeSpan.Zero
+                    ? "UTC"
+                    : (dt.Offset < TimeSpan.Zero ? "-" : "+") +
+                      dt.Offset.Duration().ToString("hhmm", System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal);
+        }
+
+        // **不带冒号的数字偏移**（Go 的 `-0700`/`Z0700`，如 RFC1123Z：探针 → "+0000"）：
+        // .NET 的 zzz 恒带冒号，故格式化后去掉
+        if (rawFormat.Contains("-0700", StringComparison.Ordinal) ||
+            rawFormat.Contains("Z0700", StringComparison.Ordinal))
+        {
+            result = System.Text.RegularExpressions.Regex.Replace(result, @"([+-]\d{2}):(\d{2})", "$1$2");
+        }
+
+        return result;
     }
 
     private static readonly Dictionary<string, string> NamedDateFormats = new(StringComparer.Ordinal)

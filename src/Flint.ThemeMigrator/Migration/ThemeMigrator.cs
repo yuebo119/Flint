@@ -80,6 +80,12 @@ internal sealed class ThemeMigrator
         var valueReturning = ScanValueReturningPartials(sourceRoot);
         summary.GlobalDiagnostics.Add($"返回值型 partial: {valueReturning.Count} 个");
         var namedTemplates = ScanNamedTemplates(sourceRoot);
+        // 跨文件 block（partial 里的 `{{ block "X" }}` 指向别的 partial 的 define）
+        var crossFileBlocks = ScanCrossFileBlocks(sourceRoot);
+        if (crossFileBlocks.Count > 0)
+        {
+            summary.GlobalDiagnostics.Add($"跨文件命名模板 block: {crossFileBlocks.Count} 个");
+        }
         // 槽位命名模板（多文件同名 define）：hugo-book 类主题的 baseof 定义默认体
         // 并用 `{{ template "main" . }}` 调用，各页面模板用同名 define **覆盖**。
         // 它们不能按名字提取到同一个 partial（会互相覆盖，实测 posts/list.html 的
@@ -154,9 +160,47 @@ internal sealed class ThemeMigrator
             var isBaseTemplate =
                 normalizedRel.Equals("baseof.html", StringComparison.OrdinalIgnoreCase) ||
                 normalizedRel.Equals("layouts/baseof.html", StringComparison.OrdinalIgnoreCase);
+            // 跨文件 block：本文件定义了别的 partial 里 `block` 引用的命名模板 →
+            // 把块体提取为 `_partials/<名>__block.html`（body 走同一转换），
+            // 供 block 调用点渲染。定义文件自身照旧转换（不含该 define）
+            foreach (var (blockName, defFile) in crossFileBlocks)
+            {
+                if (!string.Equals(
+                        defFile,
+                        rel.Replace((char)92, '/'),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var (strippedText, extracted) = InlinePartialExtractor.Extract(
+                    remainingText, new HashSet<string>(StringComparer.Ordinal) { blockName }, rel);
+                if (extracted.Count == 0)
+                {
+                    continue;
+                }
+
+                remainingText = strippedText;
+                foreach (var ex in extracted)
+                {
+                    // 文件名与调用点必须用**同一套标识符净化**：块名常带连字符
+                    // （fixit 的 `block "custom-assets"`），调用点经 SanitizeIdent 会变成
+                    // `custom_assets` → 两侧不一致时报 "partial 未找到"
+                    var blockRel =
+                        $"layouts/_partials/{TemplateConverter.SanitizeIdent(blockName)}__block.html";
+                    var blockTarget = Path.Combine(
+                        targetRoot, blockRel.Replace('/', Path.DirectorySeparatorChar));
+                    Directory.CreateDirectory(Path.GetDirectoryName(blockTarget)!);
+                    var converted = ConvertTemplate(
+                        blockRel, ex.Content, null, null, false, false, null, false);
+                    File.WriteAllText(blockTarget, converted.Text);
+                    summary.FilesConverted++;
+                }
+            }
+
             var result = ConvertTemplate(
                 rel, remainingText, valueReturning, selfPartial, baseofAvailable, selfNamedExtracted,
-                slotNames, isBaseTemplate);
+                slotNames, isBaseTemplate, crossFileBlocks.Keys);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -230,7 +274,8 @@ internal sealed class ThemeMigrator
         bool baseofAvailable = false,
         bool selfNamedTemplateExtracted = false,
         IReadOnlySet<string>? slotNames = null,
-        bool isBaseTemplate = false)
+        bool isBaseTemplate = false,
+        IEnumerable<string>? crossFileBlocks = null)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -240,7 +285,7 @@ internal sealed class ThemeMigrator
 
         var converter = new TemplateConverter(
             _map, valueReturning, selfPartialName, baseofAvailable, selfNamedTemplateExtracted,
-            slotNames, isBaseTemplate);
+            slotNames, isBaseTemplate, crossFileBlocks);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);
@@ -347,6 +392,83 @@ internal sealed class ThemeMigrator
         return owners.Where(kv => kv.Value.Count > 1)
             .Select(kv => kv.Key)
             .ToHashSet(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// **跨文件命名模板的 block**：`partials/` 下的文件里写 `{{ block "X" . }}`，而 X 的
+    /// <c>{{ define }}</c> 在**另一个** partial 文件里。Hugo 的命名模板是全局的
+    /// （`block` 会渲染任何文件 define 的 X），而转换器的槽位机制只覆盖
+    /// "baseof 声明 + 页面模板覆盖"的同名形态 → 这类 block 落到空兜底
+    /// （github-style 的 user-profile.html：`block "posts"` 指向 partials/posts.html
+    /// 的 define，此前整段文章列表渲染为空）。返回 名字 → 定义文件（相对主题根）
+    /// </summary>
+    internal static Dictionary<string, string> ScanCrossFileBlocks(string sourceRoot)
+    {
+        var defines = new Dictionary<string, string>(StringComparer.Ordinal);
+        var blocksInPartials = new Dictionary<string, string>(StringComparer.Ordinal);
+        var localDefines = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(sourceRoot, "*.html", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(sourceRoot, file).Replace((char)92, '/');
+            string text;
+            try
+            {
+                text = File.ReadAllText(file);
+            }
+            catch (IOException)
+            {
+                continue;
+            }
+
+            var local = localDefines[rel] = new HashSet<string>(StringComparer.Ordinal);
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(
+                    text, @"\{\{-?\s*define\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            {
+                var n = m.Groups[1].Value;
+                if (n.Contains('/', StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                local.Add(n);
+                defines[n] = rel;
+            }
+
+            // block 只在 **partials/ 下的文件**里才按跨文件命名模板处理：
+            // baseof 里的 block 是"声明 + 覆盖"槽位形态（同名 define 在页面模板里，
+            // 由 include 的命名参数传递），走既有机制
+            if (!rel.Contains("partials/", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            foreach (System.Text.RegularExpressions.Match m in
+                System.Text.RegularExpressions.Regex.Matches(
+                    text, @"\{\{-?\s*block\s+""([^""]+)""",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+            {
+                blocksInPartials[m.Groups[1].Value] = rel;
+            }
+        }
+
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (name, blockFile) in blocksInPartials)
+        {
+            // 本文件自己也 define 了同名模板（同文件约定）→ 走既有就地 capture 路径
+            if (localDefines.TryGetValue(blockFile, out var local) && local.Contains(name))
+            {
+                continue;
+            }
+
+            if (defines.TryGetValue(name, out var defFile) && defFile != blockFile)
+            {
+                result[name] = defFile;
+            }
+        }
+
+        return result;
     }
 
     internal static HashSet<string> ScanNamedTemplates(string sourceRoot)

@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // Front Matter 解析器——日期与时区语义部分：Hugo 特殊日期源识别与
 // 无偏移日期按站点时区补偏移（从 FrontMatterParser.cs 按 partial 拆出）
 
@@ -63,8 +63,9 @@ public sealed partial class FrontMatterParser
             return new DateTimeOffset(dt.Ticks, TimeSpan.Zero);
         }
 
-        // Unspecified/Local：无偏移信息，Hugo 语义为按站点时区解释；未配置站点时区时沿用本机时区（旧行为）
-        var offset = siteTimeZone?.GetUtcOffset(dt) ?? TimeZoneInfo.Local.GetUtcOffset(dt);
+        // Unspecified/Local：无偏移信息，Hugo 语义为按站点时区解释；未配置站点时区时按 **UTC**
+        //（Hugo 的 timeZone 默认即 UTC）
+        var offset = siteTimeZone?.GetUtcOffset(dt) ?? TimeSpan.Zero;
         return new DateTimeOffset(dt.Ticks, offset);
     }
 
@@ -78,10 +79,12 @@ public sealed partial class FrontMatterParser
                 : null;
         }
 
-        // 无偏移：按站点时区补偏移；未配置时本机时区（与 DateTimeOffset.TryParse 旧行为等价）
+        // 无偏移：按站点时区补偏移；**未配置站点时区时按 UTC**——Hugo 的 timeZone 默认就是
+        // UTC（探针：无 timeZone 配置的站点里 `date: 2026-03-10` 渲染成 `+0000`，
+        // 而按本机时区解释会得到 `+0800`：github-style 的 RFC1123 输出实测差 8 小时）
         if (DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, DateTimeStyles.None, out var noOffset))
         {
-            var offset = siteTimeZone?.GetUtcOffset(noOffset) ?? TimeZoneInfo.Local.GetUtcOffset(noOffset);
+            var offset = siteTimeZone?.GetUtcOffset(noOffset) ?? TimeSpan.Zero;
             return new DateTimeOffset(noOffset, offset);
         }
 

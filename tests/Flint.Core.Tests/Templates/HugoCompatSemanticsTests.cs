@@ -478,6 +478,24 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal(expected, await Render(template));
     }
 
+    /// <summary>
+    /// 常见 Go 布局的**时区与格式**覆盖（Hugo v0.166 探针，用夹具日期 2024-01-15T10:30:00+00:00 换算）：
+    /// RFC1123Z 的偏移**不带冒号**（探针 "+0000"）、<c>MST</c> 输出时区缩写（探针 "UTC"）、
+    /// <c>Jan. 2, 2006</c> 的句点变体、<c>Mon, Jan 2, 2006</c> 的逗号变体。
+    /// 此前这些布局会落到单 token 兜底或按 .NET 解析（github-style/console 实测乱码）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ date.to_string page.date \"Mon, 02 Jan 2006 15:04:05 -0700\" }}", "Mon, 15 Jan 2024 10:30:00 +0000")]
+    [InlineData("{{ date.to_string page.date \"2006-01-02T15:04:05-07:00\" }}", "2024-01-15T10:30:00+00:00")]
+    [InlineData("{{ date.to_string page.date \"Jan. 2, 2006\" }}", "Jan. 15, 2024")]
+    [InlineData("{{ date.to_string page.date \"Mon, Jan 2, 2006\" }}", "Mon, Jan 15, 2024")]
+    [InlineData("{{ date.to_string page.date \"2006-01-02 15:04:05 MST\" }}", "2024-01-15 10:30:00 UTC")]
+    [InlineData("{{ date.to_string page.date \"Mon, 02 Jan 2006 15:04:05 MST\" }}", "Mon, 15 Jan 2024 10:30:00 UTC")]
+    public async Task 日期布局的时区与变体覆盖(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {

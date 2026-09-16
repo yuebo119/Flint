@@ -374,14 +374,43 @@ public sealed class ParserConverterTests
         Assert.DoesNotContain("$__it", result, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 跨文件命名模板的 block：`partials/` 下的文件里 `{{ block "X" . }}` 指的是
+    /// **另一个** partial 里 define 的命名模板（Hugo 的命名模板是全局的）。
+    /// 同文件约定（baseof 的声明 + 覆盖）走槽位机制，不受影响。
+    /// github-style 的 user-profile.html 依赖此形态渲染文章列表
+    /// </summary>
+    [Fact]
+    public void 跨文件block改为渲染提取出的块体()
+    {
+        var parts = new GoTemplateParser(
+            new GoTemplateLexer("{{ block \"posts\" . }}{{ end }}").Tokenize()).Parse();
+        var converter = new TemplateConverter(
+            MigrationMap.CreateDefault(), crossFileBlockNames: ["posts"]);
+        var result = converter.Convert(parts);
+        Assert.Contains("partial \"_partials/posts__block\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("blk_posts", result, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void 变量接收者的Format保留引号()
     {
         // `$x.Date.Format "…"` 走的是链式名分支（与 `.Date.Format` 不同的代码路径）：
         // 漏引号会让 Scriban 把格式串当变量表达式 → 求值为 null → 落到默认格式
         // （stack 的 datetime 属性实测产出 '2026-01-15' 而非 RFC3339）
-        var result = Convert("{{ $x.Date.Format \"2006-01-02T15:04:05Z07:00\" }}");
-        Assert.Contains("\"yyyy-MM-ddTHH:mm:sszzz\"", result, StringComparison.Ordinal);
+        var result = Convert("{{ $x.Date.Format \"January 2, 2006\" }}");
+        Assert.Contains("\"MMMM d, yyyy\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 带时区的Format布局原样保留交引擎()
+    {
+        // 含时区 token 的布局不编译期转换：.NET 没有"无冒号偏移"（Go 的 -0700 → "+0000"）
+        // 也没有时区缩写（Go 的 MST → "UTC"），只有引擎拿到**原始 Go 布局**才能后处理
+        // （github-style 的 RFC1123 输出实测：`+0000`）
+        var result = Convert("{{ $x.Date.Format \"Mon, 02 Jan 2006 15:04:05 -0700\" }}");
+        Assert.Contains("\"Mon, 02 Jan 2006 15:04:05 -0700\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("zzz", result, StringComparison.Ordinal);
     }
 
     [Fact]

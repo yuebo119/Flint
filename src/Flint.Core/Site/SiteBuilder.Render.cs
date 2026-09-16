@@ -747,8 +747,13 @@ public sealed partial class SiteBuilder
                     Categories = [],
                     WordCount = 0,
                     ReadingTime = TimeSpan.Zero,
-                    // Type 保留既有模板语义（"taxonomy"），Kind 承载查找链维度
-                    Type = "taxonomy",
+                    // **.Type = 分类名**（"tags"/"categories"），不是 kind 名——Hugo v0.166
+                    // 探针：`/tags/`（taxonomy 列表页）与 `/tags/x/`（term 页）的 `.Type`
+                    // 都是 `tags`、`.Kind` 才是 taxonomy/term。主题据此分支
+                    //（github-style 的 posts.html：`{{ if eq .Type "tags" }}` 决定渲染
+                    // 结果条数/筛选条，Type 错则整段文章列表不渲染——实测该页在 Flint 下只剩
+                    // "no results" 分支）。Kind 仍承载模板查找链维度
+                    Type = taxPage.TaxonomyName ?? "taxonomy",
                     Kind = isTaxonomyList ? "taxonomy" : "term",
                     TaxonomyName = taxPage.TaxonomyName,
                     TaxonomySingular = taxPage.TaxonomySingular,
