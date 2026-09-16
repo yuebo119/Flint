@@ -2361,27 +2361,7 @@ public sealed partial class ScribanTemplateRenderer
             var date = a.Length > 0 ? a[0] : null;
             var format = a.Length > 1 ? a[1]?.ToString() : null;
             var dt = ConvertToDateTimeOffset(date);
-            if (dt == null)
-                return "";
-
-            if (string.IsNullOrEmpty(format))
-            {
-                return dt.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
-            }
-
-            // **Hugo 的具名日期格式**（`:date_medium` 等，v0.166 探针实测输出）：
-            // 不映射的话 `time.Format ":date_medium"` 会被当作 .NET 自定义格式串解析，
-            // 产出 `10aAe_0e10lu0` 这类乱码（hugo-paper 的 `<time>` 实测）
-            if (NamedDateFormats.TryGetValue(format, out var named))
-            {
-                // Go 的 `pm` 是小写（"3:04:05 pm"），.NET 的 `tt` 给 "PM"
-                // → 具名格式统一转小写（只作用于具名表，不动用户自定义格式串）
-                return dt.Value.ToString(named, System.Globalization.CultureInfo.InvariantCulture)
-                    .Replace("AM", "am", StringComparison.Ordinal)
-                    .Replace("PM", "pm", StringComparison.Ordinal);
-            }
-
-            return dt.Value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+            return dt == null ? "" : FormatHugoDate(dt.Value, format);
         });
 
         // now - 当前时间
@@ -2428,6 +2408,45 @@ public sealed partial class ScribanTemplateRenderer
     /// <c>:date_medium</c> → "Mar 10, 2026"、<c>:date_short</c> → "3/10/26"、
     /// <c>:time_medium</c> → "3:04:05 pm"、<c>:time_short</c> → "3:04 pm"
     /// </summary>
+    /// <summary>
+    /// 按 Hugo 的日期格式语义渲染：支持**具名格式**（<c>:date_medium</c> 等，Hugo v0.166
+    /// 探针值）与 **Go 布局串**（<c>2006-01-02</c>/<c>January 2, 2006</c>），其余按 .NET
+    /// 自定义格式串处理。<c>date.to_string</c>（迁移器产物）与 <c>time.format</c>
+    /// （Hugo 函数，运行期布局）共用，避免两处漂移
+    /// </summary>
+    internal static string FormatHugoDate(DateTimeOffset dt, string? format)
+    {
+        if (string.IsNullOrEmpty(format))
+        {
+            return dt.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // **Hugo 的具名日期格式**（`:date_medium` 等，v0.166 探针实测输出）：
+        // 不映射的话 `time.Format ":date_medium"` 会被当作 .NET 自定义格式串解析，
+        // 产出 `10aAe_0e10lu0` 这类乱码（hugo-paper 的 `<time>` 实测）
+        if (NamedDateFormats.TryGetValue(format, out var named))
+        {
+            // Go 的 `pm` 是小写（"3:04:05 pm"），.NET 的 `tt` 给 "PM"
+            // → 具名格式统一转小写（只作用于具名表，不动用户自定义格式串）
+            return dt.ToString(named, System.Globalization.CultureInfo.InvariantCulture)
+                .Replace("AM", "am", StringComparison.Ordinal)
+                .Replace("PM", "pm", StringComparison.Ordinal);
+        }
+
+        // **运行期拿到的 Go 布局串也要转**：Hugo 主题常把布局放在表达式里
+        //（ananke 的 `time.Format (compare.Default "January 2, 2006" .Site.Params.date_format)`
+        // → 迁移产物 `date.to_string page.date (default site.params.date_format "January 2, 2006")`），
+        // 迁移期只能转字面量，跑起来时布局是字符串变量。不转则按 .NET 自定义格式解析，
+        // 输出 `Januar26 2, 2006` 这类乱码（6 个主题的 <time> 文本实测）。
+        // 判据用 Go 特征 token，已转换过的 .NET 串不会被二次转换
+        if (GoDateFormat.LooksLikeGoLayout(format))
+        {
+            format = GoDateFormat.Convert(format);
+        }
+
+        return dt.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     private static readonly Dictionary<string, string> NamedDateFormats = new(StringComparer.Ordinal)
     {
         [":date_full"] = "dddd, MMMM d, yyyy",

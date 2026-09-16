@@ -24,6 +24,8 @@
 | H | 页面集合与分页产物 | `.Pages`/`.RegularPages` 默认日期降序；`ByDate` 升序；分页由模板调用驱动 | `SiteBuilder.Tree` + `PageListFunctions` + 分页注册表 | `PageCollectionAndParamsTests`、`PageAwareLookupE2ETests` |
 | I | 分页尺寸来源 | **`[pagination] pagerSize`**（v0.128+；顶层 `paginate` 被忽略）；`.Paginate $pages N` 的第二参覆盖站点值，且 `/page/N/` 的生成也按该尺寸 | `ConfigParser` 读新键（旧键兜底）+ `PagePaginateFunction` 解析第二参 + 注册表把尺寸传到站点级生成 | `HugoCompatSemanticsTests.Paginate显式页大小生效/显式尺寸时每页内容按该尺寸切` |
 | I′ | 树导航四件套：`.Ancestors`/`.Parent`/`.CurrentSection`/`.FirstSection` | 由**真实容器页**（`section`/`taxonomy`）构成、**最近祖先在前、home 在末位**；不产页的合成目录与 pager 段不入链；容器页的 `CurrentSection` 是自己、`FirstSection` 是最外层 section | `LazyPageObject.ContainerChain` 按 URL 前缀从全站页集里挑容器页 + 追加 home（`.Ancestors` 返回页面集合，`.Reverse` 可用），三个单项成员在同一链上取值 | `HugoCompatSemanticsTests.祖先链跳过不产页的合成目录/祖先链跳过分页段/home页祖先链为空/词条页祖先含分类列表页/祖先链Reverse给出面包屑顺序/父级与所属顶级section按Hugo语义` |
+| J′ | `.Render "view"` 的渲染上下文 | 渲染**点号所在的页**（`range .Pages` 体内每项渲染自己） | 转换器按作用域取接收者（range 体内 = 最内层循环变量，体外 = 页面根），引擎 `render "view" <page>` 以第二参为渲染上下文 | `MigratorTests.渲染视图在循环内用迭代项作上下文` |
+| K′ | 日期格式串的三种形态 | `time.Format`/`.Date.Format` 的布局是 **Go 布局串**（`2006-01-02`）、**具名格式**（`:date_long`）或**运行期字符串**（`site.Params.dateFormat`） | `GoDateFormat.Convert`/`LooksLikeGoLayout`（引擎侧，运行期也吃下）+ `FormatHugoDate`（具名/Go/.NET 三方言统一） | `HugoCompatSemanticsTests.管道形态的日期格式按值在前布局在后/dateToString兼容Go布局与NET格式` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -500,3 +502,33 @@ term 页含 taxonomy 祖先、`Reverse` 的面包屑顺序），断言值即上�
 
 结果：**全语料 Flint 独有坏引用 3 类 → 0 类**（21 主题、约 4000 个页面引用，
 `scripts/check-broken-assets.py` 输出无 "← Flint 独有" 行），21 主题矩阵对称保持 21/21。
+
+#### 渲染上下文与日期格式（本轮第十二、十三项）
+
+死链清零后按"逐页视觉对比"继续体检，发现两族**文本级**缺陷（不影响构建与对称门禁，
+但页面内容错）：
+
+**十二、`.Render "view"` 在循环里渲染的是外层页面**。Hugo 的 `.Render` 是页面方法，
+渲染的是**点号所在的那一页**；迁移器把接收者按"页面根"处理，落成 `render "summary" __page`
+→ ananke 首页三张 summary 卡片全部渲染成 Home（标题、链接、日期都是首页的）。
+修法：转换器按作用域取接收者（range 体内取最内层循环变量 `$__it0`，体外才回落页面根），
+引擎的 `render "view" <page>` 以第二参为渲染上下文（该能力此前已实现，只是没人喂对值）。
+ananke 首页文本相似度 88.3 → **90.9**。
+
+**十三、日期格式串的三种形态**。`<time>` 文本全语料体检（21 主题）：6 个主题的日期是**乱码或
+未转换的布局串**——ananke/hugo-coder 的 `Januar26 2, 2006`、bearblog 的 `02 Jan, 2006`、
+blog-awesome 的 `2 Jan 2006`、fixit 的 `2006-01-02`、stack 的 `2026-09-16`。三条成因：
+
+| 成因 | 现象 | 修法 |
+|---|---|---|
+| **参数序**：Hugo `time.Format` 是 (布局, 值)，Flint `date.to_string` 是 (值, 布局) | 布局串被当日期解析、日期被当格式串（`Januar26 2, 2006`） | 迁移器分形态处理：管道 `X \| time.Format FMT` 只传布局（Scriban 管道把左值注入首参 → 恰好是 (值, 布局)）；直接 `time.Format FMT VALUE` 换成 `date.to_string VALUE FMT` |
+| **运行期布局**：`site.Params.dateFormat` 里的布局迁移期看不到 | 布局按 .NET 自定义格式解析 → 数字原样输出（`2026-09-16`、`2 Jan 2024`） | 引擎 `date.to_string` 用 `LooksLikeGoLayout` 判定后 `Convert`（已转换的 .NET 串不含 Go 特征 token，不会二次转换）；布局表补齐 `2 Jan 2006`/`02 Jan, 2006` 等缩略月变体 |
+| **字面量漏引号**：链式名分支（`$Page.Date.Format "…"`）转格式串时丢引号 | Scriban 把 `yyyy-MM-ddTHH:mm:sszzz` 当变量表达式 → 求值 null → 回落默认格式（stack 的 `datetime='2026-01-15'`） | 该分支补引号（与 `.Date.Format` 分支一致） |
+
+Hugo 的裸 `time` 在 Flint 里是**解析函数**（github-style/clarity 的 `time .Date` 要用），
+故 `time.Format` 不能落成 `time.format`（成员查不到会去调用 `time` 本身，报
+"Invalid number of arguments 0 passed to time"）——这条也在实现备注里写清。
+
+验证：Core 997 全绿（新增 7 条日期/上下文用例）、迁移器 91 全绿（新增 3 条形态用例）；
+21 主题矩阵对称保持 21/21；`<time>` 文本的"Flint 独有"从 6 主题的乱码降到
+**只剩"无日期页被填成构建日"一族**（下一项，见下）。
