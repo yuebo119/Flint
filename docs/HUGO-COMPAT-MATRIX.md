@@ -336,3 +336,29 @@ Flint 现在**原样保留 + 记诊断**（此前会把定界符吃掉：`{{< sc
 21 主题的降级数因此从 1102 降到 **718**（差额全部来自 printf 去标记：fixit 236→77、
 blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表格，均为等价改写或
 转换期不可静态校验（动态 partial 名）。
+
+### O. 产物可用性检查（本轮第九项）——"能构建"之外的两类真缺陷
+
+回答"这些主题正常可用了吗"时做的第三层检查：不只比页面集合，还把每个 Flint 产物里
+**引用的本地资源**（href/src/url()）逐个核对文件是否存在，并与 Hugo 侧对照
+（脚本见 `scripts/check-broken-assets.py`，与矩阵脚本同级，不在 git 仓内）。
+
+结果暴露两类**Flint 独有**的坏引用（Hugo 侧没有）：
+
+1. **`href="/assets/{name: "js/main.ts", …整个对象转储…}"`**（fixit 30 处、narrow 54 处、
+   stack 17 处、monochrome 15 处）——`js.Build` 的形参声明是 `(string? path, …)`，
+   而 Hugo 的签名是 `js.Build [OPTIONS] INPUT`（**输入在末位**），Scriban 的管道又把
+   左值注入**首参**：两条路径参数序相反，资源对象被 Scriban 转成字符串当成了"路径"。
+   修法：实现改为**按类型定位资源实参**（不按位置），并让 `css.Build/css.Sass/
+   css.PostCSS/css.TailwindCSS/js.Babel/js.Batch` 同一口径（这些恒等实现此前会返回
+   选项字典而不是资源）。顺带把内容**透传**（旧实现产出空内容资源 → JS 文件是空的）
+2. **`/posts/page/2/page/2/`**（even、hugo-paper）——模板在**第 N 页**上再次调用
+   `.Paginate` 时，Flint 恒按"第 1 页 + 本页 RelPermalink"重建 pager：基准 URL 变成
+   pager 页自身，末页还多出个不存在的 `Next` 链接。修法：页码与基准取自**当前页已绑定
+   的 pager**（`PaginatorView.BaseRelPermalink`/`PageNumber`），Hugo 语义即"返回当前页的 pager"
+
+复核后：monochrome/stack 的坏引用清零、even/hugo-paper 分页链接正常、fixit/narrow 的
+剩余坏引用只剩 Hugo 侧也有的（favicon 等主题静态资源，属内容缺失非 Flint 问题）。
+
+**仍未覆盖**：视觉/交互验收（外观、CSS 生效、JS 交互、响应式），以及每个主题的
+`grep -c` 级结构相似度只有约 50%——内容在（文本覆盖 78–97%），标记结构差异明显。

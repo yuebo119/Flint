@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // Hugo 兼容语义回归（除真值外的其它类别，见 docs/HUGO-COMPAT-MATRIX.md）
 //
 // 每条断言都有 Hugo v0.166 实测依据（探针脚本见 docs 对应行），
@@ -201,6 +201,42 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Contains("len=2", html, StringComparison.Ordinal);
         Assert.Contains("|first=A", html, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task 分页页上的Paginate返回当前页的pager()
+    {
+        // 第 N 页上模板再次调用 `.Paginate`，Hugo 返回的是**当前页**的 pager：
+        // 以列表根为基准、末页的 `.Next` 为 null。此前恒按"第 1 页 + 本页
+        // RelPermalink"重建 → `/posts/page/2/` 上产出 `/posts/page/2/page/2/`
+        //（even / hugo-paper 产物实测出现该链接）
+        File.WriteAllText(Path.Combine(_tempDir, "probe.html"), "x");
+        var posts = new[] { MakePage("A"), MakePage("B"), MakePage("C") };
+        var site = new SiteContext
+        {
+            Title = "S",
+            BaseURL = "https://example.com",
+            Language = "en",
+            Pages = posts,
+            RegularPages = posts,
+            Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+            Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+            Config = new SiteConfig { BaseURL = "https://example.com", Title = "S", Paginate = 2 },
+            Params = new Dictionary<string, object>()
+        };
+        // 列表页 /posts/ 的第 2 页（构建器在分页产出时就是这样绑的）
+        var listPage = posts[0].WithPaginator(
+            PaginatorView.Create(posts, 2, 2, "/posts/", "page"), "https://example.com");
+
+        var context = new TemplateContext { Page = listPage, Site = site };
+        File.WriteAllText(Path.Combine(_tempDir, "probe.html"),
+            "{{ $p = page.paginate (site.regular_pages) }}" +
+            "url=[{{ $p?.url }}] next=[{{ $p?.next?.url }}] hasnext=[{{ $p?.has_next }}] " +
+            "prev=[{{ $p?.prev?.url }}]");
+        var html = (await _renderer.RenderAsync("probe.html", context)).Trim();
+
+        Assert.Equal("url=[/posts/page/2/] next=[] hasnext=[false] prev=[/posts/]", html);
+    }
+
 
     // ---- 7. `.Paginate` 的显式页大小（Hugo 第二参覆盖站点 pagerSize）----
 
