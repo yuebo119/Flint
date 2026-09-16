@@ -590,19 +590,19 @@ public sealed class PipeAndParserRegressionTests
     }
 
     [Fact]
-    public void 命名空间调用原样保留()
+    public void 反引号原始串转义为双引号串()
     {
-        // `compare.*`/`collections.*`/`math.*` 在 Flint 引擎里有同名命名空间，
-        // 故转换**保留原写法**（MigrationMap 末尾的自映射有意覆盖早先的
-        // "命名空间 → 全局"映射）：人工比对更直观，也不踩成员调用的歧义。
-        // 引擎侧可用性由 Core 的 `比较函数不再抛Int32装箱异常` 锁定
-        //（`compare.Ge 5 (math.add 3 1)` 曾报 "Object must be of type Int32"，
-        //  根因是比较函数的 CompareTo 装箱缺陷，与调用形态无关）
-        var result = Convert("{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}");
-        // 输出与输入**逐字相同**：命名空间调用在 Go 与 Scriban 里是同一种写法，
-        // 而 Flint 引擎有同名命名空间（`compare`/`math`/`collections`/`strings`/`path`/`urls`），
-        // 故转换是"保形"的——不是漏转。此前的"漏转"结论是误判
-        Assert.Equal("{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}", result.Trim());
+        // Go 原始串（反引号）不做转义，内容可以含 `"` 与 `\`；而 Scriban 里反引号不是
+        // 字符串定界符 → 原样输出会被结构检查拦下（"引号不平衡"）并**整行回退成 Go 原文**。
+        // 语料实测 12 处：narrow 的 `find_re `id="([^"]*)"``、fixit 的 `replace … `"` ""`、
+        // yinyang 的 `<img[^>]+src="([^"]+)"`
+        Assert.Equal(
+            """{{ find_re "id=\"([^\"]*)\"" x }}""",
+            Convert("""{{ findRE `id="([^"]*)"` x }}""").Trim());
+        // 反斜杠同样要转义：正则的 \s / \n 在 Scriban 串里必须写成 \\s / \\n
+        Assert.Equal(
+            """{{ replace_re "\\s+width=\"[^\"]*\"" "" page.content }}""",
+            Convert("""{{ replaceRE `\s+width="[^"]*"` "" .Content }}""").Trim());
     }
 
     [Fact]
