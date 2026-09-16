@@ -60,6 +60,32 @@ internal sealed class ScribanConverter(
     }
 
     /// <summary>
+    /// Go 原始串内容 → Scriban 双引号字符串字面量（含定界引号）。
+    /// Go 的原始串（反引号）不做任何转义，故内容里的 <c>\</c> 与 <c>"</c> 都必须转义，
+    /// 换行/制表符也要转成 <c>\n</c>/<c>\t</c>（Scriban 字符串不能跨行）。
+    /// 例：<c>`id="([^"]*)"`</c> → <c>"id=\"([^\"]*)\""</c>
+    /// </summary>
+    internal static string ToScribanStringLiteral(string rawContent)
+    {
+        var sb = new System.Text.StringBuilder(rawContent.Length + 8);
+        sb.Append('"');
+        foreach (var ch in rawContent)
+        {
+            switch (ch)
+            {
+                case '\\': sb.Append("\\\\"); break;
+                case '"': sb.Append("\\\""); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\r': sb.Append("\\r"); break;
+                case '\t': sb.Append("\\t"); break;
+                default: sb.Append(ch); break;
+            }
+        }
+        sb.Append('"');
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// 表达式文本是否需要括号包裹才能作为函数实参：含空白（多 token）且未自带
     /// 括号/方括号/花括号包裹时需要
     /// </summary>
@@ -190,9 +216,12 @@ internal sealed class ScribanConverter(
             //      不可作为管道目标
             // 此前直接拼 `x | y`（函数名丢失）→ 非法 Scriban（PaperMod 的
             // head.html 实测：`hugo.IsProduction | or (...) | and (...)`）
+            // `not` 同族：`X | not` = `not X`（非前缀形式，实测 LoveIt 的
+            // `if (urls.Parse $src).Host | not`、FixIt 的 `| and (not $x)`——
+            // 漏折叠会产出 0 参 `not` → 条件回退成 `false`，判断块被静默丢弃）
             if (acc is not null && cmd.Operands.Count > 0
                 && cmd.Operands[0] is Parsing.IdentifierExpr pid
-                && pid.Name is "and" or "or" or "eq" or "ne" or "gt" or "ge" or "lt" or "le")
+                && pid.Name is "and" or "or" or "not" or "eq" or "ne" or "gt" or "ge" or "lt" or "le")
             {
                 // 左值 acc 已是**转换后的 Scriban 文本**，不能再走表达式转换
                 // （否则 `$comment?.enable` 会被当作标识符二次 nil 安全化，
@@ -1133,6 +1162,18 @@ internal sealed class ScribanConverter(
         }
         texts.Add(left);
 
+        if (fn == "not")
+        {
+            // Hugo 的 `X | not` = `not X`（管道值作**唯一**实参）。`X | not Y` 在 Hugo
+            // 下是 2 参调用（非法）→ 判不支持并保留原文，不猜语义
+            if (texts.Count != 1)
+            {
+                Diagnostics.Add($"not 管道形态参数数异常（{texts.Count}）");
+                return new ConversionResult("", ConversionKind.Unsupported, "not 管道形态参数数异常");
+            }
+            return new ConversionResult($"!({texts[0]})", ConversionKind.Equivalent);
+        }
+
         if (fn is "and" or "or")
         {
             // 与 ConvertCall 同口径：惰性短路（Go）↔ 分支惰性三元（Scriban）
@@ -1471,6 +1512,15 @@ internal sealed class ScribanConverter(
         switch (expr)
         {
             case Parsing.LiteralExpr lit:
+                // Go **反引号原始串**必须转成 Scriban 双引号串并转义：Go 的原始串不做
+                // 转义（内容原样，可以含 `"` 与换行），而 Scriban 里反引号不是字符串定界符
+                // → 原样输出会被结构检查拦下（"引号不平衡"）并**整行回退成 Go 原文**。
+                // 语料实测 12 处（narrow 的 `find_re \`id="([^"]*)"\``、fixit 的
+                // `replace … \`"\` ""`、yinyang 的 `<img[^>]+src="([^"]+)"`、timeline/resume/icon）
+                if (lit.Kind == Parsing.LiteralKind.RawString)
+                {
+                    return new ConversionResult(ToScribanStringLiteral(lit.Unquoted), ConversionKind.Equivalent);
+                }
                 return new ConversionResult(lit.Raw, ConversionKind.Equivalent);
 
             case Parsing.DotExpr:
