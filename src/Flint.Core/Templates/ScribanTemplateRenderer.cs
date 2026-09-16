@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // Scriban 模板渲染器实现
 
 using System.Collections.Concurrent;
@@ -765,6 +765,25 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             }
         }
         return sb.ToString();
+    }
+
+    /// <inheritdoc />
+    /// <summary>
+    /// 模板文件是否为**空文件**（0 字节）。用于 404 这类"空模板即视为缺失"的判定：
+    /// Hugo v0.166 实测空的 404 模板不产出 404.html，而空的 single/partial 都是合法模板
+    /// （主题普遍用空 hook 文件）——故不能在模板扫描里一刀切跳过空文件
+    /// </summary>
+    public bool TemplateFileIsEmpty(string templateName)
+    {
+        try
+        {
+            var path = ResolveTemplatePath(templateName);
+            return !string.IsNullOrEmpty(path) && new FileInfo(path) is { Exists: true, Length: 0 };
+        }
+        catch (TemplateNotFoundException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />

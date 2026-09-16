@@ -173,7 +173,9 @@ public sealed partial class ScribanTemplateRenderer
             _paginateSize = paginateSize;
             _paginatePath = paginatePath;
             _siteTaxonomies = siteTaxonomies;
-            _pagesValue = page.Pages is not null ? GetSharedPageList(page.Pages) : null;
+            // .Pages 同理：Hugo 恒为切片（普通内容页上是空切片）——传 null 会让
+            // `union .Pages …` 之类的组合退化成"回落到本页 Pages"
+            _pagesValue = GetSharedPageList(page.Pages ?? []);
             _termsValue = page.Terms is not null
                 ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
                 : null;
@@ -211,7 +213,11 @@ public sealed partial class ScribanTemplateRenderer
             // 与 pages 一样包装成带方法族的集合——主题直接调 .ByWeight / .ByTitle
             //（techdoc 的 open-menu 用 site.home.sections.by_weight 建导航，
             //  缺此成员时 72 处 "Cannot get the member ... for a null object"）
-            SetValue("sections", page.Sections is not null ? GetSharedPageList(page.Sections) : null, false);
+            // .Sections：Hugo 语义恒为切片（无子 section 时是空切片，不是 nil）——
+            // 主题常写 `union .RegularPages .Sections`（hugo-paper 的 list.html），
+            // 传 null 会让 union 退化成"回落到本页 Pages"（在 /tags/ 上多出词条页 →
+            // 多产出 /tags/page/2/）。空集合同样满足 `{{ with .Sections }}` 的假值语义
+            SetValue("sections", GetSharedPageList(page.Sections ?? []), false);
             SetValue("terms", _termsValue, false);
             SetValue("section", page.Section, false);
             SetValue("table_of_contents", page.TableOfContents, false);
@@ -454,6 +460,15 @@ public sealed partial class ScribanTemplateRenderer
             // 主题用 `{{ .RegularPages.Related . }}` 做相关推荐——Ananke 实证）
             if (member is "regular_pages" or "RegularPages")
             {
+                // 分类页（taxonomy/term）：Hugo v0.166 实测 `.RegularPages` = **空**——
+                // 词条页不算"常规子页"（hugo-paper 的 list.html 写
+                // `$pages := union .RegularPages .Sections`，在 /tags/ 上应为空集合 →
+                // `.Paginate []` = 1 页；此前返回词条页集合 → 多产出 /tags/page/2/）
+                if (_page.Kind is "taxonomy" or "term")
+                {
+                    value = GetSharedPageList([]);
+                    return true;
+                }
                 if (_page.Pages is not null)
                 {
                     // 节点页：自身子页集合（Hugo 语义优先）

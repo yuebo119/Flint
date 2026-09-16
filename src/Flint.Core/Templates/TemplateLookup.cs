@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // TemplateLookup——模板加权匹配查找器（对齐 Hugo 0.146+ 描述符加权模型的简化版）。
 // 与 ScribanTemplateRenderer.ResolveTemplatePath 的文件名约定查找并存，
 // 作为方案五特性开关的查找后端；一致性由 TemplateLookupSnapshotTests 矩阵守护。
@@ -67,6 +67,10 @@ public sealed class TemplateLookup
                 continue;
             }
 
+            // 注意：**不要**在这里跳过 0 字节文件——Hugo v0.166 实测空的
+            // `_default/single.html`、`_partials/x.html` 都是**合法模板**
+            //（渲染为空/无输出；主题普遍用空 hook 文件）。唯一的例外是 404：
+            // 空 404 模板 Hugo 不产出 404.html，那一步在输出阶段单独判定
             foreach (var file in Directory.EnumerateFiles(_roots[i], "*.html", SearchOption.AllDirectories))
             {
                 list.Add(Describe(

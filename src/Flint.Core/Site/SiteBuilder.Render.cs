@@ -271,11 +271,22 @@ public sealed partial class SiteBuilder
         // paginate <= 0 显式关闭分页（非列表页不受影响）
         var renderTargets = new List<PageContext>(pages.Count);
         var paginatedLists = new List<(PageContext Page, IReadOnlyList<PageContext> Items, int TotalPages)>();
+        // **隐式分页器的集合 = RegularPages**（Hugo v0.166 实测）：home 模板只读
+        // `.Paginator`（不调 `.Paginate`）时，Hugo 按 **.RegularPages** 切片——
+        // 首页的 `.Pages` 是 3 条（一级子页 + 一级 section），而 pager 的
+        // `TotalNumberOfElements` 是 5（站点全部常规页）、`TotalPages` 是 3。
+        // 此前用 page.Pages 建隐式 pager：集合少 2 条 → m10c/monochrome 少产出
+        // `/page/2/`、`/page/3/`（矩阵里这两个主题"仅 Hugo"缺页的成因）
+        var regularPagesForPager = pages.Where(p => p.Kind == "page").ToList();
         foreach (var page in pages)
         {
             if ((page.Kind is "home" or "section") && config.Paginate > 0)
             {
-                var items = page.Pages ?? [];
+                // home 的 RegularPages = 站点全部常规页；section 的 = 其下常规页
+                //（Flint 的 section .Pages 即常规页集合，两者同源）
+                var items = page.Kind == "home"
+                    ? regularPagesForPager
+                    : page.Pages ?? [];
                 var totalPages = Math.Max(1,
                     (int)Math.Ceiling(items.Count / (double)config.Paginate));
                 var firstPager = PaginatorView.Create(
@@ -655,10 +666,27 @@ public sealed partial class SiteBuilder
         // `/page/N/`(N≥2)：同为模板分页确证后才产出
         foreach (var taxPage in deferred)
         {
-            if (!ScribanTemplateRenderer.WasPaginateInvoked(BaseRelPermalinkOf(taxPage)))
+            var baseRel = BaseRelPermalinkOf(taxPage);
+            if (!ScribanTemplateRenderer.WasPaginateInvoked(baseRel))
             {
                 continue;
             }
+
+            // **页数以模板实际分页的集合为准**：模板传了显式集合/尺寸时（登记在册），
+            // 超出该集合页数的 `/page/N/` 不该产出——hugo-paper 的 list.html 在 /tags/ 上
+            // 算的是 `union .RegularPages .Sections`（taxonomy 页上为空集）→ Hugo 只产出
+            // `/tags/page/1/`，此前按"词条页数量"产到 page/2（门禁④报不对称）
+            var reg = ScribanTemplateRenderer.GetPaginateCollection(baseRel);
+            if (reg is not null)
+            {
+                var size = reg.Size > 0 ? reg.Size : config.Paginate;
+                var total = Math.Max(1, (int)Math.Ceiling(reg.Items.Count / (double)Math.Max(1, size)));
+                if (taxPage.PageNumber > total)
+                {
+                    continue;
+                }
+            }
+
             await RenderTaxonomyPageAsync(taxPage).ConfigureAwait(false);
         }
 
@@ -695,9 +723,13 @@ public sealed partial class SiteBuilder
                 // taxonomy 列表页的集合 = **词条页集合**（Hugo 语义；分页切的就是它），
                 // term 页则是该词条下的页面集合
                 var taxonomyListItems = isTaxonomyList ? BuildTermPages(taxPage.Terms, config) : null;
-                var pageItems = isTaxonomyList
-                    ? taxonomyListItems!.Skip((taxPage.PageNumber - 1) * pageSize).Take(pageSize).ToList()
-                    : taxPage.Pages ?? [];
+                // **`.Pages` 是全集，当前页切片只在 pager**（Hugo v0.166 实测：
+                // /tags/ 的 `.Pages` = 全部词条页 3 条，即使本页只显示 2 条——
+                // `TotalNumberOfElements` = 3、`TotalPages` = 2）。
+                // 此前把 `.Pages` 设成"本页切片"（2 条）→ 主题写
+                // `range (.Paginate .Pages).Pages`（clarity 的 archive.html）拿到 2 条 →
+                // 页数算成 1 → 少产出 /tags/page/2/；也会让 `.Pages | len` 之类的计数偏小
+                var pageItems = isTaxonomyList ? taxonomyListItems! : taxPage.Pages ?? [];
                 var pageContext = new PageContext
                 {
                     // 标题按 Hugo 规则生成（TaxonomyService.HugoTitle 有探针依据）：

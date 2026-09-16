@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 模板渲染器接口
 
 using Flint.Core.Configuration;
@@ -46,6 +46,13 @@ public interface ITemplateRenderer
     /// <param name="templateName">模板名称</param>
     /// <returns>是否存在</returns>
     bool TemplateExists(string templateName);
+
+    /// <summary>
+    /// 模板文件是否为**空文件**（0 字节）。404 这类"空模板视为缺失"的判定用它：
+    /// Hugo v0.166 实测空的 404 模板不产出 404.html，而空的 single/partial
+    /// 都是合法模板（主题普遍用空 hook 文件）
+    /// </summary>
+    bool TemplateFileIsEmpty(string templateName);
 
     /// <summary>
     /// 渲染指定模板文件（不走模板名查找链，用于 robots.txt 等非 .html 形态辅助模板）

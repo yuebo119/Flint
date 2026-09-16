@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 树装配聚合：内容扫描/解析/过滤、页面树装配、cascade 合并、PageContext 构建
 
 using System.Collections.Concurrent;
@@ -324,24 +324,38 @@ public sealed partial class SiteBuilder
         var allSections = ordered
             .Where(e => e.Page.Kind == "section")
             .ToList();
-        foreach (var (key, page) in ordered)
+
+        // **两阶段装配：先深后浅**。单遍装配时父节点拿到的子 section 是**尚未装配
+        // Pages 的旧对象**（实测 `site.home.sections[*].pages` 恒为空、而 `site.pages`
+        // 里同名 section 有 3 条）——主题按 `.Sections`/`.Pages` 递归遍历站点结构
+        //（techdoc 的 pagination 走 prev/next 导航树）就会走出错误结构，甚至触发
+        // 递归深度上限（"partial 嵌套深度超过 200"）。故先按**层级降序**装配，
+        // 让每个 section 装配时能从表里取到已装配好的子 section；再按原顺序产出时
+        // 从表里取（顺序语义不变：`ordered` 仍是日期降序）
+        var assembled = new Dictionary<string, PageContext>(StringComparer.Ordinal);
+        foreach (var (key, page) in ordered.OrderByDescending(e => e.Key.Count(c => c == '/')))
         {
             if (page.Kind == "home")
             {
                 // Hugo 语义：home 的 .Pages 是**顶层子页 + 顶层 section**（不含深层页面）。
                 // 实测（Hugo v0.166）：content/docs/guide/getting-started.md 不进 home.Pages，
                 // 故 home 的分页页数也据此（此前用全部常规页 → 多出 /page/2/、/page/3/）
+                // **顶层判定要先去前导斜杠**：树节点的 key 形态是 `/posts`、`/about`
+                //（section 分支的 `key + "/"` 前缀匹配正是基于这个形态）。
+                // 此前写 `!e.Key.Contains('/')` → 带前导斜杠的一级节点全被排除，
+                // 首页的 `.Pages` / `.Sections` **恒为空**（实测 m10c/papermod 等站点
+                // `page.pages | len` = 0、Hugo 为 3）——凡首页用 `.Pages` 列文章的主题
+                // 都会缺整个列表区。修法：`TrimStart('/')` 后再判层级
                 var homeChildren = ordered
-                    .Where(e => e.Page.Kind is "page" or "section" &&
-                                !e.Key.Contains('/', StringComparison.Ordinal))
-                    .Select(e => e.Page)
+                    .Where(e => e.Page.Kind is "page" or "section" && IsTopLevelKey(e.Key))
+                    .Select(e => assembled.TryGetValue(e.Key, out var assembledChild) ? assembledChild : e.Page)
                     .ToList();
                 // home 的直属 section 即一级 section 页（路径无 '/'）
-                result.Add(page.WithPages(homeChildren)
+                assembled[key] = page.WithPages(homeChildren)
                     .WithSections(allSections
-                        .Where(e => !e.Key.Contains('/', StringComparison.Ordinal))
-                        .Select(e => e.Page)
-                        .ToList()));
+                        .Where(e => IsTopLevelKey(e.Key))
+                        .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
+                        .ToList());
             }
             else if (page.Kind == "section")
             {
@@ -354,15 +368,22 @@ public sealed partial class SiteBuilder
                 var childSections = allSections
                     .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal) &&
                                 e.Key.Count(c => c == '/') == key.Count(c => c == '/') + 1)
-                    .Select(e => e.Page)
+                    .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
                     .ToList();
-                result.Add(page.WithPages(sectionPages).WithSections(childSections));
+                assembled[key] = page.WithPages(sectionPages).WithSections(childSections);
             }
             else
             {
-                result.Add(page);
+                assembled[key] = page;
             }
         }
+
+        // 按原顺序产出（`ordered` 的日期降序语义不变）
+        foreach (var (key, page) in ordered)
+        {
+            result.Add(assembled.TryGetValue(key, out var assembledPage) ? assembledPage : page);
+        }
+
         return result;
     }
 
@@ -702,6 +723,13 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>页面相对 URL → Hugo <c>.Section</c>（路径首段；home 为 "/" 时为空串）</summary>
+    /// <summary>
+    /// 是否**一级**树节点：key 形态为 <c>/posts</c>（带前导斜杠），
+    /// 一级判定即"去掉前导斜杠后不再含 '/'"
+    /// </summary>
+    private static bool IsTopLevelKey(string key) =>
+        !key.TrimStart('/').Contains('/', StringComparison.Ordinal);
+
     private static string SectionOfKind(string relPermalink)
     {
         var segments = relPermalink.Split('/', StringSplitOptions.RemoveEmptyEntries);
