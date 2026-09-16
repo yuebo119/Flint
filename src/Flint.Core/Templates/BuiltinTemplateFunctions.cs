@@ -1499,8 +1499,15 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // print - 打印
-        obj.Import("print", (params object[] args) =>
-            string.Join(" ", args.Select(a => a?.ToString() ?? "")));
+        // print - Hugo 的 `print` 就是 Go 的 fmt.Sprint：**仅当相邻两个操作数都不是
+        // 字符串时才插空格**（探针 v0.166：`print "a" "b"` = "ab"、`print 1 2` = "1 2"、
+        // `print "a" 1` = "a1"）。此前一律用空格连接 → monochrome 的
+        // `print .Title " - " .Site.Title` 渲染出 `About  -  Matrix Site`（双空格，实测）
+        obj.Import("print", (params object[] args) => GoSprint(args));
+
+        // println - Go 的 fmt.Sprintln：一律插空格并以换行结尾
+        obj.Import("println", (params object[] args) =>
+            string.Join(" ", args.Select(a => a?.ToString() ?? "")) + "\n");
 
         // warnf - 警告输出到标准错误（构建可见）
         obj.Import("warnf", (string? format, params object[] args) =>
@@ -2145,6 +2152,26 @@ public sealed partial class BuiltinTemplateFunctions
     /// （实测：`compare.Ge 5 (math.add 3 1)` 报错、`compare.Ge 5 4` 正常——`math.add` 产出 double；
     /// ananke 的 home.html 就死在这一行）
     /// </summary>
+    /// <summary>
+    /// Go 的 <c>fmt.Sprint</c> 规则：相邻操作数**都不是字符串**时才插空格
+    /// （字符串与任何值的相邻不插；这是 Hugo <c>print</c> 的语义）
+    /// </summary>
+    private static string GoSprint(IReadOnlyList<object?> args)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < args.Count; i++)
+        {
+            if (i > 0 && args[i] is not string && args[i - 1] is not string)
+            {
+                sb.Append(' ');
+            }
+
+            sb.Append(args[i]?.ToString() ?? "");
+        }
+
+        return sb.ToString();
+    }
+
     private static int CompareHugo(object? a, object? b)
     {
         if (a is null && b is null)

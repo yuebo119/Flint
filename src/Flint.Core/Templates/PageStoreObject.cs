@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 页面级暂存对象（Hugo .Scratch / .Store 的等价物）
 //
 // Hugo 语义：页面渲染期内可变的键值容器，用于跨块/跨 partial 传递状态
@@ -89,6 +89,23 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
                 }
                 return v;
             }
+
+            // **SetInMap 写入的嵌套映射**：Hugo 的 `SetInMap MAP KEY VALUE` 之后
+            // `Get MAP` 返回该映射本身（monochrome 的 baseof 用 `SetInMap "params" …`
+            // 初始化一串参数、head.html 再 `(.Store.Get "params").enable_open_graph` 读取）。
+            // 此前 Get 只看扁平值表 → 读回 null → 依赖这些参数的整段 head 内容不渲染
+            //（monochrome 的 opengraph/twitter_cards 头标签缺失，实测）
+            if (_maps.TryGetValue(key, out var map))
+            {
+                var wrapped = new ScriptObject();
+                foreach (var (mapKey, mapValue) in map)
+                {
+                    wrapped[mapKey] = mapValue;
+                }
+
+                return wrapped;
+            }
+
             return MissingKeyReturnsEmptyObject ? new ScriptObject() : null;
         }
     }

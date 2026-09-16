@@ -642,6 +642,23 @@ public class HugoCompatSemanticsTests : IDisposable
         return section;
     }
 
+    /// <summary>
+    /// Go 的 <c>fmt.Sprint</c> 空格规则（Hugo v0.166 探针）：**仅当相邻两个操作数都不是
+    /// 字符串时才插空格**——`print "a" "b"` = "ab"、`print 1 2` = "1 2"、`print "a" 1` = "a1"。
+    /// 此前一律空格连接：monochrome 的 `print .Title " - " .Site.Title` 渲染成
+    /// `About  -  Matrix Site`（双空格，实测）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ print \"a\" \"b\" }}", "ab")]
+    [InlineData("{{ print 1 2 }}", "1 2")]
+    [InlineData("{{ print \"a\" 1 }}", "a1")]
+    [InlineData("{{ print 1 \"a\" }}", "1a")]
+    [InlineData("{{ print \"a\" \" - \" \"b\" }}", "a - b")]
+    public async Task print按Go的fmtSprint空格规则(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {
