@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // ScribanTemplateRenderer 的对象构建部分：page/site/menus ScriptObject 工厂、
 // 惰加载包装器与日期对象注册（从 ScribanTemplateRenderer.cs 按 partial 拆出）
 
@@ -559,8 +559,18 @@ public sealed partial class ScribanTemplateRenderer
                 ScribanTemplateRenderer.NotePaginateCollection(page.RelPermalink, items, size);
             }
 
-            var pager = PaginatorView.Create(items, 1, size,
-                string.IsNullOrEmpty(page.RelPermalink) ? "/" : page.RelPermalink, paginatePath);
+            // **页码与基准 URL 取自当前页已绑定的 pager**：模板在**第 N 页**上再次调用
+            // `.Paginate` 时，Hugo 返回的是"当前页的 pager"（`/posts/page/2/` 上
+            // `.Paginator.Next` 指向第 3 页；末页为 nil）。
+            // 此前恒按"第 1 页 + 本页 RelPermalink"重建 → 在 `/posts/page/2/` 上产出
+            // `/posts/page/2/page/2/`（末页还多了个不存在的 Next 链接），
+            // 实测 even / hugo-paper 的产物里出现 `/page/2/page/2/`
+            var bound = page.Paginator;
+            var baseRel = bound?.BaseRelPermalink
+                ?? (string.IsNullOrEmpty(page.RelPermalink) ? "/" : page.RelPermalink);
+            var currentPageNumber = bound?.PageNumber ?? 1;
+
+            var pager = PaginatorView.Create(items, currentPageNumber, size, baseRel, paginatePath);
             return BuildPaginatorObject(pager);
         }
 

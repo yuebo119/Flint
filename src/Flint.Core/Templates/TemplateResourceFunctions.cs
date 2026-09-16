@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 模板资源提供者与 resources.*/css.*/js.*/images.* 命名空间（Hugo Pipes 子集）
 //
 // 覆盖 Hugo 资源管线的高频链路：
@@ -571,14 +571,14 @@ public sealed partial class BuiltinTemplateFunctions
     private static void RegisterCssFunctions(ScriptObject css)
     {
         // css.Build：Hugo 的 CSS 构建（@import 内联 + 可选 minify）
-        css.Import("Build", (object? value, params object[] opts) =>
+        css.Import("Build", (params object?[] args) =>
         {
-            var r = TemplateResource.FromScriptObject(value);
+            var r = FindResourceArg(args);
             if (r is null)
             {
                 return null;
             }
-            var minify = OptsFlag(opts, "minify", defaultValue: true);
+            var minify = OptsFlag(args.OfType<object>().ToArray(), "minify", defaultValue: true);
             var content = r.Content;
             if (minify)
             {
@@ -587,11 +587,11 @@ public sealed partial class BuiltinTemplateFunctions
             return r.With(content).ToScriptObject();
         });
 
-        css.Import("Sass", (object? value, params object[] opts) =>
+        css.Import("Sass", (params object?[] args) =>
         {
             // Sass 编译由构建期 AssetPipeline 完成；模板侧保留资源引用，
             // 输出扩展名改为 .css（语义：编译后的样式引用）
-            var r = TemplateResource.FromScriptObject(value);
+            var r = FindResourceArg(args);
             if (r is null)
             {
                 return null;
@@ -602,24 +602,134 @@ public sealed partial class BuiltinTemplateFunctions
             return TemplateResource.Create(target, r.Content, "").ToScriptObject();
         });
 
-        css.Import("PostCSS", (object? value, params object[] opts) => value);
-        css.Import("TailwindCSS", (object? value, params object[] opts) => value);
+        // PostCSS/TailwindCSS 与 js.Babel/Batch 在 Flint 里是**恒等**（无对应工具链），
+        // 但要返回**资源实参本身**而非首个实参——否则显式参数序（资源在末位）下
+        // 返回的是选项字典，主题拿到 `{{ $css.RelPermalink }}` 就取不到值
+        css.Import("PostCSS", (params object?[] args) => FindResourceArg(args, args.FirstOrDefault()));
+        css.Import("TailwindCSS", (params object?[] args) => FindResourceArg(args, args.FirstOrDefault()));
         css.Import("Quoted", (string? s) => "\"" + s + "\"");
         css.Import("Unquoted", (string? s) => s ?? "");
         css.Import("ChromaStyles", () => new ScriptObject());
     }
 
-    private static void RegisterJsFunctions(ScriptObject js)
+    private void RegisterJsFunctions(ScriptObject js)
     {
-        js.Import("Build", (string? path, params object[] opts) =>
+        // js.Build：Hugo 的签名是 `js.Build [OPTIONS] INPUT`——**输入在末位**，
+        // 故 `$res | js.Build $opts` 展开为 (opts, res)。此前实现声明
+        // `(string? path, params object[] opts)`：管道注入的资源对象被 Scriban
+        // 转成字符串当成了"路径"，产出 `RelPermalink = "/assets/{name: …整个对象转储…}"`
+        // 的畸形资源（fixit 30 处、narrow 54 处、stack 17 处、monochrome 15 处实测
+        // 页面里出现 `href="/assets/{name: "js/main.ts", …}"` → JS/CSS 全都加载不到）。
+        //
+        // Flint 没有 esbuild：语义是**透传**（内容原样、文件名按 targetPath 改名、
+        // 可选 MinifyJs），产物在输出阶段写盘
+        js.Import("Build", (params object?[] args) =>
         {
-            // 脚本打包由构建期 JavaScriptBundler 完成；模板侧返回资源引用
-            var name = string.IsNullOrEmpty(path) ? "bundle.js" : path;
-            var r = TemplateResource.Create(name, "", "");
-            return r.ToScriptObject();
+            if (args.Length == 0)
+            {
+                return null;
+            }
+
+            // **两种参数序都要认**：Hugo 是"输入在末位"（`$res | js.Build $opts`），
+            // 而 Scriban 的管道把左值注入**首参**——同一份主题写法在两条路径下参数序
+            // 相反。故不按位置、按**类型**定位输入（资源对象优先，其次字符串路径），
+            // 其余实参即选项
+            var resource = (TemplateResource?)null;
+            var name = (string?)null;
+            var content = "";
+            var optionArgs = new List<object?>();
+            foreach (var a in args)
+            {
+                if (resource is null && a is not string && TemplateResource.FromScriptObject(a) is { } r)
+                {
+                    resource = r;
+                    name = r.Name;
+                    content = r.Content;
+                    continue;
+                }
+                optionArgs.Add(a);
+            }
+            if (resource is null)
+            {
+                // 路径形态：取最后一个字符串实参当输入（Hugo 亦接受相对 assets/ 的路径）
+                for (var i = optionArgs.Count - 1; i >= 0; i--)
+                {
+                    if (optionArgs[i] is string p && p.Length > 0)
+                    {
+                        name = p;
+                        content = _resources?.Get(p)?.Content ?? "";
+                        optionArgs.RemoveAt(i);
+                        break;
+                    }
+                }
+            }
+            if (string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+
+            // targetPath 优先（Hugo 用它决定产物文件名）；旧式 `js.Build "out.js"` 的
+            // 字符串实参同义
+            var target = OptsString([.. optionArgs], "targetPath");
+            if (string.IsNullOrEmpty(target))
+            {
+                foreach (var a in optionArgs)
+                {
+                    if (a is string legacyTarget && legacyTarget.Length > 0)
+                    {
+                        target = legacyTarget;
+                        break;
+                    }
+                }
+            }
+            if (!string.IsNullOrEmpty(target))
+            {
+                name = target;
+            }
+
+            if (OptsFlag(optionArgs.OfType<object>().ToArray(), "minify", defaultValue: false))
+            {
+                content = MinifyJs(content);
+            }
+
+            var outRes = TemplateResource.Create(name, content, "");
+            Track(outRes);
+            return outRes.ToScriptObject();
         });
-        js.Import("Babel", (object? value, params object[] opts) => value);
-        js.Import("Batch", (object? value, params object[] opts) => value);
+        js.Import("Babel", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
+        js.Import("Batch", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
+    }
+
+    /// <summary>
+    /// 在实参里按**类型**定位资源（不按位置）：Hugo 的管道语义把输入放末位，
+    /// 而 Scriban 把左值注入首参，两条路径的参数序相反，按类型找才能都认
+    /// </summary>
+    private static TemplateResource? FindResourceArg(object?[] args)
+    {
+        foreach (var a in args)
+        {
+            if (a is not string && TemplateResource.FromScriptObject(a) is { } r)
+            {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private static object? FindResourceArg(object?[] args, object? fallback) =>
+        FindResourceArg(args)?.ToScriptObject() ?? fallback;
+
+    /// <summary>选项字典里的字符串值（dict "targetPath" "a.js"）</summary>
+    private static string? OptsString(object?[] opts, string key)
+    {
+        foreach (var o in opts)
+        {
+            if (o is ScriptObject so && so.ContainsKey(key))
+            {
+                return so[key]?.ToString();
+            }
+        }
+        return null;
     }
 
     /// <summary>记录产物（按 RelPermalink 去重，保留最新）</summary>
