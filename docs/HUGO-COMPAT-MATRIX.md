@@ -28,6 +28,7 @@
 | K′ | 日期格式串的三种形态 | `time.Format`/`.Date.Format` 的布局是 **Go 布局串**（`2006-01-02`）、**具名格式**（`:date_long`）或**运行期字符串**（`site.Params.dateFormat`） | `GoDateFormat.Convert`/`LooksLikeGoLayout`（引擎侧，运行期也吃下）+ `FormatHugoDate`（具名/Go/.NET 三方言统一） | `HugoCompatSemanticsTests.管道形态的日期格式按值在前布局在后/dateToString兼容Go布局与NET格式` |
 | L′ | 日期值的成员：`.IsZero`/`.Unix` | Hugo 的 `time.Time` 值方法；**无日期页的 `.Date` 是零值时间** `0001-01-01T00:00:00Z` | 迁移器把 `.IsZero`/`.Unix` 改写为 `date.is_zero`/`date.unix`（带括号，避免被外层函数当多实参）；`SiteBuilder.Tree` 的 `Date` 缺省改为 `DateTimeOffset.MinValue` | `HugoCompatSemanticsTests.零值日期的IsZero与渲染/日期值方法的取值`、`MigratorTests.日期值方法改写为引擎函数/日期值方法在变量接收者上也改写` |
 | M′ | 参数键别名与页成员 `.Site` | `.Site` 在任意页面可用；参数表按原键名访问（`dateFormat`），迁移产物用 snake（`date_format`） | `WrapParamValue` 递归包装嵌套字典与数组（每层都补 snake 别名）；`LazyPageObject` 暴露 `site`/`Site`（按构建登记站点对象） | `PageCollectionAndParamsTests`（既有）+ 主题回归：stack 的 `:date_full`、loveit/papermod 的参数表 |
+| N′ | `i18n` 的复数选形与插值 | 键为**点分嵌套**；值是**复数子表**（`one`/`other`…）时按计数选形（`1 → one`、其余 `other`；**无计数 → other**）；值里的 `{{ .Count }}`/dict 键做插值，缺失渲染 `<no value>`；缺键输出空 | 加载端 `Translations.Flatten` 递归摊平为 `key.one`/`key.other`；引擎 `I18nFunction` 按计数选形 + 正则插值（2 参签名，第二参可为数字或 dict） | `I18nTests.Load_嵌套复数子表应摊平为点分键`、`HugoCompatSemanticsTests.I18n复数选形与插值`（断言值即探针值） |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -183,7 +184,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | `SitemapOptions/FeedOptions.ExcludedTypes` | 按 `.Type` 过滤 | 即 front matter type 或段名（Hugo 的 `.Type` 语义）；不是 kind 名 |
 | `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
 | `.Parent`/`.CurrentSection`/`.FirstSection` | **已对齐** | 三者与 `.Ancestors` 同源（同一条容器链）：`Parent` = 链首（home 页为 nil）；容器页（section/taxonomy/term/home）的 `CurrentSection` 是自己，内容页取最近的 section，根级页落到 home；`FirstSection` 是最外层 section（term 页为分类列表页）。此前 `.CurrentSection` 是**按段名拼的假对象**（取不到 `.RegularPages`/`.GetPage`，嵌套段的 URL 也错），ananke 的 `section-link.html`/`summary.html` 正依赖它 |
-| `i18n` 的复数子表与插值 | **待修**（已定位） | Hugo 的 `[key] one/other` 子表按 `.Count` 选形并渲染 `{{ .Count }}`；Flint 只查扁平键 → 输出空（stack 的阅读时长、blowfish 的 `(dict …)` 语境） |
+| `i18n` 的复数子表与插值 | **已对齐** | 嵌套子表摊平为点分键 + 按计数选形（`one`/`other`）+ `{{ .Count }}`/dict 插值；探针值与实现见 §Q「十六」 |
 
 ## 四、探针方法（复现指南）
 
@@ -559,3 +560,25 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**十六、i18n 的复数子表与插值**。加载端只处理**一层**表且只认 `other`：主题普遍使用的
+嵌套子表（`[article.readingTime] one/other`、`[error.404_title]` 这类）整块被丢弃，
+引擎端又只做扁平键查表、不选形也不插值 → `i18n "article.readingTime" $page.ReadingTime`
+输出空（stack 的阅读时长 `<time>` 为空、fixit/blowfish 的多处文案缺失）。
+
+Hugo v0.166 探针（`[readingTime] one/other`、`[nested.deep]`、`[withdict] other`）：
+
+| 调用 | Hugo 输出 |
+|---|---|
+| `i18n "simple"` | `Plain text`（扁平键原样） |
+| `i18n "readingTime" 1` | `One minute read`（`one` 形） |
+| `i18n "readingTime" 5` / `0` | `5 minutes read` / `0 minutes read`（`other` 形） |
+| `i18n "readingTime"`（无计数） | `<no value> minutes read`（**仍选 other**，`.Count` 缺失） |
+| `i18n "nested.deep" 3` | `3 items`（点分嵌套键） |
+| `i18n "withdict" (dict "Count" 3 "Name" "Bob")` | `Bob has 3 items`（dict 插值） |
+| `i18n "missing.key"` | 空 |
+
+修法：加载端递归摊平为 `key.one`/`key.other`（并把 `other` 另存为主键，供无计数调用）；
+引擎端 `I18nFunction` 改为 2 参（第二参数字或 dict）——有复数子表时按计数选形
+（`1 → one`，其余 `other`），随后对值里的 `{{ .Key }}` 插值（缺失渲染 `<no value>`）。
+相似度：stack 78.6 → **87.7**、fixit 84.4 → **88.4**；`<time>` 文本 Flint 独有保持 0。

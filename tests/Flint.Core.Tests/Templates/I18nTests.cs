@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // i18n 翻译加载与模板函数端到端测试（主题系统 P3）
 
 using AwesomeAssertions;
@@ -77,5 +77,27 @@ public sealed class I18nTests : IDisposable
 
         // Assert
         translations["hello"].Should().Be("你好", "zh-cn 缺文件时回退主段 zh");
+    }
+
+    /// <summary>
+    /// 复数子表与**嵌套**键（Hugo v0.166 探针值）：
+    /// <c>[article.readingTime] one/other</c> → <c>i18n "article.readingTime" 1</c> = "One minute read"、
+    /// <c>… 5</c> = "5 minutes read"、<c>… 0</c> = "0 minutes read"（0 走 other）。
+    /// 此前加载端只处理一层且只认 other：嵌套子表整块被丢 → 这类键输出空
+    ///（stack 的阅读时长实测）
+    /// </summary>
+    [Fact]
+    public void Load_嵌套复数子表应摊平为点分键()
+    {
+        var i18n = Path.Combine(_testDir, "i18n");
+        Directory.CreateDirectory(i18n);
+        File.WriteAllText(Path.Combine(i18n, "en.toml"),
+            "[article.readingTime]\none = \"One minute read\"\nother = \"{{ .Count }} minutes read\"\n");
+
+        var translations = Translations.Load(_testDir, null, "en");
+
+        translations["article.readingTime.one"].Should().Be("One minute read");
+        translations["article.readingTime.other"].Should().Be("{{ .Count }} minutes read");
+        translations["article.readingTime"].Should().Be("{{ .Count }} minutes read", "主键回落 other 形");
     }
 }

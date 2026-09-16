@@ -69,7 +69,15 @@ public class HugoCompatSemanticsTests : IDisposable
                 Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
                 Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
                 Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" },
-                Params = new Dictionary<string, object> { ["author"] = "A" }
+                Params = new Dictionary<string, object> { ["author"] = "A" },
+                Translations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["simple"] = "Plain text",
+                    ["readingTime"] = "{{ .Count }} minutes read",
+                    ["readingTime.one"] = "One minute read",
+                    ["readingTime.other"] = "{{ .Count }} minutes read",
+                    ["withdict.other"] = "{{ .Name }} has {{ .Count }} items"
+                }
             }
         };
         return (await _renderer.RenderAsync("probe.html", context).ConfigureAwait(false)).Trim();
@@ -448,6 +456,24 @@ public class HugoCompatSemanticsTests : IDisposable
     [InlineData("{{ date.is_zero page.date }}", "false")]
     [InlineData("{{ date.unix page.date }}", "1705314600")]
     public async Task 日期值方法的取值(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
+    /// <summary>
+    /// i18n 的**复数选形与插值**（Hugo v0.166 探针：`i18n "readingTime" 1` → "One minute read"、
+    /// `… 5` → "5 minutes read"、`… 0` → "0 minutes read"、`… (dict "Count" 3 "Name" "Bob")`
+    /// → "Bob has 3 items"、`… "missing.key"` → 空）。夹具翻译表按引擎形态给出
+    /// （`key.one`/`key.other` 点分键由加载端摊平）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ i18n \"simple\" }}", "Plain text")]
+    [InlineData("{{ i18n \"readingTime\" 1 }}", "One minute read")]
+    [InlineData("{{ i18n \"readingTime\" 5 }}", "5 minutes read")]
+    [InlineData("{{ i18n \"readingTime\" 0 }}", "0 minutes read")]
+    [InlineData("{{ i18n \"withdict\" (dict \"Count\" 3 \"Name\" \"Bob\") }}", "Bob has 3 items")]
+    [InlineData("{{ i18n \"missing.key\" }}", "")]
+    public async Task I18n复数选形与插值(string template, string expected)
     {
         Assert.Equal(expected, await Render(template));
     }
