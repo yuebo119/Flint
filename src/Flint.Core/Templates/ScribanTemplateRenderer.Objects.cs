@@ -2238,9 +2238,24 @@ public sealed partial class ScribanTemplateRenderer
             if (dt == null)
                 return "";
 
-            return dt.Value.ToString(
-                string.IsNullOrEmpty(format) ? "yyyy-MM-dd" : format,
-                System.Globalization.CultureInfo.InvariantCulture);
+            if (string.IsNullOrEmpty(format))
+            {
+                return dt.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            // **Hugo 的具名日期格式**（`:date_medium` 等，v0.166 探针实测输出）：
+            // 不映射的话 `time.Format ":date_medium"` 会被当作 .NET 自定义格式串解析，
+            // 产出 `10aAe_0e10lu0` 这类乱码（hugo-paper 的 `<time>` 实测）
+            if (NamedDateFormats.TryGetValue(format, out var named))
+            {
+                // Go 的 `pm` 是小写（"3:04:05 pm"），.NET 的 `tt` 给 "PM"
+                // → 具名格式统一转小写（只作用于具名表，不动用户自定义格式串）
+                return dt.Value.ToString(named, System.Globalization.CultureInfo.InvariantCulture)
+                    .Replace("AM", "am", StringComparison.Ordinal)
+                    .Replace("PM", "pm", StringComparison.Ordinal);
+            }
+
+            return dt.Value.ToString(format, System.Globalization.CultureInfo.InvariantCulture);
         });
 
         // now - 当前时间
@@ -2280,6 +2295,24 @@ public sealed partial class ScribanTemplateRenderer
     /// <summary>
     /// 将各种日期类型转换为 DateTimeOffset
     /// </summary>
+    /// <summary>
+    /// Hugo 的具名日期格式（<c>time.Format ":date_medium"</c> 等）→ .NET 格式串。
+    /// 期望值来自 Hugo v0.166 探针（2026-03-10T15:04:05Z）：
+    /// <c>:date_full</c> → "Tuesday, March 10, 2026"、<c>:date_long</c> → "March 10, 2026"、
+    /// <c>:date_medium</c> → "Mar 10, 2026"、<c>:date_short</c> → "3/10/26"、
+    /// <c>:time_medium</c> → "3:04:05 pm"、<c>:time_short</c> → "3:04 pm"
+    /// </summary>
+    private static readonly Dictionary<string, string> NamedDateFormats = new(StringComparer.Ordinal)
+    {
+        [":date_full"] = "dddd, MMMM d, yyyy",
+        [":date_long"] = "MMMM d, yyyy",
+        [":date_medium"] = "MMM d, yyyy",
+        [":date_short"] = "M/d/yy",
+        [":time_full"] = "h:mm:ss tt zzz",
+        [":time_medium"] = "h:mm:ss tt",
+        [":time_short"] = "h:mm tt"
+    };
+
     private static DateTimeOffset? ConvertToDateTimeOffset(object? value)
     {
         return value switch

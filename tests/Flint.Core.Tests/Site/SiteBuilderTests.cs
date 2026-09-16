@@ -554,6 +554,9 @@ public class SiteBuilderTests : IDisposable
 
 public bool TemplateExists(string templateName) => false;
 
+        /// <summary>stub：恒定视为非空（404 发射的判空在真实渲染器里实现）</summary>
+        public bool TemplateFileIsEmpty(string templateName) => false;
+
         public IReadOnlyList<string> GetDependencies(string templateName) => [];
 
         public Task<int> PrecompileTemplatesAsync(CancellationToken cancellationToken = default)

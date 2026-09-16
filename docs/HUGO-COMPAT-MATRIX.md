@@ -408,3 +408,31 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 
 阶段 3（视觉验收）：用浏览器对 Hugo 与 Flint 产物逐主题截图对比（外观/CSS/交互），
 以及链接可达性冒烟——需真实浏览器环境，尚未执行。
+
+### Q. 视觉验收（阶段 3）发现：`assets/` 资源的 URL 约定不同（待裁决）
+
+用 localhost baseURL 重建同一主题（hugo-paper）的 Hugo 与 Flint 产物，浏览器逐页对比：
+
+**已确认正常**：Tailwind 样式生效、排版/间距/按钮与 Hugo 一致、日期文本正确
+（`Mar 10, 2026`，具名格式已修）、首页列表与分页按钮正常、控制台除下面一条外无错误。
+
+**发现的分歧（架构级，需用户裁决）**：`assets/` 目录下资源的发布路径——
+
+| 引擎 | `assets/main.css` 的 `.RelPermalink` |
+|---|---|
+| Hugo v0.166（探针） | **`/main.css`**（相对 `assets/` 根，即发布到站根） |
+| Flint | `/assets/main.css`（统一加 `/assets/` 前缀） |
+
+影响（实测）：Hugo 把处理后的 CSS 发布在站根 → CSS 内 `url(./theme.png)` 解析为
+`/theme.png` ✔ 存在；Flint 发布在 `/assets/` → 解析为 `/assets/theme.png` ✗ 404
+（浏览器控制台 1 个错误、图标缺失）。同一约定还会让**每个资源链接**的文本与 Hugo 不同。
+
+修法（两条路，需裁决）：
+1. **对齐 Hugo**：`TemplateResource.RelPermalink` 改为"相对 assets 根"（`assets/x.css` →
+   `/x.css`），资产写盘目录同步改为输出根。风险：改动面广（资产管线 + 所有
+   `resources.*` 产物路径 + 硬编码 `/assets/` 的主题模板要另加兼容映射），需整轮验证。
+2. **保留 Flint 约定**：在文档中标注为**有意差异**，并给"相对引用"加兜底
+   （把 `assets/` 下的资源同时镜像到站根，或对 CSS 内的相对 `url()` 做重写）。
+
+本清单倾向方案 1（Hugo 的约定是生态事实，主题的 CSS/JS 内部相对引用依赖它），
+但属**架构级选择**，按规则交由用户裁决后再实施。
