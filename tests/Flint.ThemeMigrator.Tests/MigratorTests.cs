@@ -606,6 +606,50 @@ public sealed class PipeAndParserRegressionTests
     }
 
     [Fact]
+    public void 管道not折叠为取反()
+    {
+        // Hugo 的 `X | not` = `not X`（管道值作唯一实参）。此前未折叠 → 产出 0 参 `not`
+        // → 条件回退成 `false`，判断块被**静默丢弃**（LoveIt 的
+        // `if (urls.Parse $src).Host | not`、FixIt 的 `| and (not $x)`）
+        Assert.Equal(
+            "{{ if !($x) }}T{{ end }}",
+            Convert("{{ if $x | not }}T{{ end }}").Trim());
+        // 带第二实参的 `not`（Hugo 下非法：not 只接受 1 参）不走折叠，
+        // 条件按"不可转换"**安全降级为 false**（并记诊断）——不猜语义
+        Assert.Equal(
+            "{{ if false }}T{{ end }}",
+            Convert("{{ if $x | not $y }}T{{ end }}").Trim());
+    }
+
+    [Fact]
+    public void 命名空间调用原样保留()
+    {
+        // `compare.*`/`collections.*`/`math.*` 在 Flint 引擎里有同名命名空间，
+        // 故转换**保留原写法**（MigrationMap 末尾的自映射有意覆盖早先的
+        // "命名空间 → 全局"映射）：人工比对更直观，也不踩成员调用的歧义。
+        // 引擎侧可用性由 Core 的 `比较函数不再抛Int32装箱异常` 锁定
+        //（`compare.Ge 5 (math.add 3 1)` 曾报 "Object must be of type Int32"，
+        //  根因是比较函数的 CompareTo 装箱缺陷，与调用形态无关）
+        Assert.Equal(
+            "{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}",
+            Convert("{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}").Trim());
+    }
+
+    [Fact]
+    public void 短代码调用块原样保留()
+    {
+        // Hugo **只在内容里**支持 `{{< … >}}` / `{{% … %}}`；放 layouts 里 Hugo 自己报
+        // `unexpected "<" in command`（v0.166 实测）。此前按动作解析会把定界符悄悄吃掉：
+        // `{{< sc x="1" >}}body{{< /sc >}}` → `{{ sc x "1" }}body{{ sc }}`（静默损坏）。
+        // 现在整段原样保留 + 一条诊断；且不能吞后续正文（扫描完须退出动作态，
+        // 否则 `TAIL` 会被当动作内容切词）
+        var result = Convert("{{< sc x=\"1\" >}}body{{< /sc >}}{{% sc %}}md{{% /sc %}}TAIL");
+        Assert.Contains("{{< sc x=\"1\" >}}body{{< /sc >}}", result, StringComparison.Ordinal);
+        Assert.Contains("{{% sc %}}md{{% /sc %}}", result, StringComparison.Ordinal);
+        Assert.Contains("TAIL", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 管道比较方向与Hugo一致()
     {
         // Go 管道把左值追加为**末参**：`1 | gt 2` = gt(2, 1) = true（Hugo v0.166 实测）。

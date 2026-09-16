@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // Go template 词法器（移植 Go 标准库 text/template/parse/lex.go）
 //
 // 移植理由（实测依据）：现有 Python 转换器用 `re.finditer(r"\{\{.*?\}\}")` 切分，
@@ -31,6 +31,7 @@ internal enum TokenType
     String,        // 双引号字符串（含引号）
     RawString,     // 反引号字符串（含反引号）
     CharConstant,  // 单引号字符常量
+    ShortcodeCall, // 短代码调用块 {{< … >}} / {{% … %}}（整段原样保留，见 Parse 的说明）
     Bool,          // true / false
     Nil,           // nil
     Assign,        // =
@@ -148,6 +149,34 @@ internal sealed class GoTemplateLexer
         }
     }
 
+    /// <summary>
+    /// 扫描短代码调用块：从 <c>{{&lt;</c> / <c>{{%</c> 起到对应的 <c>&gt;}}</c> / <c>%}}</c>
+    /// （含 <c>&gt;-}}</c> 右裁剪形态），**含闭合定界符**整段作为一个 token 交解析器原样保留
+    /// </summary>
+    private void LexShortcodeCall(int start, int startLine, char opener)
+    {
+        var closer = opener == '<' ? '>' : '%';
+        var tail = closer + _rightDelim;
+
+        var plain = _input.IndexOf(tail, _pos, StringComparison.Ordinal);
+        // 右裁剪形态：`>-}}` / `%-}}`（Go 的 trim marker 在闭合定界符之前）
+        var trimmed = _input.IndexOf("-" + tail, _pos, StringComparison.Ordinal);
+        var end = plain < 0 ? trimmed
+            : trimmed < 0 ? plain
+            : Math.Min(plain, trimmed);
+
+        var target = end < 0 ? _input.Length : end + tail.Length;
+        while (_pos < target && _pos < _input.Length)
+        {
+            Next();
+        }
+        Emit(TokenType.ShortcodeCall, start, startLine);
+        // 与 LexComment 同口径：整段自带闭合定界符，扫描完必须**退出动作态**，
+        // 否则后续正文会被当作动作内容继续切词（实测：`body` 被吃掉、
+        // `{{< /sc >}}` 退化成 `{{< sc >}}`）
+        _insideAction = false;
+    }
+
     private void Emit(TokenType type, int start, int startLine)
     {
         var value = _input[start.._pos];
@@ -243,6 +272,17 @@ internal sealed class GoTemplateLexer
             Emit(TokenType.LeftDelim, start, startLine);
             _pos = probe;
             LexComment();
+            return;
+        }
+
+        // 短代码调用块：{{< … >}} / {{% … %}}（含闭合形态 {{< /x >}}）。
+        // Hugo **只在内容里**支持该语法（放在 layouts 里 Hugo 自己报
+        // `unexpected "<" in command`）；若按动作解析会把定界符偷偷吃掉——
+        // 实测 `{{< sc x="1" >}}body{{< /sc >}}` 曾产出 `{{ sc x "1" }}body{{ sc }}`，
+        // 属静默损坏。整段原样保留 + 诊断（见 Parse 的 ShortcodeCall 分支）
+        if (probe < _input.Length && (_input[probe] == '<' || _input[probe] == '%'))
+        {
+            LexShortcodeCall(start, startLine, _input[probe]);
             return;
         }
 
