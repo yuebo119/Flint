@@ -1,4 +1,4 @@
-# Hugo 兼容差异清单（常驻对照表）
+﻿# Hugo 兼容差异清单（常驻对照表）
 
 > 用途：把"Go 模板 / Hugo 引擎"与"Flint 渲染器"之间的**语义差异**逐类登记在案——
 > 每类都写明 Hugo 的真实语义、Flint 当前处理、证据来源与**可执行回归**的位置。
@@ -170,7 +170,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 |---|---|---|
 | `.Type` 的 section 语义 | **已对齐** | `/` → `page`、`/posts/` → `posts`、`/tags/x/` → `tags`、`/about/` → `page`、front matter `type` 覆盖；实现 = `Metadata.Type ?? (Section 非空 ? Section : "page")` |
 | `site.Params.mainSections` 默认值 | **已对齐** | 常规页最多的段（单元素）；并列取字典序最小；全根级页时为空；显式 `[params] mainSections` 优先 |
-| `{{ if compare.Ge 5 (math.add 3 1) }}` 形态 | **引擎已可用，转换器仍不映射** | 该行在迁移产物里**原样保留**（未转换），但引擎现按 Hugo 语义求值（`CompareHugo`），不再是阻塞；转换器侧的命名空间函数映射仍是待办 |
+| 命名空间调用（`compare.*`/`math.*`/`collections.*`…） | **已对齐（保形转换）** | 迁移产物里**逐字保留**主题写法——命名空间调用在 Go 与 Scriban 里同形，且 Flint 引擎有同名命名空间（`compare`/`math`/`collections`/`strings`/`path`/`urls`）。此前记为"未转换/待办"是**误判**：当时 `compare.Ge 5 (math.add 3 1)` 报 "Object must be of type Int32"，根因是比较函数的 `CompareTo` 装箱缺陷（已修），与调用形态无关。引擎探针逐条确认：`compare.Ge 5 (math.add 3 1)` → true、`if (compare.Ge 5 (math.add 3 1))` → 进入、`math.add 3 (math.mul 2 2)` → 7、`collections.Delimit (slice "a" "b") ", "` → "a, b" |
 | `single` 兜底级（home/section） | Flint 扩展 | Hugo 无此级；仅服务"只有 single.html 的极简站点"，排在 `all` 之后 |
 | `Scratch.Get` 取回的页面列表带方法族 | Flint 超集 | Hugo 下 `.First` 之类在 Scratch 取出后渲染为空；Flint 多给一层方法族，不冲突 |
 | `page.terms`（分类页） | Flint 扩展 | Hugo v0.166 的 /tags/ 页**没有** `.Terms`（实测报 "can't evaluate field Terms"），词条在 `.Pages` 里；Flint 两个都提供 |
