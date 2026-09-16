@@ -1,4 +1,4 @@
-// Flint 主题迁移工具测试
+﻿// Flint 主题迁移工具测试
 // 回归防护对象（本轮实测确证，均为正则版无法正确处理的情形）：
 // 1. 引号内含 }} / {{ 时正确切分（正则版会静默损坏）
 // 2. 嵌套结构产出正确语义（正则版产出 `(len < page.pages) 10` 这类垃圾）
@@ -587,6 +587,22 @@ public sealed class PipeAndParserRegressionTests
         // PaperMod：`X | printf "content=%q"` → printf "content=%q" X
         var result = Convert("{{ .Title | printf \"%s\" }}");
         Assert.Contains("printf \"%s\" page.title", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 命名空间调用原样保留()
+    {
+        // `compare.*`/`collections.*`/`math.*` 在 Flint 引擎里有同名命名空间，
+        // 故转换**保留原写法**（MigrationMap 末尾的自映射有意覆盖早先的
+        // "命名空间 → 全局"映射）：人工比对更直观，也不踩成员调用的歧义。
+        // 引擎侧可用性由 Core 的 `比较函数不再抛Int32装箱异常` 锁定
+        //（`compare.Ge 5 (math.add 3 1)` 曾报 "Object must be of type Int32"，
+        //  根因是比较函数的 CompareTo 装箱缺陷，与调用形态无关）
+        var result = Convert("{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}");
+        // 输出与输入**逐字相同**：命名空间调用在 Go 与 Scriban 里是同一种写法，
+        // 而 Flint 引擎有同名命名空间（`compare`/`math`/`collections`/`strings`/`path`/`urls`），
+        // 故转换是"保形"的——不是漏转。此前的"漏转"结论是误判
+        Assert.Equal("{{ if compare.Ge 5 (math.add 3 1) }}T{{ end }}", result.Trim());
     }
 
     [Fact]

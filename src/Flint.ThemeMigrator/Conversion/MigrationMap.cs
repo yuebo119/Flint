@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // AST → Scriban 转换器
 //
 // 设计要点：
@@ -164,6 +164,15 @@ internal sealed class MigrationMap
             ("collections.Seq", "collections.Seq"), ("collections.KeyVals", "collections.KeyVals"),
             ("collections.IsSet", "collections.IsSet"), ("collections.Append", "collections.Append"),
             ("collections.After", "collections.After"), ("collections.Group", "collections.Group"),
+            // **有意覆盖上面那批"命名空间 → 全局"的映射**：Flint 引擎里这些命名空间
+            // 与主题写法同名可用（`compare.*`/`collections.*`/`transform.*`/`urls.*`），
+            // 保留主题原写法更利于人工比对，也不会踩"成员调用 + 空格实参"的歧义。
+            // 引擎探针（2026-09-16）逐条确认可用：`compare.Ge 5 (math.add 3 1)` → true、
+            // `if (compare.Ge 5 (math.add 3 1))` → 进入、`math.add 3 (math.mul 2 2)` → 7、
+            // `collections.Delimit (slice "a" "b") ", "` → "a, b"。
+            // （此前把 `compare.Ge 5 (math.add 3 1)` 报 "Object must be of type Int32"
+            //  归因于"括号内的命名空间调用被误解析"，实为比较函数用 IComparable.CompareTo
+            //  装箱 int 与 double 相比的缺陷——已在引擎侧修掉，与调用形态无关）
             ("compare.Default", "compare.Default"), ("compare.Conditional", "compare.Conditional"),
             ("compare.Eq", "compare.Eq"), ("compare.Ne", "compare.Ne"),
             ("compare.Gt", "compare.Gt"), ("compare.Ge", "compare.Ge"),
