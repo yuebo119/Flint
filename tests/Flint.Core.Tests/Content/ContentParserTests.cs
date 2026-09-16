@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // ContentParser 单元测试
 
 using System.Text;
@@ -653,7 +653,7 @@ public class DateSourcesAndTimeZoneTests
     }
 
     [Fact]
-    public async Task ParseAsync_NoSiteTimeZone_NoOffsetDate_KeepsLegacyBehavior()
+    public async Task ParseAsync_无站点时区时无偏移日期按UTC解释()
     {
         var parser = new ContentParser();
         var file = new ContentFile
@@ -665,9 +665,9 @@ public class DateSourcesAndTimeZoneTests
 
         var result = await parser.ParseAsync(file);
 
-        // 旧行为：无站点时区时无偏移日期按本机时区解释
-        Assert.Equal(TimeZoneInfo.Local.GetUtcOffset(new DateTime(2024, 3, 15, 10, 0, 0)),
-            result.Metadata.Date!.Value.Offset);
+        // Hugo 探针：无 timeZone 配置的站点把 `date: 2026-03-10` 渲染成 `+0000`
+        //（此前按本机时区解释 → `+0800`，github-style 的 RFC1123 输出差 8 小时）
+        Assert.Equal(TimeSpan.Zero, result.Metadata.Date!.Value.Offset);
     }
 
     private sealed class StubGitDateProvider(DateTimeOffset time) : IGitDateProvider

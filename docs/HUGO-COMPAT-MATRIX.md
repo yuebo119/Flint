@@ -29,6 +29,9 @@
 | L′ | 日期值的成员：`.IsZero`/`.Unix` | Hugo 的 `time.Time` 值方法；**无日期页的 `.Date` 是零值时间** `0001-01-01T00:00:00Z` | 迁移器把 `.IsZero`/`.Unix` 改写为 `date.is_zero`/`date.unix`（带括号，避免被外层函数当多实参）；`SiteBuilder.Tree` 的 `Date` 缺省改为 `DateTimeOffset.MinValue` | `HugoCompatSemanticsTests.零值日期的IsZero与渲染/日期值方法的取值`、`MigratorTests.日期值方法改写为引擎函数/日期值方法在变量接收者上也改写` |
 | M′ | 参数键别名与页成员 `.Site` | `.Site` 在任意页面可用；参数表按原键名访问（`dateFormat`），迁移产物用 snake（`date_format`） | `WrapParamValue` 递归包装嵌套字典与数组（每层都补 snake 别名）；`LazyPageObject` 暴露 `site`/`Site`（按构建登记站点对象） | `PageCollectionAndParamsTests`（既有）+ 主题回归：stack 的 `:date_full`、loveit/papermod 的参数表 |
 | N′ | `i18n` 的复数选形与插值 | 键为**点分嵌套**；值是**复数子表**（`one`/`other`…）时按计数选形（`1 → one`、其余 `other`；**无计数 → other**）；值里的 `{{ .Count }}`/dict 键做插值，缺失渲染 `<no value>`；缺键输出空 | 加载端 `Translations.Flatten` 递归摊平为 `key.one`/`key.other`；引擎 `I18nFunction` 按计数选形 + 正则插值（2 参签名，第二参可为数字或 dict） | `I18nTests.Load_嵌套复数子表应摊平为点分键`、`HugoCompatSemanticsTests.I18n复数选形与插值`（断言值即探针值） |
+| O′ | 跨文件命名模板的 `block` | Hugo 的命名模板是**全局**的：`partials/` 里的 `{{ block "X" . }}` 渲染任何文件 `{{ define "X" }}` 的块体 | 迁移器扫描"partial 里的 block 指向别的 partial 的 define"，把块体提取为 `_partials/<名>__block.html` 并把 block 调用点改为 `partial`（默认体用 `if false` 吞掉） | `MigratorTests.跨文件block改为渲染提取出的块体` |
+| Q′ | 分类页的 `.Type` | `/tags/`（taxonomy 列表页）与 `/tags/x/`（term 页）的 `.Type` 都是**分类名**（`tags`），`.Kind` 才是 taxonomy/term（探针实测） | `SiteBuilder.Render` 的分类页构造改用 `taxPage.TaxonomyName`（此前写死 `"taxonomy"`，主题按 `.Type` 分支的列表渲染整段落空——github-style 的 posts.html 实测） | `PageCollectionAndParamsTests`（既有）+ 主题回归：github-style 的 `/categories/general/` 列表 |
+| P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -560,6 +563,25 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**十七、跨文件命名模板的 `block`（Hugo 的命名模板是全局的）**。`partials/` 下的文件里写
+`{{ block "posts" . }}{{ end }}`，而 `posts` 的 `{{ define }}` 在另一个 partial 里：
+Hugo 的 `block` 会渲染**任何文件** define 的同名模板（github-style 的 user-profile.html
+就是这么拿到文章列表的）。迁移器的槽位机制只覆盖"baseof 声明 + 页面模板覆盖"的同名形态，
+这类 block 落到空兜底 → github-style 的列表页/分类页整段文章列表不渲染。
+修法：迁移器扫描这种跨文件引用，把块体提取为 `_partials/<名>__block.html`，
+block 调用点改为 `partial` 调用（默认体用 `if false` 吞掉——命名模板已存在）。
+github-style 结构相似度 76.8 → **83.1**、文本 93.1 → **97.4**。
+
+**十八、日期解析的默认时区与"布局产出策略"**。两条彼此相关的修正：
+- **无 `timeZone` 配置时按 UTC 解释无偏移日期**（Hugo 的 timeZone 默认就是 UTC；探针：
+  无配置站点里 `date: 2026-03-10` 渲染成 `+0000`）。此前按本机时区解释 →
+  github-style 的 RFC1123 输出差 8 小时（`+0800` vs `+0000`）。
+- **含时区 token 的布局不编译期转换**：.NET 的自定义格式串没有"无冒号偏移"
+  （Go 的 `-0700` → "+0000"）也没有时区缩写（Go 的 `MST` → "UTC"），只有引擎拿到
+  **原始 Go 布局**才能做这两处后处理（`ConvertForEmit` 保留原样）。
+另补布局表的常用变体（`Jan. 2, 2006`、`Mon, Jan 2, 2006`、RFC1123/RFC1123Z）。
+console 的 `Feb. 2, 2026` 乱码与 github-style 的偏移格式因此对齐。
 
 **十六、i18n 的复数子表与插值**。加载端只处理**一层**表且只认 `other`：主题普遍使用的
 嵌套子表（`[article.readingTime] one/other`、`[error.404_title]` 这类）整块被丢弃，

@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // 模板级转换：结构块（if/with/range/define/block）编排
 //
 // 结构性约束（实测得出）：
@@ -35,10 +35,13 @@ internal sealed partial class TemplateConverter(
     bool baseofAvailable = false,
     bool selfNamedTemplateExtracted = false,
     IReadOnlySet<string>? slotNames = null,
-    bool isBaseTemplate = false)
+    bool isBaseTemplate = false,
+    IEnumerable<string>? crossFileBlockNames = null)
 {
     private readonly ScribanConverter _expr =
         new(map, valueReturningPartials, selfPartialName, selfNamedTemplateExtracted);
+    private readonly HashSet<string> _crossFileBlocks = new(
+        crossFileBlockNames ?? [], StringComparer.Ordinal);
     private readonly List<(string Kind, string? Var)> _blockStack = [];
     private readonly List<string> _definedBlocks = [];
     private int _syntheticIndex;
@@ -454,6 +457,19 @@ internal sealed partial class TemplateConverter(
             case "block":
             {
                 var name = kb.Names.Count > 0 ? kb.Names[0] : "unnamed";
+                // **跨文件命名模板**（partial 里 `block "X"` 指向别的 partial 的 define）：
+                // Hugo 的命名模板是全局的，提取出的块体用 partial 调用来渲染；
+                // 命名模板已存在，故默认体不会被用到——用 `if false` 吞掉
+                //（github-style 的 user-profile.html：`block "posts"` 此前落到空兜底，
+                //  整段文章列表不渲染）
+                if (_crossFileBlocks.Contains(name))
+                {
+                    _blockStack.Add(("skip", null));
+                    return Wrap(
+                        $"partial \"_partials/{SanitizeIdent(name)}__block\" }}}}{{{{ if false",
+                        trimL, trimR);
+                }
+
                 // extra 存**块名本身**：end 分支用它拼 `__def_<name>`（默认值变量名）。
                 // 此前存 "blk_"+name，使产出的兜底变量名错为 `__def_blk_title`
                 // （capture 的是 `__def_title`）→ block 默认内容丢失（mini fixture 实测）
@@ -806,7 +822,7 @@ internal sealed partial class TemplateConverter(
     /// 直接拼接会产出 `__def_body-class`（`-` 被解析为减法）→
     /// "Unsupported target expression for assignment"（Stack 实测 3 处）
     /// </summary>
-    private static string SanitizeIdent(string name)
+    internal static string SanitizeIdent(string name)
     {
         var sb = new System.Text.StringBuilder(name.Length);
         foreach (var ch in name)

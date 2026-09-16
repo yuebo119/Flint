@@ -449,7 +449,7 @@ internal sealed class ScribanConverter(
                 {
                     if (a is Parsing.LiteralExpr litFe)
                     {
-                        fmtArgsFe.Add("\"" + GoDateFormatConverter.Convert(litFe.Unquoted) + "\"");
+                        fmtArgsFe.Add("\"" + GoDateFormatConverter.ConvertForEmit(litFe.Unquoted) + "\"");
                     }
                     else
                     {
@@ -564,7 +564,7 @@ internal sealed class ScribanConverter(
                 // Go 格式串会被当表达式加括号）
                 return new ConversionResult(
                     $"date.to_string {ParenthesizeIfNeeded(recvConv.Text)} " +
-                    "\"" + GoDateFormatConverter.Convert(fmtLit.Unquoted) + "\"",
+                    "\"" + GoDateFormatConverter.ConvertForEmit(fmtLit.Unquoted) + "\"",
                     ConversionKind.Equivalent);
             }
         }
@@ -772,7 +772,7 @@ internal sealed class ScribanConverter(
                     // 回落默认 "yyyy-MM-dd"）。stack 的
                     // `<time datetime='{{ $Page.Date.Format "2006-01-02T15:04:05Z07:00" }}'>`
                     // 此前产出 `datetime='2026-01-15'`（实测）
-                    fmtArgs.Add("\"" + GoDateFormatConverter.Convert(lit.Unquoted) + "\"");
+                    fmtArgs.Add("\"" + GoDateFormatConverter.ConvertForEmit(lit.Unquoted) + "\"");
                 }
                 else
                 {
