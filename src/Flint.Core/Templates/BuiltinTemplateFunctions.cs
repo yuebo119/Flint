@@ -2203,10 +2203,16 @@ public sealed partial class BuiltinTemplateFunctions
     {
         null => null,
         string => null,
-        // **集合判定要在 ScriptObject 排除之前**：页面集合是
-        // `ScriptObject + IList<ScriptObject>`（LazyPageList），先按 ScriptObject 排除会漏
-        System.Collections.ICollection collection => collection.Count,
-        System.Collections.IEnumerable sequence => sequence.Cast<object?>().Count(),
+        // **页面集合接口必须先判**：LazyPageList 同时是 ScriptObject 与 IList<ScriptObject>，
+        // 而 ScriptObject 自身实现 System.Collections.ICollection（Count = **成员数**，
+        // 实测 56）——先判 ICollection 会把集合长度算成成员数（`eq .Pages 2` 恒 false）
+        IList<Scriban.Runtime.ScriptObject> list => list.Count,
+        System.Collections.Generic.IEnumerable<Scriban.Runtime.ScriptObject> sequence
+            => sequence.Count(),
+        System.Collections.ICollection collection when value is not Scriban.Runtime.ScriptObject
+            => collection.Count,
+        System.Collections.IEnumerable other when value is not Scriban.Runtime.ScriptObject
+            => other.Cast<object?>().Count(),
         _ => null
     };
 

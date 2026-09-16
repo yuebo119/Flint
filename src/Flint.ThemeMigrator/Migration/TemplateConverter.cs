@@ -51,13 +51,91 @@ internal sealed partial class TemplateConverter(
     public IReadOnlyList<string> Diagnostics => _expr.Diagnostics;
 
     /// <summary>转换整个模板</summary>
+    /// <summary>
+    /// 把槽位默认体的 capture 提到文件最前（见 <see cref="Convert"/> 的说明）。
+    /// 只处理**本文件顶层**的槽位 define；被上提的 part 索引记入 <paramref name="skip"/>
+    /// </summary>
+    private void HoistSlotDefaults(
+        IReadOnlyList<TemplatePart> parts, StringBuilder output, HashSet<int> skip)
+    {
+        for (var i = 0; i < parts.Count; i++)
+        {
+            if (parts[i] is not ActionPart { Body: KeywordBody { Name: "define", Names.Count: > 0 } d }
+                || !slotNames!.Contains(d.Names[0]))
+            {
+                continue;
+            }
+
+            // 收集到匹配的 end（含嵌套层数），与 InlinePartialExtractor 同一手法
+            var depth = 1;
+            var body = new List<TemplatePart>();
+            var j = i + 1;
+            while (j < parts.Count && depth > 0)
+            {
+                if (parts[j] is ActionPart { Body: KeywordBody inner } &&
+                    inner.Name is "define" or "if" or "with" or "range" or "block")
+                {
+                    depth++;
+                }
+                else if (parts[j] is ActionPart { Body: KeywordBody { Name: "end" } })
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        j++;
+                        break;
+                    }
+                }
+
+                body.Add(parts[j]);
+                j++;
+            }
+
+            // 体用同一套选项转换（不含 isBaseTemplate：默认体自己不再上提）
+            var innerConverter = new TemplateConverter(
+                map, valueReturningPartials, selfPartialName, baseofAvailable: false,
+                selfNamedTemplateExtracted, slotNames, isBaseTemplate: false);
+            output.Append("{{ capture __def_")
+                .Append(SanitizeIdent(d.Names[0]))
+                .Append(" }}")
+                .Append(innerConverter.Convert(body))
+                .Append("{{ end }}");
+
+            for (var k = i; k < j; k++)
+            {
+                skip.Add(k);
+            }
+
+            i = j - 1;
+        }
+    }
+
     public string Convert(IReadOnlyList<TemplatePart> parts)
     {
         var sb = new StringBuilder();
         var scope = new List<string>(); // range/with 上下文变量栈
 
+        // **槽位默认体上提**（hugo-book 的 baseof 形态）：`{{ template "X" . }}` 可能出现在
+        // `{{ define "X" }}` **之前**，而转换把 define 就地 capture 成 `__def_X`——
+        // Scriban 的 capture 是顺序执行的赋值，用在前、定义在后 → 兜底拿到空值
+        //（hugo-book 的 baseof：`{{ template "menu-container" . }}` 在文件开头、
+        //  define 在文件末尾 → 侧边菜单/toc/header 全部不渲染，实测）。
+        // Go 模板的 define 是**解析期**注册的，与位置无关，故这里把槽位默认体统一
+        // 提到文件最前面
+        var hoisted = new StringBuilder();
+        var hoistedParts = new HashSet<int>();
+        if (isBaseTemplate && slotNames is not null)
+        {
+            HoistSlotDefaults(parts, hoisted, hoistedParts);
+        }
+
         for (var i = 0; i < parts.Count; i++)
         {
+            if (hoistedParts.Contains(i))
+            {
+                continue;
+            }
+
             var part = parts[i];
             switch (part)
             {
@@ -84,6 +162,12 @@ internal sealed partial class TemplateConverter(
                     sb.Append(ConvertAction(a, scope));
                     break;
             }
+        }
+
+        if (hoisted.Length > 0)
+        {
+            hoisted.Append(sb);
+            sb = hoisted;
         }
 
         // 子模板块通过 include 命名参数传给 baseof（若有 define）。

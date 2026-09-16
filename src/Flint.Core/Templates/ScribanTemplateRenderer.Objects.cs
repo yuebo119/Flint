@@ -44,6 +44,98 @@ public sealed partial class ScribanTemplateRenderer
         return SharedSiteObjects.GetValue(site, static s => BuildSiteObject(s));
     }
 
+        /// <summary>
+        /// 识别"分组集合"并返回分组边界（`GroupByDate`/`GroupBy` 的产物：元素带
+        /// <c>key</c> 与 <c>pages</c>）。非分组形状返回 null
+        /// </summary>
+        /// <summary>
+        /// 页面序列的**元素个数**：**不能**用非泛型 <see cref="System.Collections.IEnumerable"/>
+        /// 枚举——页面集合（LazyPageList）继承 Scriban 的 ScriptObject，而
+        /// <c>IEnumerable.GetEnumerator()</c> 会落到 ScriptObject 的**成员枚举器**
+        /// （数出 56 个成员而不是 2 个页面，实测）。故按"页面序列接口优先"取数
+        /// </summary>
+        private static int CountPages(object? value) => value switch
+        {
+            // **页面集合接口必须先判**：LazyPageList 继承 ScriptObject，而 ScriptObject
+            // 自身实现 System.Collections.ICollection（Count = **成员数**，实测 56）——
+            // 先判 ICollection 会拿到成员数而不是页面数
+            IList<ScriptObject> list => list.Count,
+            IEnumerable<ScriptObject> sequence => sequence.Count(),
+            System.Collections.ICollection collection when value is not ScriptObject => collection.Count,
+            System.Collections.IEnumerable other when value is not ScriptObject => other.Cast<object?>().Count(),
+            _ => 0
+        };
+
+        /// <summary>页面序列枚举（同上：优先泛型接口，避免 ScriptObject 的成员枚举器）</summary>
+        private static IEnumerable<object?> EnumeratePages(object? value) => value switch
+        {
+            IEnumerable<ScriptObject> sequence => sequence.Cast<object?>(),
+            System.Collections.IEnumerable other when value is not ScriptObject => other.Cast<object?>(),
+            _ => []
+        };
+
+        private static List<PaginatorGroupBoundary>? ResolveGroupBoundaries(object? value)
+        {
+            if (value is not System.Collections.IEnumerable sequence || value is string)
+            {
+                return null;
+            }
+
+            var boundaries = new List<PaginatorGroupBoundary>();
+            foreach (var item in sequence)
+            {
+                if (item is not ScriptObject group ||
+                    !group.TryGetValue(null, default, "key", out var key) ||
+                    !group.TryGetValue(null, default, "pages", out var pages) ||
+                    pages is not System.Collections.IEnumerable pageSequence ||
+                    pages is string)
+                {
+                    return null;
+                }
+
+                boundaries.Add(new PaginatorGroupBoundary(
+                    key?.ToString() ?? "", CountPages(pageSequence)));
+            }
+
+            return boundaries;
+        }
+
+        /// <summary>分组集合 → 扁平页面序列（按组顺序，组内保持原序）</summary>
+        private static List<FlintPageContext> FlattenGroupedPages(object? value)
+        {
+            var result = new List<FlintPageContext>();
+            if (value is not System.Collections.IEnumerable sequence || value is string)
+            {
+                return result;
+            }
+
+            foreach (var item in sequence)
+            {
+                if (item is not ScriptObject group ||
+                    !group.TryGetValue(null, default, "pages", out var pages) ||
+                    pages is not System.Collections.IEnumerable pageSequence ||
+                    pages is string)
+                {
+                    continue;
+                }
+
+                foreach (var page in EnumeratePages(pageSequence))
+                {
+                    switch (page)
+                    {
+                        case LazyPageObject lazy:
+                            result.Add(lazy.PageContext);
+                            break;
+                        case FlintPageContext context:
+                            result.Add(context);
+                            break;
+                    }
+                }
+            }
+
+            return result;
+        }
+
     internal static ScriptObject CreatePageObject(
         FlintPageContext page,
         IReadOnlyList<FlintPageContext>? siteRegularPages = null,
@@ -733,6 +825,17 @@ public sealed partial class ScribanTemplateRenderer
             IReadOnlyList<FlintPageContext> explicitItems = [];
             var hasExplicitCollection =
                 arguments.Count > 0 && TryResolvePageCollection(arguments[0], out explicitItems);
+            // **分组集合**（`.Paginate (.Pages.GroupByDate "2006")`）：Hugo 探针（v0.166，
+            // 5 篇跨 2 年、pagerSize=2）——`TotalNumberOfElements` = 5（切的是**底层页面**）、
+            // `TotalPages` = 3、第 1 页 `PageGroups` = [2025:2]、第 2 页 = [2025:1][2024:1]。
+            // 故把分组摊平为页面参与分页，同时记住分组边界供 `page_groups` 重新切分
+            var groupBoundaries = ResolveGroupBoundaries(arguments.Count > 0 ? arguments[0] : null);
+            if (groupBoundaries is not null && groupBoundaries.Count > 0)
+            {
+                hasExplicitCollection = true;
+                explicitItems = FlattenGroupedPages(arguments[0]);
+            }
+
             var items = hasExplicitCollection ? explicitItems : page.Pages ?? [];
 
             // **显式页大小**：Hugo 的 `.Paginate $pages N` 第二参覆盖站点 pagerSize
@@ -766,6 +869,11 @@ public sealed partial class ScribanTemplateRenderer
             var currentPageNumber = bound?.PageNumber ?? 1;
 
             var pager = PaginatorView.Create(items, currentPageNumber, size, baseRel, paginatePath);
+            if (groupBoundaries is not null && groupBoundaries.Count > 0)
+            {
+                pager = pager.WithGroupBoundaries(groupBoundaries);
+            }
+
             // 登记：后续对 `page.paginator` 的读取要返回这一个（Hugo 语义）
             ScribanTemplateRenderer.NotePaginatePager(page.RelPermalink, pager);
             return BuildPaginatorObject(pager);
@@ -2153,6 +2261,24 @@ public sealed partial class ScribanTemplateRenderer
     // 随构建周期回收（与 SharedPageObjects 同一模型）
     private static readonly ConditionalWeakTable<PaginatorView, ScriptObject> SharedPaginatorObjects = new();
 
+    /// <summary>分组分页的 <c>page_groups</c>：每组 { key, pages }（页面集合同型，可继续用方法族）</summary>
+    private static ScriptArray BuildPageGroups(PaginatorView view)
+    {
+        var arr = new ScriptArray();
+        foreach (var group in view.PageGroups)
+        {
+            arr.Add(new ScriptObject
+            {
+                ["key"] = group.Key,
+                ["Key"] = group.Key,
+                ["pages"] = GetSharedPageList(group.Pages),
+                ["Pages"] = GetSharedPageList(group.Pages)
+            });
+        }
+
+        return arr;
+    }
+
     private static ScriptObject BuildPaginatorObject(PaginatorView view)
     {
         return SharedPaginatorObjects.GetValue(view, static v => BuildPaginatorObjectCore(v));
@@ -2184,6 +2310,9 @@ public sealed partial class ScribanTemplateRenderer
         so["prev"] = view.Prev is not null ? new PagerObject(view.Prev) : null;
         so["next"] = view.Next is not null ? new PagerObject(view.Next) : null;
         so["pagers"] = new LazyPagers(view.Pagers);
+        // **PageGroups**（Hugo 的 `.Paginate (.Pages.GroupByDate "2006")` 形态）：
+        // 每个组是 { key, pages } 对象；非分组分页为空列表（探针：`len .PageGroups` = 0）
+        so["page_groups"] = BuildPageGroups(view);
 
         // Hugo 兼容别名（PascalCase）：Hugo 的 Pager 字段是 Pascal（.TotalPages/
         // .HasPrev/.Prev.URL），而 Scriban 成员查找大小写敏感——只注册 snake
@@ -2197,7 +2326,8 @@ public sealed partial class ScribanTemplateRenderer
                      ("has_prev", "HasPrev"), ("has_next", "HasNext"),
                      ("is_first", "IsFirst"), ("is_last", "IsLast"),
                      ("url", "URL"), ("first", "First"), ("last", "Last"),
-                     ("prev", "Prev"), ("next", "Next"), ("pagers", "Pagers")
+                     ("prev", "Prev"), ("next", "Next"), ("pagers", "Pagers"),
+                     ("page_groups", "PageGroups")
                  })
         {
             if (so.ContainsKey(snake) && !so.ContainsKey(pascal))
