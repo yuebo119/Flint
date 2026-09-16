@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // i18n 翻译表加载（主题系统 P3）：站点 i18n/<lang>.toml 优先、主题回退，
 // 文件形态双支持——扁平键值（hello = "你好"）与 Hugo 形态（[hello] other = "你好"）
 
@@ -67,6 +67,10 @@ public static class Translations
         }
     }
 
+    /// <summary>Hugo 的复数形式键（go-i18n 的 CLDR 分类）</summary>
+    private static readonly string[] PluralForms =
+        ["zero", "one", "two", "few", "many", "other"];
+
     private static void MergeFile(Dictionary<string, string> target, string file)
     {
         var table = TomlynCompat.TryParseTable(File.ReadAllText(file));
@@ -75,17 +79,44 @@ public static class Translations
             return;
         }
 
+        Flatten(target, "", table);
+    }
+
+    /// <summary>
+    /// 递归摊平为**点分键**（`[article.readingTime] one/other` → `article.readingTime.one`
+    /// 与 `article.readingTime.other`）。此前只处理**一层**且只认 `other`：
+    /// 嵌套子表（主题里普遍存在的 `[section.key]` 形态）整块被丢弃 →
+    /// `i18n "article.readingTime" N` 输出空（stack 的阅读时长实测）。
+    /// 同时把 `other` 形另存为**主键**，使不带复数的调用（`i18n "key"`）仍能取到值
+    /// </summary>
+    private static void Flatten(Dictionary<string, string> target, string prefix, TomlTable table)
+    {
         foreach (var (key, value) in table)
         {
+            var path = prefix.Length == 0 ? key : prefix + "." + key;
             switch (value)
             {
-                case TomlTable nested when nested.TryGetValue("other", out var other):
-                    target[key] = other?.ToString() ?? "";
+                case TomlTable nested:
+                    Flatten(target, path, nested);
+                    var hasPlural = PluralForms.Any(nested.ContainsKey);
+                    if (hasPlural)
+                    {
+                        // 复数键另存主键：`i18n "key"`（无计数）用 other 形（Hugo 探针：
+                        // 无计数时选 other，`.Count` 缺失渲染为 `<no value>`）
+                        // 主键取 **other** 形优先（Hugo 探针：无计数调用走 other）
+                        var fallback = PluralForms
+                            .OrderBy(form => form == "other" ? 0 : 1)
+                            .Select(form => nested.ContainsKey(form) ? nested[form]?.ToString() : null)
+                            .FirstOrDefault(v => !string.IsNullOrEmpty(v));
+                        if (!string.IsNullOrEmpty(fallback))
+                        {
+                            target[path] = fallback;
+                        }
+                    }
+
                     break;
-                case TomlTable:
-                    break; // 复数形态的其他键（one/two/…）暂不支持，跳过
                 default:
-                    target[key] = value?.ToString() ?? "";
+                    target[path] = value?.ToString() ?? "";
                     break;
             }
         }

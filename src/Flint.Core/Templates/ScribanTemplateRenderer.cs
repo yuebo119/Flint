@@ -2287,23 +2287,115 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>
     /// i18n 翻译函数包装：单参数（翻译 ID），缺键返回空串
     /// </summary>
+    /// <summary>
+    /// Hugo 的 <c>i18n</c>/<c>lang.Translate</c>（v0.166 探针值）：
+    /// <list type="bullet">
+    /// <item>键支持**点分嵌套**（<c>article.readingTime</c>）；缺键输出空</item>
+    /// <item>值可以是**复数子表**：按计数选形（美式英语 <c>1 → one</c>、其余 <c>other</c>，
+    /// 探针：<c>i18n "readingTime" 1</c> → "One minute read"、<c>… 5</c> → "5 minutes read"、
+    /// <c>… 0</c> → "0 minutes read"）；**不给计数时选 other 形**</item>
+    /// <item>值里的 Go 模板占位（<c>{{ .Count }}</c>）用上下文（计数或 dict）插值——
+    /// blowfish 的 <c>i18n "footer.powered_by" (dict "Hugo" … "Theme" …)</c> 即此形态；
+    /// 缺失的键渲染为 <c>&lt;no value&gt;</c>（Hugo 同样如此）</item>
+    /// </list>
+    /// </summary>
     private sealed class I18nFunction(IReadOnlyDictionary<string, string> translations)
         : Scriban.Runtime.IScriptCustomFunction
     {
+        private static readonly string[] PluralForms =
+            ["zero", "one", "two", "few", "many", "other"];
+
         public object? Invoke(
             Scriban.TemplateContext context,
             Scriban.Syntax.ScriptNode? callerContext,
-            Scriban.Runtime.ScriptArray arguments,
+            ScriptArray arguments,
             Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
             var key = arguments.Count > 0 ? arguments[0]?.ToString() : null;
-            return key is not null && translations.TryGetValue(key, out var value) ? value : "";
+            if (string.IsNullOrEmpty(key))
+            {
+                return "";
+            }
+
+            var contextValue = arguments.Count > 1 ? arguments[1] : null;
+            var value = Resolve(key, contextValue);
+            return value is null ? "" : Interpolate(value, contextValue);
+        }
+
+        /// <summary>按键取形：有复数子表时按计数选形，否则取主键</summary>
+        private string? Resolve(string key, object? contextValue)
+        {
+            if (PluralForms.Any(form => translations.ContainsKey(key + "." + form)))
+            {
+                var count = ExtractCount(contextValue);
+                var form = count == 1 ? "one" : "other";
+                if (translations.TryGetValue(key + "." + form, out var selected))
+                {
+                    return selected;
+                }
+
+                foreach (var candidate in PluralForms)
+                {
+                    if (translations.TryGetValue(key + "." + candidate, out var fallback))
+                    {
+                        return fallback;
+                    }
+                }
+
+                return null;
+            }
+
+            return translations.TryGetValue(key, out var value) ? value : null;
+        }
+
+        /// <summary>计数：第二参是数字时直接取；是 dict 时取它的 <c>Count</c> 键</summary>
+        private static long? ExtractCount(object? contextValue) => contextValue switch
+        {
+            null => null,
+            string s when long.TryParse(s, out var parsed) => parsed,
+            int i => i,
+            long l => l,
+            double d => (long)d,
+            ScriptObject obj when obj.ContainsKey("Count") => ExtractCount(obj["Count"]),
+            _ => null
+        };
+
+        /// <summary>
+        /// Go 模板占位插值：<c>{{ .Key }}</c>（含 <c>{{.Key}}</c> 与内部空白）取上下文值。
+        /// 上下文是 dict 时按键取；是计数时只有 <c>Count</c> 可用。
+        /// 占位但取不到值的渲染为 <c>&lt;no value&gt;</c>（Hugo 探针同）
+        /// </summary>
+        private static string Interpolate(string value, object? contextValue)
+        {
+            if (!value.Contains("{{", StringComparison.Ordinal))
+            {
+                return value;
+            }
+
+            return System.Text.RegularExpressions.Regex.Replace(
+                value,
+                @"\{\{\s*\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
+                match =>
+                {
+                    var field = match.Groups[1].Value;
+                    object? replacement = null;
+                    if (contextValue is ScriptObject obj)
+                    {
+                        obj.TryGetValue(null, default, field, out replacement);
+                    }
+                    else if (string.Equals(field, "Count", StringComparison.OrdinalIgnoreCase))
+                    {
+                        replacement = contextValue;
+                    }
+
+                    return replacement?.ToString() ?? "<no value>";
+                });
         }
 
         public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
             Scriban.TemplateContext context,
             Scriban.Syntax.ScriptNode? callerContext,
-            Scriban.Runtime.ScriptArray arguments,
+            ScriptArray arguments,
             Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
             return new System.Threading.Tasks.ValueTask<object?>(
@@ -2312,7 +2404,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         public int RequiredParameterCount => 1;
 
-        public int ParameterCount => 1;
+        public int ParameterCount => 2;
 
         public Scriban.Runtime.ScriptVarParamKind VarParamKind =>
             Scriban.Runtime.ScriptVarParamKind.Direct;
@@ -2320,10 +2412,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         public Type ReturnType => typeof(object);
 
         public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
-            new Scriban.Runtime.ScriptParameterInfo(typeof(string), "key");
+            new(index == 0 ? typeof(string) : typeof(object), index == 0 ? "key" : "context");
 
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
-            new Scriban.Runtime.ScriptParameterInfo(typeof(object), "result");
+            new(typeof(string), "result");
     }
 
     private void CollectDependencies(
