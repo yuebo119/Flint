@@ -1881,16 +1881,25 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         };
 
     /// <summary>
-    /// Hugo 内置 opengraph.html 的 Scriban 等价：输出 og:* 元信息。
-    /// 变量缺失时用 default 兜底，不产生空标签
+    /// Hugo 内置 opengraph.html 的 Scriban 等价：输出 og:* / article:* 元信息。
+    /// 逐项对齐 Hugo 内部模板（v0.166 实测产物）：
+    /// og:url → og:site_name → og:title → og:description → **og:locale** → og:type，
+    /// 常规页再补 article:published_time/modified_time/section/tag。
+    /// **空值不输出标签**（此前无条件输出 og:description，Hugo 在描述为空时整条省略
+    /// ——跨主题审计实测 96 页多出该标签）
     /// </summary>
     private static string BuildOpenGraphTemplate() =>
         """
-        <meta property="og:title" content="{{ page.title | default site.title }}" />
-        <meta property="og:description" content="{{ page.description | default page.summary | default site.params.description }}" />
-        <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}" />
-        <meta property="og:url" content="{{ page.permalink | default site.base_url }}" />
+        <meta property="og:url" content="{{ page.permalink }}" />
         {{ if site.title }}<meta property="og:site_name" content="{{ site.title }}" />{{ end }}
+        {{ if page.title }}<meta property="og:title" content="{{ page.title }}" />{{ end }}
+        {{ $__desc = page.description | default page.summary | default site?.params?.description }}{{ if $__desc }}<meta property="og:description" content="{{ $__desc }}" />{{ end }}
+        {{ $__locale = page.params?.locale | default site?.language }}{{ if $__locale }}<meta property="og:locale" content="{{ $__locale }}" />{{ end }}
+        <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}" />
+        {{ if is_single }}{{ if page.date }}<meta property="article:published_time" content="{{ date.to_string page.date "yyyy-MM-ddTHH:mm:sszzz" }}" />{{ end }}
+        {{ if page.lastmod }}<meta property="article:modified_time" content="{{ date.to_string page.lastmod "yyyy-MM-ddTHH:mm:sszzz" }}" />{{ end }}
+        {{ if page.section }}<meta property="article:section" content="{{ page.section }}" />{{ end }}
+        {{ for $__t in page.tags }}<meta property="article:tag" content="{{ $__t }}" />{{ end }}{{ end }}
         """;
 
     /// <summary>Hugo 内置 schema.html 的 Scriban 等价：输出 JSON-LD 骨架</summary>
@@ -1902,8 +1911,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>Hugo 内置 twitter_cards.html 的 Scriban 等价：输出 twitter:* 元信息</summary>
     private static string BuildTwitterCardsTemplate() =>
         """
-        <meta name="twitter:title" content="{{ page.title | default site.title }}" />
-        <meta name="twitter:description" content="{{ page.description | default page.summary }}" />
+        {{ if page.title }}<meta name="twitter:title" content="{{ page.title }}" />{{ end }}
+        {{ $__tdesc = page.description | default page.summary }}{{ if $__tdesc }}<meta name="twitter:description" content="{{ $__tdesc }}" />{{ end }}
         <meta name="twitter:card" content="summary_large_image" />
         """;
 
