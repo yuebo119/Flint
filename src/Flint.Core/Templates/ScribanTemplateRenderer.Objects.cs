@@ -616,6 +616,14 @@ public sealed partial class ScribanTemplateRenderer
                 return true;
             }
 
+            // .Site：Hugo 的页面成员（`.Site.Params…`）；迁移产物里 `$page.Site.X` 落到
+            // `$page.site.x`（stack 的 `$Page.Site.Params.dateFormat.published` 实测）
+            if (member is "site" or "Site")
+            {
+                value = ScribanTemplateRenderer.CurrentSiteObject();
+                return true;
+            }
+
             // prev/next 懒构建：CWT 复用（相邻页面对象全构建内共享），只读不回写
             if (member is "prev_page" or "PrevPage")
             {
@@ -1719,7 +1727,7 @@ public sealed partial class ScribanTemplateRenderer
 
         foreach (var kv in source)
         {
-            obj[kv.Key] = kv.Value;
+            obj[kv.Key] = WrapParamValue(kv.Value);
         }
 
         foreach (var kv in source)
@@ -1727,12 +1735,27 @@ public sealed partial class ScribanTemplateRenderer
             var snake = ToSnakeCaseKey(kv.Key);
             if (!string.Equals(snake, kv.Key, StringComparison.Ordinal) && !obj.ContainsKey(snake))
             {
-                obj[snake] = kv.Value;
+                obj[snake] = WrapParamValue(kv.Value);
             }
         }
 
         return obj;
     }
+
+    /// <summary>
+    /// 参数值**递归包装**：嵌套字典同样转 ScriptObject 并补 snake_case 别名。
+    /// 迁移器把 `.Site.Params.dateFormat.published` 归一成 `site.params.date_format.published`，
+    /// 只做顶层别名时**嵌套层取不到值**——stack 的
+    /// <c>{{ .Date | time.Format .Site.Params.dateFormat.published }}</c> 因此回落默认格式
+    ///（文本渲染成 `2026-01-15` 而非 `Thursday, January 15, 2026`，实测）。
+    /// 列表逐元素递归（`[[params.menu]]` 这类数组里的字典同样要吃别名）
+    /// </summary>
+    private static object? WrapParamValue(object? value) => value switch
+    {
+        IReadOnlyDictionary<string, object> dict => BuildParamsObject(dict),
+        IList<object> list => new ScriptArray(list.Select(WrapParamValue)),
+        _ => value
+    };
 
     /// <summary>camelCase/PascalCase 键 → snake_case（mainSections → main_sections）</summary>
     private static string ToSnakeCaseKey(string key)
@@ -2363,6 +2386,19 @@ public sealed partial class ScribanTemplateRenderer
             var dt = ConvertToDateTimeOffset(date);
             return dt == null ? "" : FormatHugoDate(dt.Value, format);
         });
+
+        // is_zero：Hugo 的 `.Date.IsZero`（无日期页的 .Date 是**零值时间** 0001-01-01T00:00:00Z，
+        // 主题用它守卫日期/opengraph 的渲染——ananke 的 ShowDate、console/fixit 的 head 实测）。
+        // 迁移器把 `.IsZero` 改写成 `date.is_zero <接收者>`（值成员在 Scriban 侧取不到）
+        dateObject.Import("is_zero", (object? v) =>
+        {
+            var dt = ConvertToDateTimeOffset(v);
+            return dt is null || dt.Value.UtcDateTime == DateTime.MinValue;
+        });
+
+        // unix：Hugo 的 `.Date.Unix`（秒级时间戳）
+        dateObject.Import("unix", (object? v) =>
+            ConvertToDateTimeOffset(v)?.ToUnixTimeSeconds() ?? 0);
 
         // now - 当前时间
         dateObject.Import("now", () => DateTimeOffset.Now);

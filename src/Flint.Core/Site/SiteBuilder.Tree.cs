@@ -801,7 +801,11 @@ public sealed partial class SiteBuilder
             Content = content.HtmlContent,
             Permalink = config.BaseURL.TrimEnd('/') + relPermalink,
             RelPermalink = relPermalink,
-            Date = content.Metadata.Date ?? DateTimeOffset.Now,
+            // **无日期页用零值时间**（Hugo 语义）：Hugo 对无 front matter date 的页面给
+            // 零值时间 0001-01-01T00:00:00Z，主题据此隐藏日期（`.Date.IsZero` 守卫）或
+            // 直接渲染 `01 Jan, 0001`（bearblog 实测两侧输出）。此前回落 DateTimeOffset.Now
+            // → 每个无日期页都显示"构建当天"，与 Hugo 差一整段（页脚/卡片/opengraph 都受影响）
+            Date = content.Metadata.Date ?? DateTimeOffset.MinValue,
             LastMod = content.Metadata.LastMod,
             Tags = content.Metadata.Tags,
             Categories = content.Metadata.Categories,

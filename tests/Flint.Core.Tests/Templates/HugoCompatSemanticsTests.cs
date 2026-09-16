@@ -414,6 +414,44 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal(expected, await Render(template));
     }
 
+    /// <summary>
+    /// 无日期页的 <c>.Date</c> 是**零值时间**（Hugo 探针：bearblog 直接渲染
+    /// <c>01 Jan, 0001</c>、<c>datetime='0001-01-01'</c>；ananke/stack 用
+    /// <c>.Date.IsZero</c> 守卫因而**不渲染**日期）。
+    /// 迁移产物形态：<c>page.date.is_zero</c> → <c>date.is_zero page.date</c>
+    /// </summary>
+    [Fact]
+    public async Task 零值日期的IsZero与渲染()
+    {
+        var undated = new PageContext
+        {
+            Title = "U",
+            Content = "",
+            Permalink = "https://example.com/u/",
+            RelPermalink = "/u/",
+            Date = DateTimeOffset.MinValue,
+            Tags = [],
+            Categories = [],
+            WordCount = 0,
+            ReadingTime = TimeSpan.Zero,
+            Kind = "page"
+        };
+        var html = await RenderFor(
+            undated,
+            [undated],
+            "{{ $z = date.is_zero page.date }}zero={{ $z }} fmt={{ page.date | date.to_string \"2006-01-02\" }}");
+        Assert.Equal("zero=true fmt=0001-01-01", html);
+    }
+
+    /// <summary><c>date.is_zero</c> 对正常日期为 false；<c>date.unix</c> 给秒级时间戳</summary>
+    [Theory]
+    [InlineData("{{ date.is_zero page.date }}", "false")]
+    [InlineData("{{ date.unix page.date }}", "1705314600")]
+    public async Task 日期值方法的取值(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {

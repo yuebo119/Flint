@@ -261,6 +261,8 @@ public sealed partial class SiteBuilder
             ScribanTemplateRenderer.ResetPaginateTracking();
             // 登记全量页面：.GetPage 需要 section 页，而页面对象的构造快照可能只有常规页
             ScribanTemplateRenderer.SetCurrentSitePages(pages);
+            // 页面对象上的 .Site（`$page.site.params…`）需要站点对象
+            ScribanTemplateRenderer.SetCurrentSite(siteContext);
         }
 
         // C1 分页多页产出（Hugo 语义）：列表页（home/section）的**第 1 页**始终产出

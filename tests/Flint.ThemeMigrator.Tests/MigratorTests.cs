@@ -339,6 +339,25 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
+    public void 日期值方法改写为引擎函数()
+    {
+        // Hugo 的 `.Date.IsZero`/`.Lastmod.Unix` 是 time.Time 上的方法；
+        // Flint 的点号链取不到值成员（静默空值 → 守卫恒真 → 无日期页也渲染日期）
+        Assert.Contains("date.is_zero page.date", Convert("{{ if not .Date.IsZero }}x{{ end }}"),
+            StringComparison.Ordinal);
+        Assert.Contains("date.unix page.lastmod", Convert("{{ .Lastmod.Unix }}"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 日期值方法在变量接收者上也改写()
+    {
+        var result = Convert("{{ $p.Date.IsZero }}");
+        Assert.Contains("date.is_zero", result, StringComparison.Ordinal);
+        Assert.Contains("$p", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 渲染视图在循环内用迭代项作上下文()
     {
         // Hugo 的 `.Render` 是页面方法，渲染**点号所在的那一页**：range 体内每项渲染自己。

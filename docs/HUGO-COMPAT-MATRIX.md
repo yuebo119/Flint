@@ -26,6 +26,8 @@
 | I′ | 树导航四件套：`.Ancestors`/`.Parent`/`.CurrentSection`/`.FirstSection` | 由**真实容器页**（`section`/`taxonomy`）构成、**最近祖先在前、home 在末位**；不产页的合成目录与 pager 段不入链；容器页的 `CurrentSection` 是自己、`FirstSection` 是最外层 section | `LazyPageObject.ContainerChain` 按 URL 前缀从全站页集里挑容器页 + 追加 home（`.Ancestors` 返回页面集合，`.Reverse` 可用），三个单项成员在同一链上取值 | `HugoCompatSemanticsTests.祖先链跳过不产页的合成目录/祖先链跳过分页段/home页祖先链为空/词条页祖先含分类列表页/祖先链Reverse给出面包屑顺序/父级与所属顶级section按Hugo语义` |
 | J′ | `.Render "view"` 的渲染上下文 | 渲染**点号所在的页**（`range .Pages` 体内每项渲染自己） | 转换器按作用域取接收者（range 体内 = 最内层循环变量，体外 = 页面根），引擎 `render "view" <page>` 以第二参为渲染上下文 | `MigratorTests.渲染视图在循环内用迭代项作上下文` |
 | K′ | 日期格式串的三种形态 | `time.Format`/`.Date.Format` 的布局是 **Go 布局串**（`2006-01-02`）、**具名格式**（`:date_long`）或**运行期字符串**（`site.Params.dateFormat`） | `GoDateFormat.Convert`/`LooksLikeGoLayout`（引擎侧，运行期也吃下）+ `FormatHugoDate`（具名/Go/.NET 三方言统一） | `HugoCompatSemanticsTests.管道形态的日期格式按值在前布局在后/dateToString兼容Go布局与NET格式` |
+| L′ | 日期值的成员：`.IsZero`/`.Unix` | Hugo 的 `time.Time` 值方法；**无日期页的 `.Date` 是零值时间** `0001-01-01T00:00:00Z` | 迁移器把 `.IsZero`/`.Unix` 改写为 `date.is_zero`/`date.unix`（带括号，避免被外层函数当多实参）；`SiteBuilder.Tree` 的 `Date` 缺省改为 `DateTimeOffset.MinValue` | `HugoCompatSemanticsTests.零值日期的IsZero与渲染/日期值方法的取值`、`MigratorTests.日期值方法改写为引擎函数/日期值方法在变量接收者上也改写` |
+| M′ | 参数键别名与页成员 `.Site` | `.Site` 在任意页面可用；参数表按原键名访问（`dateFormat`），迁移产物用 snake（`date_format`） | `WrapParamValue` 递归包装嵌套字典与数组（每层都补 snake 别名）；`LazyPageObject` 暴露 `site`/`Site`（按构建登记站点对象） | `PageCollectionAndParamsTests`（既有）+ 主题回归：stack 的 `:date_full`、loveit/papermod 的参数表 |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -181,6 +183,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | `SitemapOptions/FeedOptions.ExcludedTypes` | 按 `.Type` 过滤 | 即 front matter type 或段名（Hugo 的 `.Type` 语义）；不是 kind 名 |
 | `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
 | `.Parent`/`.CurrentSection`/`.FirstSection` | **已对齐** | 三者与 `.Ancestors` 同源（同一条容器链）：`Parent` = 链首（home 页为 nil）；容器页（section/taxonomy/term/home）的 `CurrentSection` 是自己，内容页取最近的 section，根级页落到 home；`FirstSection` 是最外层 section（term 页为分类列表页）。此前 `.CurrentSection` 是**按段名拼的假对象**（取不到 `.RegularPages`/`.GetPage`，嵌套段的 URL 也错），ananke 的 `section-link.html`/`summary.html` 正依赖它 |
+| `i18n` 的复数子表与插值 | **待修**（已定位） | Hugo 的 `[key] one/other` 子表按 `.Count` 选形并渲染 `{{ .Count }}`；Flint 只查扁平键 → 输出空（stack 的阅读时长、blowfish 的 `(dict …)` 语境） |
 
 ## 四、探针方法（复现指南）
 
@@ -532,3 +535,27 @@ Hugo 的裸 `time` 在 Flint 里是**解析函数**（github-style/clarity 的 `
 验证：Core 997 全绿（新增 7 条日期/上下文用例）、迁移器 91 全绿（新增 3 条形态用例）；
 21 主题矩阵对称保持 21/21；`<time>` 文本的"Flint 独有"从 6 主题的乱码降到
 **只剩"无日期页被填成构建日"一族**（下一项，见下）。
+
+**十四、无日期页被填成"构建当天"**。Hugo 对没有 front matter `date` 的页面给**零值时间**
+（`0001-01-01T00:00:00Z`），Flint 此前回落 `DateTimeOffset.Now` —— 每个无日期页都显示
+构建当天。两种主题行为都因此偏离：直接渲染的（bearblog 的 `/docs/` 应输出
+`01 Jan, 0001`、`datetime='0001-01-01'`）显示成 `16 Sep, 2026`；用 `.Date.IsZero` 守卫的
+（ananke 的 ShowDate、console/fixit 的 head 元标签、stack 的 details）本该**不渲染**日期，
+却因为取不到 `is_zero`（值成员在 Scriban 侧不存在 → 静默空值）而守卫恒真、照常渲染。
+修法两条：`Date` 缺省改零值时间；`.IsZero`/`.Unix` 由迁移器改写为引擎函数
+（`date.is_zero`/`date.unix`，**带括号**——`add .Lastmod.Unix X` 改写后是两个 token）。
+`<time>` 文本的 Flint 独有项从 6 主题降到 **0**（ananke/bearblog/console/stack 之外
+fixit 仅剩 1 条 Hugo 独有）。
+
+**十五、嵌套参数取不到值 / 页对象没有 `.Site`**。迁移器把 `.Site.Params.dateFormat.published`
+归一成 `site.params.date_format.published`（或 `$page.site.params.date_format.published`），
+而 Flint 只给**顶层**参数键补 snake 别名、页面对象没有 `site` 成员 → 主题拿不到格式化配置，
+回落默认格式（stack 的 `<time>` 文本渲染成 `2026-01-15` 而非 `Thursday, January 15, 2026`）。
+修法：`WrapParamValue` 递归包装（嵌套字典与数组逐层补别名）+ 页面对象暴露 `site`/`Site`
+（构建入口登记站点对象）。loveit 文本 83.6 → 87.1、papermod 92.7 → 92.7（结构 55.5 → 56.2）、
+stack 日期文本与 Hugo 完全一致。
+
+**待办（下一项，已定位未修）**：i18n 的**复数子表与插值**——Hugo 的
+`[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
+`1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
+`i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
