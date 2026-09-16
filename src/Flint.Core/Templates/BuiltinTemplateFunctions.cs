@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 内置模板函数实现
 //
 // IL2026/IL3050：Scriban 7 起 ScriptObjectExtensions.Import 标注
@@ -1474,12 +1474,15 @@ public sealed partial class BuiltinTemplateFunctions
         obj.Import("printf", (string? format, params object[] args) =>
         {
             var f = format ?? "";
+            // 含 `%` 的一律按 **Go fmt 语义**格式化（Hugo 的 printf 就是 Go 的
+            // Sprintf）：`%v` 的复合值渲染、`%q` 的转义、类型不符的 `%!d(...)` 标记
+            // 都是 .NET 复合格式表达不出来的
+            if (f.Contains('%', StringComparison.Ordinal))
+            {
+                return GoPrintf.Format(f, args);
+            }
             try
             {
-                if (f.Contains('%', StringComparison.Ordinal))
-                {
-                    return string.Format(CultureInfo.InvariantCulture, GoFormatToDotNet(f), args);
-                }
                 return string.Format(CultureInfo.InvariantCulture, f, args);
             }
             catch
@@ -1517,92 +1520,6 @@ public sealed partial class BuiltinTemplateFunctions
         // typeof - 获取类型
         obj.Import("typeof", (object? value) =>
             value?.GetType().Name ?? "null");
-    }
-
-    /// <summary>
-    /// Go printf 动词 → .NET 复合格式转换。Go 模板生态通用动词：
-    /// <c>%s/%v/%d/%t/%f</c>→<c>{n}</c>、<c>%q</c>→<c>"{n}"</c>、
-    /// <c>%x</c>→<c>{n:x}</c>、<c>%%</c>→<c>%</c>；宽度/精度修饰透传为
-    /// .NET 形式（<c>%02d</c>→<c>{n:D2}</c>、<c>%.2f</c>→<c>{n:F2}</c>）。
-    /// 未知动词按 <c>{n}</c> 兜底
-    /// </summary>
-    private static string GoFormatToDotNet(string format)
-    {
-        var sb = new StringBuilder(format.Length + 8);
-        var argIndex = 0;
-        for (var i = 0; i < format.Length; i++)
-        {
-            if (format[i] != '%' || i + 1 >= format.Length)
-            {
-                sb.Append(format[i]);
-                continue;
-            }
-
-            i++;
-            if (format[i] == '%')
-            {
-                sb.Append('%');
-                continue;
-            }
-
-            var modStart = i;
-            while (i < format.Length &&
-                   (char.IsDigit(format[i]) || format[i] is '-' or '+' or '#' or ' ' or '.' or '*'))
-            {
-                i++;
-            }
-            if (i >= format.Length)
-            {
-                break;
-            }
-
-            var verb = format[i];
-            var mod = format[modStart..i];
-            var n = argIndex++;
-            switch (verb)
-            {
-                case 's' or 'v' or 'd' or 'i' or 't' or 'f' or 'g' or 'e' or 'b' or 'o':
-                    sb.Append('{').Append(n);
-                    AppendGoWidth(sb, mod);
-                    sb.Append('}');
-                    break;
-                case 'q':
-                    sb.Append("\"{").Append(n);
-                    AppendGoWidth(sb, mod);
-                    sb.Append("}\"");
-                    break;
-                case 'x':
-                    sb.Append('{').Append(n).Append(":x}");
-                    break;
-                case 'X':
-                    sb.Append('{').Append(n).Append(":X}");
-                    break;
-                default:
-                    sb.Append('{').Append(n).Append('}');
-                    break;
-            }
-        }
-        return sb.ToString();
-    }
-
-    /// <summary>Go 宽度/精度修饰 → .NET 格式后缀（%02d → :D2；%.2f → :F2）</summary>
-    private static void AppendGoWidth(StringBuilder sb, string mod)
-    {
-        if (mod.Length == 0)
-        {
-            return;
-        }
-        var dot = mod.IndexOf('.');
-        if (dot >= 0 && int.TryParse(mod[(dot + 1)..], out var precision))
-        {
-            sb.Append(":F").Append(precision);
-            return;
-        }
-        if (mod.Contains('0', StringComparison.Ordinal) &&
-            int.TryParse(mod.Replace("-", ""), out var width))
-        {
-            sb.Append(":D").Append(width);
-        }
     }
 
     #endregion
@@ -2826,7 +2743,7 @@ public sealed partial class BuiltinTemplateFunctions
                 // 无参调用保持原样：Go 的 Sprintf 在缺参时输出 %!v(MISSING)，
                 // 主题里的 "100% 完成" 这类文本不该被动词转换改写
                 return args.Length > 0
-                    ? string.Format(CultureInfo.InvariantCulture, GoFormatToDotNet(format), args)
+                    ? GoPrintf.Format(format, args)
                     : format;
             }
             return args.Length > 0

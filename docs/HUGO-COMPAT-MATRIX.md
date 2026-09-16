@@ -274,3 +274,42 @@ blog-awesome 的列表页调用 `.Paginate (where .Pages "Section" "blog")`（�
 
 逐主题降级分布（前五）：fixit 236、blowfish 201、narrow 198、hugo-book 93、stack 81；
 github-style / techdoc / xmin 为 0。
+
+### M. `printf` 改用 Go fmt 语义（本轮第八项）
+
+原实现把 Go 动词**翻译成 .NET 复合格式**再 `string.Format`，两类语义表达不出来：
+
+| 形态 | Go/Hugo（v0.166 探针） | 旧实现（.NET 翻译层） |
+|---|---|---|
+| `%v` 切片 | `[1 a true]` | `System.Collections.Generic.List…`（类型名） |
+| `%v` 映射 | `map[a:1 b:x]`（键排序） | 类型名 |
+| `%v` bool | `true` | `True` |
+| `%v` nil | `<nil>` | 空 |
+| `%q` 字符串 | `"a\"b"`（转义） | `"a"b"`（只加引号） |
+| `%q` 切片 | `["x"]`（逐元素） | `"x"`（整体引号化） |
+| `%s`/`%d` 类型不符 | `%!s(int=5)` 标记 | 数字照打（`5`） |
+| `%T` | `int` / `[]int` / `map[string]interface {}` | 打进 `{n}` 打印值 |
+
+语料实测（21 主题、873 个格式动词）：`%s` 464、`%v` 241、`%q` 97、`%d` 55，
+其余 `%T`(8)/`%#v`(2)/`%g`(2)/`%.2f`/`%02d`/`%5s` 等零头——**40% 走的是翻译层表达
+不出来的语义**。
+
+新实现 `Templates/GoPrintf.cs`（`printf`/`warnf`/`errorf`/`erroridf`/`warnidf`
+全部改走它，旧的 `GoFormatToDotNet` 翻译层删除）：
+
+- `%v`/`%#v`：复合值按 Go 语法渲染（切片 `[a b]`、映射键排序、bool 小写、nil `<nil>`、
+  浮点最短往返 + 小写 `e`）；`%#v` 与 `%T` 按元素推断切片类型（`[]int`/`[]string`/`[]bool`/`[]interface {}`）
+- `%q`：Go 转义（`\"`、`\`、`\n`、控制字符 `\xNN`）、数值按 rune 字面量、复合值逐元素
+- `%s/%d/%t/%f/%e/%g/%x/%X/%o/%b/%T` + 宽度/精度/标志（`%02d`、`%5s`、`%-5s`、`%.2f`）
+- 缺参 `%!v(MISSING)`、多余参 `%!(EXTRA type=value)`、`%%` 转义
+
+**两处有意偏离 Go**（均由语料验证必要性）：
+
+1. `%s`/`%d` 对**数值族**归一（Go 的 `%d` 遇 float64 产 `%!d(float64=5.7)`）——同一值在
+   两引擎内部类型不同，严格照类型打标记会无谓增多；非数值仍产 `%!d(string=5)`（与 Go 一致）。
+2. **nil 渲染空串**（Go 打 `%!s(<nil>)`）：标记会被写进 class/属性/URL。实测 ananke 的
+   `$post_class = printf "page-%s" .ContentBaseName` 在值缺失时产出
+   `class="page-%!s(<nil>=<nil>)"` → CSS class 污染、门禁④结构分下跌（49.0 → 46.5）、
+   clarity 失去对称；改为空串后两者恢复。`%v`/`%T` 与 Go 一致（`<nil>`）。
+
+回归见 `GoPrintfTests`（期望值全部来自 Hugo v0.166 探针）。
