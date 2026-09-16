@@ -30,6 +30,8 @@ public class HugoCompatSemanticsTests : IDisposable
 
     public void Dispose()
     {
+        // 清掉本次用例登记的"当前构建全站页集"（静态状态，同进程后续用例不该继承）
+        ScribanTemplateRenderer.SetCurrentSitePages([]);
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);
@@ -68,6 +70,33 @@ public class HugoCompatSemanticsTests : IDisposable
                 Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
                 Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" },
                 Params = new Dictionary<string, object> { ["author"] = "A" }
+            }
+        };
+        return (await _renderer.RenderAsync("probe.html", context).ConfigureAwait(false)).Trim();
+    }
+
+    /// <summary>按指定页面/全站页面集合渲染（祖先链这类"看页面在树里位置"的语义用）</summary>
+    private async Task<string> RenderFor(
+        PageContext page, IReadOnlyList<PageContext> allPages, string template)
+    {
+        // 与站点渲染入口同款登记（SiteBuilder.Render 的 ResetPaginateTracking +
+        // SetCurrentSitePages）：页面对象按引用跨渲染共享，若某页先在页面集合迭代里
+        // 被构造（那时没有站点页集），只能靠这份"本次构建的全站页集"兜底
+        ScribanTemplateRenderer.SetCurrentSitePages(allPages);
+        File.WriteAllText(Path.Combine(_tempDir, "probe.html"), template);
+        var context = new TemplateContext
+        {
+            Page = page,
+            Site = new SiteContext
+            {
+                Title = "S",
+                BaseURL = "https://example.com",
+                Language = "en",
+                Pages = allPages,
+                RegularPages = allPages,
+                Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+                Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+                Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" }
             }
         };
         return (await _renderer.RenderAsync("probe.html", context).ConfigureAwait(false)).Trim();
@@ -256,5 +285,96 @@ public class HugoCompatSemanticsTests : IDisposable
     {
         var html = await Render("{{ $p = page.paginate (site.regular_pages) 1 }}n={{ $p.pages | len }}");
         Assert.Equal("n=1", html);
+    }
+
+    // ---- 8. .Ancestors：只含**真实容器页**，不含路径段拼接出的假祖先 ----
+
+    private static PageContext Node(string title, string rel, string kind) => new()
+    {
+        Title = title,
+        Content = "",
+        Permalink = "https://example.com" + rel,
+        RelPermalink = rel,
+        Date = new DateTimeOffset(2024, 1, 15, 10, 30, 0, TimeSpan.Zero),
+        Tags = [],
+        Categories = [],
+        WordCount = 0,
+        ReadingTime = TimeSpan.Zero,
+        Kind = kind
+    };
+
+    // 注意：Scriban 侧没有 Hugo 的裸 `.X` 形式，迁移器把 `range .Ancestors` 归一成
+    // `for $it in as_list (page.ancestors)`、体内 `.Title` 归一成 `$it.title`，
+    // 故这里按**引擎真实接收的形态**写断言模板
+    private const string AncestorTemplate =
+        "{{ for $it in as_list (page.ancestors) }}[{{ $it.title }}|{{ $it.kind }}|{{ $it.rel_permalink }}]{{ end }}N={{ page.ancestors | len }}";
+
+    /// <summary>
+    /// Hugo v0.166 实测（探针站点：home / docs（有 _index.md）/ docs/guide（无 _index.md）
+    /// / docs/guide/deep.md / posts（有 _index.md）/ page/2 …）：
+    /// <c>/docs/guide/deep/</c> → <c>[文档区|section|/docs/][首页|home|/]</c>、N=2
+    /// —— 中间的 guide 目录不产页，**不是**祖先（旧实现按路径段拼接会产出 /docs/guide/，
+    /// narrow 的面包屑因此有 2 条死链）
+    /// </summary>
+    [Fact]
+    public async Task 祖先链跳过不产页的合成目录()
+    {
+        var home = Node("首页", "/", "home");
+        var docs = Node("文档区", "/docs/", "section");
+        var deep = Node("深页", "/docs/guide/deep/", "page");
+        var html = await RenderFor(deep, [home, docs, deep], AncestorTemplate);
+        Assert.Equal("[文档区|section|/docs/][首页|home|/]N=2", html);
+    }
+
+    /// <summary>pager 段（<c>/posts/page/2/</c>）不是页面、更不是祖先：Hugo 只产出
+    /// <c>/posts/page/N/</c>，不产出 <c>/posts/page/</c></summary>
+    [Fact]
+    public async Task 祖先链跳过分页段()
+    {
+        var home = Node("首页", "/", "home");
+        var posts = Node("帖子区", "/posts/", "section");
+        var pager2 = Node("第2页", "/posts/page/2/", "page");
+        var html = await RenderFor(pager2, [home, posts, pager2], AncestorTemplate);
+        Assert.Equal("[帖子区|section|/posts/][首页|home|/]N=2", html);
+    }
+
+    /// <summary>home 页自身没有祖先（Hugo 实测 N=0）</summary>
+    [Fact]
+    public async Task home页祖先链为空()
+    {
+        var home = Node("首页", "/", "home");
+        var docs = Node("文档区", "/docs/", "section");
+        var html = await RenderFor(home, [home, docs], AncestorTemplate);
+        Assert.Equal("N=0", html);
+    }
+
+    /// <summary>term 页的祖先是 taxonomy 列表页再是 home（Hugo 实测：
+    /// <c>/tags/x/</c> → <c>[Tags|taxonomy|/tags/][首页|home|/]</c>）；section 页只有 home</summary>
+    [Fact]
+    public async Task 词条页祖先含分类列表页()
+    {
+        var home = Node("首页", "/", "home");
+        var tax = Node("Tags", "/tags/", "taxonomy");
+        var term = Node("x", "/tags/x/", "term");
+        var html = await RenderFor(term, [home, tax, term], AncestorTemplate);
+        Assert.Equal("[Tags|taxonomy|/tags/][首页|home|/]N=2", html);
+
+        var sectionHtml = await RenderFor(tax, [home, tax, term], AncestorTemplate);
+        Assert.Equal("[首页|home|/]N=1", sectionHtml);
+    }
+
+    /// <summary>祖先链是**页面集合**：可继续调用方法族（主题写 <c>.Ancestors.Reverse</c>
+    /// 做面包屑——narrow 的 breadcrumb.html 实测），顺序为 home → … → 父级</summary>
+    [Fact]
+    public async Task 祖先链Reverse给出面包屑顺序()
+    {
+        var home = Node("首页", "/", "home");
+        var docs = Node("文档区", "/docs/", "section");
+        var guide = Node("指南区", "/docs/guide/", "section");
+        var deep = Node("深页", "/docs/guide/deep/", "page");
+        var html = await RenderFor(
+            deep, [home, docs, guide, deep],
+            "{{ for $it in as_list (page.ancestors.reverse) }}[{{ $it.title }}]{{ end }}");
+        Assert.Equal("[首页][文档区][指南区]", html);
     }
 }

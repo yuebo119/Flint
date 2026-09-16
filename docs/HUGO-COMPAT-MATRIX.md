@@ -23,6 +23,7 @@
 | G | 模板查找顺序 | 五类 kind 各有确定候选序（见第三节） | `PageTemplateCandidates.Build*` 按实测序产出 | `PageTemplateLookupTests`（候选链 + 分层解析） |
 | H | 页面集合与分页产物 | `.Pages`/`.RegularPages` 默认日期降序；`ByDate` 升序；分页由模板调用驱动 | `SiteBuilder.Tree` + `PageListFunctions` + 分页注册表 | `PageCollectionAndParamsTests`、`PageAwareLookupE2ETests` |
 | I | 分页尺寸来源 | **`[pagination] pagerSize`**（v0.128+；顶层 `paginate` 被忽略）；`.Paginate $pages N` 的第二参覆盖站点值，且 `/page/N/` 的生成也按该尺寸 | `ConfigParser` 读新键（旧键兜底）+ `PagePaginateFunction` 解析第二参 + 注册表把尺寸传到站点级生成 | `HugoCompatSemanticsTests.Paginate显式页大小生效/显式尺寸时每页内容按该尺寸切` |
+| I′ | `.Ancestors` 祖先链 | 由**真实容器页**（`section`/`taxonomy`）构成、**最近祖先在前、home 在末位**；不产页的合成目录与 pager 段不入链 | `BuildAncestorsObject` 按 URL 前缀从全站页集里挑容器页 + 追加 home；返回页面集合（`.Reverse` 可用） | `HugoCompatSemanticsTests.祖先链跳过不产页的合成目录/祖先链跳过分页段/home页祖先链为空/词条页祖先含分类列表页/祖先链Reverse给出面包屑顺序` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
 
@@ -176,6 +177,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | `page.terms`（分类页） | Flint 扩展 | Hugo v0.166 的 /tags/ 页**没有** `.Terms`（实测报 "can't evaluate field Terms"），词条在 `.Pages` 里；Flint 两个都提供 |
 | 分页 `/page/N/` 的产生 | 已对齐 | 仅在模板真的调用 `.Paginate`/`.Paginator` 时产出（Hugo 同） |
 | `SitemapOptions/FeedOptions.ExcludedTypes` | 按 `.Type` 过滤 | 即 front matter type 或段名（Hugo 的 `.Type` 语义）；不是 kind 名 |
+| `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
 
 ## 四、探针方法（复现指南）
 
@@ -458,15 +460,42 @@ home 用 `where .Site.RegularPages "Type" "in" .Site.Params.mainSections` 得到
 （narrow 的 `/docs/guide/`、`/posts/page/` 与 fixit/hugo-coder 各 1 类），
 21 主题矩阵对称保持 21/21。
 
-#### 剩余坏引用（3 条，已定位未修）
+#### 残留清零（本轮第十、十一项）：坏引用 3 类 → 0 类
 
-全语料审计后 Flint 独有的坏引用只剩 3 条（21 个主题、约 4000 个页面引用）：
+| 主题 | 链接 | 根因 | 修法 |
+|---|---|---|---|
+| hugo-coder | `/tags/page/2/page/2/` ×1 | 分类页（term/taxonomy）分页页的 pager **基准 URL 取成了 pager 页自身**（`/tags/page/2/`），再拼 `/page/2/` 成了三段 | `SiteBuilder.Render` 的 `BaseRelPermalinkOf(taxPage)`：从 `rel` 里剥掉尾部的 `/<paginatePath>/<N>/` 再作基准（常规列表页那处上一轮已修，分类页路径漏了） |
+| narrow | `/posts/page/` ×1 | `.Ancestors` 按 `RelPermalink` 的**路径段**拼接，pager 段（`page/2`）被当成一级目录 | `.Ancestors` 改由**真实容器页**构成（见下） |
+| narrow | `/docs/guide/` ×1 | 同上：无 `_index.md` 的嵌套目录是**合成节点**，Hugo 不产出该页，却进了祖先链 | 同上；且只取 `Kind` 为 `section`/`taxonomy` 的页 |
 
-| 主题 | 链接 | 诊断 |
-|---|---|---|
-| hugo-coder | `/tags/page/2/page/2/` ×1 | 分页 URL 二次拼接——分类页分页页上的 pager 基准仍是"pager 页自身"（常规列表页的那处已修，分类页路径上还有一处未覆盖） |
-| narrow | `/posts/page/` ×1 | 链到分页根目录（Hugo 只产出 `/posts/page/1/`，不产出 `/posts/page/`） |
-| narrow | `/docs/guide/` ×1 | 链到**无 `_index.md` 的嵌套目录**（该目录在 Hugo 下同样不产出页面） |
+##### `.Ancestors` 的 Hugo 语义（探针实测，v0.166）
 
-前两条同属"pager URL 拼接"族，第三条属"主题 nav 遍历时把合成目录当 section"。三条都不阻断
-使用（一次点击 404），但都是"Flint 生成了 Hugo 不会生成的链接"，故登记在此，留待下一轮定向修。
+探针站点 = home（`_index.md`）+ `docs`（有 `_index.md`）+ `docs/guide`（**无** `_index.md`）
++ `docs/guide/deep.md` + `posts` + `tags`/`tags/x`，模板打印每一项的 Title 与 Kind：
+
+| 页面 | `.Ancestors` |
+|---|---|
+| home | 空（`len` = 0） |
+| `/posts/`（section） | `[首页\|home\|/]` |
+| `/tags/`（taxonomy） | `[首页\|home\|/]` |
+| `/tags/x/`（term） | `[Tags\|taxonomy\|/tags/][首页\|home\|/]` |
+| `/docs/guide/deep/` | `[文档区\|section\|/docs/][首页\|home\|/]`（`guide` 不出现） |
+
+由此定三条：① **最近祖先在前、home 在末位**（主题写 `.Ancestors.Reverse` 才得到
+"home → … → 父级"的面包屑顺序，narrow 的 `breadcrumb.html` 即此用法）；
+② 元素是**真实页面对象**（`.Title`/`.Kind`/`.RelPermalink` 都可用，不是路径段拼出来的壳子）；
+③ 参与构成的只有 `section` 与 `taxonomy` 两类容器页——内容页与词条页不可能是别人的祖先。
+
+实现要点（`ScribanTemplateRenderer.Objects.cs`）：取**全站页集**里 `RelPermalink` 是本页
+前缀的 `section`/`taxonomy` 页（自身除外），按 URL 长度降序（最近的在前）后追加 home；
+返回**页面集合**（`LazyPageList`，与 `.Pages` 同型）而非手搓 `ScriptObject`——
+手搓形状的 `range` 会把 `count`/`reverse` 这些成员也迭代出来，而页面集合上
+`.Reverse`/`| len` 与 Hugo 的 Pages 方法族一致。另：该成员**惰性解析**（访问时才算，
+先取构造参数、再退到本次构建登记的全站页集）——页面对象按引用跨渲染共享，
+若某页先在页面集合迭代里被构造（那时没有站点页集），构造期算祖先会得到空链。
+
+回归锁定：`HugoCompatSemanticsTests` 新增 5 条用例（合成目录/分页段不入链、home 为空、
+term 页含 taxonomy 祖先、`Reverse` 的面包屑顺序），断言值即上表探针值。
+
+结果：**全语料 Flint 独有坏引用 3 类 → 0 类**（21 主题、约 4000 个页面引用，
+`scripts/check-broken-assets.py` 输出无 "← Flint 独有" 行），21 主题矩阵对称保持 21/21。

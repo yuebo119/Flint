@@ -321,8 +321,12 @@ public sealed partial class SiteBuilder
         var result = new List<PageContext>(ordered.Count);
         // section 页集合（Hugo 的 .Sections）：与 .Pages 同阶段装配，随页面对象流动。
         // 主题按层级遍历站点结构（techdoc 的 open-menu 用 site.home.sections.by_weight）
+        // `.Sections` 只暴露**会真正产出页面**的 section：嵌套且无 _index.md 的合成节点
+        // 不产页（见 Handle 的门禁），若仍出现在 `.Sections`/`.Pages` 里，主题的导航遍历会
+        // 生成指向不存在目录的链接（narrow 的 /docs/guide/ 实测——content/docs/guide/ 无
+        // _index.md，Hugo 也不产 /docs/guide/）。BundleType 判定与产页门禁同源
         var allSections = ordered
-            .Where(e => e.Page.Kind == "section")
+            .Where(e => e.Page.Kind == "section" && !IsNonProducingSynthesized(e.Key, e.Page))
             .ToList();
 
         // **两阶段装配：先深后浅**。单遍装配时父节点拿到的子 section 是**尚未装配
@@ -347,7 +351,8 @@ public sealed partial class SiteBuilder
                 // `page.pages | len` = 0、Hugo 为 3）——凡首页用 `.Pages` 列文章的主题
                 // 都会缺整个列表区。修法：`TrimStart('/')` 后再判层级
                 var homeChildren = ordered
-                    .Where(e => e.Page.Kind is "page" or "section" && IsTopLevelKey(e.Key))
+                    .Where(e => e.Page.Kind is "page" or "section" && IsTopLevelKey(e.Key) &&
+                                !IsNonProducingSynthesized(e.Key, e.Page))
                     .Select(e => assembled.TryGetValue(e.Key, out var assembledChild) ? assembledChild : e.Page)
                     .ToList();
                 // home 的直属 section 即一级 section 页（路径无 '/'）
@@ -722,7 +727,16 @@ public sealed partial class SiteBuilder
         };
     }
 
-    /// <summary>页面相对 URL → Hugo <c>.Section</c>（路径首段；home 为 "/" 时为空串）</summary>
+    /// <summary>
+    /// 是否"**不产页**的合成节点"：嵌套目录缺 _index.md 时补齐的节点不产出页面
+    /// （判据与 Handle 的产页门禁一致：合成节点 + key 含 '/'；合成节点的
+    /// <c>SourcePath</c> 为空串，用它区分于真实内容页）。
+    /// `.Sections`/`.Pages` 里若带上它，主题的导航遍历就会生成指向不存在目录的链接
+    /// （narrow 的 <c>/docs/guide/</c> 实测——content/docs/guide/ 无 _index.md，Hugo 也不产该页）
+    /// </summary>
+    private static bool IsNonProducingSynthesized(string key, PageContext page) =>
+        string.IsNullOrEmpty(page.SourcePath) && key.Contains('/', StringComparison.Ordinal);
+
     /// <summary>
     /// 是否**一级**树节点：key 形态为 <c>/posts</c>（带前导斜杠），
     /// 一级判定即"去掉前导斜杠后不再含 '/'"
@@ -730,6 +744,7 @@ public sealed partial class SiteBuilder
     private static bool IsTopLevelKey(string key) =>
         !key.TrimStart('/').Contains('/', StringComparison.Ordinal);
 
+    /// <summary>页面相对 URL → Hugo <c>.Section</c>（路径首段；home 为 "/" 时为空串）</summary>
     private static string SectionOfKind(string relPermalink)
     {
         var segments = relPermalink.Split('/', StringSplitOptions.RemoveEmptyEntries);

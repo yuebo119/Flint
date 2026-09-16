@@ -765,11 +765,14 @@ public sealed partial class SiteBuilder
                     // 分页对象与 .Pages 同源：taxonomy 列表页分页的是**词条页集合**
                     //（Hugo 实测：/tags/ 的 .Paginator 切词条页 → 产出 /tags/page/2/；
                     //  此前用 taxPage.Pages（taxonomy 页为 null）→ 恒 1 页，缺 /tags/page/2/）
+                    // **基准 URL 用列表根**（`/tags/`），不是 pager 页自身的
+                    // `/tags/page/2/`——否则 `next.url` / `url` 会二次拼接成
+                    // `/tags/page/2/page/2/`（hugo-coder 实测）
                     Paginator = PaginatorView.Create(
                         taxonomyListItems ?? (taxPage.Pages ?? []),
                         taxPage.PageNumber,
                         pageSize,
-                        relPermalink,
+                        BaseRelPermalinkOf(taxPage),
                         config.PaginatePath)
                 };
 

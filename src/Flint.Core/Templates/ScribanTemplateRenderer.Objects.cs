@@ -159,6 +159,16 @@ public sealed partial class ScribanTemplateRenderer
         /// </summary>
         private readonly IReadOnlyList<FlintPageContext>? _siteAllPages;
 
+        /// <summary>
+        /// .Ancestors 惰性缓存。**必须惰性**：页面对象按引用跨渲染共享（CWT），
+        /// 而"某个页面第一次被创建"的时机不定——列表迭代里首次取到某页时，
+        /// LazyPageList 只拿得到 PageContext，构造参数里没有站点页集，
+        /// 构造期算祖先会得到空链（测试 `词条页祖先含分类列表页` 实测：
+        /// term 页的祖先 tax 页被提前构造 → 轮到它自己渲染时祖先为空）。
+        /// 改为访问时读取：先取构造参数，再退到本次构建登记的全站页集
+        /// </summary>
+        private object? _ancestorsValue;
+
         public LazyPageObject(
             FlintPageContext page,
             IReadOnlyList<FlintPageContext>? siteRegularPages = null,
@@ -292,12 +302,6 @@ public sealed partial class ScribanTemplateRenderer
                         + (isPage ? 1 : 0);
             SetValue("level", level, false);
             SetValue("Level", level, false);
-
-            // .Ancestors：祖先链（home → 各层 section → 自身），主题用 `.Ancestors.Reverse`
-            // 做面包屑（PaperMod 实测）。按路径逐级构造最简投影
-            var ancestors = BuildAncestorsObject(page);
-            SetValue("ancestors", ancestors, false);
-            SetValue("Ancestors", ancestors, false);
 
             // .Language：语言对象（主题用 .Language.LanguageDirection 判断 rtl）
             var langObj = new ScriptObject
@@ -446,6 +450,14 @@ public sealed partial class ScribanTemplateRenderer
                 // → 1 页；隐式 = 站点常规页 → 3 页），混用会渲染出指向未产出页的链接
                 var registered = ScribanTemplateRenderer.GetPaginatePager(_page.RelPermalink);
                 value = registered is not null ? BuildPaginatorObject(registered) : _paginatorValue;
+                return true;
+            }
+
+            // .Ancestors：访问时才解析（页面对象可能先由页面集合迭代创建，那时没有站点页集）
+            if (member is "ancestors" or "Ancestors")
+            {
+                value = _ancestorsValue ??=
+                    BuildAncestorsObject(_page, _siteAllPages ?? ScribanTemplateRenderer.CurrentSitePages);
                 return true;
             }
 
@@ -1073,51 +1085,49 @@ public sealed partial class ScribanTemplateRenderer
     }
 
     /// <summary>
-    /// .Ancestors：祖先链对象（含 Reverse 方法，供面包屑）。
-    /// 按相对路径逐级上溯构造（home → /a/ → /a/b/），对齐 Hugo 的祖先语义
+    /// .Ancestors：祖先链（Hugo 语义）：
+    /// <list type="bullet">
+    /// <item>由**真实页面对象**构成（home + 逐级 section 页），可继续取 <c>.Title</c>/
+    /// <c>.RelPermalink</c>/<c>.IsSection</c> 等成员</item>
+    /// <item>顺序 = **最近祖先在前、home 在末位**（Hugo 的 <c>.Ancestors</c> 顺序；
+    /// 主题写 <c>.Ancestors.Reverse</c> 后即"home → … → 父级"的面包屑顺序）</item>
+    /// <item>**不能按 RelPermalink 的路径段拼接**：那会把"不产页的合成目录"
+    /// （<c>/docs/guide/</c>，其目录无 _index.md）与 pager 段（<c>/posts/page/</c>）
+    /// 当成祖先，面包屑便生成指向不存在页面的链接（narrow 实测 2 条）</item>
+    /// <item>实测清单（v0.166）：home 页 → 空；<c>/posts/</c>（section）→ [home]；
+    /// <c>/tags/</c>（taxonomy）→ [home]；<c>/tags/x/</c>（term）→ [Tags, home]</item>
+    /// </list>
     /// </summary>
-    private static ScriptObject BuildAncestorsObject(FlintPageContext page)
+    private static LazyPageList BuildAncestorsObject(
+        FlintPageContext page, IReadOnlyList<FlintPageContext>? allPages)
     {
-        var segs = (page.RelPermalink ?? "/").Split('/', StringSplitOptions.RemoveEmptyEntries);
-        var chain = new ScriptArray();
-        // home
-        chain.Add(new ScriptObject
+        var selfRel = page.RelPermalink ?? "/";
+        var chain = new List<FlintPageContext>();
+        if (allPages is not null &&
+            !string.Equals(page.Kind, "home", StringComparison.OrdinalIgnoreCase))
         {
-            ["title"] = page.Title,
-            ["Title"] = page.Title,
-            ["rel_permalink"] = "/",
-            ["RelPermalink"] = "/",
-            ["is_home"] = true,
-            ["IsHome"] = true
-        });
-
-        var acc = "";
-        for (var i = 0; i < Math.Max(0, segs.Length - 1); i++)
-        {
-            acc += "/" + segs[i];
-            chain.Add(new ScriptObject
+            // 真实"容器页"祖先：RelPermalink 是本页前缀（自身除外），最近的排最前。
+            // 容器页 = section 与 taxonomy 列表页——探测实证（v0.166）：
+            // `/docs/guide/deep/` → [docs, home]；`/tags/x/`（term）→ [Tags(taxonomy), home]。
+            // **page/term/home 不参与**：内容页不可能是别人的祖先，
+            // 词条页彼此前缀相同也只是路径巧合（`/tags/x/` 与 `/tags/xy/`）
+            chain.AddRange(allPages
+                .Where(p => (p.Kind == "section" || p.Kind == "taxonomy") &&
+                            !string.IsNullOrEmpty(p.RelPermalink) &&
+                            !string.Equals(p.RelPermalink, selfRel, StringComparison.OrdinalIgnoreCase) &&
+                            selfRel.StartsWith(p.RelPermalink, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(p => p.RelPermalink!.Length));
+            if (allPages.FirstOrDefault(
+                    p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase))
+                is { } home)
             {
-                ["title"] = segs[i],
-                ["Title"] = segs[i],
-                ["rel_permalink"] = acc + "/",
-                ["RelPermalink"] = acc + "/",
-                ["is_section"] = true,
-                ["IsSection"] = true
-            });
+                chain.Add(home);
+            }
         }
 
-        var o = new ScriptObject();
-        foreach (var i in Enumerable.Range(0, chain.Count))
-        {
-            o[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = chain[i];
-        }
-        o["count"] = chain.Count;
-        o["Count"] = chain.Count;
-
-        // .Reverse（Hugo 的 Pages.Reverse）：面包屑常反向输出
-        o["reverse"] = new ArrayReverseFunction(chain);
-        o["Reverse"] = o["reverse"];
-        return o;
+        // 返回**页面集合**（与 .Pages 同型）：range/.Reverse/| len 与页面集合一致。
+        // 不用手搓 ScriptObject——那种形状的 range 会把 count/reverse 等成员也迭代出来
+        return GetSharedPageList(chain);
     }
 
     /// <summary>
