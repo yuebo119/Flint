@@ -1,4 +1,4 @@
-﻿// Flint 主题迁移工具
+// Flint 主题迁移工具
 // 模板级转换：结构块（if/with/range/define/block）编排
 //
 // 结构性约束（实测得出）：

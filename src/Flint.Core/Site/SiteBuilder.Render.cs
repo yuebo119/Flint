@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // SiteBuilder 渲染调度聚合：短代码注册、依赖注册、站点上下文、页面/首页/分类页渲染
 
 using System.Collections.Concurrent;

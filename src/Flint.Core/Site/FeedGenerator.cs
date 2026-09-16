@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // RSS/Atom Feed 生成器实现
 
 using System.Text;
