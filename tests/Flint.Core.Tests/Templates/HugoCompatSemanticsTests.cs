@@ -384,6 +384,36 @@ public class HugoCompatSemanticsTests : IDisposable
     /// ③ FirstSection 是**最外层** section（/docs/guide/ 的是 /docs/ 而非自己），
     /// term 页的最外层容器是分类列表页。
     /// </summary>
+    // ---- 9. Hugo 的日期格式：time.Format（布局在前）与运行期 Go 布局 ----
+
+    /// <summary>
+    /// 迁移产物（Hugo <c>time.Format</c>）在管道形态下的参数序：
+    /// Scriban 的管道把左值注入**首参**，Flint 的 <c>date.to_string</c> 又是 (值, 布局)
+    /// → 只传布局串即可。此处锁定"管道左值 = 值、实参 = 布局"，并覆盖**运行期布局**
+    /// （<c>site.Params.dateFormat</c> 这类表达式在迁移期看不到，只能由引擎按 Go 布局解析；
+    /// 不解析会渲染出 <c>Januar26 2, 2006</c> 这类乱码——6 个主题的 <time> 实测）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ page.date | date.to_string \"2006-01-02\" }}", "2024-01-15")]
+    [InlineData("{{ page.date | date.to_string (default \"\" \"2 Jan 2006\") }}", "15 Jan 2024")]
+    [InlineData("{{ page.date | date.to_string (default \":date_long\" \"\") }}", "January 15, 2024")]
+    public async Task 管道形态的日期格式按值在前布局在后(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
+    /// <summary><c>date.to_string</c>（迁移器为 <c>.Date.Format</c> 产出）同样要吃下运行期
+    /// Go 布局：<c>.Site.Params.date_format</c> 常是 <c>2006-01-02</c> 这类 Go 串</summary>
+    [Theory]
+    [InlineData("{{ date.to_string page.date \"2006-01-02\" }}", "2024-01-15")]
+    [InlineData("{{ date.to_string page.date \"January 2, 2006\" }}", "January 15, 2024")]
+    [InlineData("{{ date.to_string page.date \":date_medium\" }}", "Jan 15, 2024")]
+    [InlineData("{{ date.to_string page.date \"yyyy-MM-dd\" }}", "2024-01-15")]
+    public async Task dateToString兼容Go布局与NET格式(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {

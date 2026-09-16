@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // AST → Scriban 转换器（结构驱动，非字符串切分）
 //
 // 与正则版的关键区别：所有转换决策基于 AST 结构，故嵌套表达式必然正确。
@@ -516,7 +516,7 @@ internal sealed class ScribanConverter(
                 // .Render "view"：页面方法 → 全局 render "view" <page>
                 if (mapped.EndsWith(".render", StringComparison.Ordinal))
                 {
-                    var recv = mapped[..^".render".Length];
+                    var recv = RenderReceiver(mapped, fe.Path, scope);
                     return new ConversionResult(
                         ("render " + string.Join(" ", argTexts) + " " + recv).Trim(),
                         ConversionKind.Equivalent);
@@ -719,27 +719,35 @@ internal sealed class ScribanConverter(
         {
             return ConvertPartial(name, args, scope);
         }
-        // time.Format / dateFormat（管道段）：Scriban 管道把左值注入首参，
-        // 故只传格式串；Flint 的 date.to_string 签名是 (date, format)
+        // time.Format / dateFormat（Hugo 的旧名同序）：Hugo 的签名是 **(布局, 值)**，
+        // 而 Flint 的 `date.to_string` 是 **(值, 布局)**——两种调用形态要分开看：
+        //   管道 `{{ .Date | time.Format FMT }}`：Scriban 把左值注入**首参**，
+        //     故只传布局串即可，落到 `date.to_string FMT` 后由管道补上值 → (值, 布局) ✓
+        //     （ananke/bearblog/blog-awesome 的 `<time>` 用这个形态）
+        //   直接 `time.Format FMT VALUE`：实参已就位，必须**换序**成
+        //     `date.to_string VALUE FMT`（blowfish 的 functions/date.html、
+        //     hugo-book 的 docs/date.html 用这个形态）
+        // 布局的字面量**不在此转换**：布局也可能是运行期表达式
+        //（`site.Params.dateFormat` 常是 "2006-01-02"），引擎统一按 Go 布局/具名格式解析
         if (name is "time.Format" or "time.format" or "dateFormat" or "dateformat")
         {
             var fmtArgsPipe = new List<string>();
             foreach (var a in args)
             {
-                if (a is Parsing.LiteralExpr litP)
+                var rP = ConvertExpr(a, scope, false);
+                if (rP.Kind == ConversionKind.Unsupported)
                 {
-                    fmtArgsPipe.Add("\"" + GoDateFormatConverter.Convert(litP.Unquoted) + "\"");
+                    return rP;
                 }
-                else
-                {
-                    var rP = ConvertExpr(a, scope, false);
-                    if (rP.Kind == ConversionKind.Unsupported)
-                    {
-                        return rP;
-                    }
-                    fmtArgsPipe.Add(rP.Text);
-                }
+
+                fmtArgsPipe.Add(rP.Text);
             }
+
+            if (fmtArgsPipe.Count >= 2)
+            {
+                (fmtArgsPipe[0], fmtArgsPipe[1]) = (fmtArgsPipe[1], fmtArgsPipe[0]);
+            }
+
             return new ConversionResult(
                 "date.to_string " + string.Join(" ", fmtArgsPipe), ConversionKind.Equivalent);
         }
@@ -759,7 +767,12 @@ internal sealed class ScribanConverter(
             {
                 if (a is Parsing.LiteralExpr lit)
                 {
-                    fmtArgs.Add(GoDateFormatConverter.Convert(lit.Unquoted));
+                    // **不能漏引号**：Unquoted 已去掉引号，裸写会让 Scriban 把
+                    // `yyyy-MM-ddTHH:mm:sszzz` 当变量表达式（求值为 null → 格式串为空 →
+                    // 回落默认 "yyyy-MM-dd"）。stack 的
+                    // `<time datetime='{{ $Page.Date.Format "2006-01-02T15:04:05Z07:00" }}'>`
+                    // 此前产出 `datetime='2026-01-15'`（实测）
+                    fmtArgs.Add("\"" + GoDateFormatConverter.Convert(lit.Unquoted) + "\"");
                 }
                 else
                 {
@@ -899,7 +912,7 @@ internal sealed class ScribanConverter(
                 // （签名 render "view" <page>）→ 追加页面接收者
                 if (mapped.EndsWith(".render", StringComparison.Ordinal))
                 {
-                    var recv = mapped[..^".render".Length];
+                    var recv = RenderReceiver(mapped, name, scope);
                     var callR = "render " + string.Join(" ", argTexts0) + " " + recv;
                     return new ConversionResult(callR.Trim(), ConversionKind.Equivalent);
                 }
@@ -1255,6 +1268,30 @@ internal sealed class ScribanConverter(
             "page" or "Page" => GlobalPageRoot + restSafe,
             _ => null
         };
+    }
+
+    /// <summary>
+    /// <c>.Render "view"</c> 的**接收者**（渲染上下文页）：
+    /// Hugo 的 <c>.Render</c> 是页面方法，渲染的是**点号所在的页**——
+    /// <c>{{ range .Pages }}{{ .Render "summary" }}{{ end }}</c> 里每一项渲染自己。
+    /// 故点号根必须跟作用域走：<c>range</c> 体内取**最内层循环变量**（<c>$__it0</c>），
+    /// 体外才是页面根（<c>page</c>）。
+    /// 修前实测：ananke 首页三条 summary 全部渲染成外层 Home（标题/链接/日期都是首页的）。
+    /// 显式接收者（<c>$x.Render</c>、<c>.Site.X</c>）保持原样
+    /// </summary>
+    private static string RenderReceiver(string mapped, string path, IReadOnlyList<string> scope)
+    {
+        var mappedRecv = mapped[..^".render".Length];
+        // 点号根（`.Render`）或当前页根（`.Page.Render`）：跟作用域，不在循环里才回落 page
+        var isDotRoot = path.Length == 0 || path[0] == '.';
+        var isPageRoot = path.StartsWith(".Page", StringComparison.OrdinalIgnoreCase) &&
+                         (path.Length == ".Page".Length || path[".Page".Length] == '.');
+        if ((isDotRoot || isPageRoot) && scope.Count > 0)
+        {
+            return scope[^1];
+        }
+
+        return mappedRecv;
     }
 
     /// <summary>dict k1 v1 k2 v2 → { k1: v1, k2: v2 }</summary>

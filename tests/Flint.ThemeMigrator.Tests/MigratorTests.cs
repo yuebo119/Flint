@@ -322,6 +322,61 @@ public sealed class ParserConverterTests
         Assert.Contains("yyyy-MM-dd", result, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Hugo 的 `time.Format` 是 **(布局, 值)**，Flint 的 `date.to_string` 是 **(值, 布局)**，
+    /// 且 Scriban 管道把左值注入**首参**——两种形态分开处理（探针与产物形态见
+    /// docs/HUGO-COMPAT-MATRIX §Q）：
+    /// </summary>
+    [Fact]
+    public void 管道形态的时间格式化不换序()
+    {
+        // `{{ .Date | time.Format "2006-01-02" }}`：管道补左值到首参 → 只传布局串
+        var result = Convert("{{ .Date | time.Format \"2006-01-02\" }}");
+        Assert.Contains("date.to_string", result, StringComparison.Ordinal);
+        Assert.Contains("\"2006-01-02\"", result, StringComparison.Ordinal);
+        // 布局串**保持 Go 原样**交给引擎（运行期布局也要吃下）
+        Assert.DoesNotContain("yyyy-MM-dd", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 渲染视图在循环内用迭代项作上下文()
+    {
+        // Hugo 的 `.Render` 是页面方法，渲染**点号所在的那一页**：range 体内每项渲染自己。
+        // 此前接收者按页面根处理 → ananke 首页三张 summary 全部渲染成 Home（实测）
+        var result = Convert("{{ range .Pages }}{{ .Render \"summary\" }}{{ end }}");
+        Assert.Contains("render \"summary\" $__it0", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 渲染视图在循环外用页面根作上下文()
+    {
+        var result = Convert("{{ .Render \"summary\" }}");
+        Assert.Contains("render \"summary\"", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("$__it", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 变量接收者的Format保留引号()
+    {
+        // `$x.Date.Format "…"` 走的是链式名分支（与 `.Date.Format` 不同的代码路径）：
+        // 漏引号会让 Scriban 把格式串当变量表达式 → 求值为 null → 落到默认格式
+        // （stack 的 datetime 属性实测产出 '2026-01-15' 而非 RFC3339）
+        var result = Convert("{{ $x.Date.Format \"2006-01-02T15:04:05Z07:00\" }}");
+        Assert.Contains("\"yyyy-MM-ddTHH:mm:sszzz\"", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 直接调用形态的时间格式化换序()
+    {
+        // `{{ time.Format "2006-01-02" .Date }}`：实参已就位 → 换成 (值, 布局)
+        var result = Convert("{{ time.Format \"2006-01-02\" .Date }}");
+        var idxValue = result.IndexOf("page.date", StringComparison.Ordinal);
+        var idxLayout = result.IndexOf("\"2006-01-02\"", StringComparison.Ordinal);
+        Assert.Contains("date.to_string", result, StringComparison.Ordinal);
+        Assert.True(idxValue >= 0 && idxLayout > idxValue,
+            $"值应在布局之前，实际产物：{result}");
+    }
+
     [Fact]
     public void 资源方法在资源上下文补前缀()
     {

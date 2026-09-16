@@ -117,6 +117,7 @@ public sealed partial class BuiltinTemplateFunctions
         };
         root.TrySetValue(null, default, "hugo", hugo, readOnly: true);
 
+
         // time.*：Scriban 内置 time 对象已提供 now/format 等；
         // 补 Hugo 的 AsTime / In / ParseDuration 别名（不覆盖内置成员）
         if (root.TryGetValue(null, default, "time", out var timeValue) && timeValue is ScriptObject timeObj)
@@ -133,6 +134,13 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 timeObj.TrySetValue(null, default, "ParseDuration", (string? s) => s ?? "", readOnly: true);
             }
+
+            // 注：`time` 在这里是**函数**（Hugo 的裸 `time` 解析函数，github-style 与 clarity
+            // 的 `time .Date` 实测用到），不是 Scriban 的 `time` 对象——故 Hugo 的
+            // `time.Format` 不能落成 `time.format`（成员查不到会去调用 `time` 本身，
+            // 报 "Invalid number of arguments 0 passed to time"）。
+            // 它由迁移器改写成 `date.to_string`（值在前、布局在后，与 Scriban 管道注入
+            // 首参的方向一致；直接调用形态由迁移器换序，见 ScribanConverter）
         }
     }
 }
