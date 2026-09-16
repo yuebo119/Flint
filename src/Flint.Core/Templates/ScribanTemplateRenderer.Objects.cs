@@ -169,6 +169,19 @@ public sealed partial class ScribanTemplateRenderer
         /// </summary>
         private object? _ancestorsValue;
 
+        /// <summary>
+        /// 容器祖先链缓存（最近祖先在前、home 在末位；见 <c>BuildContainerChain</c>）。
+        /// .Ancestors/.Parent/.CurrentSection/.FirstSection 共用同一条链
+        /// </summary>
+        private List<FlintPageContext>? _containerChain;
+
+        private object? _parentValue;
+        private object? _currentSectionValue;
+        private object? _firstSectionValue;
+        private bool _parentResolved;
+        private bool _currentSectionResolved;
+        private bool _firstSectionResolved;
+
         public LazyPageObject(
             FlintPageContext page,
             IReadOnlyList<FlintPageContext>? siteRegularPages = null,
@@ -281,21 +294,6 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("truncated", page.Truncated, false);
             SetValue("Truncated", page.Truncated, false);
             SetValue("path", page.PagePath ?? "/", false);
-            // .CurrentSection：页面的所属 section（自身即 section 时为自己）。
-            // 仅能拿字符串（父页对象需树导航，见 site.sections），主题多用于取 .Title
-            var currentSectionTitle = string.IsNullOrEmpty(page.Section)
-                ? page.Title
-                : page.Section;
-            var currentSectionObj = new ScriptObject
-            {
-                ["title"] = currentSectionTitle,
-                ["Title"] = currentSectionTitle,
-                ["rel_permalink"] = "/" + (page.Section ?? "").Trim('/') + "/",
-                ["RelPermalink"] = "/" + (page.Section ?? "").Trim('/') + "/"
-            };
-            SetValue("current_section", currentSectionObj, false);
-            SetValue("CurrentSection", currentSectionObj, false);
-
             // ---- 矩阵验证暴露的缺失属性（多主题共性）----
             // .Level：页面在树中的深度（home=0，/posts/=1，/posts/x/=2）
             var level = (page.Section ?? "").Split('/', StringSplitOptions.RemoveEmptyEntries).Length
@@ -434,6 +432,128 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("RawContent", page.RawContent, false);
         }
 
+        /// <summary>
+        /// 容器祖先链（最近祖先在前、home 在末位）。四种成员共用：
+        /// <list type="bullet">
+        /// <item><c>.Ancestors</c> = 整条链（页面集合，可 <c>.Reverse</c>）</item>
+        /// <item><c>.Parent</c> = 链首（home 页无父 → null）</item>
+        /// <item><c>.CurrentSection</c> = 见 <see cref="ResolveCurrentSection"/></item>
+        /// <item><c>.FirstSection</c> = 见 <see cref="ResolveFirstSection"/></item>
+        /// </list>
+        /// **只收真实容器页**：section 与 taxonomy 列表页（RelPermalink 为本页前缀，
+        /// 自身除外）。按路径段拼接会把"不产页的合成目录"（无 _index.md 的嵌套目录）
+        /// 与 pager 段当成祖先，链上就出现不存在的页面——narrow 的面包屑
+        /// （<c>/docs/guide/</c>、<c>/posts/page/</c> 两条死链）即此成因。
+        /// <para>
+        /// 探针实测（Hugo v0.166，站点 = home + docs（有 _index.md）+ docs/guide（有）
+        /// + docs/noindex（无）+ /posts/ + /tags/ + /tags/x/）：
+        /// </para>
+        /// <list type="table">
+        /// <item><term><c>/docs/guide/deep/</c></term><description>[指南区, 文档区, home]</description></item>
+        /// <item><term><c>/docs/noindex/deep2/</c></term><description>[文档区, home]（中间那层不产页，不入链）</description></item>
+        /// <item><term><c>/tags/x/</c></term><description>[Tags, home]</description></item>
+        /// <item><term><c>/tags/</c>、<c>/posts/</c></term><description>[home]</description></item>
+        /// <item><term>home</term><description>空</description></item>
+        /// </list>
+        /// </summary>
+        private List<FlintPageContext> ContainerChain()
+        {
+            if (_containerChain is not null)
+            {
+                return _containerChain;
+            }
+
+            var chain = new List<FlintPageContext>();
+            var selfRel = _page.RelPermalink ?? "/";
+            var allPages = _siteAllPages ?? ScribanTemplateRenderer.CurrentSitePages;
+            if (allPages is not null &&
+                !string.Equals(_page.Kind, "home", StringComparison.OrdinalIgnoreCase))
+            {
+                chain.AddRange(allPages
+                    .Where(p => (p.Kind == "section" || p.Kind == "taxonomy") &&
+                                !string.IsNullOrEmpty(p.RelPermalink) &&
+                                !string.Equals(p.RelPermalink, selfRel, StringComparison.OrdinalIgnoreCase) &&
+                                selfRel.StartsWith(p.RelPermalink, StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(p => p.RelPermalink!.Length));
+                if (allPages.FirstOrDefault(
+                        p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase))
+                    is { } home)
+                {
+                    chain.Add(home);
+                }
+            }
+
+            return _containerChain = chain;
+        }
+
+        /// <summary>
+        /// .CurrentSection：本页所属的 section 页——**自身即容器页时是自己**
+        /// （section/taxonomy/term/home 四类都如此，探针实测：<c>/docs/</c> → 自身、
+        /// <c>/tags/x/</c> → 自身、home → 自身）。
+        /// 内容页取链上**最近的 section**；根级页（如 <c>/p/</c>）与"仅有无 _index.md
+        /// 的嵌套目录"下的页（如 <c>/docs/noindex/deep2/</c>）落到 **home**
+        /// （探针实测：两者的 .CurrentSection 都是 home / 顶层 section，不是那层目录）
+        /// </summary>
+        private object? ResolveCurrentSection()
+        {
+            var kind = _page.Kind ?? "page";
+            if (kind is "home" or "section" or "taxonomy" or "term")
+            {
+                return this;
+            }
+
+            var chain = ContainerChain();
+            var nearestSection = chain.FirstOrDefault(
+                p => string.Equals(p.Kind, "section", StringComparison.OrdinalIgnoreCase));
+            if (nearestSection is not null)
+            {
+                return CreatePageObject(nearestSection);
+            }
+
+            var home = chain.LastOrDefault(
+                p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase));
+            return home is not null ? CreatePageObject(home) : this;
+        }
+
+        /// <summary>
+        /// .FirstSection：本页所在的**顶层** section——探针实测（v0.166）：
+        /// home → 自身；<c>/docs/</c>（一级 section）→ 自身；<c>/docs/guide/</c> →
+        /// <c>/docs/</c>（最外层的 section，不是自己）；内容页 → 最外层 section；
+        /// term 页 <c>/tags/x/</c> → <c>/tags/</c>（分类列表页，故 taxonomy 也计入）；
+        /// 根级页 / 无 section 可归的页 → home
+        /// </summary>
+        private object? ResolveFirstSection()
+        {
+            var kind = _page.Kind ?? "page";
+            if (kind is "home" or "taxonomy")
+            {
+                return this;
+            }
+
+            var chain = ContainerChain();
+            // 链是"最近在前"，故**末位**的 section/taxonomy 即最外层容器
+            var outermost = chain.LastOrDefault(
+                p => p.Kind is "section" or "taxonomy");
+            if (outermost is not null)
+            {
+                return CreatePageObject(outermost);
+            }
+
+            if (string.Equals(kind, "term", StringComparison.OrdinalIgnoreCase))
+            {
+                return this;
+            }
+
+            if (string.Equals(kind, "section", StringComparison.OrdinalIgnoreCase))
+            {
+                return this;
+            }
+
+            var home = chain.LastOrDefault(
+                p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase));
+            return home is not null ? CreatePageObject(home) : this;
+        }
+
         public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
             // .Paginator：**读取即视为"本页被模板分页"**（Hugo 语义：分页在首次访问
@@ -456,8 +576,43 @@ public sealed partial class ScribanTemplateRenderer
             // .Ancestors：访问时才解析（页面对象可能先由页面集合迭代创建，那时没有站点页集）
             if (member is "ancestors" or "Ancestors")
             {
-                value = _ancestorsValue ??=
-                    BuildAncestorsObject(_page, _siteAllPages ?? ScribanTemplateRenderer.CurrentSitePages);
+                value = _ancestorsValue ??= GetSharedPageList(ContainerChain());
+                return true;
+            }
+
+            // .Parent / .CurrentSection / .FirstSection：同一棵树上的三种投影（均为**真实页面对象**，
+            // 主题会继续取 .Title/.RegularPages/.GetPage 等）。判据见 BuildContainerChain 的说明
+            if (member is "parent" or "Parent")
+            {
+                if (!_parentResolved)
+                {
+                    _parentValue = ContainerChain() is [var nearest, ..] ? CreatePageObject(nearest) : null;
+                    _parentResolved = true;
+                }
+
+                value = _parentValue;
+                return true;
+            }
+            if (member is "current_section" or "CurrentSection")
+            {
+                if (!_currentSectionResolved)
+                {
+                    _currentSectionValue = ResolveCurrentSection();
+                    _currentSectionResolved = true;
+                }
+
+                value = _currentSectionValue;
+                return true;
+            }
+            if (member is "first_section" or "FirstSection")
+            {
+                if (!_firstSectionResolved)
+                {
+                    _firstSectionValue = ResolveFirstSection();
+                    _firstSectionResolved = true;
+                }
+
+                value = _firstSectionValue;
                 return true;
             }
 
@@ -1082,52 +1237,6 @@ public sealed partial class ScribanTemplateRenderer
             new(typeof(string), index == 0 ? "pathOrKind" : "name");
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new(typeof(object), "page");
-    }
-
-    /// <summary>
-    /// .Ancestors：祖先链（Hugo 语义）：
-    /// <list type="bullet">
-    /// <item>由**真实页面对象**构成（home + 逐级 section 页），可继续取 <c>.Title</c>/
-    /// <c>.RelPermalink</c>/<c>.IsSection</c> 等成员</item>
-    /// <item>顺序 = **最近祖先在前、home 在末位**（Hugo 的 <c>.Ancestors</c> 顺序；
-    /// 主题写 <c>.Ancestors.Reverse</c> 后即"home → … → 父级"的面包屑顺序）</item>
-    /// <item>**不能按 RelPermalink 的路径段拼接**：那会把"不产页的合成目录"
-    /// （<c>/docs/guide/</c>，其目录无 _index.md）与 pager 段（<c>/posts/page/</c>）
-    /// 当成祖先，面包屑便生成指向不存在页面的链接（narrow 实测 2 条）</item>
-    /// <item>实测清单（v0.166）：home 页 → 空；<c>/posts/</c>（section）→ [home]；
-    /// <c>/tags/</c>（taxonomy）→ [home]；<c>/tags/x/</c>（term）→ [Tags, home]</item>
-    /// </list>
-    /// </summary>
-    private static LazyPageList BuildAncestorsObject(
-        FlintPageContext page, IReadOnlyList<FlintPageContext>? allPages)
-    {
-        var selfRel = page.RelPermalink ?? "/";
-        var chain = new List<FlintPageContext>();
-        if (allPages is not null &&
-            !string.Equals(page.Kind, "home", StringComparison.OrdinalIgnoreCase))
-        {
-            // 真实"容器页"祖先：RelPermalink 是本页前缀（自身除外），最近的排最前。
-            // 容器页 = section 与 taxonomy 列表页——探测实证（v0.166）：
-            // `/docs/guide/deep/` → [docs, home]；`/tags/x/`（term）→ [Tags(taxonomy), home]。
-            // **page/term/home 不参与**：内容页不可能是别人的祖先，
-            // 词条页彼此前缀相同也只是路径巧合（`/tags/x/` 与 `/tags/xy/`）
-            chain.AddRange(allPages
-                .Where(p => (p.Kind == "section" || p.Kind == "taxonomy") &&
-                            !string.IsNullOrEmpty(p.RelPermalink) &&
-                            !string.Equals(p.RelPermalink, selfRel, StringComparison.OrdinalIgnoreCase) &&
-                            selfRel.StartsWith(p.RelPermalink, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(p => p.RelPermalink!.Length));
-            if (allPages.FirstOrDefault(
-                    p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase))
-                is { } home)
-            {
-                chain.Add(home);
-            }
-        }
-
-        // 返回**页面集合**（与 .Pages 同型）：range/.Reverse/| len 与页面集合一致。
-        // 不用手搓 ScriptObject——那种形状的 range 会把 count/reverse 等成员也迭代出来
-        return GetSharedPageList(chain);
     }
 
     /// <summary>
