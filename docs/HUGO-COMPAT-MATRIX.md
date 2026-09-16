@@ -434,5 +434,19 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 2. **保留 Flint 约定**：在文档中标注为**有意差异**，并给"相对引用"加兜底
    （把 `assets/` 下的资源同时镜像到站根，或对 CSS 内的相对 `url()` 做重写）。
 
-本清单倾向方案 1（Hugo 的约定是生态事实，主题的 CSS/JS 内部相对引用依赖它），
-但属**架构级选择**，按规则交由用户裁决后再实施。
+**已按方案 1 实施**（"继续"指令 + 本清单推荐）：`CollectAssetFiles` 对 `assets/` 不再加
+`assets/` 前缀（与 `static/` 同前缀，即"站点资源同一命名空间"），`TemplateResource.Create`/
+`Fingerprint` 的 `RelPermalink` 同步改为 `/x.css`。效果：样式链接与 Hugo 一致
+（`/main.<hash>.css`）、CSS 内 `url(./theme.png)` 正确解析、浏览器控制台 **0 错误 0 警告**
+（此前 1 错 1 警）；21 主题矩阵对称保持 **21/21**。
+
+#### 残留（已定位，未修）
+
+`clarity`/`stack` 的首页导航存在指向 **不存在页面** 的链接（`/page/2/`、`/page/3/`，
+各 1~3 条）。机制：主题的 `_partials/pagination.html` 读 `page.paginator`，只要
+`total_pages > 1` 就渲染页码链接（stack 的首页因此链到 /page/3/）；而 `/page/N/` 的**产出**
+在 Flint 侧要求模板显式调用 `.Paginate`（Hugo 语义：分页页由模板调用驱动）——两者判定不一致
+就出现了"有链接无页面"。探针数据：Hugo 下 stack 首页的隐式 `.Paginator` 为
+`3 pages / 5 elements`（与 Flint 相同），但 Hugo **只产出 `/page/1/`**，其首页也无页码链接——
+即 Hugo 的"链接渲染"也受某个更严的门槛约束（尚未定性）。修法方向：让"隐式 paginator 的
+链接渲染"与"分页页产出"共用同一判定。
