@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 输出写入聚合：输出目录清理、资源处理、sitemap/feed、文件写入与输出路径计算
 
 using System.Collections.Concurrent;
@@ -537,7 +537,10 @@ public sealed partial class SiteBuilder
         }
 
         // 2. 404 模板（layouts/404.html 存在时渲染输出 404.html）
-        if (_templateRenderer.TemplateExists("404"))
+        //    空文件例外：Hugo v0.166 实测 0 字节的 404 模板**不产出** 404.html
+        //（monochrome 的 layouts/404.html 正是 0 字节；而同样 0 字节的
+        //  `_default/single.html`/`_partials/x.html` Hugo 照用作模板）
+        if (_templateRenderer.TemplateExists("404") && !_templateRenderer.TemplateFileIsEmpty("404"))
         {
             var notFoundPage = new PageContext
             {

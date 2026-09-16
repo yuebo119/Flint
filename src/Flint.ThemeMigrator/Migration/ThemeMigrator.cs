@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // 迁移编排：目录遍历 → 解析 → 转换 → 预检 → 报告
 //
 // 四门禁中的前两关在此实现：
@@ -122,6 +122,18 @@ internal sealed class ThemeMigrator
 
             var text = File.ReadAllText(file);
 
+            // **空白模板按原文保留**：Hugo 不把 0 字节文件当模板（v0.166 实测：
+            // `layouts/404.html` 为空文件时 Hugo 不产出 404.html，而白空格/仅注释的
+            // 模板仍会产出）。若照常转换，转换器的"内容为空 → 补 include baseof"
+            // 规则会把它变成一个**真模板**（实测 monochrome 的 0 字节 404.html 被写成
+            // `{{ include "baseof.html" }}` → Flint 多产出 404.html、门禁④报不对称）
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                File.WriteAllText(targetPath, text);
+                summary.FilesCopied++;
+                continue;
+            }
+
             // 内联 partial 提取（Hugo 的 define "_partials/X.html"）：
             // Scriban 无此机制，必须提取为独立文件使 include 可命中
             var (remainingText, inlinePartials) = InlinePartialExtractor.Extract(text, namedTemplates, rel);
@@ -158,8 +170,21 @@ internal sealed class ThemeMigrator
                 var ipTarget = Path.Combine(targetRoot, ipRel.Replace('/', Path.DirectorySeparatorChar));
                 Directory.CreateDirectory(Path.GetDirectoryName(ipTarget)!);
 
-                // 提取内容仍走转换（保持与其他模板一致的语法）
-                var ipConverted = ConvertTemplate(ipRel, ip.Content);
+                // 提取内容仍走转换（保持与其他模板一致的语法）。
+                // **自名标志要一并传下去**：提取出的 `<name>__named.html` 就是原文件里
+                // `{{ define "<name>" }}` 的落点，其体内的**递归调用**
+                // `{{ template "<name>" … }}` 必须解析到 `__named` 文件本身——漏传该标志时
+                // 会解析回外层包装文件，形成 wrapper↔named 互相调用
+                //（techdoc 的 pagination.html 实测："partial 嵌套深度超过 200"）
+                var ipSelfPartial = ip.RelativePath.Contains(
+                    InlinePartialExtractor.NamedTemplateSelfSuffix, StringComparison.Ordinal)
+                    ? Path.GetFileName(ip.RelativePath)
+                        .Replace(InlinePartialExtractor.NamedTemplateSelfSuffix, "", StringComparison.Ordinal)
+                    : null;
+                var ipConverted = ConvertTemplate(
+                    ipRel, ip.Content,
+                    selfPartialName: ipSelfPartial,
+                    selfNamedTemplateExtracted: ipSelfPartial is not null);
                 File.WriteAllText(ipTarget, ipConverted.Text);
                 summary.FilesConverted++;
                 summary.TotalActions += ipConverted.Stats.Actions;
