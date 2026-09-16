@@ -440,13 +440,20 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 （`/main.<hash>.css`）、CSS 内 `url(./theme.png)` 正确解析、浏览器控制台 **0 错误 0 警告**
 （此前 1 错 1 警）；21 主题矩阵对称保持 **21/21**。
 
-#### 残留（已定位，未修）
+#### 残留（已修）
 
-`clarity`/`stack` 的首页导航存在指向 **不存在页面** 的链接（`/page/2/`、`/page/3/`，
-各 1~3 条）。机制：主题的 `_partials/pagination.html` 读 `page.paginator`，只要
-`total_pages > 1` 就渲染页码链接（stack 的首页因此链到 /page/3/）；而 `/page/N/` 的**产出**
-在 Flint 侧要求模板显式调用 `.Paginate`（Hugo 语义：分页页由模板调用驱动）——两者判定不一致
-就出现了"有链接无页面"。探针数据：Hugo 下 stack 首页的隐式 `.Paginator` 为
-`3 pages / 5 elements`（与 Flint 相同），但 Hugo **只产出 `/page/1/`**，其首页也无页码链接——
-即 Hugo 的"链接渲染"也受某个更严的门槛约束（尚未定性）。修法方向：让"隐式 paginator 的
-链接渲染"与"分页页产出"共用同一判定。
+`clarity`/`stack` 的首页导航曾链到**不存在的** `/page/3/`。根因（定向探针确证）：Hugo 的
+`.Paginate` 会**改写该页的 `.Paginator`**，随后读到的都是那一次创建的分页器；而 Flint 的
+`page.paginator` 只返回构建期预绑定的**隐式**分页器（站点全部常规页 → 3 页）。stack 的
+home 用 `where .Site.RegularPages "Type" "in" .Site.Params.mainSections` 得到空集
+（其主题配置 `mainSections = ["post"]`，与内容段名 `posts` 不匹配）→ Hugo 侧 `.Paginate []`
+= 1 页、不渲染页码、只产出 `/page/1/`；Flint 侧导航却按 3 页渲染 → 有链接无页面。
+
+修法：新增"模板创建的分页器"登记表（按列表页 URL），`page.paginator` 读取时**优先**返回它，
+只有模板没调过 `.Paginate` 才回落预绑定的隐式分页器；内置 `_internal/pagination.html`
+也从全局 `paginator` 改读 `page.paginator`（Hugo 内部模板用的就是页面的 `.Paginator`，
+而全局量在渲染前绑定、拿不到模板后续创建的分页器）。
+
+结果：clarity/stack 的坏链接清零，**全语料 Flint 独有坏引用从 31 类降到 3 类**
+（narrow 的 `/docs/guide/`、`/posts/page/` 与 fixit/hugo-coder 各 1 类），
+21 主题矩阵对称保持 21/21。

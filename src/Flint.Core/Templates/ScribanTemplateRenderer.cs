@@ -575,6 +575,31 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     internal static PaginateRegistration? GetPaginateCollection(string relPermalink) =>
         PaginateCollections.TryGetValue(relPermalink, out var registration) ? registration : null;
 
+    /// <summary>
+    /// 模板 <c>.Paginate</c> **实际创建**的分页器（按列表页 URL 登记）。
+    /// Hugo 语义：`.Paginate` 会**改写该页的 `.Paginator`**，随后的 `.Paginator` 读到的是
+    /// 这一次创建的分页器——而不是站点预绑定的隐式分页器。
+    /// 反例（修复前实测）：stack 的 home 用
+    /// <c>where .Site.RegularPages "Type" "in" site.Params.mainSections</c> 得到**空集**
+    /// （其主题配置 mainSections = ["post"]，与内容段名 posts 不匹配）→ Hugo 侧
+    /// <c>.Paginate []</c> → `.Paginator` 为 1 页、不渲染页码链接、只产出 /page/1/；
+    /// 而预绑定的隐式分页器是"站点全部常规页"→ 3 页 → Flint 渲染出指向未产出页的链接
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, PaginatorView> PaginatePagers = new(StringComparer.Ordinal);
+
+    /// <summary>登记模板创建的分页器</summary>
+    internal static void NotePaginatePager(string? relPermalink, PaginatorView pager)
+    {
+        if (!string.IsNullOrEmpty(relPermalink))
+        {
+            PaginatePagers[relPermalink] = pager;
+        }
+    }
+
+    /// <summary>取模板创建的分页器（无则 null → 用预绑定的隐式分页器）</summary>
+    internal static PaginatorView? GetPaginatePager(string relPermalink) =>
+        PaginatePagers.TryGetValue(relPermalink, out var pager) ? pager : null;
+
     /// <summary>该列表页是否被模板分页过</summary>
     internal static bool WasPaginateInvoked(string relPermalink) =>
         PaginatedListUrls.ContainsKey(relPermalink);
@@ -584,6 +609,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     {
         PaginatedListUrls.Clear();
         PaginateCollections.Clear();
+        PaginatePagers.Clear();
     }
 
     /// <summary>
@@ -1917,7 +1943,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         """;
 
     /// <summary>
-    /// Hugo embedded pagination（default 格式）的 Scriban 翻译：
+    /// Hugo embedded pagination（default 格式）的 Scriban 翻译。
+    /// **读 `page.paginator` 而不是全局 `paginator`**（Hugo 的内部模板用的就是页面的
+    /// `.Paginator`）：全局 `paginator` 在渲染开始前绑定（那时模板还没调 `.Paginate`），
+    /// 会拿到"预绑定的隐式分页器"——与模板实际分页的集合可能不同（clarity 的首页：
+    /// 模板传 `where … mainSections` 的 3 条 → 2 页；隐式是站点全部常规页 5 条 → 3 页
+    /// → 内置模板渲染出指向未产出页的 /page/3/ 链接）
     /// 5 槽页码窗口居中于当前页，首末页与前后页按条件渲染。
     /// 原始字符串字面量（内含大量 {{ }} 与引号，逐字可读优于拼接/转义）
     /// </summary>
@@ -1942,14 +1973,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     private static string BuildPaginationTemplate()
     {
         return """
-        {{ if paginator && paginator.total_pages > 1 }}
+        {{ if page.paginator && page.paginator.total_pages > 1 }}
         <ul class="pagination pagination-default">
-        {{ if paginator.first && paginator.page_number != paginator.first.page_number }}<li class="page-item"><a href="{{ paginator.first.url }}" aria-label="First" class="page-link" role="button"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="First" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ end }}
-        {{ if paginator.prev }}<li class="page-item"><a href="{{ paginator.prev.url }}" aria-label="Previous" class="page-link" role="button"><span aria-hidden="true">&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Previous" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;</span></a></li>{{ end }}
-        {{ slots = 5 }}{{ start = paginator.page_number - 2 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ finish = start + slots - 1 }}{{ if finish > paginator.total_pages }}{{ finish = paginator.total_pages }}{{ end }}{{ if finish - start + 1 < slots }}{{ start = finish - slots + 1 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ end }}
-        {{ for k in start..finish }}{{ if paginator.page_number == k }}<li class="page-item active"><a aria-current="page" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ else }}<li class="page-item"><a href="{{ paginator.pagers[k - 1].url }}" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ end }}{{ end }}
-        {{ if paginator.next }}<li class="page-item"><a href="{{ paginator.next.url }}" aria-label="Next" class="page-link" role="button"><span aria-hidden="true">&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Next" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;</span></a></li>{{ end }}
-        {{ if paginator.last && paginator.page_number != paginator.last.page_number }}<li class="page-item"><a href="{{ paginator.last.url }}" aria-label="Last" class="page-link" role="button"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Last" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ end }}
+        {{ if page.paginator.first && page.paginator.page_number != page.paginator.first.page_number }}<li class="page-item"><a href="{{ page.paginator.first.url }}" aria-label="First" class="page-link" role="button"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="First" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;&laquo;</span></a></li>{{ end }}
+        {{ if page.paginator.prev }}<li class="page-item"><a href="{{ page.paginator.prev.url }}" aria-label="Previous" class="page-link" role="button"><span aria-hidden="true">&laquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Previous" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&laquo;</span></a></li>{{ end }}
+        {{ slots = 5 }}{{ start = page.paginator.page_number - 2 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ finish = start + slots - 1 }}{{ if finish > page.paginator.total_pages }}{{ finish = page.paginator.total_pages }}{{ end }}{{ if finish - start + 1 < slots }}{{ start = finish - slots + 1 }}{{ if start < 1 }}{{ start = 1 }}{{ end }}{{ end }}
+        {{ for k in start..finish }}{{ if page.paginator.page_number == k }}<li class="page-item active"><a aria-current="page" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ else }}<li class="page-item"><a href="{{ page.paginator.pagers[k - 1].url }}" aria-label="Page {{ k }}" class="page-link" role="button">{{ k }}</a></li>{{ end }}{{ end }}
+        {{ if page.paginator.next }}<li class="page-item"><a href="{{ page.paginator.next.url }}" aria-label="Next" class="page-link" role="button"><span aria-hidden="true">&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Next" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;</span></a></li>{{ end }}
+        {{ if page.paginator.last && page.paginator.page_number != page.paginator.last.page_number }}<li class="page-item"><a href="{{ page.paginator.last.url }}" aria-label="Last" class="page-link" role="button"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ else }}<li class="page-item disabled"><a aria-disabled="true" aria-label="Last" class="page-link" role="button" tabindex="-1"><span aria-hidden="true">&raquo;&raquo;</span></a></li>{{ end }}
         </ul>
         {{ end }}
         """;
