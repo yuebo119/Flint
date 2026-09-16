@@ -530,11 +530,18 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // time - 解析时间
-        obj.Import("time", (string? s) =>
+        // time - Hugo 的 `time VALUE`：**时间值原样返回**、字符串解析为时间
+        //（github-style 的 `{{ time .Date }}` 实测：只收字符串时拿到 MinValue →
+        //  meta 里印出 0001-01-01；Hugo 侧是原值 → "2026-01-15 00:00:00 +0000 UTC"）
+        obj.Import("time", (object? value) => value switch
         {
-            if (DateTimeOffset.TryParse(s, out var result))
-                return result;
-            return DateTimeOffset.MinValue;
+            DateTimeOffset dto => dto,
+            DateTime dt => new DateTimeOffset(dt),
+            long unix => DateTimeOffset.FromUnixTimeSeconds(unix),
+            string s when DateTimeOffset.TryParse(
+                s, System.Globalization.CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
+                => parsed,
+            _ => DateTimeOffset.MinValue
         });
 
         // unix - Unix 时间戳
@@ -2153,6 +2160,27 @@ public sealed partial class BuiltinTemplateFunctions
             return 1;
         }
 
+        // **集合按长度参与比较**（Hugo v0.166 探针：`gt (slice 1 2) 0` = true、
+        // `gt .Pages 0` = true、`eq .Pages 0` = false、`lt .Pages 0` = false）——
+        // 主题里 `{{ if gt .Pages 0 }}` 决定是否渲染整个列表区（blowfish 的
+        // list.html 实测：此前集合落到字符串序比较 → 恒 false → 文章列表整段消失）
+        var aCount = CollectionCount(a);
+        var bCount = CollectionCount(b);
+        if (aCount is not null || bCount is not null)
+        {
+            if (aCount is not null && bCount is not null)
+            {
+                return aCount.Value.CompareTo(bCount.Value);
+            }
+
+            var other = aCount is not null ? b : a;
+            if (TryNum(other, out var otherNum))
+            {
+                var cmp = (aCount ?? bCount)!.Value.CompareTo(otherNum);
+                return aCount is not null ? cmp : -cmp;
+            }
+        }
+
         var an = TryNum(a, out var na);
         var bn = TryNum(b, out var nb);
         if (an && bn)
@@ -2165,6 +2193,22 @@ public sealed partial class BuiltinTemplateFunctions
         }
         return string.CompareOrdinal(a.ToString(), b.ToString());
     }
+
+    /// <summary>
+    /// 集合的**长度**（非集合返回 null）：页面集合（LazyPageList 实现
+    /// <c>IList&lt;ScriptObject&gt;</c>）、Scriban 的 ScriptArray、一般列表/字典之外的
+    /// 序列集合都算。字符串与页面/站点对象**不算**集合（Hugo 里它们是标量/结构体）
+    /// </summary>
+    private static double? CollectionCount(object? value) => value switch
+    {
+        null => null,
+        string => null,
+        // **集合判定要在 ScriptObject 排除之前**：页面集合是
+        // `ScriptObject + IList<ScriptObject>`（LazyPageList），先按 ScriptObject 排除会漏
+        System.Collections.ICollection collection => collection.Count,
+        System.Collections.IEnumerable sequence => sequence.Cast<object?>().Count(),
+        _ => null
+    };
 
     private static bool IsNumericValue(object? v) =>
         v is bool or int or long or double or float or decimal or short or byte or sbyte

@@ -100,4 +100,26 @@ public sealed class I18nTests : IDisposable
         translations["article.readingTime.other"].Should().Be("{{ .Count }} minutes read");
         translations["article.readingTime"].Should().Be("{{ .Count }} minutes read", "主键回落 other 形");
     }
+
+    /// <summary>
+    /// **YAML / JSON 形态**的 i18n 文件（Hugo 三种格式都支持）：blowfish 的
+    /// <c>i18n/en.yaml</c> 此前整份被忽略（只找 .toml）→ 该主题所有 i18n 文案为空
+    /// （"Skip to main content" 等 16 处实测）
+    /// </summary>
+    [Fact]
+    public void Load_YAML与JSON形态应被加载()
+    {
+        var i18n = Path.Combine(_testDir, "i18n");
+        Directory.CreateDirectory(i18n);
+        File.WriteAllText(Path.Combine(i18n, "en.yaml"),
+            "nav:\n  skip_to_main: \"Skip to main content\"\nplain: \"P\"\n");
+        File.WriteAllText(Path.Combine(i18n, "en.json"),
+            "{\"json.only\": \"J\"}");
+
+        var translations = Translations.Load(_testDir, null, "en");
+
+        translations["nav.skip_to_main"].Should().Be("Skip to main content", "YAML 嵌套键摊平");
+        translations["plain"].Should().Be("P", "YAML 扁平键");
+        translations["json.only"].Should().Be("J", "JSON 形态同样支持");
+    }
 }

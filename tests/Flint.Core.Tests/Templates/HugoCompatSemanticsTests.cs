@@ -496,6 +496,50 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal(expected, await Render(template));
     }
 
+    /// <summary>
+    /// **集合与数值的比较用集合长度**（Hugo v0.166 探针：`gt (slice 1 2) 0` = true、
+    /// `gt .Pages 0` = true（截面有 1 页时）、`eq .Pages 0` = false、`lt .Pages 0` = false）。
+    /// 主题用 `{{ if gt .Pages 0 }}` 决定是否渲染整个列表区（blowfish 的 list.html 实测：
+    /// 此前集合落到字符串序比较 → 恒 false → 文章列表整段消失）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ gt (slice 1 2) 0 }}", "true")]
+    [InlineData("{{ lt (slice 1 2) 0 }}", "false")]
+    [InlineData("{{ eq (slice 1 2) 0 }}", "false")]
+    [InlineData("{{ gt (slice) 0 }}", "false")]
+    public async Task 集合与数值比较按长度(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
+    /// <summary>页面集合（LazyPageList 同时是 ScriptObject 与 IList）同样按长度比较</summary>
+    [Fact]
+    public async Task 页面集合与数值比较按长度()
+    {
+        var child1 = Node("子页1", "/docs/a/", "page");
+        var child2 = Node("子页2", "/docs/b/", "page");
+        var section = new PageContext
+        {
+            Title = "文档区",
+            Content = "",
+            Permalink = "https://example.com/docs/",
+            RelPermalink = "/docs/",
+            Date = new DateTimeOffset(2024, 1, 15, 10, 30, 0, TimeSpan.Zero),
+            Tags = [],
+            Categories = [],
+            WordCount = 0,
+            ReadingTime = TimeSpan.Zero,
+            Kind = "section",
+            Pages = [child1, child2]
+        };
+        var all = new[] { section, child1, child2 };
+        Assert.Equal(
+            "gt=true lt=false len=2",
+            await RenderFor(
+                section, all,
+                "gt={{ gt page.pages 0 }} lt={{ lt page.pages 0 }} len={{ page.pages | len }}"));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {
