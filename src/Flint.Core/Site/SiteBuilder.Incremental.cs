@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // SiteBuilder 增量聚合：增量构建主流程、全局 identity 判定、taxonomy 签名
 
 using System.Collections.Concurrent;
@@ -182,7 +182,7 @@ public sealed partial class SiteBuilder
                 // taxonomy identity：签名一致（纯正文编辑）时 term/taxonomy 页
                 // 内容不变，仅模板变化时才需重渲染
                 var taxonomyDataChanged = taxonomySignatureBefore != taxonomySignatureAfter;
-                var taxonomyService = new TaxonomyService(config.BaseURL);
+                var taxonomyService = new TaxonomyService(config.BaseURL, TaxonomyService.FromConfigured(config.Taxonomies));
                 var taxonomies = taxonomyService.BuildTaxonomies(allPageContexts);
                 // data identity 已在 IsGlobalIdentityPath 归为全量装配——此处 data 变化
                 // 必然伴随全量重建，重新加载保证 site.data 反映最新内容

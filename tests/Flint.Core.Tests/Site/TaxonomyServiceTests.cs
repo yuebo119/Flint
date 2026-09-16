@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 分类系统服务单元测试
 
 using Flint.Core.Abstractions;
@@ -135,17 +135,19 @@ public class TaxonomyServiceTests
     }
 
     [Fact]
-    public void BuildTaxonomies_空页面列表应该返回空分类()
+    public void BuildTaxonomies_无词条的分类不出现()
     {
-        // Arrange
+        // Hugo v0.166 实测：没有词条的分类**不产出任何页面**（声明了 [taxonomies]
+        // 但内容没用到的分类，其目录不会出现——FixIt 的 `collection = "collections"`
+        // 就是这样）。故集合里直接不含该键（`.Site.Taxonomies.tags` 取到 nil，
+        // 与 Hugo 一致），而不是"存在但为空表"
         var pages = new List<PageContext>();
 
-        // Act
         var taxonomies = _service.BuildTaxonomies(pages);
 
-        // Assert
-        Assert.Empty(taxonomies.Taxonomies["tags"]);
-        Assert.Empty(taxonomies.Taxonomies["categories"]);
+        Assert.DoesNotContain("tags", taxonomies.Taxonomies.Keys);
+        Assert.DoesNotContain("categories", taxonomies.Taxonomies.Keys);
+        Assert.Empty(taxonomies.Taxonomies);
     }
 
     #endregion

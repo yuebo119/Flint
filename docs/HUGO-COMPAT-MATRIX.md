@@ -219,3 +219,26 @@ Flint 的 `PageContext.WithPaginator` 曾把 `.Pages` 换成当前页切片（�
 另外 `.Paginate <空集合>` 必须是"空分页器"而不是"回落到本页 Pages"：
 blog-awesome 的列表页调用 `.Paginate (where .Pages "Section" "blog")`（过滤结果为空），
 回落会让 3 篇文章按 2 分页、多出 `/page/2/`。空序列现按合法（空）集合处理并登记。
+
+### K. 自定义分类与分类页标题（本轮第六项修复）
+
+两项均以 Hugo v0.166 探针为准：
+
+1. **自定义分类从不产出**（真 bug）：Flint 的分类服务构造时**从不传站点配置**，
+   注册表恒为默认 tags/categories → 站点声明 `[taxonomies] series = "my-series"`
+   时 `/my-series/` 永不生成（探针：内容含 my-series/moods 时 Flint 只产出
+   tags/categories，Hugo 产出全部四个）。修法：
+   - `TaxonomyService.FromConfigured`：**键=单数、值=复数**，注册表按**复数**索引
+     （复数名同时是 front matter 字段名与 URL 段）
+   - 三处构造点（SiteBuilder / Incremental / Render）传入 `config.Taxonomies`
+   - **声明即替换默认**（实测：只声明 `series = "my-series"` 时，即便页面有 tags
+     也不产出 `/tags/`）——为此给 `TaxonomyConfig` 加 `Declared` 标志区分"未声明"
+   - **主题级 `[taxonomies]` 会合并进站点**（FixIt 的 hugo.toml 声明
+     `collection = "collections"`）：站点未声明时采用主题的（站点声明过则站点优先，
+     对齐 Hugo 的 `_merge = "shallow"` 整体替换语义）；多主题时取优先级最高的那个（[推断]）
+
+2. **分类页标题大小写**：Hugo 实测 `Title` 是"Title 化"的结果——
+   taxonomy 列表页把复数名的 `-` 换空格再 Title 化（`/my-series/` → "My Series"），
+   term 页对词条值 Title 化但**保留连字符**（`/my-series/first-run/` → "First-Run"）。
+   采用 Go `strings.Title` 语义（只大写"非字母数字之后的首字母"，其余原样）。
+   此前两者都直接输出原名（`tags`/`alpha`）。

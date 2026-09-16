@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 配置模型（自 Abstractions/IConfigLoader.cs 迁入：配置数据模型归位 Configuration 层）
 
 namespace Flint.Core.Configuration;
@@ -247,7 +247,14 @@ public sealed class PermalinkConfig
 public sealed class TaxonomyConfig
 {
     /// <summary>
-    /// 分类名称映射
+    /// 站点配置里**显式声明**过 <c>[taxonomies]</c>（Hugo 语义：声明即**替换**默认
+    /// tags/categories，故需要与"缺省用默认"区分开——主题级 <c>[taxonomies]</c> 的
+    /// 合并也依赖该标志：站点没声明时才采用主题的）
+    /// </summary>
+    public bool Declared { get; init; }
+
+    /// <summary>
+    /// 分类名称映射（键=单数名、值=复数名）
     /// </summary>
     public IReadOnlyDictionary<string, string> Taxonomies { get; init; } =
         new Dictionary<string, string>

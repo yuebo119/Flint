@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 站点构建器单元测试
 
 #pragma warning disable CA2000 // 测试代码中不需要处理 Dispose
@@ -841,6 +841,50 @@ public bool TemplateExists(string templateName) => false;
             "json 输出路径逃逸护栏未拦截 .. slug");
         Assert.False(Directory.Exists(Path.Combine(_testDir, "escape")),
             "json 输出路径逃逸护栏未拦截 .. slug（目录形态）");
+    }
+
+    [Fact]
+    public async Task BuildAsync_自定义分类按复数名建页且声明会替换默认()
+    {
+        // Hugo v0.166 实测两条规则：
+        // 1. `[taxonomies] series = "my-series"` —— 键=单数、值=复数；**复数名**既是
+        //    front matter 字段名（内容写 `my-series: [...]`）也是 URL 段（/my-series/）
+        // 2. 声明了 [taxonomies] 就**替换**默认：只声明 series 时，页面里即便有 tags
+        //    也不产出 /tags/
+        // 此前构造分类服务时从不传站点配置，注册表恒为默认 tags/categories
+        // → 自定义分类页从不产出
+        var contentDir = Path.Combine(_testDir, "content");
+        Directory.CreateDirectory(contentDir);
+        await File.WriteAllTextAsync(Path.Combine(_testDir, "Flint.toml"),
+            "baseURL = \"https://example.com/\"\ntitle = \"T\"\n[taxonomies]\nseries = \"my-series\"\n");
+        Directory.CreateDirectory(Path.Combine(_testDir, "layouts", "_default"));
+        await File.WriteAllTextAsync(
+            Path.Combine(_testDir, "layouts", "_default", "single.html"), "S={{ page.title }}");
+        // 分类列表页用 `_default/terms.html` 而不是 `taxonomy.html`：按 Hugo 实测的
+        // 候选序，`_default/taxonomy` 排在 `_default/term` **之前**，term 页也会命中它，
+        // 两个 kind 就分不开了（见 PageTemplateLookupTests 的逐级淘汰表）
+        await File.WriteAllTextAsync(
+            Path.Combine(_testDir, "layouts", "_default", "terms.html"), "X={{ page.title }}");
+        await File.WriteAllTextAsync(
+            Path.Combine(_testDir, "layouts", "_default", "term.html"), "T={{ page.title }}");
+        await File.WriteAllTextAsync(Path.Combine(contentDir, "a.md"),
+            "---\ntitle: A\ntags: [alpha]\nmy-series: [first-run]\n---\nA");
+
+        // 必须用**全真管线**（真 ConfigLoader 才读 Flint.toml 的 [taxonomies]；
+        // stub loader 恒返回默认配置，测不到"声明替换默认"）
+        var builder = CreateRealPipelineSiteBuilder();
+        var result = await builder.BuildAsync(CreateBuildOptions());
+
+        Assert.True(result.Success);
+        // 复数名建页 + 标题 Title 化（'-' → 空格）
+        Assert.Contains("X=My Series", await File.ReadAllTextAsync(
+            Path.Combine(_outputDir, "my-series", "index.html")), StringComparison.Ordinal);
+        // term 页标题 Title 化但**保留连字符**
+        Assert.Contains("T=First-Run", await File.ReadAllTextAsync(
+            Path.Combine(_outputDir, "my-series", "first-run", "index.html")), StringComparison.Ordinal);
+        // 声明替换默认：tags 不再作为分类
+        Assert.False(Directory.Exists(Path.Combine(_outputDir, "tags")),
+            "声明 [taxonomies] 后不应再产出默认分类 /tags/");
     }
 
     [Fact]
