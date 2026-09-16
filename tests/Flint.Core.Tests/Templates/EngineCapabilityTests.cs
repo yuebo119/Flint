@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 阶段 0 引擎能力测试：命名空间函数层 / 资源管线 / Store / Related / .Params 语义
 //
 // 回归防护对象（本轮实测确证的缺口）：
@@ -555,8 +555,9 @@ public sealed class ThemeConvergenceRegressionTests
         {
             // 空白名 → 不产出资源（渲染为空）
             Assert.Equal("", Eval("{{ resources.FromString \" \" \"x\" }}", assetRoot: dir));
-            // 合法名仍正常产出（守卫不误伤正常路径）
-            Assert.Equal("/assets/a.css",
+            // 合法名仍正常产出（守卫不误伤正常路径）。
+            // 路径约定对齐 Hugo v0.166：资源发布在**站根**（`assets/a.css` → `/a.css`）
+            Assert.Equal("/a.css",
                 Eval("{{ (resources.FromString \"a.css\" \"body{}\").rel_permalink }}", assetRoot: dir));
         }
         finally

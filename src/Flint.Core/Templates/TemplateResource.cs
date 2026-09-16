@@ -1,4 +1,4 @@
-// Flint 静态站点生成器
+﻿// Flint 静态站点生成器
 // 模板资源对象模型（Hugo resources.* 的等价物）
 //
 // 设计约束：
@@ -78,7 +78,10 @@ public sealed class TemplateResource
             _ => ("other", "application/octet-stream")
         };
 
-        var rel = "/assets/" + name.TrimStart('/');
+        // Hugo v0.166 实测：`assets/x.css` 的 `.RelPermalink` = `/x.css`
+        //（资源发布在**站根**，不是 `/assets/` 前缀）——模板链接与 CSS 内相对
+        // 引用都依赖该约定（hugo-paper 的 `url(./theme.png)` 实测）
+        var rel = "/" + name.TrimStart('/');
         return new TemplateResource
         {
             Name = name,
@@ -132,7 +135,7 @@ public sealed class TemplateResource
         var ext = Path.GetExtension(Name);
         var hashed = (dir.Length > 0 ? dir + "/" : "") + file + "." + shortHash + ext;
 
-        var rel = "/assets/" + hashed;
+        var rel = "/" + hashed;
         return With(
             relPermalink: rel,
             fingerprint: $"{algorithm.ToLowerInvariant()}-{Convert.ToBase64String(hash)}");

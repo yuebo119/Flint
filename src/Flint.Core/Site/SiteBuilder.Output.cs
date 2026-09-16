@@ -63,14 +63,20 @@ public sealed partial class SiteBuilder
         //   assets/ 内容保留 assets/ 前缀（Flint 扩展：assets 直接发布，Hugo 需 resources.Get）
         // 键 = 输出相对路径，站点先注册即形成覆盖（与模板查找同规则）
         var assetsByRelative = new Dictionary<string, (string Path, bool IsTheme, string OutputRelative)>(StringComparer.OrdinalIgnoreCase);
-        CollectAssetFiles(Path.Combine(sourcePath, "assets"), "assets/", isTheme: false, assetsByRelative);
+        // **资源发布在站根**（对齐 Hugo v0.166 实测：`assets/main.css` 的
+        // `.RelPermalink` = `/main.css`，即"相对 assets/ 根"，不加 `assets/` 前缀）。
+        // 此前统一放到 `/assets/…`：链接文本与 Hugo 全线不同，且**主题 CSS 内的相对引用
+        // 会 404**（hugo-paper 的 `url(./theme.png)`：Hugo 下解析为 /theme.png ✔、
+        // Flint 下解析为 /assets/theme.png ✗）。static/ 本就映射到输出根，两者同前缀即
+        // Hugo 的"站点资源同一命名空间"语义（static 先收集 → 同路径时 static 胜）
+        CollectAssetFiles(Path.Combine(sourcePath, "assets"), "", isTheme: false, assetsByRelative);
         CollectAssetFiles(Path.Combine(sourcePath, "static"), "", isTheme: false, assetsByRelative);
 
         // 主题列表按序收集（前面的优先，TryAdd 先到先得形成覆盖链）
         foreach (var themeName in themeNames)
         {
             var themeRoot = Path.Combine(sourcePath, "themes", themeName);
-            CollectAssetFiles(Path.Combine(themeRoot, "assets"), "assets/", isTheme: true, assetsByRelative);
+            CollectAssetFiles(Path.Combine(themeRoot, "assets"), "", isTheme: true, assetsByRelative);
             CollectAssetFiles(Path.Combine(themeRoot, "static"), "", isTheme: true, assetsByRelative);
         }
 
