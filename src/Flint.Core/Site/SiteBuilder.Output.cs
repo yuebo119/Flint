@@ -250,13 +250,12 @@ public sealed partial class SiteBuilder
                 WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
             }};
             var rssContent = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
-            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "rss.xml"), rssContent, cancellationToken);
+            await WriteRssAliasesAsync(options, rssContent, cancellationToken);
             return;
         }
 
         var rss = feedGenerator.GenerateRss(pages);
-        var rssPath = Path.Combine(options.OutputPath, "rss.xml");
-        await File.WriteAllTextAsync(rssPath, rss, cancellationToken);
+        await WriteRssAliasesAsync(options, rss, cancellationToken);
 
         // 生成 Atom Feed
         feedOptions = feedOptions with { FeedPath = "/atom.xml" };
@@ -264,6 +263,23 @@ public sealed partial class SiteBuilder
         var atom = atomGenerator.GenerateAtom(pages);
         var atomPath = Path.Combine(options.OutputPath, "atom.xml");
         await File.WriteAllTextAsync(atomPath, atom, cancellationToken);
+    }
+
+    /// <summary>
+    /// 首页 RSS 的产物名：**主名 <c>index.xml</c>**（Hugo v0.166 实测：首页 RSS 输出路径
+    /// 就是 <c>/index.xml</c>，各 section 是 <c>{section}/index.xml</c>），
+    /// <c>rss.xml</c> 作为 Flint 历史别名一并写出（老站点/工具可能直接引它）。
+    /// 此前只写 <c>rss.xml</c> → 主题的 feed 链接
+    /// <c>&lt;link rel="alternate" href="/index.xml"&gt;</c> 404（fixit 实测）
+    /// </summary>
+    private static async Task WriteRssAliasesAsync(
+        BuildOptions options, string content, CancellationToken cancellationToken)
+    {
+        foreach (var name in new[] { "index.xml", "rss.xml" })
+        {
+            await File.WriteAllTextAsync(
+                Path.Combine(options.OutputPath, name), content, cancellationToken);
+        }
     }
 
     private async Task WriteOutputAsync(
