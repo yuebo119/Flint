@@ -56,6 +56,9 @@ internal sealed class ThemeMigrator
 
     private readonly MigrationMap _map = MigrationMap.CreateDefault();
 
+    /// <summary>baseof 序幕 partial 的规范名（无扩展名）</summary>
+    private const string BaseofProloguePath = "_partials/__baseof_prologue";
+
     /// <summary>执行迁移</summary>
     /// <param name="sourceRoot">Hugo 主题根目录</param>
     /// <param name="targetRoot">输出目录（Flint 主题布局）</param>
@@ -82,6 +85,12 @@ internal sealed class ThemeMigrator
         var namedTemplates = ScanNamedTemplates(sourceRoot);
         // 跨文件 block（partial 里的 `{{ block "X" }}` 指向别的 partial 的 define）
         var crossFileBlocks = ScanCrossFileBlocks(sourceRoot);
+        // baseof 序幕（纯副作用动作）：页面模板要在块体捕获**之前**先跑它
+        var (baseofPrologueText, baseofPrologueParts) = ScanBaseofPrologue(sourceRoot);
+        if (baseofPrologueText is not null)
+        {
+            summary.GlobalDiagnostics.Add("baseof 序幕：已提到块体之前（纯副作用动作）");
+        }
         if (crossFileBlocks.Count > 0)
         {
             summary.GlobalDiagnostics.Add($"跨文件命名模板 block: {crossFileBlocks.Count} 个");
@@ -97,6 +106,18 @@ internal sealed class ThemeMigrator
         if (slotNames.Count > 0)
         {
             summary.GlobalDiagnostics.Add($"槽位命名模板（多文件同名 define）: {slotNames.Count} 个");
+        }
+
+        // baseof 序幕 partial 落盘（页面模板会在块体捕获之前 include 它）
+        if (baseofPrologueText is not null)
+        {
+            var prologueRel = "layouts/" + BaseofProloguePath + ".html";
+            var prologueTarget = Path.Combine(
+                targetRoot, prologueRel.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(prologueTarget)!);
+            var prologueConverted = ConvertTemplate(prologueRel, baseofPrologueText);
+            File.WriteAllText(prologueTarget, prologueConverted.Text);
+            summary.FilesConverted++;
         }
 
         foreach (var file in Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories))
@@ -200,7 +221,9 @@ internal sealed class ThemeMigrator
 
             var result = ConvertTemplate(
                 rel, remainingText, valueReturning, selfPartial, baseofAvailable, selfNamedExtracted,
-                slotNames, isBaseTemplate, crossFileBlocks.Keys);
+                slotNames, isBaseTemplate, crossFileBlocks.Keys,
+                baseofPrologueText is null ? null : BaseofProloguePath,
+                isBaseTemplate ? baseofPrologueParts : 0);
             File.WriteAllText(targetPath, result.Text);
 
             // 提取的内联 partial 作为独立模板文件写出（路径相对主题 layouts/）
@@ -275,7 +298,9 @@ internal sealed class ThemeMigrator
         bool selfNamedTemplateExtracted = false,
         IReadOnlySet<string>? slotNames = null,
         bool isBaseTemplate = false,
-        IEnumerable<string>? crossFileBlocks = null)
+        IEnumerable<string>? crossFileBlocks = null,
+        string? baseofProloguePath = null,
+        int baseofProloguePartCount = 0)
     {
         var lexer = new GoTemplateLexer(text);
         var tokens = lexer.Tokenize();
@@ -285,7 +310,7 @@ internal sealed class ThemeMigrator
 
         var converter = new TemplateConverter(
             _map, valueReturning, selfPartialName, baseofAvailable, selfNamedTemplateExtracted,
-            slotNames, isBaseTemplate, crossFileBlocks);
+            slotNames, isBaseTemplate, crossFileBlocks, baseofProloguePath, baseofProloguePartCount);
         var output = converter.Convert(parts);
 
         return (output, converter.Stats, [.. parser.Diagnostics, .. converter.Diagnostics]);
@@ -470,6 +495,131 @@ internal sealed class ThemeMigrator
 
         return result;
     }
+
+    /// <summary>
+    /// **baseof 序幕**：baseof.html 顶部连续的"纯副作用动作"（partial 调用 / store 写入等，
+    /// **不定义也不引用局部变量**）。Hugo 的块体在 baseof 之内求值——序幕先跑、块体随后读
+    /// store；而转换把块体捕获提到 include 之前，块体读 store 就是空值
+    /// （fixit 的 home.html 读 `.Site.Store.Get "mainSectionPages"` → 首页文章列表整段不渲染）。
+    /// 返回（序幕文本, 覆盖的 part 数）；无可用序幕时返回 (null, 0)
+    /// </summary>
+    internal static (string? Text, int PartCount) ScanBaseofPrologue(string sourceRoot)
+    {
+        foreach (var relCandidate in new[] { "layouts/baseof.html", "baseof.html" })
+        {
+            var path = Path.Combine(sourceRoot, relCandidate.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            string text;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (IOException)
+            {
+                return (null, 0);
+            }
+
+            IReadOnlyList<TemplatePart> parts;
+            try
+            {
+                parts = new GoTemplateParser(new GoTemplateLexer(text).Tokenize()).Parse();
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or FormatException)
+            {
+                return (null, 0);
+            }
+
+            var prologue = new List<TemplatePart>();
+            foreach (var part in parts)
+            {
+                // 只吸收**动作**：夹在中间的空文本放过，遇到非空文本或注释即停
+                if (part is ActionPart action)
+                {
+                    if (ReferencesVariables(action))
+                    {
+                        return (null, 0);
+                    }
+
+                    prologue.Add(action);
+                    continue;
+                }
+
+                if (part is TextPart { Text: var txt } && string.IsNullOrWhiteSpace(txt))
+                {
+                    continue;
+                }
+
+                break;
+            }
+
+            if (prologue.Count == 0)
+            {
+                return (null, 0);
+            }
+
+            // 序幕在 parts 里的**前导长度**（含跳过的空白文本）用于在原文件里跳过
+            var consumed = 0;
+            for (var i = 0; i < parts.Count; i++)
+            {
+                if (i < prologue.Count)
+                {
+                    consumed = i + 1;
+                    continue;
+                }
+
+                if (parts[i] is TextPart { Text: var gap } && string.IsNullOrWhiteSpace(gap))
+                {
+                    consumed = i + 1;
+                    continue;
+                }
+
+                break;
+            }
+
+            return (string.Concat(prologue.Select(SerializePart)), consumed);
+        }
+
+        return (null, 0);
+    }
+
+    /// <summary>动作里是否出现局部变量（<c>$x</c> / <c>$.x</c> 除外——<c>$</c> 是页面根）</summary>
+    private static bool ReferencesVariables(TemplatePart part)
+    {
+        var text = SerializePart(part);
+        for (var i = 0; i < text.Length - 1; i++)
+        {
+            if (text[i] != '$')
+            {
+                continue;
+            }
+
+            var next = text[i + 1];
+            // `$.` 是 Hugo 的页面根（转换器映射为 page），不算局部变量
+            if (next is '.' or ' ' or '{' or '}')
+            {
+                continue;
+            }
+
+            if (char.IsLetter(next) || next == '_')
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>TemplatePart → 源文本（序幕重排用）</summary>
+    private static string SerializePart(TemplatePart part) => part switch
+    {
+        TextPart t => t.Text,
+        ActionPart a => "{{" + a.Raw + "}}",
+        _ => ""
+    };
 
     internal static HashSet<string> ScanNamedTemplates(string sourceRoot)
     {
