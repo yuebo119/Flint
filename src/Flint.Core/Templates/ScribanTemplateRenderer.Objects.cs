@@ -1362,7 +1362,17 @@ public sealed partial class ScribanTemplateRenderer
     /// </summary>
     private static ScriptObject BuildOutputFormatsObject(FlintPageContext page)
     {
-        var formats = page.Outputs.Count > 0 ? page.Outputs : (IReadOnlyList<string>)["html"];
+        // **kind 默认输出格式**（Hugo 探针）：home/section/taxonomy/term 未在
+        // front matter 声明 `outputs` 时默认 **HTML + RSS**，普通页仅 HTML。
+        // 此前列表页恒只有 html → `with .OutputFormats.Get "rss"` 取到 null →
+        // fixit/section.html 的 RSS 订阅链接整段不渲染（实测）
+        IReadOnlyList<string> formats = page.Outputs.Count > 0
+            ? page.Outputs
+            : page.Kind.ToLowerInvariant() switch
+            {
+                "home" or "section" or "taxonomy" or "term" => ["html", "rss"],
+                _ => ["html"]
+            };
         var arr = new ScriptArray();
         foreach (var name in formats)
         {
@@ -1397,9 +1407,13 @@ public sealed partial class ScribanTemplateRenderer
             "json" => "json",
             _ => "html"
         };
+        // **分页页归一**：分页页（/posts/page/2/）的 RSS/JSON 地址指向**列表根**的
+        // feed（/posts/index.xml），与 Hugo 一致——分页页本身不产出独立 RSS
+        var baseRel = System.Text.RegularExpressions.Regex.Replace(
+            page.RelPermalink ?? "/", @"/page/\d+/$", "/");
         var rel = name.Equals("html", StringComparison.OrdinalIgnoreCase)
             ? page.RelPermalink
-            : page.RelPermalink.TrimEnd('/') + "/index." + suffix;
+            : baseRel.TrimEnd('/') + "/index." + suffix;
         return new ScriptObject
         {
             ["name"] = name, ["Name"] = name,
@@ -1410,7 +1424,11 @@ public sealed partial class ScribanTemplateRenderer
                 _ => "text/html"
             },
             ["rel_permalink"] = rel, ["RelPermalink"] = rel,
-            ["permalink"] = page.Permalink, ["Permalink"] = page.Permalink,
+            // **permalink 对齐 Hugo**：RSS/JSON 等非 HTML 格式的 permalink 是
+            // 自身的绝对地址（/posts/index.xml），不是 HTML 页地址
+            // （fixit 的 RSS 订阅链接此前指向列表页本身，实测）
+            ["permalink"] = page.Permalink.TrimEnd('/') + (rel == page.RelPermalink ? "" : "/index." + suffix),
+            ["Permalink"] = page.Permalink,
             ["rel"] = "alternate", ["Rel"] = "alternate"
         };
     }

@@ -43,6 +43,7 @@
 | A″ | 列表页的派生日期 | home/section/taxonomy/term 未显式设置日期时，`.Date`/`.Lastmod` 取**后代页面里的最大日期**（子页无 lastmod 时用自己的 date 参与聚合） | `SiteBuilder.WithDerivedListDates` 在两阶段装配里聚合（home 在**路径段数**降序中排最后）；`.Lastmod` 缺省 = `.Date` | `PageAwareLookupE2ETests.列表页日期由后代派生` |
 | B″ | baseof 序幕与块体的求值顺序 | Hugo 的块体在 baseof 骨架**之内**求值：baseof 顶部的 init 链先写 `site.store`，块体随后读 | 迁移器扫描 baseof 顶部的**纯副作用动作**（不定义/不引用局部变量）提取为 `_partials/__baseof_prologue.html`，页面模板在块体捕获**之前** include 它（baseof 自身跳过该段） | `MigratorTests.baseof序幕提到块体之前` + 主题回归：fixit 首页卡片 |
 | C″ | `dict` 键的蛇形读取 | 迁移产物把 `.displayName` 归一成 `.display_name`，而 `dict "displayName" …` 的键是驼峰且 ScriptObject 成员访问大小写敏感 | `ScriptDictWithSnakeAliases`（dict 与 merge 的产物均使用）：读取时去下划线 + 忽略大小写兜底 | `HugoCompatSemanticsTests.dict的驼峰键可蛇形读取` + 主题回归：narrow 的许可证链接文本 |
+| D″ | `.OutputFormats.Get "rss"` | 列表 kind（home/section/taxonomy/term）未声明 `outputs` 时默认 **HTML + RSS**（探针：`with .OutputFormats.Get "rss"` 在 section 页可取到 `/posts/index.xml`）；非 HTML 格式的 `permalink` 是自身地址 | `BuildOutputFormatsObject` 按 kind 补默认格式；`BuildFormatObject` 的非 HTML 格式 `permalink` = `rel + /index.<suffix>`（此前指向 HTML 页地址） | `HugoCompatSemanticsTests.OutputFormatsGet返回RSS格式` + 主题回归：fixit 的 RSS 订阅链接 |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -576,6 +577,22 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十五、`.OutputFormats` 的 kind 默认格式与格式 permalink（本轮第六项）**。fixit 的
+section.html 用 `with .OutputFormats.Get "rss"` 渲染 RSS 订阅链接。两处缺陷叠加：
+① 列表 kind 未声明 `outputs` 时 Hugo 默认 **HTML + RSS**，Flint 恒只有 html →
+`Get "rss"` 为 null → 订阅链接整段不渲染；② 命中后 RSS 格式的 `permalink` 应是
+`/posts/index.xml`（自身地址），Flint 给的是 HTML 页地址 `/posts/`。
+修法：`BuildOutputFormatsObject` 按 kind 补默认格式；`BuildFormatObject` 的非 HTML
+格式 permalink = `rel + /index.<suffix>`；同时 `SiteBuilder.Output` 为**每个列表页**生成
+`<列表页>/index.xml`（此前只有站点根 /index.xml，ananke 全站 9 个 RSS 文件缺失、
+`<link rel="alternate">` 全部 404，实测）。fixit 结构 49.6 → **50.0** / 文本 89.9 → **90.5**、
+ananke 结构 55.6 → **56.7** / 文本 92.0。
+
+**分页页不产出 RSS**（Hugo 实测）：blog-awesome 的 /page/2/ 与 /tags/page/2/ 在 Hugo
+只有 HTML、无 index.xml——分页页 head 的 RSS 链接指向**列表根 feed**（/posts/index.xml）。
+Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
+RSS 链接指向列表根 feed。
 
 **二十四、`dict` 键的蛇形读取（本轮第五项）**。narrow 的 post-license.html 用
 `dict "displayName" "知识共享署名…"` 存配置、再以 `$license.displayName` 读取；迁移产物

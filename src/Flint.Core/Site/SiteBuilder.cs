@@ -20,6 +20,13 @@ namespace Flint.Core.Site;
 public sealed partial class SiteBuilder : ISiteBuilder
 {
     private readonly IContentParser _contentParser;
+
+    /// <summary>
+    /// 分类页（taxonomy/term）的列表上下文：生成各列表页 RSS 用。
+    /// Hugo 为每个 taxonomy/term 列表页产出 &lt;列表页&gt;/index.xml——
+    /// 这些页在分类渲染阶段创建，不进 pageContexts 主列表，故单独收集
+    /// </summary>
+    private readonly List<PageContext> TaxonomyFeedContexts = new();
     private readonly ITemplateRenderer _templateRenderer;
     private readonly IAssetPipeline _assetPipeline;
     private readonly IConfigLoader _configLoader;

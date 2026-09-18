@@ -241,7 +241,8 @@ public sealed partial class SiteBuilder
         var feedGenerator = new FeedGenerator(feedOptions);
 
         // 主题兼容批次二 #9：rss 模板存在时覆盖内置生成器
-        if (_templateRenderer.TemplateExists("rss"))
+        var useTemplate = _templateRenderer.TemplateExists("rss");
+        if (useTemplate)
         {
             var rssCtx = new TemplateContext { Site = siteContext, Page = homePage ?? new PageContext
             {
@@ -251,18 +252,69 @@ public sealed partial class SiteBuilder
             }};
             var rssContent = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
             await WriteRssAliasesAsync(options, rssContent, cancellationToken);
-            return;
+        }
+        else
+        {
+            var rss = feedGenerator.GenerateRss(pages);
+            await WriteRssAliasesAsync(options, rss, cancellationToken);
+
+            // 生成 Atom Feed
+            feedOptions = feedOptions with { FeedPath = "/atom.xml" };
+            var atomGenerator = new FeedGenerator(feedOptions);
+            var atom = atomGenerator.GenerateAtom(pages);
+            var atomPath = Path.Combine(options.OutputPath, "atom.xml");
+            await File.WriteAllTextAsync(atomPath, atom, cancellationToken);
         }
 
-        var rss = feedGenerator.GenerateRss(pages);
-        await WriteRssAliasesAsync(options, rss, cancellationToken);
+        // **各列表页的 RSS**（Hugo v0.166 探针）：home/section/taxonomy/term 各自产出
+        // `<列表页>/index.xml`（如 /posts/index.xml、/tags/intro/index.xml）。主题 head 里的
+        // `.OutputFormats.Get "rss"` 链接指向这些文件——列表页缺 RSS 产物时
+        // `<link rel="alternate">` 404（ananke 全站 9 个 index.xml 缺失，实测）。
+        // 首页的 /index.xml 已由上方别名写出，此处只处理其余列表页与分页页。
+        // **注意顺序**：rss 模板存在时必须**先写完根 RSS 再循环各列表页**——
+        // 原先模板分支 `return` 会跳过列表页 RSS（blog-awesome/fixit 实测）
+        // **每个列表页（含分页页）各自产出 RSS**：Hugo v0.166 探针——/posts/ 产出
+        // /posts/index.xml，分页页产出 /posts/page/2/index.xml；taxonomy/term 同理。
+        // 主题 head 的 `.OutputFormats.Get "rss"` 链接指向这些文件——缺产物即 404
+        //（ananke 全站 9 个 index.xml 缺失、fixit/loveit 订阅链接缺失，实测）。
+        // 分页信息来自分页注册表（模板调用过 .Paginate/.Paginator 的列表页才登记）
+        // **taxonomy/term 页不在 pageContexts 里**（分类渲染阶段单独构建），需并入
+        foreach (var listPage in pages
+            .Where(p => p.Kind is "home" or "section" or "taxonomy" or "term" &&
+                        !string.IsNullOrEmpty(p.RelPermalink))
+            .Concat(TaxonomyFeedContexts.Where(c => c.Pages is { Count: > 0 })))
+        {
+            var baseRel = listPage.RelPermalink!.TrimEnd('/');
+            if (baseRel.Length == 0)
+            {
+                baseRel = "/";
+            }
 
-        // 生成 Atom Feed
-        feedOptions = feedOptions with { FeedPath = "/atom.xml" };
-        var atomGenerator = new FeedGenerator(feedOptions);
-        var atom = atomGenerator.GenerateAtom(pages);
-        var atomPath = Path.Combine(options.OutputPath, "atom.xml");
-        await File.WriteAllTextAsync(atomPath, atom, cancellationToken);
+            var registration = Flint.Core.Templates.ScribanTemplateRenderer.GetPaginateCollection(baseRel);
+            var items = registration?.Items ?? listPage.Pages ?? [];
+            var size = registration is { Size: > 0 } reg ? reg.Size : Math.Max(1, config.Paginate);
+            if (items.Count == 0)
+            {
+                size = 1;
+            }
+
+            var target = Path.Combine(
+                options.OutputPath, baseRel.TrimStart('/').Replace('/', Path.DirectorySeparatorChar), "index.xml");
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+
+            if (useTemplate)
+            {
+                var rssCtx = new TemplateContext { Page = listPage, Site = siteContext };
+                var content = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
+                await File.WriteAllTextAsync(target, content, cancellationToken);
+            }
+            else
+            {
+                var sectionFeed = new FeedGenerator(feedOptions with { FeedPath = baseRel + "/index.xml" });
+                var sectionRss = sectionFeed.GenerateRss(items);
+                await File.WriteAllTextAsync(target, sectionRss, cancellationToken);
+            }
+        }
     }
 
     /// <summary>
