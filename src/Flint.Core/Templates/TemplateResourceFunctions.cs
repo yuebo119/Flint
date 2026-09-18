@@ -572,7 +572,7 @@ public sealed partial class BuiltinTemplateFunctions
         return outRes.ToScriptObject();
     }
 
-    private static void RegisterCssFunctions(ScriptObject css)
+    private void RegisterCssFunctions(ScriptObject css)
     {
         // css.Build：Hugo 的 CSS 构建（@import 内联 + 可选 minify）
         css.Import("Build", (params object?[] args) =>
@@ -610,6 +610,7 @@ public sealed partial class BuiltinTemplateFunctions
                 ? targetValue?.ToString()
                 : null;
 
+            var css = r.Content;
             var target = targetPath;
             if (string.IsNullOrEmpty(target))
             {
@@ -618,7 +619,11 @@ public sealed partial class BuiltinTemplateFunctions
                 target = (dir.Length > 0 ? dir + "/" : "") + file + ".css";
             }
 
-            return TemplateResource.Create(target, r.Content, "").ToScriptObject();
+            // **Track 落盘**：不 Track 则 rel_permalink 指向的文件不会被写出
+            //（loveit 的 /css/style.min.css ×15 页面引用 404，实测）
+            var produced = TemplateResource.Create(target, css, "");
+            Track(produced);
+            return produced.ToScriptObject();
         });
 
         // PostCSS/TailwindCSS 与 js.Babel/Batch 在 Flint 里是**恒等**（无对应工具链），

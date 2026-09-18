@@ -673,6 +673,21 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal(expected, await Render(template));
     }
 
+    /// <summary>
+    /// `.OutputFormats.Get "rss"`：section 页有 RSS 输出格式（页面含 /index.xml 引用）。
+    /// fixit 的 section.html 用 `with .OutputFormats.Get "rss"` 渲染 RSS 订阅链接——
+    /// 返回 null 时整段订阅链接不渲染（实测 Hugo 有、Flint 无）
+    /// </summary>
+    [Fact]
+    public async Task OutputFormatsGet返回RSS格式()
+    {
+        var section = Node("帖子", "/posts/", "section");
+        var html = await RenderFor(
+            section, [section],
+            "{{ $v = page.output_formats.get \"rss\"; if $v }}{{ $v.permalink }}{{ end }}");
+        Assert.Equal("rss=https://example.com/posts/index.xml", "rss=" + html);
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {

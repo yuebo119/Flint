@@ -791,6 +791,11 @@ public sealed partial class SiteBuilder
 
                 // 分类页的派生日期（探针：taxonomy/term 的 .Date/.Lastmod = 集合内最大日期）
                 pageContext = WithDerivedListDates(pageContext, pageItems, []);
+                // 仅**第 1 页**入列：RSS 只对列表页本体产出（/tags/index.xml、/tags/x/index.xml）
+                if (taxPage.PageNumber == 1)
+                {
+                    TaxonomyFeedContexts.Add(pageContext);
+                }
 
                 var context = new TemplateContext
                 {
