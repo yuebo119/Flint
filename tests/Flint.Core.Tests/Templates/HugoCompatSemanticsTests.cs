@@ -659,6 +659,20 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal(expected, await Render(template));
     }
 
+    /// <summary>
+    /// **dict 的蛇形键读取**：迁移产物把 `.displayName` 归一成 `.display_name`，
+    /// 而 `dict "displayName" …` 的键是驼峰——ScriptObject 的成员访问大小写敏感、
+    /// 不做下划线归一，此前读回空（narrow 的许可证链接文本整段消失，实测）
+    /// </summary>
+    [Theory]
+    [InlineData("{{ $d = dict \"displayName\" \"XYZ\" }}{{ $d.display_name }}", "XYZ")]
+    [InlineData("{{ $d = dict \"display_name\" \"XYZ\" }}{{ $d.displayName }}", "XYZ")]
+    [InlineData("{{ $m = merge (dict \"displayName\" \"XYZ\") (dict \"x\" 1) }}{{ $m.display_name }}", "XYZ")]
+    public async Task dict的驼峰键可蛇形读取(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
     [Fact]
     public async Task 父级与所属顶级section按Hugo语义()
     {

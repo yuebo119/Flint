@@ -1641,7 +1641,9 @@ public sealed partial class ScribanTemplateRenderer
 
         public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
-            switch (member.ToLowerInvariant())
+            // **去下划线归一**：迁移器把 `.ByCount` 归一成 `by_count`（带下划线），
+            // 而 Scriban 标准成员是折叠形 `bycount`——两种拼写都要命中
+            switch (member.ToLowerInvariant().Replace("_", ""))
             {
                 case "alphabetical":
                     _alphabetical ??= _terms
