@@ -2764,7 +2764,7 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>dict "k" v ... → 字典（奇数参数时末键配空串）</summary>
     private static object BuildDict(object?[] args)
     {
-        var dict = new ScriptObject();
+        var dict = new ScriptDictWithSnakeAliases();
         for (var i = 0; i + 1 < args.Length; i += 2)
         {
             dict[args[i]?.ToString() ?? ""] = args[i + 1];
@@ -2775,7 +2775,9 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>merge：Hugo 语义为"前参优先"——从后往前填充缺失键</summary>
     private static object MergeDicts(object?[] args)
     {
-        var result = new ScriptObject();
+        // 与 BuildDict 同类：merge 的产物也要支持**蛇形别名读取**
+        //（narrow 的 `$license = merge $defaults .` 之后以 `$license.display_name` 读取）
+        var result = new ScriptDictWithSnakeAliases();
         for (var i = args.Length - 1; i >= 0; i--)
         {
             if (args[i] is ScriptObject so)

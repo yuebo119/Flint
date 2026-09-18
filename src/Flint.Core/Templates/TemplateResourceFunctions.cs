@@ -593,16 +593,31 @@ public sealed partial class BuiltinTemplateFunctions
 
         css.Import("Sass", (params object?[] args) =>
         {
-            // Sass 编译由构建期 AssetPipeline 完成；模板侧保留资源引用，
-            // 输出扩展名改为 .css（语义：编译后的样式引用）
+            // Hugo 的 toCSS 会真正编译 SCSS；Flint 的 DartSassHost 在 **AOT 发布**下
+            // 初始化即抛"Reflection-based serialization has been disabled"（其内部
+            // 依赖反射 JSON），无法在模板级编译。此处按 Hugo 的 OPTIONS 语义改写
+            // 目标路径（targetPath 优先，否则 .scss/.sass → .css），内容直通：
+            // 样式由主题自带编译产物或构建期管线提供（差异登记 §三）
             var r = FindResourceArg(args);
             if (r is null)
             {
                 return null;
             }
-            var dir = Path.GetDirectoryName(r.Name)?.Replace('\\', '/') ?? "";
-            var file = Path.GetFileNameWithoutExtension(r.Name);
-            var target = (dir.Length > 0 ? dir + "/" : "") + file + ".css";
+
+            ScriptObject? options = args.FirstOrDefault(a =>
+                a is ScriptObject so && so.ContainsKey("targetPath")) as ScriptObject;
+            var targetPath = options?.TryGetValue(null, default, "targetPath", out var targetValue) == true
+                ? targetValue?.ToString()
+                : null;
+
+            var target = targetPath;
+            if (string.IsNullOrEmpty(target))
+            {
+                var dir = Path.GetDirectoryName(r.Name)?.Replace((char)92, '/') ?? "";
+                var file = Path.GetFileNameWithoutExtension(r.Name);
+                target = (dir.Length > 0 ? dir + "/" : "") + file + ".css";
+            }
+
             return TemplateResource.Create(target, r.Content, "").ToScriptObject();
         });
 

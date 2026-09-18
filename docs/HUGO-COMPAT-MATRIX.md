@@ -42,6 +42,7 @@
 | Z′ | `Scratch.SetInMap` 与 `Get` | `SetInMap MAP KEY VALUE` 之后 `Get MAP` 返回该**映射本身**（主题用它批量初始化参数再逐项读取） | `PageStoreObject.Get` 在扁平值表未命中时返回 `_maps` 里的映射（转 ScriptObject） | `PageStoreTests.SetInMap写入的映射可由Get读回` |
 | A″ | 列表页的派生日期 | home/section/taxonomy/term 未显式设置日期时，`.Date`/`.Lastmod` 取**后代页面里的最大日期**（子页无 lastmod 时用自己的 date 参与聚合） | `SiteBuilder.WithDerivedListDates` 在两阶段装配里聚合（home 在**路径段数**降序中排最后）；`.Lastmod` 缺省 = `.Date` | `PageAwareLookupE2ETests.列表页日期由后代派生` |
 | B″ | baseof 序幕与块体的求值顺序 | Hugo 的块体在 baseof 骨架**之内**求值：baseof 顶部的 init 链先写 `site.store`，块体随后读 | 迁移器扫描 baseof 顶部的**纯副作用动作**（不定义/不引用局部变量）提取为 `_partials/__baseof_prologue.html`，页面模板在块体捕获**之前** include 它（baseof 自身跳过该段） | `MigratorTests.baseof序幕提到块体之前` + 主题回归：fixit 首页卡片 |
+| C″ | `dict` 键的蛇形读取 | 迁移产物把 `.displayName` 归一成 `.display_name`，而 `dict "displayName" …` 的键是驼峰且 ScriptObject 成员访问大小写敏感 | `ScriptDictWithSnakeAliases`（dict 与 merge 的产物均使用）：读取时去下划线 + 忽略大小写兜底 | `HugoCompatSemanticsTests.dict的驼峰键可蛇形读取` + 主题回归：narrow 的许可证链接文本 |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -199,6 +200,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
 | `.Parent`/`.CurrentSection`/`.FirstSection` | **已对齐** | 三者与 `.Ancestors` 同源（同一条容器链）：`Parent` = 链首（home 页为 nil）；容器页（section/taxonomy/term/home）的 `CurrentSection` 是自己，内容页取最近的 section，根级页落到 home；`FirstSection` 是最外层 section（term 页为分类列表页）。此前 `.CurrentSection` 是**按段名拼的假对象**（取不到 `.RegularPages`/`.GetPage`，嵌套段的 URL 也错），ananke 的 `section-link.html`/`summary.html` 正依赖它 |
 | `i18n` 的复数子表与插值 | **已对齐** | 嵌套子表摊平为点分键 + 按计数选形（`one`/`other`）+ `{{ .Count }}`/dict 插值；探针值与实现见 §Q「十六」 |
+| 模板级 `toCSS` 的 SCSS 编译 | **有意差异** | DartSassHost 在 Flint 的运行时配置下（全局关闭反射 JSON）无法初始化，模板级 `toCSS` 按 Hugo 的 OPTIONS 语义改写目标路径后**内容直通**（SCSS 原文）；主题自带编译产物的样式不受影响，依赖模板级编译的主题（loveit）样式表为 SCSS 原文，需构建期管线或预编译产物 |
 
 ## 四、探针方法（复现指南）
 
@@ -574,6 +576,14 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十四、`dict` 键的蛇形读取（本轮第五项）**。narrow 的 post-license.html 用
+`dict "displayName" "知识共享署名…"` 存配置、再以 `$license.displayName` 读取；迁移产物
+把读取端归一成 `$license.display_name`（蛇形），而 ScriptObject 的成员访问大小写敏感、
+不做下划线归一 → 读回空 → **许可证类型链接的文本整段消失**（Hugo 渲染出
+"知识共享署名-非商业性使用-相同方式共享 4.0 国际许可协议"）。
+修法：dict 与 merge 的产物统一用 `ScriptDictWithSnakeAliases`（读取时去下划线 +
+忽略大小写兜底）。narrow 文本 93.2 → **93.9**。
 
 **二十三、baseof 序幕与块体的求值顺序（本轮第四项）**。Hugo 的块体在 baseof 骨架之内
 求值：baseof 顶部的 init 链先写 `site.store`，块体随后读取。而转换把块体捕获提到了
