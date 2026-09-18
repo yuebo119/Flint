@@ -442,6 +442,44 @@ public sealed class ParserConverterTests
         Assert.True(useIndex > captureIndex, $"capture 应在使用点之前，实际：{result}");
     }
 
+    /// <summary>
+    /// baseof 序幕与块体的求值顺序：Hugo 的块体在 baseof 之内求值（init 链先写
+    /// site.store、块体随后读），而转换把块体捕获提到 include 之前 → 块体读 store
+    /// 拿到空值（fixit 的首页文章列表整段不渲染，实测）。序幕须**提到块体之前**
+    /// </summary>
+    [Fact]
+    public void baseof序幕提到块体之前()
+    {
+        var parts = new GoTemplateParser(
+            new GoTemplateLexer(
+                "{{- partial \"init/index.html\" . -}}\n<div>{{ block \"main\" . }}{{ end }}</div>\n{{ define \"main\" }}X{{ end }}")
+                .Tokenize()).Parse();
+        // baseof 自身：跳过序幕段（序幕移到独立 partial，避免执行两次）
+        var baseofConverter = new TemplateConverter(
+            MigrationMap.CreateDefault(),
+            slotNames: new HashSet<string>(StringComparer.Ordinal) { "main" },
+            isBaseTemplate: true,
+            baseofProloguePath: "_partials/__baseof_prologue",
+            baseofProloguePartCount: 1);
+        var baseofResult = baseofConverter.Convert(parts);
+        Assert.DoesNotContain("init/index.html", baseofResult, StringComparison.Ordinal);
+
+        // 页面模板：序幕调用在最前、先于块体捕获（init 链先写 store、块体随后读）
+        var pageParts = new GoTemplateParser(
+            new GoTemplateLexer("{{ define \"main\" }}X{{ end }}\n{{ include \"baseof.html\" blk_main: blk_main }}")
+                .Tokenize()).Parse();
+        var pageConverter = new TemplateConverter(
+            MigrationMap.CreateDefault(),
+            slotNames: new HashSet<string>(StringComparer.Ordinal) { "main" },
+            baseofProloguePath: "_partials/__baseof_prologue");
+        var pageResult = pageConverter.Convert(pageParts);
+        var prologueIndex = pageResult.IndexOf(
+            "partial \"_partials/__baseof_prologue\"", StringComparison.Ordinal);
+        var captureIndex = pageResult.IndexOf("capture blk_main", StringComparison.Ordinal);
+        Assert.True(prologueIndex >= 0, $"页面模板应 include 序幕，实际：{pageResult}");
+        Assert.True(captureIndex > prologueIndex, $"序幕应先于块体捕获，实际：{pageResult}");
+    }
+
     [Fact]
     public void 变量接收者的Format保留引号()
     {

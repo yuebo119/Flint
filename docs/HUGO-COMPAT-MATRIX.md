@@ -41,6 +41,7 @@
 | Y′ | `resources.Get` 的 `.Content`（SVG） | SVG 是**文本资源**，`.Content` 给符号表原文（主题据此内联图标） | 资源装载对 `.svg` 读文本（位图仍不读）；`TemplateResourceTests.Get读取SVG内容` | `TemplateResourceTests.Get读取SVG内容` + 主题回归：monochrome 图标 |
 | Z′ | `Scratch.SetInMap` 与 `Get` | `SetInMap MAP KEY VALUE` 之后 `Get MAP` 返回该**映射本身**（主题用它批量初始化参数再逐项读取） | `PageStoreObject.Get` 在扁平值表未命中时返回 `_maps` 里的映射（转 ScriptObject） | `PageStoreTests.SetInMap写入的映射可由Get读回` |
 | A″ | 列表页的派生日期 | home/section/taxonomy/term 未显式设置日期时，`.Date`/`.Lastmod` 取**后代页面里的最大日期**（子页无 lastmod 时用自己的 date 参与聚合） | `SiteBuilder.WithDerivedListDates` 在两阶段装配里聚合（home 在**路径段数**降序中排最后）；`.Lastmod` 缺省 = `.Date` | `PageAwareLookupE2ETests.列表页日期由后代派生` |
+| B″ | baseof 序幕与块体的求值顺序 | Hugo 的块体在 baseof 骨架**之内**求值：baseof 顶部的 init 链先写 `site.store`，块体随后读 | 迁移器扫描 baseof 顶部的**纯副作用动作**（不定义/不引用局部变量）提取为 `_partials/__baseof_prologue.html`，页面模板在块体捕获**之前** include 它（baseof 自身跳过该段） | `MigratorTests.baseof序幕提到块体之前` + 主题回归：fixit 首页卡片 |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -573,6 +574,18 @@ stack 日期文本与 Hugo 完全一致。
 `[article.readingTime] one/other` 子表按计数选形并渲染 `{{ .Count }}`（stack 显示
 `1 minute read`、ananke 的 `readingTime`、blowfish 的 `(dict …)` 语境），Flint 的
 `i18n` 只做**扁平键**查表 → 这类键整段输出空（stack 的阅读时长 `<time>` 为空）。
+
+**二十三、baseof 序幕与块体的求值顺序（本轮第四项）**。Hugo 的块体在 baseof 骨架之内
+求值：baseof 顶部的 init 链先写 `site.store`，块体随后读取。而转换把块体捕获提到了
+include 之前 → fixit 的 home.html 读 `.Site.Store.Get "mainSectionPages"` 时 init 链
+还没跑 → **首页文章列表整段不渲染**（"published on" ×3 全缺）。
+
+修法：迁移器扫描 baseof 顶部**连续的纯副作用动作**（partial 调用 / store 写入；
+**不定义也不引用局部变量**——hugo-paper 的 `$.Scratch.Set "bg_color" (index $color_map …)`
+引用变量，判非纯、不迁移）→ 提取为 `_partials/__baseof_prologue.html`，页面模板在块体
+捕获之前 include（baseof 自身跳过该段，避免执行两次）。
+fixit 首页 3 张卡片与 "published on" 全部恢复（文本 88.4 → **89.9**），
+loveit 结构 56.5 → **57.5** / 文本 87.2 → **89.6**。
 
 **二十二、列表页的派生日期（含装配顺序的一个坑）**。Hugo v0.166 探针：home/section/
 taxonomy/term 未显式设置日期时，`.Date` = 后代页面里**最大**的 date、`.Lastmod` = 后代里

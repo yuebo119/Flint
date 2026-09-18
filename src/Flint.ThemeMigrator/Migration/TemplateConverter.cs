@@ -36,7 +36,9 @@ internal sealed partial class TemplateConverter(
     bool selfNamedTemplateExtracted = false,
     IReadOnlySet<string>? slotNames = null,
     bool isBaseTemplate = false,
-    IEnumerable<string>? crossFileBlockNames = null)
+    IEnumerable<string>? crossFileBlockNames = null,
+    string? baseofProloguePath = null,
+    int baseofProloguePartCount = 0)
 {
     private readonly ScribanConverter _expr =
         new(map, valueReturningPartials, selfPartialName, selfNamedTemplateExtracted);
@@ -115,6 +117,9 @@ internal sealed partial class TemplateConverter(
         var sb = new StringBuilder();
         var scope = new List<string>(); // range/with 上下文变量栈
 
+        // **baseof 序幕**（纯副作用动作）的处理见 Convert 的收尾：页面模板先跑序幕
+        // （init 链写 site.store），再捕获块体——否则块体里的 store 读取拿到空值
+
         // **槽位默认体上提**（hugo-book 的 baseof 形态）：`{{ template "X" . }}` 可能出现在
         // `{{ define "X" }}` **之前**，而转换把 define 就地 capture 成 `__def_X`——
         // Scriban 的 capture 是顺序执行的赋值，用在前、定义在后 → 兜底拿到空值
@@ -131,7 +136,7 @@ internal sealed partial class TemplateConverter(
 
         for (var i = 0; i < parts.Count; i++)
         {
-            if (hoistedParts.Contains(i))
+            if (hoistedParts.Contains(i) || (isBaseTemplate && i < baseofProloguePartCount))
             {
                 continue;
             }
@@ -162,6 +167,18 @@ internal sealed partial class TemplateConverter(
                     sb.Append(ConvertAction(a, scope));
                     break;
             }
+        }
+
+        // **页面模板先跑 baseof 序幕**：Hugo 的块体在 baseof 骨架**之内**求值
+        //（baseof 顶部的 init 链先写 site.store，块体随后读），而转换把块体捕获提到
+        // 了 include 之前 → 块体读 store 拿到空值（fixit 的 home.html 读
+        // `.Site.Store.Get "mainSectionPages"` 得到空集 → 首页文章列表整段不渲染）。
+        // 序幕是**纯副作用动作**（不定义/不引用局部变量，见 ScanBaseofPrologue），
+        // 故可安全前置且只执行一次
+        if (baseofProloguePath is not null && !isBaseTemplate &&
+            _definedBlocks.Count > 0 && sb.Length > 0)
+        {
+            sb.Insert(0, $"{{{{ partial \"{baseofProloguePath}\" }}}}\n");
         }
 
         if (hoisted.Length > 0)
