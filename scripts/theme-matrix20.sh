@@ -129,7 +129,19 @@ make_config() {
     echo "[pagination]"
     echo "pagerSize = 2"
     echo ""
-    echo "params.description = \"Matrix test site\""
+    # TOML 铁律：表头之后的点号键挂进**该表**。站点参数必须用显式 [params] 段，
+    # 且主题参数（add_theme_params）在此段内追加、menus 永远收尾（write_menus）
+    echo "[params]"
+    echo "description = \"Matrix test site\""
+  } > "$site/hugo.toml"
+  cp "$site/hugo.toml" "$site/Flint.toml"
+}
+
+# menus 必须写在**最后**：TOML 的表头之后，后续点号键全部挂进该表——
+# 此前 params.* 追加在 [menus] 之后，全部被嵌进 menus.main 数组元素（对主题不可见）
+write_menus() {
+  local site="$1"
+  {
     echo ""
     echo "[menus]"
     echo "[[menus.main]]"
@@ -140,7 +152,7 @@ make_config() {
     echo "name = \"Posts\""
     echo "url = \"/posts/\""
     echo "weight = 2"
-  } > "$site/hugo.toml"
+  } >> "$site/hugo.toml"
   cp "$site/hugo.toml" "$site/Flint.toml"
 }
 
@@ -150,45 +162,57 @@ add_theme_params() {
   case "$name" in
     hugo-book)
       cat >> "$site/hugo.toml" <<'EOF'
-params.BookSection = "docs"
-params.BookTheme = "light"
-params.BookDateFormat = "January 2, 2006"
-params.BookComments = false
-params.BookSearch = false
+BookSection = "docs"
+BookTheme = "light"
+BookDateFormat = "January 2, 2006"
+BookComments = false
+BookSearch = false
 EOF
       ;;
     loveit|fixit)
       # 这两个主题要求 Author 是映射（字符串会渲染失败——第一轮 loveit 血例）
       cat >> "$site/hugo.toml" <<'EOF'
-params.Author.name = "Tester"
-params.Author.link = "https://example.com/"
-params.home.profile.enable = true
+Author.name = "Tester"
+Author.link = "https://example.com/"
+home.profile.enable = true
+EOF
+      ;;
+    even)
+      # even 的 baseof 校验 params.version == "4.x"（缺了直接 errorf 拒绝构建，
+      # 主题 exampleSite 的 config.toml 自带此项）；Author 要求映射（head.html 取
+      # .Site.Params.Author.name，字符串会报 "can't evaluate field name"）；
+      # archivePaginate 供 .Paginate 第二参（缺失时 Hugo 报 "must be a positive integer"）
+      cat >> "$site/hugo.toml" <<'EOF'
+Author.name = "Tester"
+version = "4.x"
+archivePaginate = 50
+showArchiveCount = false
 EOF
       ;;
     papermod)
       cat >> "$site/hugo.toml" <<'EOF'
-params.author = "Tester"
-params.homeInfoParams.Title = "Matrix Site"
-params.homeInfoParams.Content = "Matrix test"
+author = "Tester"
+homeInfoParams.Title = "Matrix Site"
+homeInfoParams.Content = "Matrix test"
 EOF
       ;;
     stack)
       cat >> "$site/hugo.toml" <<'EOF'
-params.sidebar.emoji = "cat"
-params.sidebar.subtitle = "Matrix"
-params.widgets.homepage = ["search", "archives"]
-params.widgets.page = ["toc"]
+sidebar.emoji = "cat"
+sidebar.subtitle = "Matrix"
+widgets.homepage = ["search", "archives"]
+widgets.page = ["toc"]
 EOF
       ;;
     ananke)
       cat >> "$site/hugo.toml" <<'EOF'
-params.author = "Tester"
-params.ananke.show_recent_posts = true
+author = "Tester"
+ananke.show_recent_posts = true
 EOF
       ;;
-    blowfish|congo|clarity|relearn|hextra|jane|mainroad|even|terminal|archie|hermit|xmin|bearblog|blog-awesome|console|risotto|hugo-coder|hugo-paper)
+    blowfish|congo|clarity|relearn|hextra|jane|mainroad|terminal|archie|hermit|xmin|bearblog|blog-awesome|console|risotto|hugo-coder|hugo-paper)
       cat >> "$site/hugo.toml" <<'EOF'
-params.author = "Tester"
+author = "Tester"
 EOF
       ;;
   esac
@@ -203,6 +227,7 @@ prepare_site() {
   make_content "$site"
   make_config "$name" "$site"
   add_theme_params "$name" "$site"
+  write_menus "$site"
   # 主题用 junction 挂载（零拷贝；失败则回退复制）
   cmd //c "mklink /J $(cygpath -w "$site/themes/$name") $(cygpath -w "$theme_src")" >/dev/null 2>&1 ||
     cp -r "$theme_src" "$site/themes/$name"
