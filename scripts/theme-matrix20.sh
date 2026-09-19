@@ -169,6 +169,14 @@ BookComments = false
 BookSearch = false
 EOF
       ;;
+    blog-awesome)
+      # author 必须是映射（bio.html 取 author.name/avatar，meta 取 author.name）；
+      # avatar 指向主题 assets 里的既有图标
+      cat >> "$site/hugo.toml" <<'EOF'
+Author.name = "Tester"
+Author.avatar = "icons/android-chrome-192x192.png"
+EOF
+      ;;
     loveit|fixit)
       # 这两个主题要求 Author 是映射（字符串会渲染失败——第一轮 loveit 血例）
       cat >> "$site/hugo.toml" <<'EOF'
@@ -197,11 +205,17 @@ homeInfoParams.Content = "Matrix test"
 EOF
       ;;
     stack)
+      # widgets 必须是**带 type 的表数组**（sidebar/right.html 取 widget 的 .type，
+      # 字符串元素报 "can't evaluate field type"）；形状对齐主题 demo
       cat >> "$site/hugo.toml" <<'EOF'
 sidebar.emoji = "cat"
 sidebar.subtitle = "Matrix"
-widgets.homepage = ["search", "archives"]
-widgets.page = ["toc"]
+[[widgets.homepage]]
+type = "search"
+[[widgets.homepage]]
+type = "archives"
+[[widgets.page]]
+type = "toc"
 EOF
       ;;
     ananke)
@@ -210,7 +224,15 @@ author = "Tester"
 ananke.show_recent_posts = true
 EOF
       ;;
-    blowfish|congo|clarity|relearn|hextra|jane|mainroad|terminal|archie|hermit|xmin|bearblog|blog-awesome|console|risotto|hugo-coder|hugo-paper)
+    blowfish|clarity)
+      # 两者的 author 相关取值按映射写（blowfish 的 Author.name 在字符串上取
+      # .name 会直接报错；clarity 的 RSS 取 Author.email/name）
+      cat >> "$site/hugo.toml" <<'EOF'
+Author.name = "Tester"
+Author.email = "tester@example.com"
+EOF
+      ;;
+    congo|relearn|hextra|jane|mainroad|terminal|archie|hermit|xmin|bearblog|console|risotto|hugo-coder|hugo-paper)
       cat >> "$site/hugo.toml" <<'EOF'
 author = "Tester"
 EOF

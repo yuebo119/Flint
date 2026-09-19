@@ -595,6 +595,25 @@ ananke 结构 55.6 → **56.7** / 文本 92.0。
 Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
 RSS 链接指向列表根 feed。
 
+**二十八、矩阵站点的 TOML 参数嵌套缺陷（本轮第八项）**。`make_config` 把
+`params.*` 点号键写在 `[pagination]` 表头之后、`add_theme_params` 再追加在
+`[menus]` 之后——TOML 语义下点号键挂进**最近的表头**，这些参数实际写成了
+`pagination.params.*` 与 `menus.main[].params.*`，`.Site.Params` **从未收到过**
+任何站点参数（含各主题专属参数）。缺陷潜伏的原因：多数主题对缺参渲染降级，
+直到 even 的 baseof 显式校验 `params.version == "4.x"` 才显形。
+
+重构：`make_config` 开显式 `[params]` 段、`add_theme_params` 在段内追加
+（键名去掉 `params.` 前缀）、`write_menus` 收尾。补齐各主题 exampleSite 的
+必要参数形状：even（`Author` 映射 + `version` + `archivePaginate`）、
+blog-awesome（`Author.name/avatar` 映射）、blowfish/clarity（`Author` 映射）、
+stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、相似度
+61.6/95.8）、blog-awesome 53.8/97.0、clarity 67.5/90.7、stack 57.4/96.0。
+
+**遗留**：fixit 的 Hugo 基线需 Dart Sass（其 `to-css.html` 写死
+`transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
+"feature not available"——环境限制，非引擎缺陷；fixit 侧 Flint 迁移+构建正常
+（22 页），门禁④待环境装上 Dart Sass 后恢复。
+
 **二十七、`markdownify` 的行内语义（本轮第七项）**。clarity 的页脚用
 `{{ T "copyright" | markdownify }}`——i18n 值是纯文本，Hugo 的 `markdownify` 是
 **行内**渲染（探针 v0.166：`"Copyright" | markdownify` → `Copyright`、
