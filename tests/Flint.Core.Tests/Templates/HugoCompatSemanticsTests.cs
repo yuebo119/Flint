@@ -819,4 +819,64 @@ public class HugoCompatSemanticsTests : IDisposable
         File.WriteAllText(Path.Combine(_tempDir, "probe.html"), "{{ page.fuzzy_word_count }}");
         Assert.Equal(expected.ToString(), (await _renderer.RenderAsync("probe.html", context)).Trim());
     }
+
+    /// <summary>
+    /// **ByWeight 等权重的日期降序破平**：Hugo 探针（等权 Jan/Feb/Mar 三页）→
+    /// <c>.Pages.ByWeight</c> = <c>[c][b][a]</c>（日期降序，不是标题序）。
+    /// techdoc 的菜单树递归遍历靠 ByWeight 定 Prev/Next，破平方向反了会整树反序
+    /// </summary>
+    [Fact]
+    public async Task ByWeight等权重按日期降序破平()
+    {
+        // 标题序（a<b<c）与日期序（c 最新）刻意相反——旧实现按标题破平会得 [a][b][c]
+        var mk = (string t, int m) => new PageContext
+        {
+            Title = t,
+            Content = "c",
+            Permalink = $"https://example.com/posts/{t}/",
+            RelPermalink = $"/posts/{t}/",
+            Date = new DateTimeOffset(2026, m, 1, 0, 0, 0, TimeSpan.Zero),
+            Tags = [],
+            Categories = [],
+            Weight = 0,
+            WordCount = 1,
+            ReadingTime = TimeSpan.FromMinutes(1)
+        };
+        var a = mk("a", 1);
+        var b = mk("b", 2);
+        var c = mk("c", 3);
+        var section = new PageContext
+        {
+            Title = "帖子",
+            Content = "",
+            Permalink = "https://example.com/posts/",
+            RelPermalink = "/posts/",
+            Date = new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero),
+            Tags = [],
+            Categories = [],
+            Kind = "section",
+            Pages = [c, b, a],
+            WordCount = 0,
+            ReadingTime = TimeSpan.Zero
+        };
+
+        var html = await RenderFor(
+            section, [section, a, b, c],
+            "{{ for $p in as_list (page.pages.by_weight) }}[{{ $p.title }}]{{ end }}");
+        Assert.Equal("[c][b][a]", html);
+    }
+
+    private static PageContext MakeDated(string title, int y, int m, int d) => new()
+    {
+        Title = title,
+        Content = "c",
+        Permalink = $"https://example.com/posts/{title}/",
+        RelPermalink = $"/posts/{title}/",
+        Date = new DateTimeOffset(y, m, d, 0, 0, 0, TimeSpan.Zero),
+        Tags = [],
+        Categories = [],
+        Weight = 0,
+        WordCount = 1,
+        ReadingTime = TimeSpan.FromMinutes(1)
+    };
 }

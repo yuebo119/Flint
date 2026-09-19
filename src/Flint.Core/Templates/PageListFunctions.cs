@@ -98,12 +98,15 @@ public sealed class PagesByTitleFunction(IReadOnlyList<FlintPageContext> pages) 
         ToPageSequence(pages.OrderBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
-/// <summary>按权重升序（Hugo ByWeight）</summary>
+/// <summary>按权重升序（Hugo ByWeight）；等权重按**日期降序**破平（探针 v0.166：
+/// 等权 Jan/Feb/Mar → [c][b][a]），再按标题——techdoc 的菜单树遍历靠此定 Prev/Next</summary>
 public sealed class PagesByWeightFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
 {
     public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
         ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
-        ToPageSequence(pages.OrderBy(p => p.Weight).ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
+        ToPageSequence(pages.OrderBy(p => p.Weight)
+            .ThenByDescending(p => p.Date)
+            .ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>按内容长度降序（Hugo ByLength）</summary>
