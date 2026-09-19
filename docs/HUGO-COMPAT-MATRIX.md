@@ -638,10 +638,16 @@ blog-awesome（`Author.name/avatar` 映射）、blowfish/clarity（`Author` 映�
 stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、相似度
 61.6/95.8）、blog-awesome 53.8/97.0、clarity 67.5/90.7、stack 57.4/96.0。
 
-**遗留**：fixit 的 Hugo 基线需 Dart Sass（其 `to-css.html` 写死
-`transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
-"feature not available"——环境限制，非引擎缺陷；fixit 侧 Flint 迁移+构建正常
-（22 页），门禁④待环境装上 Dart Sass 后恢复。
+**遗留（已解决，见三十一）**：fixit 的 Hugo 基线需 Dart Sass（其 `to-css.html`
+写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
+"feature not available"——环境限制，非引擎缺陷。
+
+**三十一、Dart Sass 就位，21/21 满对称（本轮第十一项）**。网络恢复后从
+GitHub Releases 装官方 dart-sass 1.104.1 到 `tools/dart-sass/`（矩阵脚本探测到
+即入 PATH，hugo env 报 `compiler="1.104.1"`），fixit 的 Hugo 基线由"失败 0 页"
+转为有效：22/22 页、对称=1、相似度 **53.1/95.2**。词数/阅读时长徽标与 Hugo
+**逐字节一致**（"About 100 words"/"One minute"——第九项的 `.FuzzyWordCount`
+与 `.Param` 回落修复经真实基线验证）。**21 主题矩阵首次满对称**。
 
 **二十七、`markdownify` 的行内语义（本轮第七项）**。clarity 的页脚用
 `{{ T "copyright" | markdownify }}`——i18n 值是纯文本，Hugo 的 `markdownify` 是

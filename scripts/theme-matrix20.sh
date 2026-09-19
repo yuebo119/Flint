@@ -23,6 +23,11 @@ else
   echo "无法定位 tools/themes（脚本位置: $SELF_DIR）" >&2
   exit 1
 fi
+# fixit 等主题的 Hugo 基线需要 Dart Sass（to-css.html 写死 transpiler=dartsass）：
+# tools/dart-sass/（官方 windows-x64 发行包，sass.bat 含 --embedded 协议）存在则入 PATH
+if [ -d "$REPO_ROOT/tools/dart-sass" ]; then
+  export PATH="$REPO_ROOT/tools/dart-sass:$PATH"
+fi
 FLINT_SRC="$REPO_ROOT/Flint"
 [ -d "$FLINT_SRC/src" ] || FLINT_SRC="$REPO_ROOT"
 THEMES_DIR="$REPO_ROOT/tools/themes"
