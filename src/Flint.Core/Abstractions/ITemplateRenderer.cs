@@ -490,10 +490,9 @@ public sealed class PageContext
     /// </summary>
     public string? Language { get; init; }
 
-    /// <summary>模糊字数（对齐 Hugo .FuzzyWordCount：百位近似）</summary>
-    public int FuzzyWordCount => WordCount < 100
-        ? WordCount
-        : (int)Math.Round(WordCount / 100.0, MidpointRounding.AwayFromZero) * 100;
+        /// <summary>模糊字数（对齐 Hugo .FuzzyWordCount：向上取整到百，探针 v0.166：
+    /// W=17→100、W=99→100、W=100→100、W=106→200、W=1070→1100）</summary>
+    public int FuzzyWordCount => (int)(Math.Ceiling(WordCount / 100.0) * 100);
 
     /// <summary>
     /// 分类单数名（对齐 Hugo <c>.Data.Singular</c>）

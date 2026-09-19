@@ -45,6 +45,7 @@
 | C″ | `dict` 键的蛇形读取 | 迁移产物把 `.displayName` 归一成 `.display_name`，而 `dict "displayName" …` 的键是驼峰且 ScriptObject 成员访问大小写敏感 | `ScriptDictWithSnakeAliases`（dict 与 merge 的产物均使用）：读取时去下划线 + 忽略大小写兜底 | `HugoCompatSemanticsTests.dict的驼峰键可蛇形读取` + 主题回归：narrow 的许可证链接文本 |
 | D″ | `.OutputFormats.Get "rss"` | 列表 kind（home/section/taxonomy/term）未声明 `outputs` 时默认 **HTML + RSS**（探针：`with .OutputFormats.Get "rss"` 在 section 页可取到 `/posts/index.xml`）；非 HTML 格式的 `permalink` 是自身地址 | `BuildOutputFormatsObject` 按 kind 补默认格式；`BuildFormatObject` 的非 HTML 格式 `permalink` = `rel + /index.<suffix>`（此前指向 HTML 页地址） | `HugoCompatSemanticsTests.OutputFormatsGet返回RSS格式` + 主题回归：fixit 的 RSS 订阅链接 |
 | E″ | `markdownify` 的行内语义 | 单段落输入输出**行内 HTML**（探针：`"Copyright" \| markdownify` → `Copyright` 无 `<p>` 包裹、`"**bold** text"` → `<strong>bold</strong> text`）；多段落（块级）输入才渲染出多个 `<p>` | `markdownify` 渲染后剥掉**唯一**的 `<p>` 包裹（内层再出现 `<p>` 或多段落时保持块级）；clarity 页脚 `T "copyright" \| markdownify` 的嵌套 `<p>` 由此消除 | `HugoCompatSemanticsTests.markdownify单段落输出行内HTML/markdownify多段落保持块级输出` |
+| F″ | `.Param` 的站点回落与 `.FuzzyWordCount` | `.Param "x"` 页面参数未命中时**回落站点参数**；`.FuzzyWordCount` = **向上取整到百**（W=17→100、W=106→200）；`.ReadingTime` = `ceil(W/200)`（探针 W=425→3） | `ParamLookup` 页面 params 未命中 → 经 `page.site` 查站点 params；`FuzzyWordCount` 改 `ceil(W/100)*100`（此前 W<100 返原值、取整用四舍五入） | `HugoCompatSemanticsTests.FuzzyWordCount向上取整到百` + 主题回归：fixit 词数/阅读时长徽标 |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -594,6 +595,17 @@ ananke 结构 55.6 → **56.7** / 文本 92.0。
 只有 HTML、无 index.xml——分页页 head 的 RSS 链接指向**列表根 feed**（/posts/index.xml）。
 Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
 RSS 链接指向列表根 feed。
+
+**二十九、`.Param` 的站点回落与 `.FuzzyWordCount` 的取整（本轮第九项）**。
+两处探针级修正：① **`.Param` 回落**——Hugo 的 `.Param "x"` 是页面参数未命中时
+**回落站点参数**；Flint 此前 `paramLookup page` 只查页面 params，fixit 的
+`.Param "word_count"` 门控因此永远关闭（词数/阅读时长徽标整段缺失）。修法：
+页面 params 未命中 → 经 `page.site` 取站点 params 再查。fixit 文章页的
+"About 100 words"/"One minute" 徽标由此恢复。② **`.FuzzyWordCount`**——Hugo
+是**向上取整到百**（探针：W=17→100、W=99→100、W=100→100、W=106→200、
+W=1070→1100）；Flint 此前 W<100 返回原值、取整用四舍五入，两处都与 Hugo 相反。
+修正为 `ceil(W/100)*100`。另以探针核实 `.ReadingTime` = `ceil(W/200)`
+（W=425→3 排除旧文档的 213——Flint 的 200 WPM 本就正确）。
 
 **二十八、矩阵站点的 TOML 参数嵌套缺陷（本轮第八项）**。`make_config` 把
 `params.*` 点号键写在 `[pagination]` 表头之后、`add_theme_params` 再追加在

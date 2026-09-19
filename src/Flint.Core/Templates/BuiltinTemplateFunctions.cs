@@ -2816,12 +2816,29 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
 
-    /// <summary>paramLookup：ctx 为 page/site 对象，path 点路径查 params（Hugo .Param 语义）</summary>
+    /// <summary>paramLookup：ctx 为 page/site 对象，path 点路径查 params（Hugo .Param 语义：
+    /// 页面参数未命中时**回落站点参数**——fixit 的 `.Param "word_count"` 门控实测依赖此语义）</summary>
     private static object? ParamLookup(object? ctx, string path)
     {
-        if (ctx is ScriptObject so && so.TryGetValue(null, default, "params", out var prm) && prm is not null)
+        if (ctx is ScriptObject so)
         {
-            return GetMember(prm, path);
+            if (so.TryGetValue(null, default, "params", out var prm) && prm is not null)
+            {
+                var pageValue = GetMember(prm, path);
+                if (pageValue is not null)
+                {
+                    return pageValue;
+                }
+            }
+
+            // Hugo .Param 回落：page param 未命中 → site param
+            if (so.TryGetValue(null, default, "site", out var siteObj) &&
+                siteObj is ScriptObject siteSo &&
+                siteSo.TryGetValue(null, default, "params", out var sitePrm) &&
+                sitePrm is not null)
+            {
+                return GetMember(sitePrm, path);
+            }
         }
         return null;
     }

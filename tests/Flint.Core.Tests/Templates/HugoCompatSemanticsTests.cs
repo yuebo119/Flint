@@ -774,4 +774,49 @@ public class HugoCompatSemanticsTests : IDisposable
             "<p>one</p>\n<p>two</p>",
             await Render("{{ \"one\\n\\ntwo\" | markdownify }}"));
     }
+
+    // ---- .FuzzyWordCount：向上取整到百（fixit 的 "About N words"）----
+    //（探针 v0.166：W=17→100、W=99→100、W=100→100、W=106→200、W=1000→1000、W=1070→1100；
+    //  此前 W<100 返回原值、取整用四舍五入——两处都与 Hugo 相反）
+
+    [Theory]
+    [InlineData(17, 100)]
+    [InlineData(99, 100)]
+    [InlineData(100, 100)]
+    [InlineData(106, 200)]
+    [InlineData(1000, 1000)]
+    [InlineData(1070, 1100)]
+    public async Task FuzzyWordCount向上取整到百(int wordCount, int expected)
+    {
+        var page = new PageContext
+        {
+            Title = "A",
+            Content = "c",
+            Permalink = "https://example.com/a/",
+            RelPermalink = "/a/",
+            Date = new DateTimeOffset(2024, 1, 15, 10, 30, 0, TimeSpan.Zero),
+            Tags = [],
+            Categories = [],
+            WordCount = wordCount,
+            ReadingTime = TimeSpan.FromMinutes(1)
+        };
+        var context = new TemplateContext
+        {
+            Page = page,
+            Site = new SiteContext
+            {
+                Title = "S",
+                BaseURL = "https://example.com",
+                Language = "en",
+                Pages = [page],
+                RegularPages = [page],
+                Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+                Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+                Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" },
+                Params = new Dictionary<string, object>()
+            }
+        };
+        File.WriteAllText(Path.Combine(_tempDir, "probe.html"), "{{ page.fuzzy_word_count }}");
+        Assert.Equal(expected.ToString(), (await _renderer.RenderAsync("probe.html", context)).Trim());
+    }
 }
