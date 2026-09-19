@@ -642,6 +642,25 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十六、注释剥离、AlternativeOutputFormats 与 `| html` 映射（本轮第十六项）**。
+三项产物级对齐：① **HTML 注释剥离**——Go html/template 序列化时丢弃**普通**注释
+（yinyang 67.8 → **89.5** 大涨），但**条件注释**（`<!--[if lt IE 9]>…<![endif]-->`）
+只剥标记、内容保留（console 的 html5shiv/respond 脚本实测——整段吞掉会独缺这两个
+脚本）；script/style 体内的 `<!--` 不动。② **`.AlternativeOutputFormats`**——
+hugo-book 的 html-head 用 `range .AlternativeOutputFormats` 发 RSS 自动发现链接，
+此前未实现（55.6/84.3）。③ **Go 内建转义 `| html`**——papermod head 的
+`{{ .MediaType.Type | html }}` 管道尾映射为 `html_escape`；同批把格式对象的
+`media_type` 从字符串改为**嵌套对象**（`.MediaType.Type` 链——console 的
+baseof 拼链接实测 type="" 空值）。矩阵脚本默认主题列表对齐 tools/themes 目录
+（21 个，无跳过）。全矩阵：hugo-coder 74.8/94.3、hugo-paper 75.1/94.1、
+monochrome 64.8/94.0、fixit 69.4/96.0、stack 62.8/96.9、xmin 83.1/95.4。
+
+**S3 反向验证否决项**：generator meta 与 RSS 链接的"自动注入"——Hugo 确实注入
+generator（首页）但注入点经 DOM 序列化、字节位置无法用字符串替换复刻（实测
+console -2.4）；RSS 链接 Hugo **并不注入**（xmin 的 Hugo 产物无 rss 链接——
+凡出现的都是主题自写，如 hugo-book 的 AlternativeOutputFormats）。两者均已
+撤除，按主题自写为准。
+
 **三十五、图像操作的二进制直通（本轮第十五项）**。位图在装载期不读文本
 （Content 为空），Fill/Resize 产物因此被判"空内容"跳过落盘 → HTML 引用了
 产物名却无文件（blog-awesome 的 bio 头像 `.Fill "70x70 center webp"` 实测

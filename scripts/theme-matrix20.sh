@@ -38,8 +38,10 @@ WORK="$REPO_ROOT/matrix20"
 
 THEMES=("$@")
 if [ ${#THEMES[@]} -eq 0 ]; then
-  THEMES=(hugo-book hugo-coder blowfish terminal hugo-paper hextra even congo bearblog
-          archie hermit fixit mainroad jane xmin blog-awesome console clarity risotto relearn)
+  # 与 tools/themes/ 目录的实际 21 个主题保持一致（不存在的主题名会静默跳过）
+  THEMES=(ananke bearblog blog-awesome blowfish clarity console even fixit github-style
+          hugo-book hugo-coder hugo-paper loveit m10c monochrome narrow papermod
+          stack techdoc xmin yinyang)
 fi
 
 # ---- 通用内容集（覆盖首页/列表/单页/分类/标签/分页/代码/标题层级/独立页）----

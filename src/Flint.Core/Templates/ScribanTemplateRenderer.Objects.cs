@@ -425,6 +425,11 @@ public sealed partial class ScribanTemplateRenderer
             var outputFormats = BuildOutputFormatsObject(page);
             SetValue("output_formats", outputFormats, false);
             SetValue("OutputFormats", outputFormats, false);
+            // .AlternativeOutputFormats：除当前 HTML 之外的输出格式
+            //（hugo-book 的 html-head 用 range .AlternativeOutputFormats 发 RSS 链接）
+            var altFormats = BuildAlternativeOutputFormatsObject(page);
+            SetValue("alternative_output_formats", altFormats, false);
+            SetValue("AlternativeOutputFormats", altFormats, false);
 
             // .Plain 的派生：词列表与模糊字数
             var plainWords = page.Plain is null
@@ -1480,11 +1485,23 @@ public sealed partial class ScribanTemplateRenderer
         return new ScriptObject
         {
             ["name"] = name, ["Name"] = name,
-            ["media_type"] = name.ToLowerInvariant() switch
+            // media_type 是**嵌套对象**（Hugo 的 OutputFormat.MediaType.Type 链——
+            // console 的 baseof 取 `.MediaType.Type` 拼链接；此前给字符串 → `.type`
+            // 取空 → 输出 type=""）
+            ["media_type"] = new ScriptObject
             {
-                "rss" => "application/rss+xml",
-                "json" => "application/json",
-                _ => "text/html"
+                ["type"] = name.ToLowerInvariant() switch
+                {
+                    "rss" => "application/rss+xml",
+                    "json" => "application/json",
+                    _ => "text/html"
+                },
+                ["Type"] = name.ToLowerInvariant() switch
+                {
+                    "rss" => "application/rss+xml",
+                    "json" => "application/json",
+                    _ => "text/html"
+                }
             },
             ["rel_permalink"] = rel, ["RelPermalink"] = rel,
             // **permalink 对齐 Hugo**：RSS/JSON 等非 HTML 格式的 permalink 是
@@ -1494,6 +1511,34 @@ public sealed partial class ScribanTemplateRenderer
             ["Permalink"] = page.Permalink,
             ["rel"] = "alternate", ["Rel"] = "alternate"
         };
+    }
+
+    /// <summary>
+    /// .AlternativeOutputFormats：页面除当前 HTML 渲染之外的其他输出格式
+    /// （Hugo 语义：`range .AlternativeOutputFormats` 用于在 head 里发
+    /// RSS/JSON 自动发现链接——hugo-book 的 html-head.html 实测）
+    /// </summary>
+    private static ScriptArray BuildAlternativeOutputFormatsObject(FlintPageContext page)
+    {
+        IReadOnlyList<string> formats = page.Outputs.Count > 0
+            ? page.Outputs
+            : page.Kind.ToLowerInvariant() switch
+            {
+                "home" or "section" or "taxonomy" or "term" => ["html", "rss"],
+                _ => ["html"]
+            };
+        var arr = new ScriptArray();
+        foreach (var name in formats)
+        {
+            if (name.Equals("html", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            arr.Add(BuildFormatObject(page, name));
+        }
+
+        return arr;
     }
 
     /// <summary>OutputFormats.Get(NAME)：按名取格式（未命中返回 null）</summary>
