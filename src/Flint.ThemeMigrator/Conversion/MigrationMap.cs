@@ -128,6 +128,10 @@ internal sealed class MigrationMap
             ("md5", "md5"), ("sha1", "sha1"), ("sha256", "sha256"),
             ("base64Encode", "base64_encode"), ("base64Decode", "base64_decode"),
             ("jsonify", "jsonify"), ("htmlEscape", "html_escape"), ("htmlUnescape", "html_unescape"),
+            // Go 模板**内建转义函数**（管道尾 `| html` / `| js` / `| urlquery`——
+            // Hugo 模板里作为转义动作；papermod 的 head.html
+            // `{{ .MediaType.Type | html }}` 实测）
+            ("html", "html_escape"),
             // 安全
             ("safeHTML", "safe_html"), ("safeCSS", "safe_css"), ("safeJS", "safe_js"),
             ("safeURL", "safe_url"), ("safeHTMLAttr", "safe_html_attr"),
