@@ -2355,9 +2355,52 @@ public sealed partial class ScribanTemplateRenderer
         var obj = new ScriptObject();
         foreach (var (name, items) in menus.Menus)
         {
-            obj[name] = items.Select(CreateMenuItemObject).ToList();
+            obj[name] = new MenuItemsList(items.Select(CreateMenuItemObject).ToList());
         }
         return obj;
+    }
+
+    /// <summary>
+    /// 菜单项列表：可迭代（保持配置序）+ <c>byweight</c>/<c>by_weight</c> 成员。
+    /// Hugo 菜单方法族 <c>.Site.Menus.main.ByWeight</c> ——techdoc 的 global-menu
+    /// 实测：菜单列表是普通 List 时 <c>.by_weight</c> 取空 → 整个站点菜单不渲染
+    /// </summary>
+    private sealed class MenuItemsList : ScriptObject, IEnumerable<ScriptObject>
+    {
+        private readonly ScriptArray _byWeight;
+        private readonly List<ScriptObject> _items;
+
+        public MenuItemsList(List<ScriptObject> items)
+        {
+            _items = items;
+            _byWeight = new ScriptArray(
+                items.OrderBy(i => i["weight"] is int w ? w : 0).ToList());
+            // 索引成员注册条目：ScriptObject 空成员时 Flint 真值判定为假，
+            // `{{ if site.menus.main }}` 守卫会整块跳过（techdoc 菜单实测）
+            for (var i = 0; i < items.Count; i++)
+            {
+                this[i.ToString(System.Globalization.CultureInfo.InvariantCulture)] = items[i];
+            }
+        }
+
+        public new IEnumerator<ScriptObject> GetEnumerator() => _items.GetEnumerator();
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
+        {
+            if (member is "byweight" or "by_weight" or "ByWeight")
+            {
+                value = _byWeight;
+                return true;
+            }
+            if (member is "count" or "length" or "Count" or "Length")
+            {
+                value = _items.Count;
+                return true;
+            }
+            return base.TryGetValue(context, span, member, out value);
+        }
     }
 
     /// <summary>
