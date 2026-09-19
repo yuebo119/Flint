@@ -1,4 +1,4 @@
-// Flint 主题迁移工具
+﻿// Flint 主题迁移工具
 // 四门禁后两关：构建验证 + 产物差分验证
 //
 // 门禁设计（阶段 2）：
@@ -73,8 +73,13 @@ internal static class Gates
         using var process = Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 Flint CLI");
 
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+        // **并发排水两根管道**：先 ReadToEnd(stdout) 再 ReadToEnd(stderr) 会在
+        // 子进程 stderr 写满管道缓冲区（4KB）时互相等死——loveit 的构建向 stderr
+        // 写大量渲染诊断，实测把门禁③构建挂死（5 分钟超时被杀）
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var stdout = stdoutTask.GetAwaiter().GetResult();
+        var stderr = stderrTask.GetAwaiter().GetResult();
         process.WaitForExit(TimeSpan.FromMinutes(5));
 
         var combined = stdout + "\n" + stderr;
