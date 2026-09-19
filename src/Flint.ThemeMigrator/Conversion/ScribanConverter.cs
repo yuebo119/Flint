@@ -832,8 +832,11 @@ internal sealed class ScribanConverter(
             if (SelfPartialName is not null)
             {
                 var key = RetKeyPrefix + SelfPartialName;
+                // C# 插值串里 }} → }、{{ → {：四个 } 产出两个（闭合 set 动作），
+                // 四个 { 产出两个（开 ret 动作）。此前写六个 } → 多出一个**字面** }，
+                // 文本通道调用该 partial 的主题（hugo-book 菜单标题）每个条目多吐一个 }
                 return new ConversionResult(
-                    $"__partial_ret_set \"{key}\" {r.Text} }}}}}}{{{{ ret",
+                    $"__partial_ret_set \"{key}\" {r.Text} }}}}{{{{ ret",
                     ConversionKind.Equivalent);
             }
 
