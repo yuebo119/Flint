@@ -44,6 +44,7 @@
 | B″ | baseof 序幕与块体的求值顺序 | Hugo 的块体在 baseof 骨架**之内**求值：baseof 顶部的 init 链先写 `site.store`，块体随后读 | 迁移器扫描 baseof 顶部的**纯副作用动作**（不定义/不引用局部变量）提取为 `_partials/__baseof_prologue.html`，页面模板在块体捕获**之前** include 它（baseof 自身跳过该段） | `MigratorTests.baseof序幕提到块体之前` + 主题回归：fixit 首页卡片 |
 | C″ | `dict` 键的蛇形读取 | 迁移产物把 `.displayName` 归一成 `.display_name`，而 `dict "displayName" …` 的键是驼峰且 ScriptObject 成员访问大小写敏感 | `ScriptDictWithSnakeAliases`（dict 与 merge 的产物均使用）：读取时去下划线 + 忽略大小写兜底 | `HugoCompatSemanticsTests.dict的驼峰键可蛇形读取` + 主题回归：narrow 的许可证链接文本 |
 | D″ | `.OutputFormats.Get "rss"` | 列表 kind（home/section/taxonomy/term）未声明 `outputs` 时默认 **HTML + RSS**（探针：`with .OutputFormats.Get "rss"` 在 section 页可取到 `/posts/index.xml`）；非 HTML 格式的 `permalink` 是自身地址 | `BuildOutputFormatsObject` 按 kind 补默认格式；`BuildFormatObject` 的非 HTML 格式 `permalink` = `rel + /index.<suffix>`（此前指向 HTML 页地址） | `HugoCompatSemanticsTests.OutputFormatsGet返回RSS格式` + 主题回归：fixit 的 RSS 订阅链接 |
+| E″ | `markdownify` 的行内语义 | 单段落输入输出**行内 HTML**（探针：`"Copyright" \| markdownify` → `Copyright` 无 `<p>` 包裹、`"**bold** text"` → `<strong>bold</strong> text`）；多段落（块级）输入才渲染出多个 `<p>` | `markdownify` 渲染后剥掉**唯一**的 `<p>` 包裹（内层再出现 `<p>` 或多段落时保持块级）；clarity 页脚 `T "copyright" \| markdownify` 的嵌套 `<p>` 由此消除 | `HugoCompatSemanticsTests.markdownify单段落输出行内HTML/markdownify多段落保持块级输出` |
 | P′ | 日期布局的产出策略与解析默认值 | 无 `timeZone` 配置时按 **UTC** 解释无偏移日期；`-0700` 输出 "+0000"（无冒号）、`MST` 输出时区缩写 | 解析端默认 `TimeSpan.Zero`；**含时区 token 的布局不编译期转换**（原样交给引擎，引擎做无冒号偏移/缩写后处理） | `ContentParserTests.ParseAsync_无站点时区时无偏移日期按UTC解释`、`HugoCompatSemanticsTests.日期布局的时区与变体覆盖` |
 
 ## 二、本轮（第二十三轮）新增/修正的四项
@@ -593,6 +594,14 @@ ananke 结构 55.6 → **56.7** / 文本 92.0。
 只有 HTML、无 index.xml——分页页 head 的 RSS 链接指向**列表根 feed**（/posts/index.xml）。
 Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
 RSS 链接指向列表根 feed。
+
+**二十七、`markdownify` 的行内语义（本轮第七项）**。clarity 的页脚用
+`{{ T "copyright" | markdownify }}`——i18n 值是纯文本，Hugo 的 `markdownify` 是
+**行内**渲染（探针 v0.166：`"Copyright" | markdownify` → `Copyright`、
+`"**bold** text"` → `<strong>bold</strong> text`，无 `<p>` 包裹）；Flint 此前走完整
+Markdig 管道（块级）→ 产出 `<p><p>Copyright</p>…</p>` 嵌套结构。修法：渲染后剥掉
+**唯一**的 `<p>` 包裹（内层再出现 `<p>` 或多段落时保持块级，与 Hugo 的多段行为一致）。
+clarity 页脚版权行与 Hugo 逐字节一致（`Copyright&nbsp;<span class="year">…`）。
 
 **二十六、门禁③管道死锁（loveit verify 卡死）**。`RunBuildGate` 先
 `ReadToEnd(stdout)` 再 `ReadToEnd(stderr)`——子进程 stderr 写满 4KB 管道缓冲区时
