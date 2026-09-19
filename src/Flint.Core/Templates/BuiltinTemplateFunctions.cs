@@ -475,9 +475,30 @@ public sealed partial class BuiltinTemplateFunctions
 
         // emojify - 未提供（需要完整 emoji 短名映射表），不注册：调用报函数未定义
 
-        // markdownify - Markdown 转 HTML
+        // markdownify - Hugo 语义是**行内**渲染：单段落输入去掉 <p> 包裹
+        //（探针 v0.166：`"Copyright" | markdownify` → "Copyright" 无 <p>；
+        //  clarity 的页脚 i18n 字符串经 markdownify 后被包进 <p> → 嵌套 <p> 破坏结构）
+        // 多段落（块级）内容保持块级输出（对齐 Hugo：多段输入渲染出多个 <p>）
         obj.Import("markdownify", (string? s) =>
-            string.IsNullOrEmpty(s) ? "" : MarkdownifyParser.ToHtml(s));
+        {
+            if (string.IsNullOrEmpty(s))
+            {
+                return "";
+            }
+
+            var html = MarkdownifyParser.ToHtml(s);
+            if (html.StartsWith("<p>", StringComparison.Ordinal))
+            {
+                var close = html.LastIndexOf("</p>", StringComparison.Ordinal);
+                if (close > 3 &&
+                    !html.AsSpan(3, close - 3).Contains("<p>", StringComparison.OrdinalIgnoreCase))
+                {
+                    return html.Substring(3, close - 3).TrimEnd('\n');
+                }
+            }
+
+            return html;
+        });
 
         // plainify - 去除 HTML 标签
         obj.Import("plainify", (string? s) =>

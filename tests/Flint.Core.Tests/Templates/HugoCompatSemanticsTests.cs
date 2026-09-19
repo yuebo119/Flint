@@ -750,4 +750,28 @@ public class HugoCompatSemanticsTests : IDisposable
             "{{ for $it in as_list (page.ancestors.reverse) }}[{{ $it.title }}]{{ end }}");
         Assert.Equal("[首页][文档区][指南区]", html);
     }
+
+    // ---- markdownify：Hugo 是**行内**语义，单段落输入去掉 <p> 包裹 ----
+    //（探针 v0.166：`"Copyright" | markdownify` → "Copyright"；
+    //  `"**bold** text" | markdownify` → "<strong>bold</strong> text"。
+    //  clarity 页脚 `{{ T "copyright" | markdownify }}` 若按块级渲染会产出嵌套 <p>）
+
+    [Theory]
+    [InlineData("{{ \"Copyright\" | markdownify }}", "Copyright")]
+    [InlineData("{{ \"**bold** text\" | markdownify }}", "<strong>bold</strong> text")]
+    [InlineData("{{ \"a & b\" | markdownify }}", "a &amp; b")]
+    [InlineData("{{ \"\" | markdownify }}", "")]
+    public async Task markdownify单段落输出行内HTML(string template, string expected)
+    {
+        Assert.Equal(expected, await Render(template));
+    }
+
+    /// <summary>多段落（块级）内容保持块级输出——对齐 Hugo：markdownify 多段输入渲染出多个 <c>&lt;p&gt;</c></summary>
+    [Fact]
+    public async Task markdownify多段落保持块级输出()
+    {
+        Assert.Equal(
+            "<p>one</p>\n<p>two</p>",
+            await Render("{{ \"one\\n\\ntwo\" | markdownify }}"));
+    }
 }
