@@ -859,6 +859,7 @@ public sealed partial class SiteBuilder
             ReadingTime = content.ReadingTime,
             Description = description,
             Summary = content.Summary,
+            ExplicitSummary = content.Metadata.Summary,
             // kind 由树节点 bundle 类型推导（前置：front matter 显式 type 覆盖）——
             // _index.md 归一为 branch 节点后必须产出 section 语义（list 模板、IsList），
             // 此前用 "page" 兜底致真实 section 页走 single 模板

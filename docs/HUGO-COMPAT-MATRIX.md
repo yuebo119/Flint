@@ -642,6 +642,14 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十二、`.Params.summary` 只含显式 front matter（本轮第十二项）**。探针
+（v0.166）：无显式 summary 时 `.Params` **没有** summary 键（有 title/draft/
+iscjklanguage；显式设置时 description/summary 才出现）——自动摘要不进 params。
+Flint 此前把自动计算的 Summary 投影进 `.Params.summary`，narrow 首页 meta
+description、clarity/narrow 的 `if .Params.summary` 覆盖钩子因此恒真（home
+走错回退分支，输出自动摘要而非 site.Params.description）。修法：PageContext 新增
+`ExplicitSummary`（仅 front matter 显式值），params 投影改用它。
+
 **三十一、Dart Sass 就位，21/21 满对称（本轮第十一项）**。网络恢复后从
 GitHub Releases 装官方 dart-sass 1.104.1 到 `tools/dart-sass/`（矩阵脚本探测到
 即入 PATH，hugo env 报 `compiler="1.104.1"`），fixit 的 Hugo 基线由"失败 0 页"

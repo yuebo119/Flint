@@ -430,6 +430,12 @@ public sealed class PageContext
     /// </summary>
     public string? Summary { get; init; }
 
+    /// <summary>front matter **显式**设置的 summary（<see cref="Summary"/> 在缺省时
+    /// 会回退 description/自动截断——探针 v0.166：Hugo 的 <c>.Params.summary</c> 只含
+    /// 显式 front matter 值，自动摘要不进 params；narrow/clarity 的
+    /// <c>if .Params.summary</c> 覆盖钩子依赖此判定）</summary>
+    public string? ExplicitSummary { get; init; }
+
     /// <summary>
     /// 上一页
     /// </summary>

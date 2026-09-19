@@ -1559,7 +1559,9 @@ public sealed partial class ScribanTemplateRenderer
 
         SetBoth("title", page.Title);
         SetBoth("description", page.Description);
-        SetBoth("summary", page.Summary);
+        // summary 只投影**显式 front matter**值（探针 v0.166：自动摘要不进 .Params，
+        // narrow 首页 meta description、clarity 摘要钩子依赖该判定）
+        SetBoth("summary", page.ExplicitSummary);
         SetBoth("date", page.Date);
         SetBoth("lastmod", page.LastMod);
         SetBoth("publishdate", page.PublishDate);
