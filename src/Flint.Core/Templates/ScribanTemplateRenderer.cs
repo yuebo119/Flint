@@ -2311,13 +2311,44 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ScriptArray arguments,
             Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
-            var key = arguments.Count > 0 ? arguments[0]?.ToString() : null;
+            // **键/上下文自适应**：迁移产物存在两种形态——
+            //   直接调用 `i18n "key" $ctx`（键在前）
+            //   管道 `dict … | i18n "key"`（Scriban 把管道左值注入**首参** → 键被挤到第二位）
+            // loveit 的 summary.html 用后一形态，按首参是否为字符串判别键的位置
+            var keyIndex = -1;
+            for (var i = 0; i < arguments.Count; i++)
+            {
+                if (arguments[i] is string)
+                {
+                    keyIndex = i;
+                    break;
+                }
+            }
+
+            if (keyIndex < 0)
+            {
+                return "";
+            }
+
+            var key = arguments[keyIndex]?.ToString();
             if (string.IsNullOrEmpty(key))
             {
                 return "";
             }
 
-            var contextValue = arguments.Count > 1 ? arguments[1] : null;
+            // 上下文 = 除键之外的首个非空参数（dict / 值）
+            object? contextValue = null;
+            for (var i = 0; i < arguments.Count; i++)
+            {
+                if (i == keyIndex || arguments[i] is null)
+                {
+                    continue;
+                }
+
+                contextValue = arguments[i];
+                break;
+            }
+
             var value = Resolve(key, contextValue);
             return value is null ? "" : Interpolate(value, contextValue);
         }
@@ -2411,8 +2442,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         public Type ReturnType => typeof(object);
 
+        // **两个参数都声明为 object**：若首参声明 string，Scriban 会对非字符串实参
+        //（管道注入的 dict）做 ToString 强转，键变成 "map[Date:X]" 乱码（loveit 实测）
         public Scriban.Runtime.ScriptParameterInfo GetParameterInfo(int index) =>
-            new(index == 0 ? typeof(string) : typeof(object), index == 0 ? "key" : "context");
+            new(typeof(object), index == 0 ? "keyOrContext" : "contextOrKey");
 
         public Scriban.Runtime.ScriptParameterInfo ReturnParameterInfo =>
             new(typeof(string), "result");

@@ -594,6 +594,13 @@ ananke 结构 55.6 → **56.7** / 文本 92.0。
 Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
 RSS 链接指向列表根 feed。
 
+**二十六、门禁③管道死锁（loveit verify 卡死）**。`RunBuildGate` 先
+`ReadToEnd(stdout)` 再 `ReadToEnd(stderr)`——子进程 stderr 写满 4KB 管道缓冲区时
+两者互等，门禁③构建挂死（loveit verify 600/900 秒超时被杀，实测）。修法：并发排水
+两根管道后再等进程退出。此修同时暴露并修复了 loveit 的真实回归：修复前 verify
+挂死被杀 → public-flint 残缺 → loveit 显示 0.0/0.0。修复后 loveit 结构
+65.8 → **69.6** / 文本 90.4 → **95.1**（verify 完整跑通后的真实数值）。
+
 **二十四、`dict` 键的蛇形读取（本轮第五项）**。narrow 的 post-license.html 用
 `dict "displayName" "知识共享署名…"` 存配置、再以 `$license.displayName` 读取；迁移产物
 把读取端归一成 `$license.display_name`（蛇形），而 ScriptObject 的成员访问大小写敏感、
