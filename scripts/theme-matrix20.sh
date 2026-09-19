@@ -177,8 +177,20 @@ Author.name = "Tester"
 Author.avatar = "icons/android-chrome-192x192.png"
 EOF
       ;;
-    loveit|fixit)
-      # 这两个主题要求 Author 是映射（字符串会渲染失败——第一轮 loveit 血例）
+    fixit)
+      # fixit 要求 Author 是映射（同 loveit）；文章页的词数/阅读时长徽标由
+      # .Param 门控（single.html 的 word_count/reading_time），开启后
+      # FuzzyWordCount/ReadingTime 文案进对比面
+      cat >> "$site/hugo.toml" <<'EOF'
+Author.name = "Tester"
+Author.link = "https://example.com/"
+home.profile.enable = true
+word_count = true
+reading_time = true
+EOF
+      ;;
+    loveit)
+      # loveit 要求 Author 是映射（字符串会渲染失败——第一轮 loveit 血例）
       cat >> "$site/hugo.toml" <<'EOF'
 Author.name = "Tester"
 Author.link = "https://example.com/"
