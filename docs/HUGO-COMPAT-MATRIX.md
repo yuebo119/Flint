@@ -642,6 +642,15 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**四十一、资产内 Go 模板动作不执行（有意差异 · S3 否决记录）**。经
+`resources.ExecuteAsTemplate` 执行的资产（narrow 的 theme-init.js、hugo-book
+的搜索配置）内含 Go 模板动作；资产不经迁移器（只转 layouts），动作原样保留。
+尝试按 Scriban 渲染资产：narrow 的简单动作成功（colorScheme 取到 shadcn），
+但 hugo-book 的复杂 Go 模板（range/if 语义与 Scriban 不同）被错误执行——
+55.6/85.4 → 26.8/67.7，**S3 反向验证否决**，保持直通。正确解法是迁移器扩到
+assets（后续专项）。同族已登记：指纹哈希（压缩器字节差）、script-JSON
+上下文转义（Hugo 怪癖）、JS 标识符混淆——四者功能等价或影响为纯外观。
+
 **四十、`Z0700` 布局的字面泄漏与 og:locale（本轮第二十项）**。①
 blog-awesome 的 `dateFormat "2006-01-02T15:04:05Z0700"` 渲染成
 `00:00:00Z0700`——token 表里裸 `Z` 变体（`2006-01-02T15:04:05Z`）吃掉了
