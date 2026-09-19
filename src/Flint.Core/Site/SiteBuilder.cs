@@ -175,7 +175,12 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 模板引用的 RelPermalink 必须真实存在，否则 404。渲染已完成，此时收集
             foreach (var generated in _templateRenderer.GeneratedResources)
             {
-                if (string.IsNullOrEmpty(generated.Content) || string.IsNullOrEmpty(generated.RelPermalink))
+                var binary = generated.BinaryContent;
+                if (binary is null && string.IsNullOrEmpty(generated.Content))
+                {
+                    continue;
+                }
+                if (string.IsNullOrEmpty(generated.RelPermalink))
                 {
                     continue;
                 }
@@ -184,7 +189,8 @@ public sealed partial class SiteBuilder : ISiteBuilder
                 {
                     OutputPath = generated.RelPermalink.TrimStart('/'),
                     SourcePath = generated.Name,
-                    Content = System.Text.Encoding.UTF8.GetBytes(generated.Content),
+                    // 二进制载荷（位图直通）优先，避免 UTF-8 往返破坏 PNG/JPEG 字节
+                    Content = binary ?? System.Text.Encoding.UTF8.GetBytes(generated.Content),
                     MediaType = generated.MediaType,
                     ContentHash = ""
                 });

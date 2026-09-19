@@ -35,6 +35,13 @@ public sealed class TemplateResource
     /// <summary>资源内容</summary>
     public string Content { get; init; } = "";
 
+    /// <summary>二进制载荷（位图图像专用）。非空时站点写出端优先用它，
+    /// 不经 <see cref="Content"/> 的 UTF-8 往返（会破坏 PNG/JPEG 字节）；
+    /// 位图在装载期不读文本（<see cref="TemplateResourceFunctions.FileSystemResourceProvider"/>），
+    /// Fill/Resize 等图像操作的产物靠此通道把**原图字节**带到输出
+    /// （尺寸变换为直通——与模板级 toCSS 同策略）</summary>
+    public ReadOnlyMemory<byte>? BinaryContent { get; init; }
+
     /// <summary>输出相对路径（发布后的 URL 路径，以 / 开头）</summary>
     public string RelPermalink { get; init; } = "";
 
