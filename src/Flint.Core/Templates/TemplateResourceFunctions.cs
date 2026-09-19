@@ -491,8 +491,13 @@ public sealed partial class BuiltinTemplateFunctions
             // 目标路径字符串 → ToResource 得 null → 整条 `| resources.Minify
             // | resources.Fingerprint` 链塌成 null（hugo-book 的 $searchJS 实测：
             // partial 上下文为 null，全站页头报错）。此处按"找资源 + 找路径"解析，
-            // 并把资源改名到目标路径使 RelPermalink 与 Hugo 一致
-            //（内容不递归渲染，避免与主渲染管线耦合）
+            // 并把资源改名到目标路径使 RelPermalink 与 Hugo 一致。
+            //
+            // Hugo 语义是**模板执行**：资产内容里的动作（narrow 的 theme-init.js
+            // 取 `{{ site.Params.colorScheme | default "shadcn" }}`）会被渲染。
+            // 资产文件不经迁移器（assets 不是 layouts），仍是 Go 语法——其中
+            // 简单动作（成员访问/管道/default）与 Scriban 同构，直接按 Scriban
+            // 渲染；解析或执行失败则回退原文（与 toCSS 的直通策略一致）
             TemplateResource? src = null;
             string? target = null;
             foreach (var a in args)
@@ -519,6 +524,12 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 return null;
             }
+
+            // S3 反向验证否决"按 Scriban 渲染资产"：narrow 的简单动作渲染成功
+            //（colorScheme 取到 shadcn），但 hugo-book 的复杂 Go 模板（range/if
+            // 语义与 Scriban 不同）被错误执行——分数 55.6/85.4 → 26.8/67.7。
+            // 资产文件不经迁移器转换，保持**直通**；资产内 Go 模板动作不执行
+            // 登记为有意差异（正确解法是迁移器扩到 assets，属后续专项）
             var renamed = TemplateResource.Create(target ?? src.Name, src.Content, _resources?.BaseUrl ?? "");
             Track(renamed);
             return renamed.ToScriptObject();
