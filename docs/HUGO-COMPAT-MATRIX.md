@@ -642,6 +642,16 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**四十、`Z0700` 布局的字面泄漏与 og:locale（本轮第二十项）**。①
+blog-awesome 的 `dateFormat "2006-01-02T15:04:05Z0700"` 渲染成
+`00:00:00Z0700`——token 表里裸 `Z` 变体（`2006-01-02T15:04:05Z`）吃掉了
+`Z0700` 的前缀，残留 "0700" 字面。修法：全形态 `…Z0700` 排在裸 Z 之前，
+映射为占位标记（引号保护——裸标记会被 .NET 部分解析成 `###+0000###`，
+后续单 token 又会把标记内的 Z0700 子串换成 zzz），后处理按偏移替换：
+UTC → `Z`、非 UTC → 无冒号偏移。修后 datetime 与 Hugo 逐字节一致。
+② og:locale 输出 `map[Lang:en …]`——语言对象化后的连带：内嵌 opengraph 的
+default 兜底改取 `site.language.locale`。
+
 **三十九、语言对象、twitter:card 与 void 斜杠回退（本轮第十九项）**。三处
 探针级修正：① **`site.Language` 是语言对象**——narrow 的 baseof 取
 `site.Language.Locale`，此前站点对象给纯字符串 → `.locale` 空 → `<html lang="">`

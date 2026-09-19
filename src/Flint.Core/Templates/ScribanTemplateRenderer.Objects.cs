@@ -2814,6 +2814,20 @@ public sealed partial class ScribanTemplateRenderer
                 StringComparison.Ordinal);
         }
 
+        // Go 的 Z0700：UTC → 字面 "Z"、非 UTC → 无冒号偏移
+        //（探针：blog-awesome 的 2006-01-02T15:04:05Z0700 → 2026-03-10T00:00:00Z）
+        if (rawFormat.Contains("Z0700", StringComparison.Ordinal) &&
+            result.Contains(GoDateFormat.Z0700Marker, StringComparison.Ordinal))
+        {
+            result = result.Replace(
+                GoDateFormat.Z0700Marker,
+                dt.Offset == TimeSpan.Zero
+                    ? "Z"
+                    : (dt.Offset < TimeSpan.Zero ? "-" : "+") +
+                      dt.Offset.Duration().ToString("hhmm", System.Globalization.CultureInfo.InvariantCulture),
+                StringComparison.Ordinal);
+        }
+
         // **不带冒号的数字偏移**（Go 的 `-0700`/`Z0700`，如 RFC1123Z：探针 → "+0000"）：
         // .NET 的 zzz 恒带冒号，故格式化后去掉
         if (rawFormat.Contains("-0700", StringComparison.Ordinal) ||

@@ -24,10 +24,22 @@ public static class GoDateFormat
     /// </summary>
     public const string ZoneAbbrevMarker = "###TZ###";
 
+    /// <summary>
+    /// Go 的 <c>Z0700</c> 占位标记：UTC 时输出字面 <c>Z</c>、非 UTC 输出无冒号偏移
+    /// （探针：blog-awesome 的 <c>2006-01-02T15:04:05Z0700</c> →
+    /// <c>2026-03-10T00:00:00Z</c>）。
+    /// </summary>
+    public const string Z0700Marker = "###GOZISOTIME###";
+
     /// <summary>长模式优先（避免 "2006" 先于 "2006-01-02" 命中）</summary>
     private static readonly (string Go, string Net)[] Tokens =
     [
         ("2006-01-02T15:04:05Z07:00", "yyyy-MM-ddTHH:mm:sszzz"),
+        // Z0700 必须排在裸 Z 变体之前——裸 "2006-01-02T15:04:05Z" 会吃掉
+        // "…Z0700" 的前缀，残留 "0700" 字面（blog-awesome 的 datetime 实测）。
+        // 标记用**引号包裹**进 .NET 格式串：裸 ###/Z0700 会被 .NET 部分解析
+        //（实测产物 ###+0000###）
+        ("2006-01-02T15:04:05Z0700", "yyyy-MM-ddTHH:mm:ss'" + Z0700Marker + "'"),
         ("2006-01-02T15:04:05-07:00", "yyyy-MM-ddTHH:mm:sszzz"),
         ("2006-01-02T15:04:05Z", "yyyy-MM-ddTHH:mm:ss'Z'"),
         ("2006-01-02 15:04:05", "yyyy-MM-dd HH:mm:ss"),
