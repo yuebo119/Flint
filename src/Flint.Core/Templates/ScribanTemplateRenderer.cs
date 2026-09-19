@@ -1975,7 +1975,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         {{ if site.title }}<meta property="og:site_name" content="{{ site.title }}">{{ end }}
         {{ if page.title }}<meta property="og:title" content="{{ page.title }}">{{ end }}
         {{ $__desc = page.description | default page.summary | default site?.params?.description }}{{ if $__desc }}<meta property="og:description" content="{{ $__desc }}">{{ end }}
-        {{ $__locale = page.params?.locale | default site?.language }}{{ if $__locale }}<meta property="og:locale" content="{{ $__locale }}">{{ end }}
+        {{ $__locale = page.params?.locale | default site?.language?.locale }}{{ if $__locale }}<meta property="og:locale" content="{{ $__locale }}">{{ end }}
         <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}">
         {{ if is_single }}{{ if page.date }}<meta property="article:published_time" content="{{ date.to_string page.date "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
         {{ if page.lastmod }}<meta property="article:modified_time" content="{{ date.to_string page.lastmod "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
