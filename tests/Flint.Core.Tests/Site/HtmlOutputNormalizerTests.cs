@@ -1,48 +1,19 @@
 // Flint 静态站点生成器
-// HtmlOutputNormalizer 回归：对齐 Go html/template 的 void 元素序列化
+// HtmlOutputNormalizer 回归：对齐 Go html/template 的注释处理
 //
-// Hugo 的模板输出经 html/template 解析再序列化，void 元素（meta/link/br…）
-// 的自闭合斜杠被剥掉；Flint 直接透传模板文本，主题自带的 ` />` 全部保留。
-// 每页每个 void 标签都差一个字符——是产物字节级对齐的最大单一噪声源。
+// Hugo 的模板输出经 html/template：普通注释丢弃、条件注释只剥标记
+// （内容保留，console 的 html5shiv/respond 脚本实测）；script/style 体内
+// 的 "<!--" 不是注释。字面 HTML（含 void 元素自闭合斜杠）**逐字透传**，
+// 不做规范化（S3 反向验证否决：xmin/narrow 的 Hugo 产物保留模板自写的 />）。
 
 using Flint.Core.Site;
 using Xunit;
 
 namespace Flint.Core.Tests.Site;
 
-/// <summary>HTML 输出规范化（void 元素剥自闭合斜杠）</summary>
+/// <summary>HTML 输出规范化（注释剥离）</summary>
 public class HtmlOutputNormalizerTests
 {
-    [Theory]
-    [InlineData("""<meta charset="utf-8">""", """<meta charset="utf-8">""")]
-    [InlineData("""<meta charset="utf-8" />""", """<meta charset="utf-8">""")]
-    [InlineData("""<meta property="og:title" content="Home"/>""", """<meta property="og:title" content="Home">""")]
-    [InlineData("""<link rel="stylesheet" href="/a.css"  />""", """<link rel="stylesheet" href="/a.css">""")]
-    [InlineData("""<br/><hr />""", """<br><hr>""")]
-    [InlineData("""<img src="/x.png" alt="a/b" />""", """<img src="/x.png" alt="a/b">""")]
-    public void Void元素剥自闭合斜杠(string input, string expected)
-    {
-        Assert.Equal(expected, HtmlOutputNormalizer.Normalize(input));
-    }
-
-    [Theory]
-    [InlineData("""<div class="a" />content</div>""")]
-    [InlineData("""<script>if (a / b) { x(); }</script>""")]
-    [InlineData("""<p>text with a slash / only</p>""")]
-    public void 非Void元素与斜杠文本不动(string input)
-    {
-        Assert.Equal(input, HtmlOutputNormalizer.Normalize(input));
-    }
-
-    [Fact]
-    public void 无斜杠内容原样返回且引用不劣化()
-    {
-        const string html = "<html><body><p>hi</p></body></html>";
-        Assert.Same(HtmlOutputNormalizer.Normalize(html), html);
-    }
-
-    // ---- HTML 注释剥离（Go html/template 解析再序列化时丢弃注释）----
-
     [Fact]
     public void 普通注释被剥离()
     {
@@ -74,8 +45,6 @@ public class HtmlOutputNormalizerTests
             HtmlOutputNormalizer.Normalize("<p>x</p><!--Dock 控制脚本--><script>var e = 1;</script>"));
     }
 
-    // ---- 条件注释（html/template 语义：只剥标记、内容保留）----
-
     [Fact]
     public void 条件注释剥标记保内容()
     {
@@ -88,8 +57,6 @@ public class HtmlOutputNormalizerTests
     [Fact]
     public void DownlevelHidden条件注释整体剥除()
     {
-        // `<!--[if !IE]> --> 内容 <!-- <![endif]-->`：非 IE 下内容可见——
-        // 标记（含随后的 -->）剥除，内容保留
         Assert.Equal(
             " 内容 ",
             HtmlOutputNormalizer.Normalize("<!--[if !IE]> --> 内容 <!-- <![endif]-->"));
@@ -101,5 +68,21 @@ public class HtmlOutputNormalizerTests
         Assert.Equal(
             "<script>var a = 1;</script>",
             HtmlOutputNormalizer.Normalize("<!-- 说明 --><!--[if lt IE 9]><script>var a = 1;</script><![endif]-->"));
+    }
+
+    [Fact]
+    public void 字面HTML含自闭合斜杠原样透传()
+    {
+        // Go html/template 对字面 HTML 逐字透传：模板自写的 void 自闭合斜杠
+        // 保留（xmin/narrow 的 Hugo 产物实测），不做规范化
+        const string html = """<meta name="description" content="d" /><link rel="stylesheet" href="/a.css" />""";
+        Assert.Equal(html, HtmlOutputNormalizer.Normalize(html));
+    }
+
+    [Fact]
+    public void 无注释内容原样返回且引用不劣化()
+    {
+        const string html = "<html><body><p>hi</p></body></html>";
+        Assert.Same(HtmlOutputNormalizer.Normalize(html), html);
     }
 }
