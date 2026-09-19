@@ -642,6 +642,18 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十四、右裁剪标记与 void 元素序列化（本轮第十四项）**。两个字节级对齐项：
+① **词法器丢失 `-}}`**——`LexRightDelim` 消费右裁剪 `-` 时不产生独立 token，
+解析器按"前一个 token 值 == '-'"判定 TrimRight **恒为 false**，迁移重写动作时
+`{{- with X -}}` 变 `{{- $w = X; if $w }}`（尾部 `-` 丢失）→ 属性行首渗入模板
+换行（narrow 首页 `content="
+ Matrix test site"` vs Hugo
+`content="Matrix test site"`）。修法：右裁剪并入定界 token 值（`-}}`，与左
+定界 `{{-` 对称）。修后 narrow 的 description/author 属性值与 Hugo **逐字节
+一致**。② **void 元素自闭合斜杠**——Go html/template 序列化时剥掉
+`<meta … />` 的斜杠，Flint 此前透传；新增输出级 `HtmlOutputNormalizer`
+（引号感知、仅限 void 元素）。
+
 **三十三、内嵌 `schema.html` 对齐为 itemprop 形态（本轮第十三项）**。探针
 （v0.166）：Hugo 内置 schema.html 输出的是 **itemprop meta**（name/description/
 datePublished/dateModified/wordCount，日期布局 `-07:00` → `+00:00`），不是
