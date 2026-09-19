@@ -866,6 +866,20 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal("[c][b][a]", html);
     }
 
+    /// <summary>
+    /// **.Params.summary 只含显式 front matter**（探针 v0.166：无显式 summary 时
+    /// <c>.Params</c> 无 summary 键——自动摘要不进 params）。narrow 首页的
+    /// meta description、clarity 的摘要钩子以 <c>if .Params.summary</c> 为覆盖判定，
+    /// 自动摘要泄漏会让钩子恒真（home 走错回退分支）
+    /// </summary>
+    [Fact]
+    public async Task ParamsSummary只含显式frontMatter()
+    {
+        // 夹具页无 front matter summary → params.summary 缺席
+        var html = await Render("{{ $s = page.params.summary; if $s }}S=[{{ $s }}]{{ else }}EMPTY{{ end }}");
+        Assert.Equal("EMPTY", html);
+    }
+
     private static PageContext MakeDated(string title, int y, int m, int d) => new()
     {
         Title = title,
