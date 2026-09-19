@@ -881,8 +881,35 @@ internal sealed partial class TemplateConverter(
             return t;
         }
 
-        // 含管道的表达式：只括号化首段
-        var pipeIdx = t.IndexOf(" | ", StringComparison.Ordinal);
+        // 含管道的表达式：只括号化首段。切分点必须是**括号深度 0** 的 " | "——
+        // 深度盲切会把函数参数里嵌套的管道切出来：
+        //   `time.Format (site.Params.dateFormat | default ":date_long") .`
+        //   → 转换产物 `date.to_string page (site?... | default ":date_long")`
+        //   在此处被切成 `(date.to_string page (site?...) | default ":date_long")`，
+        //   default 的作用对象从**格式串**变成 date.to_string 的**结果**——
+        //   nil date_format 时结果已是 ISO 串（非空），default 永不生效，
+        //   blowfish 的日期卡因此在 Flint 里显示 `2026-01-15` 而 Hugo 显示
+        //   `January 15, 2026`（:date_long 具名格式被吞）
+        var depth = 0;
+        var pipeIdx = -1;
+        for (var i = 0; i < t.Length - 2; i++)
+        {
+            var c = t[i];
+            if (c is '(' or '[' or '{')
+            {
+                depth++;
+            }
+            else if (c is ')' or ']' or '}')
+            {
+                depth--;
+            }
+            else if (depth == 0 && c == ' ' && t[i + 1] == '|' && t[i + 2] == ' ')
+            {
+                pipeIdx = i;
+                break;
+            }
+        }
+
         if (pipeIdx >= 0)
         {
             var first = t[..pipeIdx];

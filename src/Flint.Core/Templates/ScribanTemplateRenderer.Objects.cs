@@ -608,6 +608,55 @@ public sealed partial class ScribanTemplateRenderer
         }
 
         /// <summary>
+        /// .NextInSection/.PrevInSection 的取值：在所属 section 的子页列表
+        /// （SiteBuilder 按 Hugo 默认序排列：权重升、日期降）上取相邻页——
+        /// 列表降序 ⇒ <paramref name="newer"/>（NextInSection）取 idx-1、
+        /// PrevInSection 取 idx+1；边界（最新/最旧）为 nil（探针实测）
+        /// </summary>
+        private object? ResolveInSectionNeighbour(bool newer)
+        {
+            var kind = _page.Kind ?? "page";
+            Flint.Core.Abstractions.PageContext? sectionContext;
+            if (kind is "home" or "section" or "taxonomy" or "term")
+            {
+                sectionContext = _page;
+            }
+            else
+            {
+                var chain = ContainerChain();
+                sectionContext = chain.FirstOrDefault(
+                    p => string.Equals(p.Kind, "section", StringComparison.OrdinalIgnoreCase))
+                    ?? chain.LastOrDefault(
+                    p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase));
+            }
+
+            var pages = sectionContext?.Pages;
+            if (pages is null || pages.Count == 0)
+            {
+                return null;
+            }
+
+            var selfIndex = -1;
+            for (var i = 0; i < pages.Count; i++)
+            {
+                if (ReferenceEquals(pages[i], _page))
+                {
+                    selfIndex = i;
+                    break;
+                }
+            }
+            if (selfIndex < 0)
+            {
+                return null;
+            }
+
+            var neighbourIndex = newer ? selfIndex - 1 : selfIndex + 1;
+            return neighbourIndex >= 0 && neighbourIndex < pages.Count
+                ? CreatePageObject(pages[neighbourIndex])
+                : null;
+        }
+
+        /// <summary>
         /// .FirstSection：本页所在的**顶层** section——探针实测（v0.166）：
         /// home → 自身；<c>/docs/</c>（一级 section）→ 自身；<c>/docs/guide/</c> →
         /// <c>/docs/</c>（最外层的 section，不是自己）；内容页 → 最外层 section；
@@ -725,6 +774,20 @@ public sealed partial class ScribanTemplateRenderer
             if (member is "next_page" or "NextPage")
             {
                 value = _page.NextPage is not null ? CreatePageObject(_page.NextPage) : null;
+                return true;
+            }
+
+            // .NextInSection / .PrevInSection：Hugo 探针（v0.166，section 内 a<b<c<d）——
+            // NextInSection = **更新的页**、PrevInSection = **更旧的页**，边界为 nil。
+            // blowfish 的 article-pagination 卡片（含日期）靠这两个成员渲染
+            if (member is "next_in_section" or "NextInSection")
+            {
+                value = ResolveInSectionNeighbour(newer: true);
+                return true;
+            }
+            if (member is "prev_in_section" or "PrevInSection")
+            {
+                value = ResolveInSectionNeighbour(newer: false);
                 return true;
             }
 
