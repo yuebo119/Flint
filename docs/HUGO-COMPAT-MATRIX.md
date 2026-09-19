@@ -642,6 +642,20 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十九、语言对象、twitter:card 与 void 斜杠回退（本轮第十九项）**。三处
+探针级修正：① **`site.Language` 是语言对象**——narrow 的 baseof 取
+`site.Language.Locale`，此前站点对象给纯字符串 → `.locale` 空 → `<html lang="">`
+（Hugo 为 `lang="en"`）。修为嵌套对象（locale/lang/language_code），页面对象的
+language 成员补 `locale`。② **内嵌 twitter_cards 对齐**（探针：card 在**首位**、
+有 `params.images` 时 `summary_large_image` + 逐图 `twitter:image`、无图
+`summary`；此前恒 `summary_large_image` 且在末位）。③ **回退 void 斜杠规范化**
+——Go html/template 对字面 HTML **逐字透传**，xmin/narrow/console 的 Hugo 产物
+都保留模板自写的 ` />`；初版的斜杠剥离当初未做 S3 反向验证，本轮补做后否决
+（规范化让 Flint 与 Hugo 字节相反）。
+
+blowfish 结构 51.3 → **67.6**/95.5（内嵌 partial 三件套全中）、papermod
+57.1 → **60.0**；narrow 的 lang/twitter:card/og 与 Hugo 逐字节一致。
+
 **三十八、站点菜单列表的 `ByWeight` 成员（本轮第十八项）**。techdoc 的
 global-menu 用 `.Site.Menus.main.ByWeight` 渲染站点菜单——Flint 的
 `menus.main` 是普通 List，`.by_weight` 成员不存在取空 → `if site.menus.main`

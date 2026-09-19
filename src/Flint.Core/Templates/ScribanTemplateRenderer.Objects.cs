@@ -402,6 +402,8 @@ public sealed partial class ScribanTemplateRenderer
                 ["LanguageCode"] = page.Language ?? "",
                 ["language_name"] = page.Language ?? "",
                 ["LanguageName"] = page.Language ?? "",
+                ["locale"] = page.Language ?? "",
+                ["Locale"] = page.Language ?? "",
                 // RTL 判断：主题读 language_direction；未知时给 ltr（安全默认）
                 ["language_direction"] = "ltr",
                 ["LanguageDirection"] = "ltr"
@@ -1839,7 +1841,20 @@ public sealed partial class ScribanTemplateRenderer
             //   GetPage "section" "posts"   按 kind + 名
             ["get_page"] = new GetPageFunction(site.Pages, site.Language),
             ["GetPage"] = new GetPageFunction(site.Pages, site.Language),
-            ["language"] = site.Language,
+            // language 是**语言对象**（Hugo 的 .Site.Language.Locale/Lang 链——
+            // narrow 的 baseof 取 `site.Language.Locale`；此前给纯字符串 → .locale 空
+            // → <html lang="">）
+            ["language"] = new ScriptObject
+            {
+                ["locale"] = site.Language ?? "",
+                ["Locale"] = site.Language ?? "",
+                ["lang"] = site.Language ?? "",
+                ["Lang"] = site.Language ?? "",
+                ["language_code"] = site.Language ?? "",
+                ["LanguageCode"] = site.Language ?? "",
+                ["language_name"] = site.Language ?? "",
+                ["language_direction"] = "ltr"
+            },
             ["pages"] = lazyPages,
             ["regular_pages"] = lazyRegularPages,
             ["taxonomies"] = lazyTaxonomies,

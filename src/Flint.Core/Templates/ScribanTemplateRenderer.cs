@@ -1971,16 +1971,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     private static string BuildOpenGraphTemplate() =>
         """
-        <meta property="og:url" content="{{ page.permalink }}" />
-        {{ if site.title }}<meta property="og:site_name" content="{{ site.title }}" />{{ end }}
-        {{ if page.title }}<meta property="og:title" content="{{ page.title }}" />{{ end }}
-        {{ $__desc = page.description | default page.summary | default site?.params?.description }}{{ if $__desc }}<meta property="og:description" content="{{ $__desc }}" />{{ end }}
-        {{ $__locale = page.params?.locale | default site?.language }}{{ if $__locale }}<meta property="og:locale" content="{{ $__locale }}" />{{ end }}
-        <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}" />
-        {{ if is_single }}{{ if page.date }}<meta property="article:published_time" content="{{ date.to_string page.date "yyyy-MM-ddTHH:mm:sszzz" }}" />{{ end }}
-        {{ if page.lastmod }}<meta property="article:modified_time" content="{{ date.to_string page.lastmod "yyyy-MM-ddTHH:mm:sszzz" }}" />{{ end }}
-        {{ if page.section }}<meta property="article:section" content="{{ page.section }}" />{{ end }}
-        {{ for $__t in page.tags }}<meta property="article:tag" content="{{ $__t }}" />{{ end }}{{ end }}
+        <meta property="og:url" content="{{ page.permalink }}">
+        {{ if site.title }}<meta property="og:site_name" content="{{ site.title }}">{{ end }}
+        {{ if page.title }}<meta property="og:title" content="{{ page.title }}">{{ end }}
+        {{ $__desc = page.description | default page.summary | default site?.params?.description }}{{ if $__desc }}<meta property="og:description" content="{{ $__desc }}">{{ end }}
+        {{ $__locale = page.params?.locale | default site?.language }}{{ if $__locale }}<meta property="og:locale" content="{{ $__locale }}">{{ end }}
+        <meta property="og:type" content="{{ if is_home }}website{{ else }}article{{ end }}">
+        {{ if is_single }}{{ if page.date }}<meta property="article:published_time" content="{{ date.to_string page.date "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
+        {{ if page.lastmod }}<meta property="article:modified_time" content="{{ date.to_string page.lastmod "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
+        {{ if page.section }}<meta property="article:section" content="{{ page.section }}">{{ end }}
+        {{ for $__t in page.tags }}<meta property="article:tag" content="{{ $__t }}">{{ end }}{{ end }}
         """;
 
     /// <summary>Hugo 内置 schema.html 的 Scriban 等价（探针 v0.166：Hugo 输出的是
@@ -1998,9 +1998,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// <summary>Hugo 内置 twitter_cards.html 的 Scriban 等价：输出 twitter:* 元信息</summary>
     private static string BuildTwitterCardsTemplate() =>
         """
-        {{ if page.title }}<meta name="twitter:title" content="{{ page.title }}" />{{ end }}
-        {{ $__tdesc = page.description | default page.summary }}{{ if $__tdesc }}<meta name="twitter:description" content="{{ $__tdesc }}" />{{ end }}
-        <meta name="twitter:card" content="summary_large_image" />
+        {{ if page.params.images }}<meta name="twitter:card" content="summary_large_image">{{ for $img in page.params.images }}<meta name="twitter:image" content="{{ $img | abs_url }}">{{ end }}{{ else }}<meta name="twitter:card" content="summary">{{ end }}
+        {{ if page.title }}<meta name="twitter:title" content="{{ page.title }}">{{ end }}
+        {{ $__tdesc = page.description | default page.summary }}{{ if $__tdesc }}<meta name="twitter:description" content="{{ $__tdesc }}">{{ end }}
         """;
 
     /// <summary>
