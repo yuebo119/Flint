@@ -1007,9 +1007,34 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             throw new InvalidOperationException(
                 $"partial 嵌套深度超过 {MaxPartialDepth}：疑似 partial 互相递归。最近 12 层: {string.Join(" → ", tail)}");
         }
+        // ret 键记录栈：与 partial 渲染栈同生命周期（null = 本层未调 __partial_ret_set）
+        RetKeyStack ??= new List<string?>();
+        RetKeyStack.Add(null);
     }
 
     private static void ExitPartial() => _partialDepth--;
+
+    /// <summary>当前 partial 层的 ret 键（<see cref="PartialRetSetFunction"/> 写入）</summary>
+    internal static List<string?>? RetKeyStack { get; private set; }
+
+    internal static void RecordRetKey(string key)
+    {
+        if (RetKeyStack is { Count: > 0 })
+        {
+            RetKeyStack[^1] = key;
+        }
+    }
+
+    internal static string? PopRetKey()
+    {
+        if (RetKeyStack is { Count: > 0 })
+        {
+            var key = RetKeyStack[^1];
+            RetKeyStack.RemoveAt(RetKeyStack.Count - 1);
+            return key;
+        }
+        return null;
+    }
 
 
 
@@ -1106,6 +1131,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             try
             {
                 var rendered = partialTemplate.Render(callerContext);
+                // Hugo 的 `{{ partial "x" . }}` 语句会**输出**返回值：partial 内的
+                // return 改写为 store 通道 + ret，若本次渲染调过 __partial_ret_set
+                // （有 ret 键），把返回值**追加**到文本输出——否则 title 类 partial
+                // 经文本通道调用时输出为空（hugo-book 菜单标题实测）
+                if (PopRetKey() is { } retKey)
+                {
+                    var retText = ResolveStore(callerContext)?.Get(retKey)?.ToString();
+                    if (!string.IsNullOrEmpty(retText))
+                    {
+                        rendered += retText;
+                    }
+                }
                 return RestoreScalarType(rendered);
             }
             finally
@@ -1539,8 +1576,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             var value = arguments.Count > 1 ? arguments[1] : null;
             var store = ResolveStore(context);
             // 与读取端同规则归一（含剥掉可能已带的前缀）——见 CanonicalPartialKey
-            store?.Set(
-                PartialValueFunction.KeyPrefix + PartialValueFunction.CanonicalPartialKey(name), value);
+            var canonicalKey = PartialValueFunction.KeyPrefix + PartialValueFunction.CanonicalPartialKey(name);
+            store?.Set(canonicalKey, value);
+            // 记录到当前 partial 层：文本通道 `{{ partial "x" . }}` 的语义是**输出**
+            // 返回值（Hugo 的 partial 语句），RenderPartialWithType 渲染后据此补输出
+            RecordRetKey(canonicalKey);
             return "";
         }
 

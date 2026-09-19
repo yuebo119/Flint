@@ -642,6 +642,20 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十七、return 改写的字面 `}` 与文本通道返回值（本轮第十七项）**。两处
+转换器/引擎级缺陷，视觉比对（playwright 截图对比 narrow/hugo-book 两侧首页）
+时定位：① **字面 `}` 泄漏**——`{{ return X }}` 改写的插值串写了**六个** `}`
+（C# 转义后产出三个，闭合 set 动作只需两个），多出的一个成为字面文本，凡经
+**文本通道**调用该 partial 的调用点每调用多吐一个 `}`（hugo-book 菜单标题实测：
+`<a …>}</a>`）。ScribanConverter 与 TemplateConverter 两处同款，均改为四 `}`。
+② **文本通道 partial 不输出返回值**——return 改写为 store 通道 + `ret` 后，
+`partialValue` 从 store 取值，但 `partial`（文本通道）的输出只剩字面文本，
+返回值被丢弃（hugo-book 菜单标题因此整段为空）。修法：`PartialRetSetFunction`
+把 ret 键记录到**线程内 partial 渲染栈**，`RenderPartialWithType` 渲染后据此把
+store 里的返回值**追加**到文本输出（Hugo 的 `{{ partial "x" . }}` 语句语义就是
+输出返回值）。修后 hugo-book 菜单与 Hugo 一致（"Getting Started"），文本
+84.3 → **85.4**；视觉比对 narrow/hugo-book 两侧首页确认无功能缺陷。
+
 **三十六、注释剥离、AlternativeOutputFormats 与 `| html` 映射（本轮第十六项）**。
 三项产物级对齐：① **HTML 注释剥离**——Go html/template 序列化时丢弃**普通**注释
 （yinyang 67.8 → **89.5** 大涨），但**条件注释**（`<!--[if lt IE 9]>…<![endif]-->`）

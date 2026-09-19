@@ -641,8 +641,11 @@ internal sealed partial class TemplateConverter(
                     // 只有 Stack 的 11 处 IndexOutOfRange（产出仍有 129KB）。
                     // 两害相权取产出量级更优者，Stack 的残留问题记录在案
                     var key = ScribanConverter.RetKeyPrefix + selfName;
+                    // 插值串 }} → }：四个 } 产出两个（闭合 set 动作）。此前六个 }
+                    // 多产出一个字面 }，文本通道调用该 partial 的主题每调用多吐一个 }
+                    //（hugo-book 菜单标题实测）
                     return Wrap(
-                        $"__partial_ret_set \"{key}\" {retVal} }}}}}}{{{{ ret",
+                        $"__partial_ret_set \"{key}\" {retVal} }}}}{{{{ ret",
                         trimL, trimR);
                 }
                 return Wrap($"ret {retVal}", trimL, trimR);
