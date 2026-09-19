@@ -642,6 +642,14 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十八、站点菜单列表的 `ByWeight` 成员（本轮第十八项）**。techdoc 的
+global-menu 用 `.Site.Menus.main.ByWeight` 渲染站点菜单——Flint 的
+`menus.main` 是普通 List，`.by_weight` 成员不存在取空 → `if site.menus.main`
+守卫虽过、菜单条目迭代为空 → **整站菜单不渲染**（视觉比对定位）。修法：
+菜单列表换成 `MenuItemsList`（ScriptObject + IEnumerable：条目注册为索引成员
+保真值判定、`byweight`/`by_weight` 返回按 weight 排序的 ScriptArray）。
+techdoc 结构 42.2 → **53.9** / 文本 97.6，菜单与 Hugo 逐条一致。
+
 **三十七、return 改写的字面 `}` 与文本通道返回值（本轮第十七项）**。两处
 转换器/引擎级缺陷，视觉比对（playwright 截图对比 narrow/hugo-book 两侧首页）
 时定位：① **字面 `}` 泄漏**——`{{ return X }}` 改写的插值串写了**六个** `}`
