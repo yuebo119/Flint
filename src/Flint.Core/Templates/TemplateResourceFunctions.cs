@@ -26,6 +26,9 @@ public interface ITemplateResourceProvider
     /// <summary>按路径取资源（相对 assets/，如 "css/main.css"）；不存在返回 null</summary>
     TemplateResource? Get(string path);
 
+    /// <summary>按路径读**原始字节**（位图图像操作的直通载荷）；不存在返回 null</summary>
+    ReadOnlyMemory<byte>? ReadBytes(string path);
+
     /// <summary>glob 匹配（Hugo resources.Match 语义，支持 ** 与 *）</summary>
     IReadOnlyList<TemplateResource> Match(string pattern);
 
@@ -110,6 +113,30 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
         }
 
         return Load(key, full);
+    }
+
+    /// <summary>读原始字节（位图直通载荷；站点 assets/ 优先语义与 Get 一致）</summary>
+    public ReadOnlyMemory<byte>? ReadBytes(string path)
+    {
+        EnsureIndexed();
+        var key = path.Replace('\\', '/').TrimStart('/');
+        if (!_index.TryGetValue(key, out var full))
+        {
+            return null;
+        }
+
+        try
+        {
+            return File.ReadAllBytes(full);
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public IReadOnlyList<TemplateResource> Match(string pattern)
@@ -553,7 +580,11 @@ public sealed partial class BuiltinTemplateFunctions
         var dir = Path.GetDirectoryName(r.Name)?.Replace((char)92, '/') ?? "";
         var file = Path.GetFileNameWithoutExtension(r.Name);
         var ext = Path.GetExtension(r.Name);
-        var suffix = string.IsNullOrEmpty(spec) ? opName.ToLowerInvariant() : opName.ToLowerInvariant() + "_" + spec;
+        // 规格串会进 URL（Hugo 用 _hu_<hash> 命名；Flint 用 op_spec 确定性命名）——
+        // 空格（"70x70 center webp"）进 src 会成为未编码 URL，替换为下划线
+        var suffix = string.IsNullOrEmpty(spec)
+            ? opName.ToLowerInvariant()
+            : opName.ToLowerInvariant() + "_" + spec.Replace(' ', '_');
         var newName = (dir.Length > 0 ? dir + "/" : "") + file + "_" + suffix + ext;
         var baseRes = TemplateResource.Create(newName, r.Content, _resources?.BaseUrl ?? "");
         var outRes = new TemplateResource
@@ -563,6 +594,12 @@ public sealed partial class BuiltinTemplateFunctions
             ResourceType = "image",
             MediaType = baseRes.MediaType,
             Content = baseRes.Content,
+            // 位图在装载期不读文本（Content 为空）——取**原图字节**直通到输出，
+            // 否则 SiteBuilder 按"空内容"跳过 → 引用了产物却无文件（blog-awesome 的
+            // bio 头像实测断链）；尺寸变换本身为直通（与模板级 toCSS 同策略）
+            BinaryContent = r.Content.Length == 0
+                ? _resources?.ReadBytes(r.Name)
+                : null,
             RelPermalink = baseRes.RelPermalink,
             Permalink = baseRes.Permalink,
             Width = w > 0 ? w : r.Width,

@@ -642,6 +642,15 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十五、图像操作的二进制直通（本轮第十五项）**。位图在装载期不读文本
+（Content 为空），Fill/Resize 产物因此被判"空内容"跳过落盘 → HTML 引用了
+产物名却无文件（blog-awesome 的 bio 头像 `.Fill "70x70 center webp"` 实测
+Flint 独有断链）。修法：TemplateResource 新增 `BinaryContent` 载荷通道
+（`ReadOnlyMemory<byte>`，写出端优先、绕过 UTF-8 往返），provider 加
+`ReadBytes`；图像操作对位图取**原图字节**直通（尺寸变换不实现——与模板级
+toCSS 同策略），规格串进 URL 前把空格替换为下划线。断链复查：
+**Flint 独有断链清零**（其余缺失 Hugo 侧同样存在，行为一致）。
+
 **三十四、右裁剪标记与 void 元素序列化（本轮第十四项）**。两个字节级对齐项：
 ① **词法器丢失 `-}}`**——`LexRightDelim` 消费右裁剪 `-` 时不产生独立 token，
 解析器按"前一个 token 值 == '-'"判定 TrimRight **恒为 false**，迁移重写动作时
