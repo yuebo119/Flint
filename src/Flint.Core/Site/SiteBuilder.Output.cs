@@ -364,8 +364,12 @@ public sealed partial class SiteBuilder
                 {
                     Directory.CreateDirectory(dir);
                 }
+                // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
+                var content = page.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                    ? HtmlOutputNormalizer.Normalize(page.Content)
+                    : page.Content;
                 // 添加重试逻辑以处理文件访问冲突
-                await WriteFileWithRetryAsync(page.OutputPath, page.Content, ct);
+                await WriteFileWithRetryAsync(page.OutputPath, content, ct);
             });
 
         // 优化：并行写入资源（去重以避免并发写入同一文件）

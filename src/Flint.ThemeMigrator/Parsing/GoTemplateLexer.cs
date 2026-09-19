@@ -439,8 +439,11 @@ internal sealed class GoTemplateLexer
     private void LexRightDelim()
     {
         var startLine = _line;
-        // 可选右裁剪标记
-        if (Peek() == '-')
+        // 可选右裁剪标记——**并入 token 值**（"-}}"），与左定界的 "{{-" 对称；
+        // 此前只消费不记录，解析器据此推出的 TrimRight 恒为 false，
+        // 动作重写丢失 -}} 后属性值内渗入模板换行（narrow 首页 meta 实测）
+        var hasTrim = Peek() == '-';
+        if (hasTrim)
         {
             Next();
         }
@@ -449,7 +452,7 @@ internal sealed class GoTemplateLexer
         {
             Next();
         }
-        Emit(TokenType.RightDelim, _rightDelim, startLine);
+        Emit(TokenType.RightDelim, hasTrim ? "-" + _rightDelim : _rightDelim, startLine);
         _insideAction = false;
         _parenDepth = 0;
     }

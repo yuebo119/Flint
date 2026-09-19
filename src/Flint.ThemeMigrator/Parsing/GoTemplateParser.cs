@@ -191,7 +191,9 @@ internal sealed class GoTemplateParser
             if (t.Type == TokenType.RightDelim)
             {
                 Next();
-                trimRight = _pos >= 2 && _tokens[_pos - 2].Value == "-";
+                // 右裁剪标记并入定界 token 值（"-}}"，见 LexRightDelim）；
+                // Next() 之后该 token 位于 _pos-1
+                trimRight = _pos >= 1 && _tokens[_pos - 1].Value.StartsWith('-');
                 break;
             }
             bodyTokens.Add(t);
