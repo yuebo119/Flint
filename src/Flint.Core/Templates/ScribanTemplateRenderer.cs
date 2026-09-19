@@ -1943,10 +1943,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         {{ for $__t in page.tags }}<meta property="article:tag" content="{{ $__t }}" />{{ end }}{{ end }}
         """;
 
-    /// <summary>Hugo 内置 schema.html 的 Scriban 等价：输出 JSON-LD 骨架</summary>
+    /// <summary>Hugo 内置 schema.html 的 Scriban 等价（探针 v0.166：Hugo 输出的是
+    /// **itemprop meta**，不是 JSON-LD；hugo-book 的 docs/html-head 实测——
+    /// name/description/publishDate/lastmod/wordCount，日期布局 -07:00 → +00:00）</summary>
     private static string BuildSchemaTemplate() =>
         """
-        <script type="application/ld+json">{"@context":"https://schema.org","@type":"{{ if is_home }}WebSite{{ else }}BlogPosting{{ end }}","headline":"{{ page.title }}","url":"{{ page.permalink | default site.base_url }}"}</script>
+        <meta itemprop="name" content="{{ page.title }}">
+        <meta itemprop="description" content="{{ page.description | default page.summary | default site?.params?.description }}">
+        {{ if page.publish_date }}<meta itemprop="datePublished" content="{{ date.to_string page.publish_date "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
+        {{ if page.lastmod }}<meta itemprop="dateModified" content="{{ date.to_string page.lastmod "yyyy-MM-ddTHH:mm:sszzz" }}">{{ end }}
+        {{ if page.word_count }}<meta itemprop="wordCount" content="{{ page.word_count }}">{{ end }}
         """;
 
     /// <summary>Hugo 内置 twitter_cards.html 的 Scriban 等价：输出 twitter:* 元信息</summary>

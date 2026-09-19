@@ -642,6 +642,20 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**三十三、内嵌 `schema.html` 对齐为 itemprop 形态（本轮第十三项）**。探针
+（v0.166）：Hugo 内置 schema.html 输出的是 **itemprop meta**（name/description/
+datePublished/dateModified/wordCount，日期布局 `-07:00` → `+00:00`），不是
+JSON-LD。Flint 此前的等价实现恒输出 JSON-LD（home 为 WebSite、其余
+BlogPosting）——凡调用 `partial "schema.html"` 的主题（hugo-book、even、
+ananke、bearblog、hugo-paper、techdoc、narrow…）头部整段错形。对齐后相似度
+大幅上升：even 61.6 → **73.1**/97.4、bearblog 39.2 → **56.0**/96.9、
+ananke 55.7 → **67.6**/93.8、hugo-paper 60.7 → **67.6**/93.2、
+hugo-book 42.3 → **46.4**/89.2、narrow 41.1/95.6、techdoc 42.2/96.5。
+
+另：Flint 的 `MinifyJs` 只去注释/空白、不做标识符混淆（Hugo 用 tdewolff/minify
+把 `var menu` 缩成 `var e`）——内联脚本文本因此不同但**功能等价**，登记为有意
+差异（实现变量名混淆 = 重写压缩器，风险收益比不成立）。
+
 **三十二、`.Params.summary` 只含显式 front matter（本轮第十二项）**。探针
 （v0.166）：无显式 summary 时 `.Params` **没有** summary 键（有 title/draft/
 iscjklanguage；显式设置时 description/summary 才出现）——自动摘要不进 params。
