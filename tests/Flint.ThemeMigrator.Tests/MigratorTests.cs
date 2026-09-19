@@ -514,6 +514,20 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
+    public void 布局参数内嵌default管道不被外提()
+    {
+        // `{{ return time.Format (site.Params.dateFormat | default ":date_long") . }}`：
+        // 内层 default 作用于**格式串**。ParenthesizeIfCallWithArgs 此前用
+        // IndexOf(" | ") 盲切——把嵌在括号里的管道切到调用外层，default 的作用
+        // 对象变成 date.to_string 的**结果**（结果非空 → default 永不生效 →
+        // :date_long 具名格式被吞，blowfish 日期卡显示 ISO 而非 "January 15, 2026"）
+        var result = Convert("{{ return time.Format (site.Language.Params.dateFormat | default \":date_long\") . }}");
+        Assert.Contains(
+            "(site?.language?.params?.date_format | default \":date_long\")",
+            result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 资源方法在资源上下文补前缀()
     {
         // with .Resources.ByType 块内的裸 .GetMatch：隐式接收者是资源对象
