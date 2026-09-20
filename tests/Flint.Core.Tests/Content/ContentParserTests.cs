@@ -555,6 +555,32 @@ public class FilenameConventionTests
         Assert.Equal(new DateTime(2020, 1, 1), result.Metadata.Date!.Value.DateTime); // 显式 date 优先
         Assert.Equal("explicit", result.Metadata.Slug); // 显式 slug 优先
     }
+
+    [Fact]
+    public async Task ParseAsync_普通连字符文件名_不当成日期前缀slug()
+    {
+        // Hugo 的 :filename 约定要求文件名**以日期开头**（YYYY-MM-DD-slug）。
+        // `static-site-deep-dive.md` 是普通连字符名——此前只要含 3+ 连字符就把
+        // 尾段当 slug（"dive"）写进 URL → /posts/dive/ 而非
+        // /posts/static-site-deep-dive/（21 主题演示站全量实测该错误 URL）
+        var parser = new ContentParser();
+        var file = new ContentFile
+        {
+            Path = "/site/content/posts/static-site-deep-dive.md",
+            RawContent = System.Text.Encoding.UTF8.GetBytes("---
+title: \"T\"
+---
+
+Body
+"),
+            ModifiedTime = DateTimeOffset.UtcNow
+        };
+
+        var result = await parser.ParseAsync(file);
+
+        Assert.Null(result.Metadata.Slug); // 普通文件名不产出 slug 段
+        Assert.Null(result.Metadata.Date); // 也不产出日期
+    }
 }
 
 /// <summary>
