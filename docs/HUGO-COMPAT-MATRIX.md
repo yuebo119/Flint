@@ -642,6 +642,16 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**四十三、指纹哈希差异的深度定性（本轮第二十二项 · 最终登记）**。对 narrow 的
+115KB tailwind 产物做逐字节 diff：Flint 与 tdewolff 的压缩输出 **99.95% 相同**，
+差异收敛为六条规则——① `/*!` 重要注释 tdewolff 保留、Flint 删除；② `@supports `/
+`@media ` 后的空格 tdewolff 移除；③ 数字规范化（`3.40282e38px` → `340282e33px`）；
+④ 简写坍缩（`flex:0 1 0` → `flex:0`、box-shadow 尾 `0` 移除）；⑤
+`border-color:currentColor` → `initial`；⑥ 其余单点空格。要哈希一致必须**逐字节
+复刻 tdewolff 的全部值级优化**——每条都有边界条件，压错即破坏真实站点样式；
+且部分对齐收益为零（哈希要求全等）。登记为最终有意差异：指纹文件名/SRI 哈希
+不同，但样式内容功能等价（两侧浏览器渲染一致，视觉比对已证）。
+
 **四十二、迁移器扩展到 assets（本轮第二十一项，取代四十一）**。四十一的
 否决是针对"对**未转换**的 Go 语法直接 Scriban 渲染"；正确解法落地：
 ① 迁移器遍历 `assets/` 时，含 `{{` 的文件走同一转换管线（GoTemplateParser
