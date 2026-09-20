@@ -35,6 +35,14 @@ if [ $# -gt 0 ]; then
   THEMES=("$@")
 fi
 
+# 端口按主题在总表中的**固定位置**分配：子集运行与全量运行的端口一致
+declare -A THEME_PORT
+_i=$PORT_BASE
+for _t in ananke bearblog blog-awesome blowfish clarity console even fixit github-style hugo-book hugo-coder hugo-paper loveit m10c monochrome narrow papermod stack techdoc xmin yinyang; do
+  THEME_PORT[$_t]=$_i
+  _i=$((_i+1))
+done
+
 # ---- 统一站点配置：基础段 + 主题专属 params（与 theme-matrix20 同源）----
 write_config() {
   local name="$1" site="$2" port="$3"
@@ -104,7 +112,21 @@ type = "archives"
 type = "toc"
 EOF
       ;;
-    blowfish|clarity)
+    blowfish)
+      cat >> "$site/hugo.toml" <<'EOF'
+Author.name = "演示作者"
+Author.email = "demo@example.com"
+[params.homepage]
+showRecent = true
+showRecentItems = 5
+EOF
+      ;;
+    github-style)
+      cat >> "$site/hugo.toml" <<'EOF'
+headerIcon = "/images/github-mark.png"
+EOF
+      ;;
+    clarity)
       cat >> "$site/hugo.toml" <<'EOF'
 Author.name = "演示作者"
 Author.email = "demo@example.com"
@@ -158,6 +180,7 @@ printf -- "---------------------------------------------------------------------
 port=$PORT_BASE
 fail=0
 for name in "${THEMES[@]}"; do
+  port=${THEME_PORT[$name]}
   src="$THEMES_DIR/$name"
   if [ ! -d "$src/layouts" ]; then
     printf "%-14s 跳过（主题不存在）\n" "$name"
@@ -187,6 +210,7 @@ for name in "${THEMES[@]}"; do
   pages=$(find "$site/public" -name "*.html" 2>/dev/null | wc -l)
   minsz=$(find "$site/public" -name "*.html" -exec wc -c {} + 2>/dev/null | sort -n | head -1 | awk '{print $1}')
 
+  port=${THEME_PORT[$name]}
   url="http://127.0.0.1:$port/"
   if [ $bexit -eq 0 ] && [ "$pages" -gt 0 ]; then
     printf "%-14s %-8s %-6s %-8s %s\n" "$name" "通过" "$pages" "${minsz:-NA}" "$url"
@@ -195,18 +219,15 @@ for name in "${THEMES[@]}"; do
     echo "$build_out" | tail -3 | sed 's/^/    /'
     fail=$((fail+1))
   fi
-  port=$((port+1))
 done
 
 echo "--------------------------------------------------------------------------"
 if [ "${SERVE:-0}" = "1" ]; then
   echo "启动全部服务…"
-  port=$PORT_BASE
   for name in "${THEMES[@]}"; do
     site="$WORK/$name"
     [ -d "$site/public" ] || continue
-    (cd "$site/public" && python -m http.server "$port" --bind 127.0.0.1 > /dev/null 2>&1 &)
-    port=$((port+1))
+    (cd "$site/public" && python -m http.server "${THEME_PORT[$name]}" --bind 127.0.0.1 > /dev/null 2>&1 &)
   done
   echo "全部服务已后台启动。"
 fi
