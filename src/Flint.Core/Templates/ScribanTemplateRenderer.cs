@@ -1012,10 +1012,23 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         RetKeyStack.Add(null);
     }
 
-    private static void ExitPartial() => _partialDepth--;
+    /// <summary>退出 partial：弹栈。线程静态栈无需加锁</summary>
+    private static void ExitPartial()
+    {
+        _partialDepth--;
+        if (RetKeyStack is { Count: > 0 })
+        {
+            RetKeyStack.RemoveAt(RetKeyStack.Count - 1);
+        }
+    }
 
-    /// <summary>当前 partial 层的 ret 键（<see cref="PartialRetSetFunction"/> 写入）</summary>
-    internal static List<string?>? RetKeyStack { get; private set; }
+    /// <summary>当前 partial 层的 ret 键（<see cref="PartialRetSetFunction"/> 写入）。
+    /// **必须 ThreadStatic**：内容解析（render hook 经 Markdig 同步管线）与
+    /// 页面渲染在多线程并行执行，共享 List 会互相弹栈/写入错层——
+    /// PopRetKey 取到别的线程的键甚至空栈越界（"Index was out of range"，
+    /// fixit render-heading 间歇竞态的根因：3 次构建命中 1 次）</summary>
+    [ThreadStatic]
+    internal static List<string?>? RetKeyStack;
 
     internal static void RecordRetKey(string key)
     {
@@ -1025,13 +1038,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
     }
 
-    internal static string? PopRetKey()
+    internal static string? PeekRetKey()
     {
         if (RetKeyStack is { Count: > 0 })
         {
-            var key = RetKeyStack[^1];
-            RetKeyStack.RemoveAt(RetKeyStack.Count - 1);
-            return key;
+            return RetKeyStack[^1];
         }
         return null;
     }
@@ -1135,7 +1146,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 // return 改写为 store 通道 + ret，若本次渲染调过 __partial_ret_set
                 // （有 ret 键），把返回值**追加**到文本输出——否则 title 类 partial
                 // 经文本通道调用时输出为空（hugo-book 菜单标题实测）
-                if (PopRetKey() is { } retKey)
+                if (PeekRetKey() is { } retKey)
                 {
                     var retText = ResolveStore(callerContext)?.Get(retKey)?.ToString();
                     if (!string.IsNullOrEmpty(retText))
@@ -2067,6 +2078,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     // 缓存内置函数对象（线程安全，只创建一次）
     private ScriptObject? _cachedBuiltinObject;
     private ScriptObject? _cachedDateObject;
+    /// <summary>函数对象缓存的并发锁：内容解析（render hook）与页面渲染
+    /// 多线程并发调用 EnsureFunctionObjects——`if (null) 赋值` 非原子，
+    /// 两个线程可能各自构造一份（浪费但不致命）或读到半构造对象
+    /// （致命：partialValue 等成员缺失 → 间歇渲染失败）</summary>
+    private readonly object _fnCacheGate = new();
 
     private static readonly IReadOnlyDictionary<string, string> EmptyTranslations =
         new Dictionary<string, string>();
@@ -2085,24 +2101,37 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     private void EnsureFunctionObjects(Scriban.TemplateContext scribanContext)
     {
-        // 优化：复用内置函数对象（只创建一次）
+        // 优化：复用内置函数对象（只创建一次）。**双检锁**：并发渲染下
+        // 多个线程可能同时首访（render hook 与页面渲染并行）
         if (_cachedBuiltinObject == null)
         {
-            var builtinObject = new ScriptObject();
-            _builtinFunctions.RegisterFunctions(builtinObject);
-            // partialCached（对齐 Hugo）：IScriptCustomFunction 实现，不经反射绑定（AOT 安全）
-            builtinObject.TrySetValue(scribanContext, default, "partialcached",
-                new PartialCachedFunction(this), readOnly: true);
-            _cachedBuiltinObject = builtinObject;
+            lock (_fnCacheGate)
+            {
+                if (_cachedBuiltinObject == null)
+                {
+                    var builtinObject = new ScriptObject();
+                    _builtinFunctions.RegisterFunctions(builtinObject);
+                    // partialCached（对齐 Hugo）：IScriptCustomFunction 实现，不经反射绑定（AOT 安全）
+                    builtinObject.TrySetValue(scribanContext, default, "partialcached",
+                        new PartialCachedFunction(this), readOnly: true);
+                    _cachedBuiltinObject = builtinObject;
+                }
+            }
         }
         scribanContext.PushGlobal(_cachedBuiltinObject);
 
         // 优化：复用日期对象（只创建一次）
         if (_cachedDateObject == null)
         {
-            var dateObject = new ScriptObject();
-            RegisterDateObject(dateObject);
-            _cachedDateObject = new ScriptObject { ["date"] = dateObject };
+            lock (_fnCacheGate)
+            {
+                if (_cachedDateObject == null)
+                {
+                    var dateObject = new ScriptObject();
+                    RegisterDateObject(dateObject);
+                    _cachedDateObject = new ScriptObject { ["date"] = dateObject };
+                }
+            }
         }
         scribanContext.PushGlobal(_cachedDateObject);
     }
