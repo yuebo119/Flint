@@ -56,6 +56,22 @@ internal static class ServeHandler
             var templateRenderer = new ScribanTemplateRenderer(
                 Path.Combine(sourcePath, "layouts"),
                 config.BaseURL,
+                new TemplateEnvironmentInfo
+                {
+                    Environment = "production",
+                    IsMultilingual = config.Languages.Count > 0,
+                    WorkingDir = sourcePath
+                },
+                // 模板资源提供者（Hugo Pipes）：与 BuildHandler 同构——否则
+                // `| minify` 等资源函数未注册，serve 的动态渲染全页失败
+                //（yinyang 的 head.html 实测）
+                new FileSystemResourceProvider(config.BaseURL,
+                [
+                    Path.Combine(sourcePath, "assets"),
+                    .. config.Theme
+                        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                        .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
+                ]),
                 themeLayoutDirs);
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染
