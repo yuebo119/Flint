@@ -704,7 +704,9 @@ public sealed partial class BuiltinTemplateFunctions
                                  (ext == ".scss" || ext == ".sass" || ext == ".css");
             if (sassCompilable)
             {
-                var compiled = TryCompileWithSassCli(r.SourcePath!);
+                // 编译**渲染后的内容**；load-path 取源文件目录（@import 解析基准）
+                var loadPath = Path.GetDirectoryName(r.SourcePath!);
+                var compiled = TryCompileWithSassCli(css, loadPath);
                 if (compiled is not null)
                 {
                     css = compiled;
@@ -794,10 +796,11 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>
-    /// 调用 Dart Sass 编译磁盘上的 SCSS 文件（@import 相对解析依赖文件位置）；
-    /// 找不到可执行文件或编译失败返回 null（调用方回退内容直通）
+    /// 调用 Dart Sass 编译**内存中的 SCSS 内容**（stdin 模式 + load-path 解析 @import）。
+    /// 必须编内容而不是磁盘文件：ExecuteAsTemplate → toCSS 链上磁盘文件含未渲染的
+    /// Scriban 动作，按文件编译必失败（clarity/m10c 实测）
     /// </summary>
-    private static string? TryCompileWithSassCli(string sourcePath)
+    private static string? TryCompileWithSassCli(string content, string? loadPath)
     {
         var sass = LocateSassExecutable();
         if (sass is null)
@@ -807,24 +810,33 @@ public sealed partial class BuiltinTemplateFunctions
 
         try
         {
+            var args = "--no-source-map --quiet --stdin";
+            if (!string.IsNullOrEmpty(loadPath))
+            {
+                args += " --load-path=\"" + loadPath + "\"";
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = sass,
-                Arguments = "--no-source-map --quiet \"" + sourcePath + "\"",
+                Arguments = args,
                 UseShellExecute = false,
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(sourcePath) ?? ""
+                WorkingDirectory = loadPath ?? ""
             };
             // .bat 必须经 cmd 解析（直接 spawn .bat 在部分 .NET 版本被禁）
             if (sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
             {
                 psi.FileName = "cmd.exe";
-                psi.Arguments = "/c \"\"" + sass + "\" --no-source-map --quiet \"" + sourcePath + "\"\"";
+                psi.Arguments = "/c \"\"" + sass + "\" " + args + "\"";
             }
 
             using var proc = Process.Start(psi)!;
+            proc.StandardInput.Write(content);
+            proc.StandardInput.Close();
             var stdout = proc.StandardOutput.ReadToEnd();
             var stderr = proc.StandardError.ReadToEnd();
             proc.WaitForExit(120_000);
