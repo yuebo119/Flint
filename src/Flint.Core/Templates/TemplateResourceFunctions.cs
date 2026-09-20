@@ -484,7 +484,7 @@ public sealed partial class BuiltinTemplateFunctions
             return renamed.ToScriptObject();
         });
 
-        res.Import("ExecuteAsTemplate", (params object?[] args) =>
+        res.Import("ExecuteAsTemplate", (Scriban.TemplateContext? ctx, object?[] args) =>
         {
             // Hugo 的签名是 `ExecuteAsTemplate TARGETPATH DATA RESOURCE`
             //（管道形态把资源注入末位）。早期实现只取**首参**当资源——而首参是
@@ -525,12 +525,45 @@ public sealed partial class BuiltinTemplateFunctions
                 return null;
             }
 
-            // S3 反向验证否决"按 Scriban 渲染资产"：narrow 的简单动作渲染成功
-            //（colorScheme 取到 shadcn），但 hugo-book 的复杂 Go 模板（range/if
-            // 语义与 Scriban 不同）被错误执行——分数 55.6/85.4 → 26.8/67.7。
-            // 资产文件不经迁移器转换，保持**直通**；资产内 Go 模板动作不执行
-            // 登记为有意差异（正确解法是迁移器扩到 assets，属后续专项）
-            var renamed = TemplateResource.Create(target ?? src.Name, src.Content, _resources?.BaseUrl ?? "");
+            // 渲染语义（S3 复验后的最终形态）：迁移器现已**转换** assets 内含
+            // Go 动作的文件（解析干净且有动作才转换，否则原样复制）——此处对
+            // **解析干净的 Scriban** 执行渲染，失败回退原文。此前两版：
+            // ① 完全直通（资产动作泄漏到产物）；② 对未经转换的 Go 语法直接
+            // Scriban 渲染（复杂 range/if 语义不同，hugo-book 崩到 26.8）——均废
+            var content = src.Content;
+            if (content.Contains("{{", StringComparison.Ordinal) && ctx is not null)
+            {
+                try
+                {
+                    var parsed = Scriban.Template.Parse(content, target ?? src.Name);
+                    if (!parsed.HasErrors)
+                    {
+                        // **输出缓冲隔离**（同 RenderPartialWithType）：Scriban 的
+                        // Render 会把内容写进 context.Output——不隔离的话整段 JS
+                        // 会被复制进调用页的 HTML（narrow 的 TOC 页实测：extra 元素
+                        // 激增、结构相似度 41.1 → 23.4）
+                        ctx.PushOutput();
+                        try
+                        {
+                            var rendered = parsed.Render(ctx);
+                            if (!string.IsNullOrEmpty(rendered))
+                            {
+                                content = rendered;
+                            }
+                        }
+                        finally
+                        {
+                            ctx.PopOutput();
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // 渲染失败回退原文
+                }
+            }
+
+            var renamed = TemplateResource.Create(target ?? src.Name, content, _resources?.BaseUrl ?? "");
             Track(renamed);
             return renamed.ToScriptObject();
         });
