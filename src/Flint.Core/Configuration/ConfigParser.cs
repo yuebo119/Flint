@@ -82,15 +82,7 @@ public static partial class ConfigParser
     {
         ArgumentNullException.ThrowIfNull(content);
         var model = TomlynCompat.ParseTable(content);
-        var normalized = ConfigNormalizer.NormalizeToml(model);
-        if (normalized.TryGetValue("params", out var pv) && pv is Dictionary<string, object> pd)
-        {
-            foreach (var kv in pd)
-            {
-                Console.Error.WriteLine($"DBG-toml params.{kv.Key} = {kv.Value?.GetType().Name}");
-            }
-        }
-        return ConvertDictToConfig(normalized);
+        return ConvertDictToConfig(ConfigNormalizer.NormalizeToml(model));
     }
 
     /// <summary>
@@ -419,11 +411,6 @@ public static partial class ConfigParser
         var obj = GetDictObject(dict, "params");
         if (obj is null)
             return new Dictionary<string, object>();
-
-        foreach (var kv in obj)
-        {
-            Console.Error.WriteLine($"DBG-params key={kv.Key} type={kv.Value?.GetType().FullName ?? "null"}");
-        }
 
         return NormalizeDictionary(obj);
     }

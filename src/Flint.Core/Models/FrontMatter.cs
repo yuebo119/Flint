@@ -215,7 +215,11 @@ public static class FrontMatterExtensions
     public static FrontMatter WithFilenameConvention(this FrontMatter fm, string fileName)
     {
         var baseName = Path.GetFileNameWithoutExtension(fileName);
-        // 形如 2024-01-15 或 2024-01-15-my-slug
+        // 形如 2024-01-15 或 2024-01-15-my-slug。
+        // **必须先确认前三段确为日期**再取 slug 段：Hugo 的 :filename 约定要求
+        // 文件名**以日期开头**（`2024-01-15-my-post`）；否则像
+        // `static-site-deep-dive` 这种普通连字符文件名会被误判——slug 段
+        // "dive" 被当显式 slug 写进 URL（/posts/dive/ 而非 /posts/static-site-deep-dive/）
         var dash1 = baseName.IndexOf('-');
         if (dash1 < 0) return fm;
         var dash2 = baseName.IndexOf('-', dash1 + 1);
@@ -225,11 +229,12 @@ public static class FrontMatterExtensions
         var slugPart = dash3 < 0 ? null : baseName[(dash3 + 1)..];
 
         DateTimeOffset filenameDate = default;
-        var needsDate = fm.Date is null &&
-            DateTimeOffset.TryParseExact(
-                datePart, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out filenameDate);
-        var needsSlug = string.IsNullOrEmpty(fm.Slug) && slugPart is not null;
+        var dateParsed = DateTimeOffset.TryParseExact(
+            datePart, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out filenameDate);
+        // slug 段只在**确为日期前缀**时成立
+        var needsDate = fm.Date is null && dateParsed;
+        var needsSlug = dateParsed && string.IsNullOrEmpty(fm.Slug) && slugPart is not null;
 
         if (!needsDate && !needsSlug)
         {
