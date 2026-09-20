@@ -48,6 +48,10 @@ public sealed class TemplateResource
     /// <summary>输出绝对路径</summary>
     public string Permalink { get; init; } = "";
 
+    /// <summary>磁盘源文件路径（文件系统资源装载时设置；Sass 等需要**按文件**
+    /// 编译的场景用它解析相对 @import——不存在或非文件资源时为 null）</summary>
+    public string? SourcePath { get; init; }
+
     /// <summary>图像宽度（非图像为 0）</summary>
     public int Width { get; init; }
 
@@ -116,7 +120,29 @@ public sealed class TemplateResource
             Height = Height,
             Fingerprint = fingerprint ?? Fingerprint,
             Published = Published,
-            Params = Params
+            Params = Params,
+            SourcePath = SourcePath,
+            BinaryContent = BinaryContent
+        };
+
+    /// <summary>附带磁盘源路径的拷贝（文件系统资源装载用）</summary>
+    public TemplateResource WithSourcePath(string path) =>
+        new()
+        {
+            Name = Name,
+            Title = Title,
+            ResourceType = ResourceType,
+            MediaType = MediaType,
+            Content = Content,
+            RelPermalink = RelPermalink,
+            Permalink = Permalink,
+            Width = Width,
+            Height = Height,
+            Fingerprint = Fingerprint,
+            Published = Published,
+            Params = Params,
+            SourcePath = path,
+            BinaryContent = BinaryContent
         };
 
     /// <summary>
@@ -207,6 +233,7 @@ public sealed class TemplateResource
             ["height"] = Height, ["Height"] = Height,
             ["data"] = data, ["Data"] = data,
             ["params"] = Params, ["Params"] = Params,
+            ["source_path"] = SourcePath ?? "",
             ["key"] = RelPermalink, ["Key"] = RelPermalink
         };
         // 图像变换方法族（Resize/Fit/Fill/Crop/Process）由资源命名空间注册方
@@ -243,7 +270,8 @@ public sealed class TemplateResource
             Permalink = o["permalink"]?.ToString() ?? "",
             Width = int.TryParse(o["width"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) ? w : 0,
             Height = int.TryParse(o["height"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var h) ? h : 0,
-            Fingerprint = (o["data"] as ScriptObject)?["integrity"]?.ToString()
+            Fingerprint = (o["data"] as ScriptObject)?["integrity"]?.ToString(),
+            SourcePath = o["source_path"]?.ToString() is { Length: > 0 } sp ? sp : null
         };
     }
 }

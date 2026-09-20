@@ -15,6 +15,8 @@
 // 文件级压制（disable/restore 配对）
 #pragma warning disable IL2026, IL3050
 
+using System.ComponentModel;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using Scriban.Runtime;
 
@@ -187,11 +189,11 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
             //  图像 → Content 恒空 → 全部图标渲染成空 <svg>，实测）
             if (res.IsImage && !rel.EndsWith(".svg", StringComparison.OrdinalIgnoreCase))
             {
-                return res;
+                return res.WithSourcePath(full);
             }
 
             var text = File.ReadAllText(full);
-            return TemplateResource.Create(rel, text, BaseUrl);
+            return TemplateResource.Create(rel, text, BaseUrl).WithSourcePath(full);
         }
         catch (IOException)
         {
@@ -563,7 +565,11 @@ public sealed partial class BuiltinTemplateFunctions
                 }
             }
 
-            var renamed = TemplateResource.Create(target ?? src.Name, content, _resources?.BaseUrl ?? "");
+            // **SourcePath 继承**：ExecuteAsTemplate → toCSS 链上，后续 Sass 编译
+            // 依赖磁盘源路径解析 @import（m10c/clarity/hugo-coder 的
+            // ExecuteAsTemplate→toCSS 链实测：断链后 toCSS 跳过编译，SCSS 原文直出）
+            var renamed = TemplateResource.Create(target ?? src.Name, content, _resources?.BaseUrl ?? "")
+                .WithSourcePath(src.SourcePath ?? "");
             Track(renamed);
             return renamed.ToScriptObject();
         });
@@ -674,11 +680,12 @@ public sealed partial class BuiltinTemplateFunctions
 
         css.Import("Sass", (params object?[] args) =>
         {
-            // Hugo 的 toCSS 会真正编译 SCSS；Flint 的 DartSassHost 在 **AOT 发布**下
-            // 初始化即抛"Reflection-based serialization has been disabled"（其内部
-            // 依赖反射 JSON），无法在模板级编译。此处按 Hugo 的 OPTIONS 语义改写
-            // 目标路径（targetPath 优先，否则 .scss/.sass → .css），内容直通：
-            // 样式由主题自带编译产物或构建期管线提供（差异登记 §三）
+            // Hugo 的 toCSS 会真正编译 SCSS。Flint 的 DartSassHost 在 **裁剪发布**下
+            // 初始化即抛"Reflection-based serialization has been disabled"，故改为
+            // 调用**外部 Dart Sass 可执行文件**（定位顺序：环境变量 FLINT_SASS →
+            // PATH 上的 sass → 进程目录向上找 tools/dart-sass/sass.bat）。
+            // 编译必须**按磁盘文件**进行（@import 相对解析依赖文件位置）；
+            // 找不到 sass 或编译失败时回退为内容直通（差异登记 §三）。
             var r = FindResourceArg(args);
             if (r is null)
             {
@@ -692,6 +699,18 @@ public sealed partial class BuiltinTemplateFunctions
                 : null;
 
             var css = r.Content;
+            var ext = r.SourcePath is { } sp ? Path.GetExtension(sp) : null;
+            var sassCompilable = File.Exists(r.SourcePath) &&
+                                 (ext == ".scss" || ext == ".sass" || ext == ".css");
+            if (sassCompilable)
+            {
+                var compiled = TryCompileWithSassCli(r.SourcePath!);
+                if (compiled is not null)
+                {
+                    css = compiled;
+                }
+            }
+
             var target = targetPath;
             if (string.IsNullOrEmpty(target))
             {
@@ -715,6 +734,112 @@ public sealed partial class BuiltinTemplateFunctions
         css.Import("Quoted", (string? s) => "\"" + s + "\"");
         css.Import("Unquoted", (string? s) => s ?? "");
         css.Import("ChromaStyles", () => new ScriptObject());
+    }
+
+    /// <summary>Dart Sass 可执行文件的定位缓存（null = 已找过但没找到）</summary>
+    private static string? _sassExePath;
+
+    /// <summary>
+    /// 定位 Dart Sass：环境变量 FLINT_SASS → PATH 上的 sass →
+    /// 进程目录向上找 tools/dart-sass/sass.bat（仓库工具布局）
+    /// </summary>
+    private static string? LocateSassExecutable()
+    {
+        if (_sassExePath is not null)
+        {
+            return _sassExePath.Length > 0 ? _sassExePath : null;
+        }
+
+        var candidates = new List<string>();
+        if (Environment.GetEnvironmentVariable("FLINT_SASS") is { Length: > 0 } env)
+        {
+            candidates.Add(env);
+        }
+
+        // 进程目录向上找仓库工具目录（Flint/src/Flint.Cli/bin/…/win-x64 → 上溯 6 层）
+        var procDir = AppContext.BaseDirectory;
+        var dir = new DirectoryInfo(procDir);
+        for (var i = 0; i < 8 && dir is not null; i++)
+        {
+            candidates.Add(Path.Combine(dir.FullName, "tools", "dart-sass", "sass.bat"));
+            dir = dir.Parent;
+        }
+
+        foreach (var c in candidates)
+        {
+            if (File.Exists(c))
+            {
+                _sassExePath = c;
+                return c;
+            }
+        }
+
+        // PATH 上的 sass（dart-sass 的 .bat/.exe 或类 Unix 的启动脚本）
+        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
+        foreach (var pd in pathDirs)
+        {
+            foreach (var exe in new[] { "sass.bat", "sass.exe", "sass" })
+            {
+                var full = Path.Combine(pd.Trim(), exe);
+                if (File.Exists(full))
+                {
+                    _sassExePath = full;
+                    return full;
+                }
+            }
+        }
+
+        _sassExePath = "";
+        return null;
+    }
+
+    /// <summary>
+    /// 调用 Dart Sass 编译磁盘上的 SCSS 文件（@import 相对解析依赖文件位置）；
+    /// 找不到可执行文件或编译失败返回 null（调用方回退内容直通）
+    /// </summary>
+    private static string? TryCompileWithSassCli(string sourcePath)
+    {
+        var sass = LocateSassExecutable();
+        if (sass is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = sass,
+                Arguments = "--no-source-map --quiet \"" + sourcePath + "\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                WorkingDirectory = Path.GetDirectoryName(sourcePath) ?? ""
+            };
+            // .bat 必须经 cmd 解析（直接 spawn .bat 在部分 .NET 版本被禁）
+            if (sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+            {
+                psi.FileName = "cmd.exe";
+                psi.Arguments = "/c \"\"" + sass + "\" --no-source-map --quiet \"" + sourcePath + "\"\"";
+            }
+
+            using var proc = Process.Start(psi)!;
+            var stdout = proc.StandardOutput.ReadToEnd();
+            var stderr = proc.StandardError.ReadToEnd();
+            proc.WaitForExit(120_000);
+
+            if (proc.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+            {
+                return null;
+            }
+
+            return stdout;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
+        {
+            return null;
+        }
     }
 
     private void RegisterJsFunctions(ScriptObject js)
