@@ -141,6 +141,37 @@ internal sealed class ThemeMigrator
             var ext = Path.GetExtension(rel);
             if (!TemplateExtensions.Contains(ext))
             {
+                // 资产文件含 Go 模板动作时按模板转换（`resources.ExecuteAsTemplate`
+                // 引用的资产——narrow 的 theme-init.js、hugo-book 的搜索配置实测）：
+                // **解析干净且有动作**才落转换结果；JS 里的 `{{` 可能是对象字面量/
+                // 字符串（解析必然报错），误转比不转更糟 → 落到下方原样复制
+                var normalizedAssetRel = rel.Replace((char)92, '/');
+                if (normalizedAssetRel.StartsWith("assets/", StringComparison.OrdinalIgnoreCase))
+                {
+                    var assetText = File.ReadAllText(file);
+                    if (assetText.Contains("{{", StringComparison.Ordinal))
+                    {
+                    try
+                    {
+                        var assetResult = ConvertTemplate(normalizedAssetRel, assetText);
+                        if (assetResult.Diagnostics.Count == 0 && assetResult.Stats.Actions > 0)
+                        {
+                            File.WriteAllText(targetPath, assetResult.Text);
+                            summary.FilesConverted++;
+                            continue;
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // 转换异常 → 原样复制（资产转换是**尽力而为**：JS 里的
+                        // `{{` 形态千奇百怪，单个文件的边角缺陷不能让迁移整体失败
+                        // ——迁移中途崩溃会让全部后续文件停在未转换状态，整站构建失败）
+                        summary.GlobalDiagnostics.Add(
+                            $"资产 {normalizedAssetRel} 转换异常，已按原文保留: {ex.Message}");
+                    }
+                    }
+                }
+
                 // 非模板：原样复制（static/assets 等）
                 File.Copy(file, targetPath, overwrite: true);
                 summary.FilesCopied++;

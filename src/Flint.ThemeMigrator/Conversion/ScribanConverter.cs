@@ -1844,7 +1844,9 @@ internal sealed class ScribanConverter(
                         // 而非前置拼接（否则 `site?.site?.params`）
                         // 从索引 2 起找第二个 `?.`（首个在位置 0，属首段，
                         // 须被替换掉——否则 `site?.site?.params`）
-                        var secondMarker = loweredSafe.IndexOf("?.", 2, StringComparison.Ordinal);
+                        var secondMarker = loweredSafe.Length > 2
+                            ? loweredSafe.IndexOf("?.", 2, StringComparison.Ordinal)
+                            : -1;
                         var tail = secondMarker >= 0 ? loweredSafe[secondMarker..] : "";
                         var body = first.Equals("Site", StringComparison.OrdinalIgnoreCase)
                             ? "site" + tail

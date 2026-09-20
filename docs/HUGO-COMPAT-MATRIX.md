@@ -642,6 +642,19 @@ stack（`widgets` 表数组）。结果：even **首次全绿**（22/22 页、�
 写死 `transpiler=dartsass`），本机 hugo.exe 仅有 libsass，`TOCSS-DART` 报
 "feature not available"——环境限制，非引擎缺陷。
 
+**四十二、迁移器扩展到 assets（本轮第二十一项，取代四十一）**。四十一的
+否决是针对"对**未转换**的 Go 语法直接 Scriban 渲染"；正确解法落地：
+① 迁移器遍历 `assets/` 时，含 `{{` 的文件走同一转换管线（GoTemplateParser
+解析干净**且有动作**才落转换结果；解析失败/无动作/转换异常一律原样复制
+——转换异常不能让迁移中途崩溃，那会让全部后续文件停在未转换状态）；
+② Flint 的 `ExecuteAsTemplate` 恢复 Scriban 渲染（解析干净才执行、失败回退
+原文），并**输出缓冲隔离**（Scriban 的 Render 会写进 context.Output——不隔离
+整段 JS 会被复制进调用页 HTML，narrow 的 TOC 页 extra 元素激增、
+41.1 → 23.4 实测）。另修转换器的一个边角：nil-safe 路径长度 ≤2 时
+`IndexOf("?.", 2)` 越界（资产动作里的退化形态触发）。
+验证：narrow 的 theme-init 渲染出 `colorScheme || 'shadcn'`（与 Hugo 一致）、
+页面 0 副作用；全矩阵 21/21 满对称；全量 1055+102 测试通过。
+
 **四十一、资产内 Go 模板动作不执行（有意差异 · S3 否决记录）**。经
 `resources.ExecuteAsTemplate` 执行的资产（narrow 的 theme-init.js、hugo-book
 的搜索配置）内含 Go 模板动作；资产不经迁移器（只转 layouts），动作原样保留。
