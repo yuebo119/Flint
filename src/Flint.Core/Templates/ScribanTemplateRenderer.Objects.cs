@@ -267,6 +267,11 @@ public sealed partial class ScribanTemplateRenderer
         /// </summary>
         private List<FlintPageContext>? _containerChain;
 
+        /// <summary>惰性求值并发锁：页面对象跨渲染线程共享（CWT），
+        /// ContainerChain 与四个成员投影（.Ancestors/.Parent/.CurrentSection/
+        /// .FirstSection）的惰性缓存必须串行求值，否则并发读半构建状态</summary>
+        private readonly object _lazyGate = new();
+
         private object? _parentValue;
         private object? _currentSectionValue;
         private object? _firstSectionValue;
@@ -557,32 +562,45 @@ public sealed partial class ScribanTemplateRenderer
         /// </summary>
         private List<FlintPageContext> ContainerChain()
         {
+            // **并发渲染下必须加锁**：页面对象按 CWT 跨线程共享，惰性缓存
+            // （_containerChain/_ancestorsValue 等）被多线程同时求值时
+            // `??=` 非原子 + List 可变共享 → 读到半构建的链/空链
+            // （fixit 的 render-heading 间歇性 "Index was out of range"，
+            //  连跑 3 次构建命中 1 次的竞态根因）
             if (_containerChain is not null)
             {
                 return _containerChain;
             }
 
-            var chain = new List<FlintPageContext>();
-            var selfRel = _page.RelPermalink ?? "/";
-            var allPages = _siteAllPages ?? ScribanTemplateRenderer.CurrentSitePages;
-            if (allPages is not null &&
-                !string.Equals(_page.Kind, "home", StringComparison.OrdinalIgnoreCase))
+            lock (_lazyGate)
             {
-                chain.AddRange(allPages
-                    .Where(p => (p.Kind == "section" || p.Kind == "taxonomy") &&
-                                !string.IsNullOrEmpty(p.RelPermalink) &&
-                                !string.Equals(p.RelPermalink, selfRel, StringComparison.OrdinalIgnoreCase) &&
-                                selfRel.StartsWith(p.RelPermalink, StringComparison.OrdinalIgnoreCase))
-                    .OrderByDescending(p => p.RelPermalink!.Length));
-                if (allPages.FirstOrDefault(
-                        p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase))
-                    is { } home)
+                if (_containerChain is not null)
                 {
-                    chain.Add(home);
+                    return _containerChain;
                 }
-            }
 
-            return _containerChain = chain;
+                var chain = new List<FlintPageContext>();
+                var selfRel = _page.RelPermalink ?? "/";
+                var allPages = _siteAllPages ?? ScribanTemplateRenderer.CurrentSitePages;
+                if (allPages is not null &&
+                    !string.Equals(_page.Kind, "home", StringComparison.OrdinalIgnoreCase))
+                {
+                    chain.AddRange(allPages
+                        .Where(p => (p.Kind == "section" || p.Kind == "taxonomy") &&
+                                    !string.IsNullOrEmpty(p.RelPermalink) &&
+                                    !string.Equals(p.RelPermalink, selfRel, StringComparison.OrdinalIgnoreCase) &&
+                                    selfRel.StartsWith(p.RelPermalink, StringComparison.OrdinalIgnoreCase))
+                        .OrderByDescending(p => p.RelPermalink!.Length));
+                    if (allPages.FirstOrDefault(
+                            p => string.Equals(p.Kind, "home", StringComparison.OrdinalIgnoreCase))
+                        is { } home)
+                    {
+                        chain.Add(home);
+                    }
+                }
+
+                return _containerChain = chain;
+            }
         }
 
         /// <summary>
@@ -724,7 +742,16 @@ public sealed partial class ScribanTemplateRenderer
             // .Ancestors：访问时才解析（页面对象可能先由页面集合迭代创建，那时没有站点页集）
             if (member is "ancestors" or "Ancestors")
             {
-                value = _ancestorsValue ??= GetSharedPageList(ContainerChain());
+                // **双检锁**：并发渲染下多线程可能同时首访该成员
+                if (_ancestorsValue is null)
+                {
+                    lock (_lazyGate)
+                    {
+                        _ancestorsValue ??= GetSharedPageList(ContainerChain());
+                    }
+                }
+
+                value = _ancestorsValue;
                 return true;
             }
 
@@ -734,8 +761,14 @@ public sealed partial class ScribanTemplateRenderer
             {
                 if (!_parentResolved)
                 {
-                    _parentValue = ContainerChain() is [var nearest, ..] ? CreatePageObject(nearest) : null;
-                    _parentResolved = true;
+                    lock (_lazyGate)
+                    {
+                        if (!_parentResolved)
+                        {
+                            _parentValue = ContainerChain() is [var nearest, ..] ? CreatePageObject(nearest) : null;
+                            _parentResolved = true;
+                        }
+                    }
                 }
 
                 value = _parentValue;
@@ -745,8 +778,14 @@ public sealed partial class ScribanTemplateRenderer
             {
                 if (!_currentSectionResolved)
                 {
-                    _currentSectionValue = ResolveCurrentSection();
-                    _currentSectionResolved = true;
+                    lock (_lazyGate)
+                    {
+                        if (!_currentSectionResolved)
+                        {
+                            _currentSectionValue = ResolveCurrentSection();
+                            _currentSectionResolved = true;
+                        }
+                    }
                 }
 
                 value = _currentSectionValue;
@@ -756,8 +795,14 @@ public sealed partial class ScribanTemplateRenderer
             {
                 if (!_firstSectionResolved)
                 {
-                    _firstSectionValue = ResolveFirstSection();
-                    _firstSectionResolved = true;
+                    lock (_lazyGate)
+                    {
+                        if (!_firstSectionResolved)
+                        {
+                            _firstSectionValue = ResolveFirstSection();
+                            _firstSectionResolved = true;
+                        }
+                    }
                 }
 
                 value = _firstSectionValue;

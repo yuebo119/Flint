@@ -704,9 +704,10 @@ public sealed partial class BuiltinTemplateFunctions
                                  (ext == ".scss" || ext == ".sass" || ext == ".css");
             if (sassCompilable)
             {
-                // 编译**渲染后的内容**；load-path 取源文件目录（@import 解析基准）
+                // 编译**渲染后的内容**；load-path 取源文件目录（@import 解析基准）；
+                // .sass 走缩进语法（--indented）
                 var loadPath = Path.GetDirectoryName(r.SourcePath!);
-                var compiled = TryCompileWithSassCli(css, loadPath);
+                var compiled = TryCompileWithSassCli(css, loadPath, indented: ext == ".sass");
                 if (compiled is not null)
                 {
                     css = compiled;
@@ -736,6 +737,29 @@ public sealed partial class BuiltinTemplateFunctions
         css.Import("Quoted", (string? s) => "\"" + s + "\"");
         css.Import("Unquoted", (string? s) => s ?? "");
         css.Import("ChromaStyles", () => new ScriptObject());
+    }
+
+    /// <summary>sass 缩进语法的 tab→空格规范化（每个行首 tab 视作一级缩进 = 2 空格）</summary>
+    private static string NormalizeSassIndent(string content)
+    {
+        if (!content.Contains('\t', StringComparison.Ordinal))
+        {
+            return content;
+        }
+
+        var sb = new System.Text.StringBuilder(content.Length);
+        var lineStart = true;
+        foreach (var c in content)
+        {
+            if (lineStart && c == '\t')
+            {
+                sb.Append("  ");
+                continue;
+            }
+            sb.Append(c);
+            lineStart = c is '\n' or '\r';
+        }
+        return sb.ToString();
     }
 
     /// <summary>Dart Sass 可执行文件的定位缓存（null = 已找过但没找到）</summary>
@@ -796,11 +820,11 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>
-    /// 调用 Dart Sass 编译**内存中的 SCSS 内容**（stdin 模式 + load-path 解析 @import）。
+    /// 调用 Dart Sass 编译**内存中的 SCSS/Sass 内容**（stdin 模式 + load-path 解析 @import）。
     /// 必须编内容而不是磁盘文件：ExecuteAsTemplate → toCSS 链上磁盘文件含未渲染的
     /// Scriban 动作，按文件编译必失败（clarity/m10c 实测）
     /// </summary>
-    private static string? TryCompileWithSassCli(string content, string? loadPath)
+    private static string? TryCompileWithSassCli(string content, string? loadPath, bool indented = false)
     {
         var sass = LocateSassExecutable();
         if (sass is null)
@@ -808,9 +832,37 @@ public sealed partial class BuiltinTemplateFunctions
             return null;
         }
 
+        if (indented)
+        {
+            // **tab 缩进规范化为空格**：sass 缩进语法官方只允许空格，但 Hugo 的
+            // Dart Sass 对上游主题的 tab 笔误（clarity 的 _components.sass 771-772
+            // 行实测）宽容处理；sass CLI 1.104 直接报 "Expected spaces, was tabs"。
+            // 为与 Hugo 产物一致，编译前把行首 tab 转成等宽空格
+            content = NormalizeSassIndent(content);
+        }
+
         try
         {
-            var args = "--no-source-map --quiet --stdin";
+            // .sass 缩进语法必须显式 --indented（stdin 模式无扩展名可推断，
+            // 默认按 SCSS 解析会报 "expected ;"——clarity 的 main.sass 实测）
+            var args = indented
+                ? "--no-source-map --quiet --indented --stdin"
+                : "--no-source-map --quiet --stdin";
+
+            // **tab 规范化的镜像目录**：被 @import 的磁盘文件（clarity 的
+            // _components.sass）里的 tab 同样会让 sass CLI 报错。stdin 只覆盖
+            // 主文件，import 的文件必须走 --load-path——把源目录镜像到临时目录
+            // 并规范化全部 .sass/.scss 的 tab 后作为 load-path
+            string? mirrorDir = null;
+            if (indented && !string.IsNullOrEmpty(loadPath))
+            {
+                mirrorDir = CreateTabNormalizedMirror(loadPath);
+                if (mirrorDir is not null)
+                {
+                    loadPath = mirrorDir;
+                }
+            }
+
             if (!string.IsNullOrEmpty(loadPath))
             {
                 args += " --load-path=\"" + loadPath + "\"";
@@ -834,14 +886,27 @@ public sealed partial class BuiltinTemplateFunctions
                 psi.Arguments = "/c \"\"" + sass + "\" " + args + "\"";
             }
 
-            using var proc = Process.Start(psi)!;
-            proc.StandardInput.Write(content);
-            proc.StandardInput.Close();
-            var stdout = proc.StandardOutput.ReadToEnd();
-            var stderr = proc.StandardError.ReadToEnd();
-            proc.WaitForExit(120_000);
+            string stdout, stderr;
+            int exitCode;
+            try
+            {
+                using var proc = Process.Start(psi)!;
+                proc.StandardInput.Write(content);
+                proc.StandardInput.Close();
+                stdout = proc.StandardOutput.ReadToEnd();
+                stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(120_000);
+                exitCode = proc.ExitCode;
+            }
+            finally
+            {
+                if (mirrorDir is not null)
+                {
+                    TryDeleteMirror(mirrorDir);
+                }
+            }
 
-            if (proc.ExitCode != 0 || string.IsNullOrWhiteSpace(stdout))
+            if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout))
             {
                 return null;
             }
@@ -851,6 +916,58 @@ public sealed partial class BuiltinTemplateFunctions
         catch (Exception ex) when (ex is InvalidOperationException or Win32Exception)
         {
             return null;
+        }
+    }
+
+    /// <summary>
+    /// 把 sass 源目录镜像到临时目录并把全部 .sass/.scss 的行首 tab 规范化为空格
+    /// （Hugo 的 Dart Sass 对上游 tab 笔误宽容，sass CLI 不容——clarity 实测）
+    /// </summary>
+    private static string? CreateTabNormalizedMirror(string sourceDir)
+    {
+        try
+        {
+            var needsMirror = Directory.EnumerateFiles(sourceDir, "*.s*ss", SearchOption.AllDirectories)
+                .Any(f => File.ReadAllText(f).Contains('\t', StringComparison.Ordinal));
+            if (!needsMirror)
+            {
+                return null;
+            }
+
+            var mirror = Path.Combine(Path.GetTempPath(), "flint-sass-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(mirror);
+            foreach (var f in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(sourceDir, f);
+                var dest = Path.Combine(mirror, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                if (f.EndsWith(".sass", StringComparison.OrdinalIgnoreCase) ||
+                    f.EndsWith(".scss", StringComparison.OrdinalIgnoreCase))
+                {
+                    File.WriteAllText(dest, NormalizeSassIndent(File.ReadAllText(f)));
+                }
+                else
+                {
+                    File.Copy(f, dest, overwrite: true);
+                }
+            }
+            return mirror;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    private static void TryDeleteMirror(string dir)
+    {
+        try
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 清理失败无碍正确性（临时目录）
         }
     }
 
