@@ -208,6 +208,65 @@ public sealed class TemplateResourceTests : IDisposable
         Assert.DoesNotContain("\n", r);
         Assert.Contains("color:red", r);
     }
+
+    /// <summary>
+    /// 回归：行注释正则 `^\s*//.*$` 在压平空白后锚点失效，`// 注释` 后的
+    /// 所有代码被吞（narrow 的 dock.js 实测 "Unexpected end of input"）
+    /// </summary>
+    [Fact]
+    public void MinifyJs剥行注释但不动字符串与模板字面量内的斜杠()
+    {
+        var js = "var u = \"https://a.com/x\"; // 行注释\nvar t = `// 不是注释`;\nvar keep = 1;";
+        var r = BuiltinTemplateFunctions.MinifyJs(js);
+        Assert.DoesNotContain("行注释", r);
+        Assert.Contains("https://a.com/x", r); // 字符串内的 // 不动
+        Assert.Contains("// 不是注释", r); // 模板字面量内的 // 不动
+        Assert.Contains("var keep = 1;", r); // 注释后的代码不被吞
+    }
+
+    [Fact]
+    public void EsmBundler打包ES模块入口()
+    {
+        File.WriteAllText(Path.Combine(_dir, "js", "util.js"),
+            "export function greet(n) {\n  return \"hi \" + n;\n}\n");
+        var entry = Path.Combine(_dir, "js", "entry.js");
+        File.WriteAllText(entry, "import { greet } from \"./util.js\";\nconsole.log(greet(\"x\"));\n");
+        var bundled = BuiltinTemplateFunctions.EsmBundler.Bundle(entry, File.ReadAllText(entry));
+
+        Assert.NotNull(bundled);
+        // import/export 语句已剥（否则浏览器报 "Cannot use import statement outside a module"）
+        Assert.DoesNotContain("import ", bundled!);
+        Assert.DoesNotContain("export ", bundled);
+        // 两个模块的实现都在，且被依赖者在先（拓扑序）
+        var utilIdx = bundled.IndexOf("return \"hi \" + n;", StringComparison.Ordinal);
+        var entryIdx = bundled.IndexOf("console.log(greet(", StringComparison.Ordinal);
+        Assert.True(utilIdx >= 0 && entryIdx >= 0 && utilIdx < entryIdx);
+        // 每模块独立作用域（IIFE）+ 导出名转发到顶层
+        Assert.Contains("(function(){", bundled);
+        Assert.Contains("function greet(){ return __flint_mod['greet']", bundled);
+    }
+
+    [Fact]
+    public void EsmBundler循环依赖跳过而非抛异常()
+    {
+        var a = Path.Combine(_dir, "js", "cyc-a.js");
+        File.WriteAllText(a, "import \"./cyc-b.js\";\nvar a = 1;\n");
+        File.WriteAllText(Path.Combine(_dir, "js", "cyc-b.js"), "import \"./cyc-a.js\";\nvar b = 2;\n");
+
+        var bundled = BuiltinTemplateFunctions.EsmBundler.Bundle(a, File.ReadAllText(a));
+
+        Assert.NotNull(bundled);
+        Assert.Contains("var b = 2;", bundled!);
+    }
+
+    [Fact]
+    public void EsmBundler依赖缺失返回null由调用方回退原文()
+    {
+        var broken = Path.Combine(_dir, "js", "broken.js");
+        File.WriteAllText(broken, "import \"./nope.js\";\nvar x = 1;\n");
+
+        Assert.Null(BuiltinTemplateFunctions.EsmBundler.Bundle(broken, File.ReadAllText(broken)));
+    }
 }
 
 /// <summary>Store 语义：Set/Get/Add/SetInMap/Delete</summary>

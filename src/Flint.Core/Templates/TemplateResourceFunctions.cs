@@ -67,6 +67,9 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
 
     public string BaseUrl { get; }
 
+    /// <summary>资源根集合（ES module 打包的路径反查用）</summary>
+    internal IReadOnlyList<string> Roots => _roots;
+
     /// <summary>扫描全部资源根建索引（站点根优先，后写不覆盖）</summary>
     private void EnsureIndexed()
     {
@@ -1046,6 +1049,29 @@ public sealed partial class BuiltinTemplateFunctions
                 name = target;
             }
 
+            // **ES module 打包**：narrow 的 js.Build 输入是 ES module 入口
+            // （import { initX } from "./ui.js"）——不打包则浏览器报
+            // "Cannot use import statement outside a module"，全部 JS 失效
+            // （narrow 导航/主题切换/dock 实测全死）。轻量实现：以入口文件为源
+            // 做 import 解析 + 拓扑序拼接 + 去掉 import/export 语句。
+            // **必须在 minify 之前**：MinifyJs 把 import 压成单行后逐行解析失效
+            var entryPath = resource?.SourcePath;
+            if (entryPath is null && !string.IsNullOrEmpty(name))
+            {
+                entryPath = TryResolveAssetPath(name);
+            }
+
+            if (entryPath is not null && File.Exists(entryPath) &&
+                (content.Contains("import ", StringComparison.Ordinal) ||
+                 content.Contains("export ", StringComparison.Ordinal)))
+            {
+                var bundled = EsmBundler.Bundle(entryPath, content);
+                if (bundled is not null)
+                {
+                    content = bundled;
+                }
+            }
+
             if (OptsFlag(optionArgs.OfType<object>().ToArray(), "minify", defaultValue: false))
             {
                 content = MinifyJs(content);
@@ -1057,6 +1083,212 @@ public sealed partial class BuiltinTemplateFunctions
         });
         js.Import("Babel", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
         js.Import("Batch", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
+    }
+
+    /// <summary>
+    /// 按资源名反查磁盘路径（遍历资源根）：ES module 打包需要入口文件的
+    /// 真实路径来解析相对 import
+    /// </summary>
+    private string? TryResolveAssetPath(string name)
+    {
+        if (_resources is not FileSystemResourceProvider fs || string.IsNullOrEmpty(name))
+        {
+            return null;
+        }
+
+        foreach (var root in fs.Roots)
+        {
+            var candidate = Path.Combine(root, name.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>轻量 ES module 打包器（js.Build 的 ES module 入口形态）</summary>
+    internal static partial class EsmBundler
+    {
+        /// <summary>导出名终止字符（函数名/变量名的边界）</summary>
+        private static readonly char[] ExportNameStopChars = [' ', '(', '=', ';'];
+        /// <summary>
+        /// 从入口文件出发解析相对 import，按**依赖序**拼接（被依赖者在前），
+        /// 去掉 import/export 语句。循环/解析失败返回 null（调用方回退原文）
+        /// </summary>
+        internal static string? Bundle(string entryPath, string entryContent)
+        {
+            try
+            {
+                var visited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var order = new List<string>();
+                if (!Visit(entryPath, entryContent, visited, order))
+                {
+                    return null;
+                }
+
+                // **每模块包一层 IIFE**：多个模块的顶层 `let initialized` 等同名
+                // 声明拼接后冲突（"Identifier 'initialized' has already been
+                // declared"——narrow 的 ui.js/tabs.js/codeblock.js 实测）。
+                // IIFE 给每个模块独立作用域；export 的函数需暴露到外层——
+                // 用显式赋值把**导出的名字**挂到共享命名空间对象
+                var exported = new Dictionary<string, string>(StringComparer.Ordinal);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("var __flint_mod = {};");
+                foreach (var path in order)
+                {
+                    var body = StripModuleSyntax(visited[path]);
+                    var names = ExtractExportedNames(visited[path]);
+                    sb.Append("/* ===== ").Append(Path.GetFileName(path)).AppendLine(" ===== */");
+                    sb.AppendLine("(function(){");
+                    sb.AppendLine(body);
+                    foreach (var n in names)
+                    {
+                        if (!exported.ContainsKey(n))
+                        {
+                            exported[n] = path;
+                            sb.Append("  try { __flint_mod['").Append(n).Append("'] = ")
+                              .Append(n).Append("; } catch (e) {}");
+                            sb.AppendLine();
+                        }
+                    }
+                    sb.AppendLine("})();");
+                }
+                // 把导出名提升为顶层函数声明（import 方直接调用）
+                foreach (var n in exported.Keys)
+                {
+                    sb.Append("function ").Append(n).Append("(){ return __flint_mod['")
+                      .Append(n).Append("'] && __flint_mod['").Append(n).Append("'].apply(null, arguments); }");
+                    sb.AppendLine();
+                }
+                return sb.ToString();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return null;
+            }
+        }
+
+        private static bool Visit(
+            string path, string content,
+            Dictionary<string, string> visited, List<string> order)
+        {
+            var key = Path.GetFullPath(path);
+            if (visited.ContainsKey(key))
+            {
+                return true; // 已处理（含循环依赖：直接跳过）
+            }
+
+            visited[key] = content;
+            var dir = Path.GetDirectoryName(key)!;
+            foreach (var importPath in ExtractImports(content))
+            {
+                if (importPath.StartsWith("./", StringComparison.Ordinal) ||
+                    importPath.StartsWith("../", StringComparison.Ordinal))
+                {
+                    var dep = Path.GetFullPath(Path.Combine(dir, importPath));
+                    if (!File.Exists(dep))
+                    {
+                        return false;
+                    }
+                    if (!Visit(dep, File.ReadAllText(dep), visited, order))
+                    {
+                        return false;
+                    }
+                }
+            }
+            order.Add(key);
+            return true;
+        }
+
+        /// <summary>提取 `export function NAME` / `export const NAME` 的导出名（IIFE 提升用）</summary>
+        private static List<string> ExtractExportedNames(string content)
+        {
+            var result = new List<string>();
+            foreach (var line in content.Split('\n'))
+            {
+                var trimmed = line.TrimStart();
+                if (!trimmed.StartsWith("export ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                var rest = trimmed["export ".Length..];
+                string? name = null;
+                if (rest.StartsWith("function ", StringComparison.Ordinal))
+                {
+                    var afterFn = rest["function ".Length..].TrimStart();
+                    var sp = afterFn.IndexOfAny(ExportNameStopChars);
+                    name = sp > 0 ? afterFn[..sp] : (sp < 0 && afterFn.Length > 0 ? afterFn : null);
+                }
+                else if (rest.StartsWith("const ", StringComparison.Ordinal) ||
+                         rest.StartsWith("let ", StringComparison.Ordinal) ||
+                         rest.StartsWith("var ", StringComparison.Ordinal))
+                {
+                    var kw = rest.IndexOf(' ');
+                    var afterKw = rest[(kw + 1)..].TrimStart();
+                    var sp = afterKw.IndexOfAny(ExportNameStopChars);
+                    name = sp > 0 ? afterKw[..sp] : (sp < 0 && afterKw.Length > 0 ? afterKw : null);
+                }
+                if (!string.IsNullOrEmpty(name) && !result.Contains(name, StringComparer.Ordinal))
+                {
+                    result.Add(name);
+                }
+            }
+            return result;
+        }
+
+        private static List<string> ExtractImports(string content)
+        {
+            var result = new List<string>();
+            foreach (var line in content.Split('\n'))
+            {
+                var trimmed = line.TrimStart();
+                if (!trimmed.StartsWith("import ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                // import … from "./x.js" 或 import "./x.js"
+                var fromIdx = trimmed.LastIndexOf(" from ", StringComparison.Ordinal);
+                var spec = fromIdx >= 0
+                    ? trimmed[(fromIdx + 6)..].Trim().TrimEnd(';').Trim()
+                    : trimmed["import ".Length..].Trim().TrimEnd(';').Trim();
+                spec = spec.Trim('"', '\'');
+                if (spec.Length > 0)
+                {
+                    result.Add(spec);
+                }
+            }
+            return result;
+        }
+
+        private static string StripModuleSyntax(string content)
+        {
+            var sb = new System.Text.StringBuilder();
+            foreach (var line in content.Split('\n'))
+            {
+                var trimmed = line.TrimStart();
+                if (trimmed.StartsWith("import ", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (trimmed.StartsWith("export ", StringComparison.Ordinal))
+                {
+                    // `export function initUI` → `function initUI`（保留实现）；
+                    // `export default`/`export {…}` 整体丢弃
+                    var rest = trimmed["export ".Length..];
+                    if (!rest.StartsWith("default", StringComparison.Ordinal) &&
+                        !rest.StartsWith('{') &&
+                        !rest.StartsWith('*'))
+                    {
+                        var indent = line[..^trimmed.Length];
+                        sb.Append(indent).Append(rest).Append('\n');
+                    }
+                    continue;
+                }
+                sb.Append(line.TrimEnd()).Append('\n');
+            }
+            return sb.ToString();
+        }
     }
 
     /// <summary>
@@ -1157,9 +1389,82 @@ public sealed partial class BuiltinTemplateFunctions
             return "";
         }
         var s = Regex.Replace(js, @"/\*.*?\*/", "", RegexOptions.Singleline);
-        s = Regex.Replace(s, @"^\s*//.*$", "", RegexOptions.Multiline);
+        // **行内注释也必须在压平空白之前剥**：压平后整文件只剩一行，
+        // `let x = 1; // 注释` 会把后续所有代码吞进注释（narrow 的 dock.js
+        // 实测 "Unexpected end of input"——IIFE 收尾被吃掉）。正则无法区分
+        // 字符串内的 `//`（URL 等），用逐字符状态机：遇字符串/模板字面量跳过，
+        // 遇 `//` 跳到行尾
+        s = StripJsLineComments(s);
         s = Regex.Replace(s, @"\s+", " ");
         return s.Trim();
+    }
+
+    /// <summary>逐字符剥 JS 行注释（字符串/模板字面量内的 `//` 不动）</summary>
+    private static string StripJsLineComments(string js)
+    {
+        var sb = new System.Text.StringBuilder(js.Length);
+        var i = 0;
+        var n = js.Length;
+        while (i < n)
+        {
+            var c = js[i];
+            if (c == '"' || c == '\'')
+            {
+                var quote = c;
+                sb.Append(c);
+                i++;
+                while (i < n)
+                {
+                    var sc = js[i];
+                    sb.Append(sc);
+                    if (sc == '\\' && i + 1 < n)
+                    {
+                        sb.Append(js[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    if (sc == quote)
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (c == '`')
+            {
+                sb.Append(c);
+                i++;
+                while (i < n)
+                {
+                    var tc = js[i];
+                    sb.Append(tc);
+                    if (tc == '\\' && i + 1 < n)
+                    {
+                        sb.Append(js[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    i++;
+                    if (tc == '`')
+                    {
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (c == '/' && i + 1 < n && js[i + 1] == '/')
+            {
+                while (i < n && js[i] != '\n' && js[i] != '\r')
+                {
+                    i++;
+                }
+                continue;
+            }
+            sb.Append(c);
+            i++;
+        }
+        return sb.ToString();
     }
 
     internal static string MinifyHtml(string html)

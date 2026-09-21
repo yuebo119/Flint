@@ -567,12 +567,7 @@ public class FilenameConventionTests
         var file = new ContentFile
         {
             Path = "/site/content/posts/static-site-deep-dive.md",
-            RawContent = System.Text.Encoding.UTF8.GetBytes("---
-title: \"T\"
----
-
-Body
-"),
+            RawContent = System.Text.Encoding.UTF8.GetBytes("---\ntitle: \"T\"\n---\n\nBody\n"),
             ModifiedTime = DateTimeOffset.UtcNow
         };
 
