@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-cn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Flint 主题画廊 · 21 主题一键切换</title>
+<meta name="description" content="Flint 静态站点生成器主题画廊：21 个适配主题共用同一套 100 篇公共语料，点击卡片直达对应主题演示站。" />
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e9ef;
+    --muted: #9aa3b2; --accent: #5b8cff; --accent-soft: rgba(91,140,255,.14);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text);
+         font: 15px/1.6 "PingFang SC","Microsoft YaHei",system-ui,sans-serif; }
+  a { color: inherit; text-decoration: none; }
+  .hero { max-width: 1200px; margin: 0 auto; padding: 48px 24px 8px; }
+  .hero h1 { font-size: 30px; letter-spacing: .5px; }
+  .hero h1 .dot { color: var(--accent); }
+  .hero .sub { color: var(--muted); margin-top: 8px; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  .stats span { background: var(--panel); border: 1px solid var(--line);
+                border-radius: 999px; padding: 4px 14px; font-size: 13px; color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; }
+  .toolbar { max-width: 1200px; margin: 22px auto 0; padding: 0 24px; }
+  .toolbar input { width: 100%; max-width: 420px; background: var(--panel);
+                   border: 1px solid var(--line); border-radius: 10px;
+                   padding: 10px 14px; color: var(--text); font-size: 14px; outline: none; }
+  .toolbar input:focus { border-color: var(--accent); }
+  .grid { max-width: 1200px; margin: 22px auto 0; padding: 0 24px 48px;
+          display: grid; grid-template-columns: repeat(auto-fill,minmax(330px,1fr)); gap: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+          overflow: hidden; display: flex; flex-direction: column;
+          transition: transform .18s ease, border-color .18s ease; }
+  .card:hover { transform: translateY(-4px); border-color: var(--accent); }
+  .card .shot { aspect-ratio: 16/10; background: #0a0c10; overflow: hidden; }
+  .card .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .info { padding: 14px 16px 16px; }
+  .card .name { font-size: 17px; font-weight: 600; }
+  .card .port { color: var(--accent); font-size: 12px; margin-left: 8px;
+                font-family: ui-monospace,Consolas,monospace; }
+  .card .desc { color: var(--muted); font-size: 13px; margin-top: 6px; min-height: 40px; }
+  .card .tags { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .card .tags i { font-style: normal; font-size: 11px; color: var(--muted);
+                  background: var(--accent-soft); border-radius: 6px; padding: 2px 8px; }
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; grid-column: 1/-1; }
+  footer { border-top: 1px solid var(--line); padding: 22px 24px; text-align: center;
+           color: var(--muted); font-size: 13px; }
+  footer code { color: var(--accent); font-family: ui-monospace,Consolas,monospace; }
+</style>
+</head>
+<body>
+<header class="hero">
+  <h1>Flint 主题画廊<span class="dot">.</span></h1>
+  <p class="sub">21 个适配主题共用同一套测试语料（100 篇长文 · 每篇 ≥2000 字），点击卡片直达对应主题的演示站。</p>
+  <div class="stats">
+    <span><b>21</b> 个主题</span>
+    <span><b>100</b> 篇公共语料</span>
+    <span><b>4</b> 个栏目：posts / weekly / notes / docs</span>
+    <span>本地演示端口 <b>8401 – 8421</b></span>
+  </div>
+</header>
+<div class="toolbar">
+  <input id="q" type="search" placeholder="筛选主题：名称 / 风格 / 标签…" autocomplete="off" />
+</div>
+<main class="grid" id="grid">
+{{ $themes = [
+  ["ananke","Ananke 官方经典博客布局","8401","博客 经典"],
+  ["bearblog","极致轻量，纯文本无依赖","8402","极简 轻量"],
+  ["blog-awesome","侧栏导航，标签云丰富","8403","博客 侧栏"],
+  ["blowfish","功能全面的现代主题，暗色模式","8404","现代 暗色"],
+  ["clarity","简洁文档风，Tailwind 样式","8405","文档 简洁"],
+  ["console","终端极客风，等宽字体","8406","终端 极客"],
+  ["even","中文社区经典，Hexo Even 移植","8407","博客 中文"],
+  ["fixit","功能密集，LoveIt 增强分支","8408","博客 功能全"],
+  ["github-style","GitHub 个人主页风格","8409","个人页 极简"],
+  ["hugo-book","文档站首选，侧栏目录树","8410","文档 目录树"],
+  ["hugo-coder","极简开发者个人主页","8411","个人页 极简"],
+  ["hugo-paper","纸感排版，纸媒风格","8412","博客 纸感"],
+  ["loveit","功能全面的中文主题","8413","博客 中文"],
+  ["m10c","杂志式网格布局","8414","杂志 网格"],
+  ["monochrome","黑白灰，无彩色","8415","极简 黑白"],
+  ["narrow","窄栏极简，移动优先","8416","极简 移动"],
+  ["papermod","快速简洁，Fast Paper 移植","8417","博客 简洁"],
+  ["stack","卡片流布局，侧栏组件丰富","8418","卡片 侧栏"],
+  ["techdoc","技术文档风，左侧导航","8419","文档 导航"],
+  ["xmin","学术极简，大留白","8420","学术 极简"],
+  ["yinyang","阴阳太极，黑白对比","8421","博客 对比"]
+] }}
+{{ for $t in $themes }}
+  <a class="card" href="http://127.0.0.1:{{ $t[2] }}/" target="_blank" rel="noopener"
+     data-q="{{ $t[0] }} {{ $t[1] }} {{ $t[3] }}">
+    <div class="shot"><img src="/shots/{{ $t[0] }}.png" alt="{{ $t[0] }} 主题预览" loading="lazy" /></div>
+    <div class="info">
+      <span class="name">{{ $t[0] }}</span><span class="port">:{{ $t[2] }}</span>
+      <p class="desc">{{ $t[1] }}</p>
+      <div class="tags">{{ for $tag in ($t[3] | string.split " ") }}<i>{{ $tag }}</i>{{ end }}</div>
+    </div>
+  </a>
+{{ end }}
+  <div class="empty" id="empty" hidden>没有匹配的主题</div>
+</main>
+<footer>
+  用 <code>Flint</code> 构建 · 主题画廊案例站 · 同一套语料，<code>21</code> 种排版
+</footer>
+<script>
+  var q = document.getElementById('q');
+  var cards = Array.prototype.slice.call(document.querySelectorAll('.card'));
+  var empty = document.getElementById('empty');
+  q.addEventListener('input', function () {
+    var v = q.value.trim().toLowerCase();
+    var shown = 0;
+    cards.forEach(function (c) {
+      var hit = !v || c.dataset.q.toLowerCase().indexOf(v) >= 0;
+      c.style.display = hit ? '' : 'none';
+      if (hit) shown++;
+    });
+    empty.hidden = shown > 0;
+  });
+</script>
+</body>
+</html>
