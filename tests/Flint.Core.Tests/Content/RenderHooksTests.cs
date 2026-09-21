@@ -204,4 +204,38 @@ public class RenderHooksTests : IDisposable
         Assert.Contains("<pre><code class=\"language-go\"", html);
         Assert.Contains("&quot;hi&quot;", html); // 双引号的 HTML 转义
     }
+
+    /// <summary>
+    /// 回归：无语言围栏（裸 ```）曾让整篇内容 PARSE001——FencedCodeBlock.Info
+    /// 是**空串**而非 null，`Split(' ', RemoveEmptyEntries)[0]` 对空数组取索引
+    /// 抛 IndexOutOfRangeException（语料库 plain 围栏实测，构建直接失败）
+    /// </summary>
+    [Fact]
+    public void ToHtml_CodeBlockWithoutLanguage_GenericHookNotCrash()
+    {
+        WriteHook("render-codeblock.html",
+            "<div class=\"code\" data-lang=\"{{ identifier }}\">{{ inner }}</div>");
+        var parser = CreateHookedParser();
+
+        var html = parser.ToHtml("```\nplain text\n```");
+
+        Assert.Contains("data-lang=\"\"", html); // identifier 为空串而非抛异常
+        Assert.Contains("plain text", html);
+    }
+
+    /// <summary>
+    /// Hugo 语义：codeblock hook 的 .Type 是**语言标识**（loveit 的 .Type /
+    /// narrow 的 .Type | default "plaintext" 按此取语言标签），无语言围栏为空串
+    /// </summary>
+    [Fact]
+    public void ToHtml_CodeBlockHook_TypeIsLanguageIdentifier()
+    {
+        WriteHook("render-codeblock.html", "<span lang=\"{{ type }}\">{{ inner }}</span>");
+        var parser = CreateHookedParser();
+
+        var html = parser.ToHtml("```go\nx\n```\n\n```\ny\n```");
+
+        Assert.Contains("lang=\"go\"", html);
+        Assert.Contains("lang=\"\"", html); // 无语言围栏的 Type 为空串（模板侧 default 生效）
+    }
 }

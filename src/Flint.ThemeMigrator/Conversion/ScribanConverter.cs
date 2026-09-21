@@ -476,6 +476,19 @@ internal sealed class ScribanConverter(
             // Console 的 `.Page.Resources` 同因，实测）
             var isPageRoot = fe.Path.StartsWith(".Page", StringComparison.OrdinalIgnoreCase)
                 && (fe.Path.Length == ".Page".Length || fe.Path[".Page".Length] == '.');
+            // `.PageInner.Resources.X` → `resources.X`：Flint 的 render hook 在
+            // **解析期**执行（Markdig 渲染器内），没有页面上下文，`.PageInner`
+            // 恒不可达。papermod 的 `with or (.PageInner.Resources.Get $path)
+            // (resources.Get $path)` 迁出后落在本分支，而带参链不能用 nil 安全
+            // 分隔符（Scriban 把 `(x)?.f a` 整体当函数名），普通点访问 null 的
+            // `page.page_inner` 直接 "Cannot get the member … for a null object"
+            // （整篇内容 PARSE001 实测）。页面包资源查找降级为全局 assets 查找，
+            // 与模板自带的 `or … (resources.Get …)` 回落同语义
+            const string pageInnerResources = ".PageInner.Resources";
+            var isPageInnerResourcesRoot =
+                fe.Path.StartsWith(pageInnerResources, StringComparison.OrdinalIgnoreCase) &&
+                (fe.Path.Length == pageInnerResources.Length ||
+                 fe.Path[pageInnerResources.Length] == '.');
             // **裸 `.Page`**（无后续段）不能简单映射成 `page`：在"以 dict 调用的 partial"
             // 里 `.` 是调用点传的 dict，`(slice .Page)` 取的是 **dict 的 Page 键**
             // （hugo-book 的 `dict "Scratch" $scratch "Page" .` 递归收集章节页），
@@ -494,11 +507,13 @@ internal sealed class ScribanConverter(
             // 资源上下文与页面方法链），统一替换会打翻既有正确映射。
             // 结论：**只保留无参字段链的作用域替换**；带参数形态的嵌套作用域
             // 暂不支持（narrow 的 archives.html 内层仍用 page 根，见第三十二节 F）
-            var feMapped = isSiteRoot
-                ? "site" + ToSnakePath(fe.Path[".Site".Length..])
-                : isPageRoot
-                    ? "page" + ToSnakePath(fe.Path[".Page".Length..])
-                    : "page" + ToSnakePath(fe.Path);
+            var feMapped = isPageInnerResourcesRoot
+                ? "resources" + ToSnakePath(fe.Path[pageInnerResources.Length..])
+                : isSiteRoot
+                    ? "site" + ToSnakePath(fe.Path[".Site".Length..])
+                    : isPageRoot
+                        ? "page" + ToSnakePath(fe.Path[".Page".Length..])
+                        : "page" + ToSnakePath(fe.Path);
             var mapped = MapChainMethod(feMapped);
             if (mapped is not null)
             {

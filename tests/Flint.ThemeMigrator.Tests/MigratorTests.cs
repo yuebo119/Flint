@@ -139,6 +139,20 @@ public sealed class ParserConverterTests
     }
 
     [Fact]
+    public void PageInnerResources查找降级为全局resources()
+    {
+        // papermod 的 render-image：`with or (.PageInner.Resources.Get $path)
+        // (resources.Get $path)`——Flint 的 render hook 在解析期执行、无页面
+        // 上下文，`.PageInner` 恒不可达；带参链又不能用 `?.`（Scriban 会把
+        // `(x)?.f a` 当函数名），普通点访问会 null object 崩溃。
+        // 降级为全局 resources.get（与模板自带回落同语义）
+        var result = Convert("{{ with or (.PageInner.Resources.Get $path) (resources.Get $path) }}x{{ end }}");
+
+        Assert.Contains("resources.get $path", result, StringComparison.Ordinal);
+        Assert.DoesNotContain("page_inner", result, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 比较函数转中缀()
     {
         var result = Convert("{{ eq .Kind \"home\" }}");

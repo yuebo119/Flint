@@ -958,3 +958,23 @@ narrow 的 `assets/js/main.js` 以 ES module 组织（`import`/`export`），`js
 （`aria-expanded` false → true）三项交互全部恢复，控制台 JS 错误清零
 （残留仅主题自身缺失的 `site.webmanifest` 404，Hugo 侧同样 404）。
 
+
+**四十五、codeblock render hook 的两个缺陷（100 篇语料全量实测）**。
+新语料含无语言代码围栏（裸 ```` ``` ````）后全主题构建暴露两处：
+
+1. **裸围栏整篇 PARSE001**：`FencedCodeBlock.Info` 对无语言围栏是**空串**而非
+   null，`"".Split(' ', RemoveEmptyEntries)[0]` 对空数组取索引抛
+   IndexOutOfRangeException——渲染钩子在解析期执行，异常被 PARSE001 包装成
+   "整篇内容解析失败"（构建直接失败，非跳过）。修法：空 info 走空数组分支，
+   identifier 取空串，语言专属钩子查找自然跳过、落通用钩子。
+2. **`.Type` 语义错误**：钩子变量此前把 `type` 赋成字面量 `"codeblock"`，而 Hugo
+   的 codeblock hook `.Type` 是**语言标识**（loveit 的 `dict "Lang" .Type`、
+   narrow 的 `.Type | default "plaintext"` 都按此取语言标签）。改为赋
+   identifier（语言），裸围栏为空串（模板侧 default 生效，与 Hugo 一致）。
+   修复后 narrow 的代码块头部标签为 `GO`/`PLAINTEXT`、class 为 `language-go`。
+
+另修迁移器一处：`.PageInner.Resources.Get X`（papermod 的 render-image）迁出后
+落在"字段+参数"分支，而带参链不能用 nil 安全分隔符（Scriban 把 `(x)?.f a` 整体
+当函数名），产出 `page.page_inner.resources.get` → null object 崩溃。Flint 的
+render hook 在解析期执行、无页面上下文，`.PageInner` 恒不可达——根切到全局
+`resources` 命名空间（与模板自带的 `or … (resources.Get …)` 回落同语义）。

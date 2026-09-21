@@ -64,7 +64,14 @@ public sealed class HookedCodeBlockRenderer : MarkdownObjectRenderer<HtmlRendere
 
     protected override void Write(HtmlRenderer renderer, FencedCodeBlock block)
     {
-        var identifier = block.Info?.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0] ?? "";
+        // **空 info string 必须走空数组分支**：无语言围栏（裸 ```）的 Info 是
+        // 空串而非 null，`"".Split(' ', RemoveEmptyEntries)` 得空数组，直接
+        // 取 [0] 抛 IndexOutOfRangeException（语料库实测整篇内容 PARSE001）
+        var info = block.Info?.Trim();
+        var parts = string.IsNullOrEmpty(info)
+            ? Array.Empty<string>()
+            : info.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var identifier = parts.Length > 0 ? parts[0] : "";
         var hook = identifier.Length > 0 && _hooks.CodeBlockByLang.TryGetValue(identifier, out var byLang)
             ? byLang
             : _hooks.CodeBlock;
@@ -80,7 +87,10 @@ public sealed class HookedCodeBlockRenderer : MarkdownObjectRenderer<HtmlRendere
             ["identifier"] = identifier,
             ["inner"] = HookedRendererHelpers.GetEscapedCodeText(block),
             ["ordinal"] = _ordinal++,
-            ["type"] = "codeblock",
+            // Hugo 语义：codeblock hook 的 .Type 是**语言标识**（如 "go"），
+            // 无语言围栏为空串（loveit 的 .Type / narrow 的 .Type | default
+            // "plaintext" 都按此取语言标签）
+            ["type"] = identifier,
             ["attributes"] = new Dictionary<string, object>()
         };
         renderer.Write(hook(vars));
