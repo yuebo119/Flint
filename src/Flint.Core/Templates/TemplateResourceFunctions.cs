@@ -15,6 +15,7 @@
 // 文件级压制（disable/restore 配对）
 #pragma warning disable IL2026, IL3050
 
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.RegularExpressions;
@@ -440,7 +441,10 @@ public sealed partial class BuiltinTemplateFunctions
                     }
                 }
             }
-            var result = TemplateResource.Create(target, sb.ToString(), provider.BaseUrl);
+            var joined = sb.ToString();
+            var result = CachedByKey(
+                $"concat|{target}|{joined.Length}:{ContentDigest(joined)}",
+                () => TemplateResource.Create(target, joined, provider.BaseUrl));
             Track(result);
             return result.ToScriptObject();
         });
@@ -452,14 +456,14 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 return null;
             }
-            var minified = r.ResourceType switch
-            {
-                "css" => MinifyCss(r.Content),
-                "js" => MinifyJs(r.Content),
-                "html" => MinifyHtml(r.Content),
-                _ => r.Content
-            };
-            var outRes = r.With(minified);
+            var outRes = CachedTransform("minify", r.ResourceType, r, () =>
+                r.With(r.ResourceType switch
+                {
+                    "css" => MinifyCss(r.Content),
+                    "js" => MinifyJs(r.Content),
+                    "html" => MinifyHtml(r.Content),
+                    _ => r.Content
+                }));
             Track(outRes);
             return outRes.ToScriptObject();
         });
@@ -472,7 +476,7 @@ public sealed partial class BuiltinTemplateFunctions
                 return null;
             }
             var algorithm = opts.Length > 0 ? opts[0]?.ToString() ?? "sha256" : "sha256";
-            var fp = r.WithFingerprint(algorithm);
+            var fp = CachedTransform("fingerprint", algorithm, r, () => r.WithFingerprint(algorithm));
             Track(fp);
             return fp.ToScriptObject();
         });
@@ -673,12 +677,16 @@ public sealed partial class BuiltinTemplateFunctions
                 return null;
             }
             var minify = OptsFlag(args.OfType<object>().ToArray(), "minify", defaultValue: true);
-            var content = r.Content;
-            if (minify)
+            var outRes = CachedTransform("css.build", minify ? "minify" : "raw", r, () =>
             {
-                content = MinifyCss(content);
-            }
-            return r.With(content).ToScriptObject();
+                var content = r.Content;
+                if (minify)
+                {
+                    content = MinifyCss(content);
+                }
+                return r.With(content);
+            });
+            return outRes.ToScriptObject();
         });
 
         css.Import("Sass", (params object?[] args) =>
@@ -708,13 +716,13 @@ public sealed partial class BuiltinTemplateFunctions
             if (sassCompilable)
             {
                 // 编译**渲染后的内容**；load-path 取源文件目录（@import 解析基准）；
-                // .sass 走缩进语法（--indented）
+                // .sass 走缩进语法（--indented）。**整段入缓存**：外部 Dart Sass
+                // 进程单次 ~1-2s，每页重跑时 700 页必然超时
                 var loadPath = Path.GetDirectoryName(r.SourcePath!);
-                var compiled = TryCompileWithSassCli(css, loadPath, indented: ext == ".sass");
-                if (compiled is not null)
-                {
-                    css = compiled;
-                }
+                var indented = ext == ".sass";
+                css = CachedText(
+                    $"css.sass|{loadPath}|{indented}|{css.Length}:{ContentDigest(css)}",
+                    () => TryCompileWithSassCli(css, loadPath, indented: indented) ?? css);
             }
 
             var target = targetPath;
@@ -1060,24 +1068,33 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 entryPath = TryResolveAssetPath(name);
             }
+            var minifyJs = OptsFlag(optionArgs.OfType<object>().ToArray(), "minify", defaultValue: false);
 
-            if (entryPath is not null && File.Exists(entryPath) &&
-                (content.Contains("import ", StringComparison.Ordinal) ||
-                 content.Contains("export ", StringComparison.Ordinal)))
-            {
-                var bundled = EsmBundler.Bundle(entryPath, content);
-                if (bundled is not null)
+            // **整段入缓存**：ES 打包 + minify 是对"入口路径 + 内容"的纯函数，
+            // 每页重跑时 700 页各打包一遍主 bundle（fixit 实测为超时主因之一）
+            var outRes = CachedByKey(
+                $"js.build|{name}|{entryPath}|{minifyJs}|{content.Length}:{ContentDigest(content)}",
+                () =>
                 {
-                    content = bundled;
-                }
-            }
+                    var out0 = content;
+                    if (entryPath is not null && File.Exists(entryPath) &&
+                        (out0.Contains("import ", StringComparison.Ordinal) ||
+                         out0.Contains("export ", StringComparison.Ordinal)))
+                    {
+                        var bundled = EsmBundler.Bundle(entryPath, out0);
+                        if (bundled is not null)
+                        {
+                            out0 = bundled;
+                        }
+                    }
 
-            if (OptsFlag(optionArgs.OfType<object>().ToArray(), "minify", defaultValue: false))
-            {
-                content = MinifyJs(content);
-            }
+                    if (minifyJs)
+                    {
+                        out0 = MinifyJs(out0);
+                    }
 
-            var outRes = TemplateResource.Create(name, content, "");
+                    return TemplateResource.Create(name, out0, "");
+                });
             Track(outRes);
             return outRes.ToScriptObject();
         });
@@ -1324,6 +1341,65 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>记录产物（按 RelPermalink 去重，保留最新）</summary>
+    /// <summary>
+    /// 纯变换结果缓存（**构建内**生效）：toCSS/js.Build/minify/fingerprint/concat
+    /// 对"同一来源 + 同一选项 + 同一内容"的重复调用直接命中。Hugo 的 resources
+    /// 管道对变换结果有全局缓存；Flint 此前每页重跑——fixit 的资产分部每页调用
+    /// 十几次 toCSS/js.Build，每次都要起外部 Dart Sass 进程或重新打包压缩，
+    /// 单页 ~13s、700 页必然超时（实测 timeout 600s 且 0 页产出）。
+    /// **ExecuteAsTemplate 不入缓存**（输出依赖页面上下文）
+    /// </summary>
+    private readonly ConcurrentDictionary<string, TemplateResource> _transformCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>文本变换缓存（css.Sass 的外部 Sass 编译产物）</summary>
+    private readonly ConcurrentDictionary<string, string> _textCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>按显式键缓存纯变换（键已含全部输入因子）</summary>
+    private TemplateResource CachedByKey(string key, Func<TemplateResource> transform)
+    {
+        if (_transformCache.TryGetValue(key, out var hit))
+        {
+            return hit;
+        }
+        var produced = transform();
+        _transformCache[key] = produced;
+        return produced;
+    }
+
+    /// <summary>文本形态的纯变换缓存（css.Sass 的编译产物是字符串而非资源）</summary>
+    private string CachedText(string key, Func<string> transform)
+    {
+        if (_textCache.TryGetValue(key, out var hit))
+        {
+            return hit;
+        }
+        var produced = transform();
+        _textCache[key] = produced;
+        return produced;
+    }
+
+    /// <summary>按"变换类型 + 选项 + 来源路径 + 内容摘要"缓存纯变换</summary>
+    private TemplateResource CachedTransform(
+        string kind, string optionsKey, TemplateResource source, Func<TemplateResource> transform)
+    {
+        var content = source.Content ?? "";
+        var identity = source.SourcePath is { Length: > 0 } sp ? sp : source.Name ?? "";
+        return CachedByKey(
+            $"{kind}|{optionsKey}|{identity}|{content.Length}:{ContentDigest(content)}",
+            transform);
+    }
+
+    /// <summary>内容摘要（SHA-256 前 8 字节十六进制）——摘要碰撞即错配缓存产物，用 SHA-256 保底</summary>
+    private static string ContentDigest(string content)
+    {
+        Span<byte> hash = stackalloc byte[32];
+        System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(content), hash);
+        return Convert.ToHexString(hash[..8]);
+    }
+
     private void Track(TemplateResource r)
     {
         // RelPermalink 必须指向**具名文件**（"…/" 这类目录形态无文件名，
