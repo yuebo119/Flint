@@ -930,3 +930,31 @@ Hugo v0.166 探针（`[readingTime] one/other`、`[nested.deep]`、`[withdict] o
 引擎端 `I18nFunction` 改为 2 参（第二参数字或 dict）——有复数子表时按计数选形
 （`1 → one`，其余 `other`），随后对值里的 `{{ .Key }}` 插值（缺失渲染 `<no value>`）。
 相似度：stack 78.6 → **87.7**、fixit 84.4 → **88.4**；`<time>` 文本 Flint 独有保持 0。
+
+**四十四、`js.Build` 的 ES module 打包与 minify 的行注释缺陷（narrow 实测）**。
+narrow 的 `assets/js/main.js` 以 ES module 组织（`import`/`export`），`js.Build` 此前
+是直通——产物原样带 `import` 语句，浏览器按经典脚本执行报
+"Cannot use import statement outside a module"，导航/搜索/目录/停靠栏全部失效。
+
+修法（`TemplateResourceFunctions.cs`）：
+
+1. **打包先于 minify**。先做 ES module 打包再压缩：`MinifyJs` 会把换行压成单空格，
+   多行 `import { a } from "./x.js"` 被并成一行后，import 提取正则失效。
+2. **EsmBundler**：从入口文件出发提取相对 import、拓扑排序，每个模块包一层 IIFE
+   （隔离各模块的同名顶层声明——narrow 三个模块都有 `let initialized`，不隔离会
+   "Identifier 'initialized' has already been declared"），export 汇入共享命名空间
+   对象，入口的导出名再生成转发函数，`import` 侧改写成命名空间属性访问。
+3. **入口路径解析**：`js.Build` 的实参在模板里常以对象形态传入（SourcePath 经
+   `ToScriptObject`/`FromScriptObject` 往返后仍在），对象形态取不到时按资源名在
+   `FileSystemResourceProvider.Roots` 下定位。
+4. **`MinifyJs` 行注释**：原实现用 `^\s*//.*$`（Multiline）剥行注释，压平空白后
+   整文件只剩一行、锚点失效，`// 注释` 后的所有代码被吞（narrow 的 dock.js 实测
+   "Unexpected end of input"——IIFE 收尾被吃掉）。改为逐字符状态机
+   （`StripJsLineComments`）：字符串/模板字面量内的 `//`（URL 等）不动，
+   只在字符串外遇 `//` 跳到行尾，且**先剥注释再压空白**。
+
+浏览器实测（375×812 移动视口）：移动导航面板开合（`#mobile-nav-panel`
+`hidden` → `display:block`、高 0 → 149px）、⌘K 搜索对话框、下拉菜单
+（`aria-expanded` false → true）三项交互全部恢复，控制台 JS 错误清零
+（残留仅主题自身缺失的 `site.webmanifest` 404，Hugo 侧同样 404）。
+
