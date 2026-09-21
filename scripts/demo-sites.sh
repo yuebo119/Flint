@@ -24,7 +24,7 @@ FLINT_SRC="$REPO_ROOT/Flint"
 THEMES_DIR="$REPO_ROOT/tools/themes"
 MIGRATOR="$FLINT_SRC/src/Flint.ThemeMigrator/bin/Debug/net10.0/Flint.ThemeMigrator.exe"
 FLINT="$FLINT_SRC/src/Flint.Cli/bin/Release/net10.0/win-x64/Flint.exe"
-FIXTURES="$SELF_DIR/fixtures/longform"
+FIXTURES="$SELF_DIR/fixtures/corpus"
 WORK="$REPO_ROOT/demo-sites"
 PORT_BASE=8401
 
@@ -190,8 +190,11 @@ for name in "${THEMES[@]}"; do
   rm -rf "$site"
   mkdir -p "$site"
 
-  # 统一内容集：fixtures 根内容（posts/、about/、_index.md）整体并入 content/
-  cp -r "$FIXTURES"/. "$site/content/"
+  # 统一内容集：corpus 的 content/（posts/weekly/notes/docs/about）与
+  # static/（占位插图）分别并入站点对应目录——21 主题共用同一套语料
+  cp -r "$FIXTURES/content"/. "$site/content/"
+  mkdir -p "$site/static"
+  cp -r "$FIXTURES/static"/. "$site/static/"
 
   write_config "$name" "$site" "$port"
 
@@ -205,7 +208,9 @@ for name in "${THEMES[@]}"; do
   fi
 
   # 构建
-  build_out=$(cd "$site" && timeout 300 "$FLINT" build -s . -o public --clean 2>&1)
+  # 单站超时 600s：fixit 在 100 篇语料 + 全分类/标签分页下需 ~500s
+  # （其余主题 30-60s），300s 会把慢主题误判为失败
+  build_out=$(cd "$site" && timeout 600 "$FLINT" build -s . -o public --clean 2>&1)
   bexit=$?
   pages=$(find "$site/public" -name "*.html" 2>/dev/null | wc -l)
   minsz=$(find "$site/public" -name "*.html" -exec wc -c {} + 2>/dev/null | sort -n | head -1 | awk '{print $1}')
