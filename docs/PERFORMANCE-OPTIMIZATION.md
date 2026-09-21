@@ -600,6 +600,36 @@ Flint 在复杂主题场景下的性能优势更加明显：
 
 ---
 
+## 阶段七：partial 调用与资源变换缓存（2026-09-21，fixit 实测）
+
+**背景**：100 篇语料全主题重建时，fixit 单站 600s 超时且零页产出，其余主题 30-60s。
+插桩定位（模板内 `warnf now` 打点）到两个固定开销：
+
+| 热点 | 实测 | 根因 |
+|---|---|---|
+| `partialValue` 单次调用 ~10ms | camel-case-keys 递归每页数百次 → 单页 ~7s | `FileTemplateLoader.GetPath` 每次十几次 `File.Exists` 探测（根 × 候选形态），`Load` 每次 `File.ReadAllText` + 重建 roots 校验表 |
+| 资源变换每页重跑 | fixit 资产分部每页十几次 toCSS/js.Build | Hugo 的 resources 管道有全局变换缓存，Flint 此前每页重算（外部 Dart Sass 进程/ES 打包/minify） |
+
+**修法**（均为构建内纯缓存，语义不变）：
+
+1. `FileTemplateLoader.GetPath`：按「调用者文件 + 模板名」缓存解析结果（含自解析跳过，
+   键含 callerSpan.FileName 保证确定）
+2. `FileTemplateLoader.Load`：按「路径 + mtime」缓存模板文本（mtime 不变即命中，
+   保留 serve 模式热更新语义）；roots 校验表改为一次性构建
+3. `BuiltinTemplateFunctions`：`toCSS`/`js.Build`/`minify`/`fingerprint`/`concat`
+   按「变换类型 + 选项 + 来源路径 + 内容 SHA-256 摘要」缓存；
+   **ExecuteAsTemplate 不入缓存**（输出依赖页面上下文）
+
+**效果**（fixit 演示站实测）：单页 16.6s → 4.4s；200 次 partial 调用 2s → <1s；
+整站 631 页从「600s 超时零页」到 5m33s 建成（仍是 21 主题中最慢，其余 ~40s）。
+`demo-sites.sh` 单站超时同步 300s → 600s。
+
+**回归验证**：Core 1062 通过 / Integration 1647（5 个失败经 stash 对照实验确认
+全部为存量失败或环境抖动：3 个 `lang=` map 转贮存量、1 个 Kestrel socket 权限环境、
+1 个内存测试仅在并发负载下失败、隔离重跑两次通过）。
+
+---
+
 ## 内存基准
 
 性能测试使用以下内存基准公式：

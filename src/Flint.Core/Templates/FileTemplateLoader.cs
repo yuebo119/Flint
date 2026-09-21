@@ -1,6 +1,7 @@
 // Flint 静态站点生成器
 // 文件系统模板加载器（从 ScribanTemplateRenderer.cs 按 partial 拆出的独立类）
 
+using System.Collections.Concurrent;
 using Scriban.Runtime;
 using Scriban.Parsing;
 using Flint.Core.Abstractions;
@@ -16,6 +17,26 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     // include 的主题回退目录（与页面模板查找同序：站点优先，主题按序回退）
     private readonly string[] _themeBasePaths;
 
+    /// <summary>根目录缓存（Roots 每次访问都新建 List——partial 高频调用下是纯浪费）</summary>
+    private string[]? _rootsCache;
+
+    /// <summary>根校验用的归一化根前缀缓存（Load 每次调用重建是第二项固定开销）</summary>
+    private string[]? _allowedRootsCache;
+
+    /// <summary>
+    /// 路径解析缓存：GetPath 每次要做十几次 File.Exists 探测（根 × 候选形态），
+    /// partial 递归调用（fixit 的 camel-case-keys 每页数百次）下单次 ~10ms、
+    /// 700 页站点必然超时（实测 fixit 单页 ~16s、timeout 600s 零页产出）。
+    /// 键 = 调用者文件 + 模板名（解析结果对二者确定，含自解析跳过）；
+    /// 构建期模板文件不增删，缓存与渲染器的 mtime 失效检查同口径
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string> _pathCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>模板文本缓存（mtime 不变即命中；保留 serve 模式热更新语义）</summary>
+    private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc)> _textCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public FileTemplateLoader(string basePath, params string[] themeBasePaths)
     {
         _basePath = basePath;
@@ -26,9 +47,14 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     {
         get
         {
-            var roots = new List<string> { _basePath };
-            roots.AddRange(_themeBasePaths);
-            return [.. roots];
+            var cached = _rootsCache;
+            if (cached is null)
+            {
+                var roots = new List<string> { _basePath };
+                roots.AddRange(_themeBasePaths);
+                cached = _rootsCache = [.. roots];
+            }
+            return cached;
         }
     }
 
@@ -39,12 +65,22 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     internal const string BuiltinPrefix = "\u0001builtin:";
 
     /// <summary>
-    /// Scriban include 的路径解析入口：按根序（站点→主题）探测候选形态，
-    /// 返回实际存在的物理路径——主题回退必须在此完成（Scriban 先 GetPath
-    /// 后 Load，Load 拿到的已是探测结果）。全部未命中时若为内置模板
-    /// （pagination 等）返回内置哨兵
+    /// Scriban include 的路径解析入口（带缓存的外壳）：解析结果对
+    /// "调用者文件 + 模板名"确定，故按键命中；未命中走 <see cref="ResolvePath"/>
     /// </summary>
     public string GetPath(Scriban.TemplateContext context, SourceSpan callerSpan, string templateName)
+    {
+        var key = (callerSpan.FileName ?? "") + "\u0001" + templateName;
+        if (_pathCache.TryGetValue(key, out var cached))
+        {
+            return cached;
+        }
+        var resolved = ResolvePath(context, callerSpan, templateName);
+        _pathCache[key] = resolved;
+        return resolved;
+    }
+
+    private string ResolvePath(Scriban.TemplateContext context, SourceSpan callerSpan, string templateName)
     {
         // Hugo 的部分模板名解析**先相对于调用者所在目录**，再回落到根——
         // 例如 `_partials/templates/opengraph.html` 内调用
@@ -243,10 +279,12 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // 无条件 GetFullPath：模板根为相对路径时组合产物非 rooted，
         // 以 IsPathRooted 为前提会让 "{{ include \"../..\" }}" 完全绕过校验
         var fullPath = Path.GetFullPath(templatePath);
-        var allowedRoots = Roots.Select(r => Path.GetFullPath(r)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar).ToList();
-        if (!allowedRoots.Any(allowed =>
+        var allowedRoots = _allowedRootsCache ??= Roots
+            .Select(r => Path.GetFullPath(r)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar)
+            .ToArray();
+        if (!Array.Exists(allowedRoots, allowed =>
                 fullPath.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)))
         {
             throw new FileNotFoundException($"模板 include 路径越出模板目录，已拒绝: {templatePath}");
@@ -254,7 +292,16 @@ internal sealed class FileTemplateLoader : ITemplateLoader
 
         // 渲染期依赖收集（T4.1）：include/partial 实际命中的物理路径
         RenderDependencyTracker.Track(context, fullPath);
-        return File.ReadAllText(fullPath);
+        // **文本缓存**：File.ReadAllText + allowedRoots 重建是 partial 高频调用下
+        // 的固定开销（每次全量读盘）；mtime 不变即命中，保留 serve 模式热更新语义
+        var mtime = File.GetLastWriteTimeUtc(fullPath);
+        if (_textCache.TryGetValue(fullPath, out var tc) && tc.MtimeUtc == mtime)
+        {
+            return tc.Text;
+        }
+        var text = File.ReadAllText(fullPath);
+        _textCache[fullPath] = (text, mtime);
+        return text;
     }
 
     // Scriban 7 的 ITemplateLoader.LoadAsync 返回注解为 ValueTask<string?>
