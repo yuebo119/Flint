@@ -281,7 +281,11 @@ internal sealed class ScribanConverter(
                     {
                         return rl;
                     }
-                    lastArgs.Add(rl.Text);
+                    // 负数字面量实参必须加括号：Scriban 把 `add -1 $index` 解析为
+                    // `add - 1 $index`（二元减号 + 对 `1` 的调用）→ 渲染期报
+                    // "Invalid target function `1` (int)"（even 主题
+                    // `$index | add -1 | index $paginator.Pages` 实测）
+                    lastArgs.Add(rl.Text.StartsWith('-') ? "(" + rl.Text + ")" : rl.Text);
                 }
                 if (lastOk)
                 {

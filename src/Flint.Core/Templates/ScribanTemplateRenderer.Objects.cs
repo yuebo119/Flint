@@ -1400,41 +1400,135 @@ public sealed partial class ScribanTemplateRenderer
 
             var a0 = arguments[0]?.ToString() ?? "";
             var a1 = arguments.Count > 1 ? arguments[1]?.ToString() : null;
-            // 检索集合优先用"当前构建的全量页面"（含 section/term）：页面对象的
-            // 构造快照可能是常规页集合（列表渲染先行创建），只认快照会漏 section
-            var searchPages = ScribanTemplateRenderer.CurrentSitePages ?? pages;
 
-            FlintPageContext? found = null;
+            // 检索顺序：先闭包列表（站点对象构造时拿到的页面集合），命中即返回；
+            // 未命中再退回"当前构建全量页面"静态表（页面对象构造快照可能是常规页
+            // 集合——列表渲染先行创建，只认快照会漏 section）。先闭包后静态保证
+            // 并发构建不同站点时（测试进程多站点并行）不会先撞上别的站点的页面
+            var staticPages = ScribanTemplateRenderer.CurrentSitePages;
+            var first = pages;
+            var second = staticPages is null || ReferenceEquals(staticPages, pages) ? null : staticPages;
+
+            FlintPageContext? found = first is { Count: > 0 } ? Search(first, a0, a1) : null;
+            found ??= second is { Count: > 0 } ? Search(second, a0, a1) : null;
+
+            return found is null ? null : CreatePageObject(found);
+        }
+
+        /// <summary>在给定页面集合里按 Hugo GetPage 语义查找（kind/名 或 路径形态）</summary>
+        private FlintPageContext? Search(
+            IReadOnlyList<FlintPageContext> searchPages, string a0, string? a1)
+        {
+            // baseURL 子路径前缀从候选页推导（见 BasePrefixOf）：子路径构建时 posts
+            // 段页的 rel 是 `/hugo-book/posts/`，查询路径 "posts" 必须先剥掉前缀才能
+            // 命中（hugo-book 的 menu-section partial 实测 errorf
+            // "Section 'posts' not found, check BookSection theme parameter"）
+            var basePrefix = BasePrefixOf(searchPages);
             if (a1 is not null)
             {
                 // (kind, 名) 形态：section 按 Section 段匹配，page 按标题/slug 匹配
-                found = a0.ToLowerInvariant() switch
+                return a0.ToLowerInvariant() switch
                 {
                     "section" or "sections" => searchPages.FirstOrDefault(p =>
                         p.Kind.Equals("section", StringComparison.OrdinalIgnoreCase) &&
                         (p.Section.Equals(a1, StringComparison.OrdinalIgnoreCase) ||
-                         p.RelPermalink.Trim('/').Equals(a1, StringComparison.OrdinalIgnoreCase))),
+                         StripBasePrefix(p.RelPermalink, basePrefix).Equals(a1, StringComparison.OrdinalIgnoreCase))),
                     "home" => searchPages.FirstOrDefault(p => p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)),
                     "page" => searchPages.FirstOrDefault(p => p.Title.Equals(a1, StringComparison.OrdinalIgnoreCase)),
                     _ => null
                 };
             }
-            else
-            {
-                // 路径形态：归一后比对 RelPermalink；多语言站点再比一次"剥掉语言前缀"的形态——
-                // Hugo 的 .Site.GetPage 按**当前语言的内容根**解析路径，主题写
-                // `"/about"` 而页面 RelPermalink 是 `"/en/about/"`，只比全路径必然落空
-                //（monochrome 的 states.html：`.Site.GetPage .Params.balloon_resources`
-                // （值 "/about"）返回 null → "$res.resources for a null object"）
-                var path = a0.Trim('/');
-                found = searchPages.FirstOrDefault(p =>
-                    p.RelPermalink.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) ||
-                    p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true ||
-                    MatchesIgnoringLanguagePrefix(p, path) ||
-                    (path.Length == 0 && p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)));
-            }
 
-            return found is null ? null : CreatePageObject(found);
+            // 路径形态：归一后比对 RelPermalink；多语言站点再比一次"剥掉语言前缀"的形态——
+            // Hugo 的 .Site.GetPage 按**当前语言的内容根**解析路径，主题写
+            // `"/about"` 而页面 RelPermalink 是 `"/en/about/"`，只比全路径必然落空
+            //（monochrome 的 states.html：`.Site.GetPage .Params.balloon_resources`
+            // （值 "/about"）返回 null → "$res.resources for a null object"）
+            var path = a0.Trim('/');
+            return searchPages.FirstOrDefault(p =>
+                StripBasePrefix(p.RelPermalink, basePrefix).Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true ||
+                MatchesIgnoringLanguagePrefix(p, path) ||
+                (path.Length == 0 && p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase)));
+        }
+
+        /// <summary>
+        /// 剥掉 baseURL 子路径前缀后取归一路径（无前导/尾斜杠）。子路径构建时段页的
+        /// RelPermalink 是 `/hugo-book/posts/`，Hugo 的 `.GetPage "posts"` 按**内容根**
+        /// 解析（不含子路径），不剥前缀必返回 null（hugo-book 的 menu-section partial
+        /// 实测 errorf "Section 'posts' not found, check BookSection theme parameter"）。
+        /// 前缀由 <see cref="BasePrefixOf"/> 从候选页推导，无静态状态、跨并发渲染无竞态；
+        /// 根 baseURL 下前缀为空串，历史行为不变
+        /// </summary>
+        private static string StripBasePrefix(string relPermalink, string basePrefix)
+        {
+            var rel = relPermalink.Trim('/');
+            if (basePrefix.Length > 0 && rel.StartsWith(basePrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                rel = rel[basePrefix.Length..].Trim('/');
+            }
+            return rel;
+        }
+
+        /// <summary>
+        /// 候选题集合的 baseURL 子路径前缀：所有页面 RelPermalink 的**公共目录前缀**
+        /// （首页 rel 恰为 `子路径 + "/"`，故公共前缀即子路径本身）。根 baseURL 下
+        /// 各页面首段不同，公共前缀为 "/" → 空串。
+        /// 公共前缀不得把**非首页页剥空**——全部内容都在同一段下的站点（/stack/posts/）
+        /// 会把公共前缀深到该段自身，逐段回退到不剥空任何非首页页为止
+        /// </summary>
+        private static string BasePrefixOf(IReadOnlyList<FlintPageContext> pages)
+        {
+            string? common = null;
+            foreach (var p in pages)
+            {
+                var rel = p.RelPermalink;
+                if (string.IsNullOrEmpty(rel))
+                {
+                    continue;
+                }
+                common = common is null ? rel : LongestCommonPrefix(common, rel);
+                if (common == "/")
+                {
+                    return "";
+                }
+            }
+            if (common is null || common == "/")
+            {
+                return "";
+            }
+            while (common.Length > 1 && pages.Any(p =>
+                       !p.Kind.Equals("home", StringComparison.OrdinalIgnoreCase) &&
+                       StripBasePrefix(p.RelPermalink, common.Trim('/')).Length == 0))
+            {
+                common = TrimLastSegment(common);
+            }
+            return common.Trim('/');
+        }
+
+        /// <summary>逐字符公共前缀，裁剪到目录边界（/hugo-book/p 与 /hugo-book/posts/ → /hugo-book/）</summary>
+        private static string LongestCommonPrefix(string a, string b)
+        {
+            var len = Math.Min(a.Length, b.Length);
+            var i = 0;
+            while (i < len && a[i] == b[i])
+            {
+                i++;
+            }
+            if (i < a.Length && i < b.Length)
+            {
+                var slash = a.LastIndexOf('/', i - 1);
+                i = slash >= 0 ? slash + 1 : 0;
+            }
+            return a[..i];
+        }
+
+        /// <summary>去掉末段目录（/stack/posts/ → /stack/）</summary>
+        private static string TrimLastSegment(string dir)
+        {
+            var trimmed = dir.TrimEnd('/');
+            var slash = trimmed.LastIndexOf('/');
+            return slash >= 0 ? trimmed[..slash] : "/";
         }
 
         /// <summary>
