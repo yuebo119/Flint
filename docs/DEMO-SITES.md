@@ -62,7 +62,15 @@ SSG 的主题是**站点级**能力（一个渲染站只能挂一个主题），
 引擎侧关键实现：`TemplateResource.BasePathOf/OriginOf` 统一解析 baseURL 的子路径与
 源站，RelUrl/AbsUrl、页面 permalink、`TemplateResource.Create`（toCSS/js.Build/
 Concat/Copy 等）、`WithFingerprint`、sitemap/feed 输出、404/robots 均基于该前缀
-推导，根 baseURL（无子路径）时行为与历史完全一致（1095 项测试覆盖）。
+推导，根 baseURL（无子路径）时行为与历史完全一致（子路径回归测试 +
+append/GetPage 语义测试合计 1103 项全绿）。
+
+配套的三处**演示站层面**处理（非引擎行为，子路径归并的必然收尾）：
+- 菜单 URL 带 `/<主题>/` 前缀（`write_config`）：不带会跳统一树根或 404；
+- `build-gallery.sh` 汇总各主题 `static/fonts` 到统一树根：hugo-coder 模板硬编码
+  `/fonts/...` 绝对路径（原始 Hugo 主题写法，子路径 baseURL 下 Hugo 同样断）；
+- corpus 的 `site.webmanifest` 用相对路径：静态文件按原样拷贝不过 relURL，
+  绝对路径在子路径站点下必然指错。
 
 ## 测试语料库（scripts/fixtures/corpus/）
 
@@ -95,8 +103,11 @@ corpus/
 - fixit 是 21 主题中构建最慢的（~5.5 分钟/631 页），`demo-sites.sh` 单站超时
   已放宽到 600s；慢的根因与修复见 `docs/PERFORMANCE-OPTIMIZATION.md` 阶段七
 - `site.webmanifest` / favicon 已由 corpus 静态目录统一提供（`scripts/fixtures/
-  corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径）；
-  早期"主题引用不存在的文件"问题已修复
+  corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径，
+  manifest 内用相对路径以适配子路径站点）；早期"主题引用不存在的文件"问题已修复
+- fixit 首页有 4 个 AI 聊天插件的脚本 404（`src="map[Headings:…]"` 形态，
+  MergePageMembers 污染 partial 调用方字典的已知引擎问题，与子路径无关），
+  不影响页面其余部分渲染
 - 重建演示站前需先停掉统一服务（Windows 下服务进程 CWD 在 `demo-unified/`
   外则无锁问题；`--clean` 只清各站自己的 `public/`）：若 8400 已被占用，
   `netstat -ano | grep :8400` 找 PID 后 `taskkill /F /PID <pid>`
