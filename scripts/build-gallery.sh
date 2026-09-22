@@ -54,6 +54,18 @@ mkdir -p "$UNIFIED"
 cp -r "$SITE/public/." "$UNIFIED/"
 echo "画廊已合并进统一树: $UNIFIED/（入口 index.html，主题在 /<主题>/）"
 
+# 根级字体兼容：个别主题（hugo-coder）的模板**硬编码** `/fonts/...` 绝对路径
+# （原始 Hugo 主题写法，baseURL 带子路径时同样断——非 Flint 引擎问题）。
+# 归并单端口后把各主题 static/fonts 汇总复制到统一树根，让硬编码路径仍可访问
+mkdir -p "$UNIFIED/fonts"
+font_themes=0
+for theme_fonts in "$REPO_ROOT/tools/themes"/*/static/fonts; do
+  [ -d "$theme_fonts" ] || continue
+  cp -rn "$theme_fonts/." "$UNIFIED/fonts/" 2>/dev/null || true
+  font_themes=$((font_themes + 1))
+done
+[ "$font_themes" -gt 0 ] && echo "根级字体兼容: $font_themes 个主题的 static/fonts → $UNIFIED/fonts/"
+
 if [ "${SERVE:-0}" = "1" ]; then
   (cd "$UNIFIED" && python -m http.server "$PORT" --bind 127.0.0.1 > /dev/null 2>&1 &)
   echo "统一服务已启动: http://127.0.0.1:$PORT/"
