@@ -820,16 +820,21 @@ public sealed partial class BuiltinTemplateFunctions
                 var list = en.Cast<object?>().ToList();
                 if (item != null)
                 {
-                    // **Hugo 语义：实参是切片时铺平并入**（hugo v0.166 实测：
+                    // **Hugo 语义：实参是切片（列表）时铺平并入**（hugo v0.166 实测：
                     // `slice "a" | append (slice "b" "c")` → [a b c]；非切片实参
                     // 反而报 "expected a slice"）。迁移产物把 Hugo 的
                     // `append (slice .Data)` 转成 `append ([page?.data])`（数组
                     // 字面量）：不铺平会使累积数组变成 [[d1],[d2]]，消费端每条
                     // 多包一层数组、成员全取不到——fixit/loveit 的 store/script
-                    // 实测全站 body 脚本一个都不渲染
-                    if (item is System.Collections.IEnumerable itemEnum && item is not string)
+                    // 实测全站 body 脚本一个都不渲染。
+                    // **只铺平 list 形态**（数组/List/ScriptArray，判据 IList）：
+                    // ScriptObject（字典/资源对象）也是 IEnumerable（成员枚举），按
+                    // IEnumerable 铺平会把单个资源拆成几十个成员塞进数组，下游
+                    // `resources.Concat` 等内容全取空——blowfish 的
+                    // css/main.bundle.css 实测打包成空串、全站无样式
+                    if (item is System.Collections.IList itemList)
                     {
-                        list.AddRange(itemEnum.Cast<object?>());
+                        list.AddRange(itemList.Cast<object?>());
                     }
                     else
                     {
