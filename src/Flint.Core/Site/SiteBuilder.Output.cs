@@ -55,11 +55,19 @@ public sealed partial class SiteBuilder
         IReadOnlyList<string> themeNames,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string basePathPrefix = "")
     {
         // 资源收集（对齐 Hugo 语义）：站点 assets/static 优先，主题目录回退——
         // 同一输出相对路径站点覆盖主题。**输出前缀语义**（Hugo 对齐，2026-09-10 实证）：
         //   static/ 内容映射到输出根（static/css/a.css → public/css/a.css）
+        //   assets/ 内容保留 assets/ 前缀（Flint 扩展：assets 直接发布，Hugo 需 resources.Get）
+        // 键 = 输出相对路径，站点先注册即形成覆盖（与模板查找同规则）。
+        // **basePathPrefix**：baseURL 子路径（如 fixit/）——多主题站按子路径
+        // 归并单一端口时，静态资源也要落到各主题子目录
+        var outputPrefixBase = string.IsNullOrEmpty(basePathPrefix)
+            ? ""
+            : basePathPrefix.Trim('/') + "/";
         //   assets/ 内容保留 assets/ 前缀（Flint 扩展：assets 直接发布，Hugo 需 resources.Get）
         // 键 = 输出相对路径，站点先注册即形成覆盖（与模板查找同规则）
         var assetsByRelative = new Dictionary<string, (string Path, bool IsTheme, string OutputRelative)>(StringComparer.OrdinalIgnoreCase);
@@ -69,15 +77,15 @@ public sealed partial class SiteBuilder
         // 会 404**（hugo-paper 的 `url(./theme.png)`：Hugo 下解析为 /theme.png ✔、
         // Flint 下解析为 /assets/theme.png ✗）。static/ 本就映射到输出根，两者同前缀即
         // Hugo 的"站点资源同一命名空间"语义（static 先收集 → 同路径时 static 胜）
-        CollectAssetFiles(Path.Combine(sourcePath, "assets"), "", isTheme: false, assetsByRelative);
-        CollectAssetFiles(Path.Combine(sourcePath, "static"), "", isTheme: false, assetsByRelative);
+        CollectAssetFiles(Path.Combine(sourcePath, "assets"), outputPrefixBase, isTheme: false, assetsByRelative);
+        CollectAssetFiles(Path.Combine(sourcePath, "static"), outputPrefixBase, isTheme: false, assetsByRelative);
 
         // 主题列表按序收集（前面的优先，TryAdd 先到先得形成覆盖链）
         foreach (var themeName in themeNames)
         {
             var themeRoot = Path.Combine(sourcePath, "themes", themeName);
-            CollectAssetFiles(Path.Combine(themeRoot, "assets"), "", isTheme: true, assetsByRelative);
-            CollectAssetFiles(Path.Combine(themeRoot, "static"), "", isTheme: true, assetsByRelative);
+            CollectAssetFiles(Path.Combine(themeRoot, "assets"), outputPrefixBase, isTheme: true, assetsByRelative);
+            CollectAssetFiles(Path.Combine(themeRoot, "static"), outputPrefixBase, isTheme: true, assetsByRelative);
         }
 
         var results = new ConcurrentBag<ProcessedAsset>();
@@ -203,6 +211,14 @@ public sealed partial class SiteBuilder
 
         var homePage = pages.FirstOrDefault(p => p.Kind == "home") ?? pages.FirstOrDefault();
 
+        // **baseURL 子路径前缀**：sitemap/RSS/atom 也要落到各主题子目录
+        var feedPrefix = Flint.Core.Templates.TemplateResource.BasePathOf(config.BaseURL)
+            .TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        var feedRoot = string.IsNullOrEmpty(feedPrefix)
+            ? options.OutputPath
+            : Path.Combine(options.OutputPath, feedPrefix);
+        Directory.CreateDirectory(feedRoot);
+
         // 生成 Sitemap（主题兼容批次二 #9：站点/主题 sitemap 模板存在时覆盖内置生成器）
         if (!sitemapDisabled)
         {
@@ -215,13 +231,13 @@ public sealed partial class SiteBuilder
                     WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
                 }};
                 var sitemap = await _templateRenderer.RenderAsync("sitemap", ctx, cancellationToken);
-                await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "sitemap.xml"), sitemap, cancellationToken);
+                await File.WriteAllTextAsync(Path.Combine(feedRoot, "sitemap.xml"), sitemap, cancellationToken);
             }
             else
             {
                 var sitemapGenerator = new SitemapGenerator(config.BaseURL);
                 var sitemap = sitemapGenerator.Generate(pages);
-                await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "sitemap.xml"), sitemap, cancellationToken);
+                await File.WriteAllTextAsync(Path.Combine(feedRoot, "sitemap.xml"), sitemap, cancellationToken);
             }
         }
 
@@ -251,18 +267,18 @@ public sealed partial class SiteBuilder
                 WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
             }};
             var rssContent = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
-            await WriteRssAliasesAsync(options, rssContent, cancellationToken);
+            await WriteRssAliasesAsync(options, rssContent, cancellationToken, feedRoot);
         }
         else
         {
             var rss = feedGenerator.GenerateRss(pages);
-            await WriteRssAliasesAsync(options, rss, cancellationToken);
+            await WriteRssAliasesAsync(options, rss, cancellationToken, feedRoot);
 
             // 生成 Atom Feed
             feedOptions = feedOptions with { FeedPath = "/atom.xml" };
             var atomGenerator = new FeedGenerator(feedOptions);
             var atom = atomGenerator.GenerateAtom(pages);
-            var atomPath = Path.Combine(options.OutputPath, "atom.xml");
+            var atomPath = Path.Combine(feedRoot, "atom.xml");
             await File.WriteAllTextAsync(atomPath, atom, cancellationToken);
         }
 
@@ -325,12 +341,14 @@ public sealed partial class SiteBuilder
     /// <c>&lt;link rel="alternate" href="/index.xml"&gt;</c> 404（fixit 实测）
     /// </summary>
     private static async Task WriteRssAliasesAsync(
-        BuildOptions options, string content, CancellationToken cancellationToken)
+        BuildOptions options, string content, CancellationToken cancellationToken,
+        string feedRootPath = "")
     {
+        var root = string.IsNullOrEmpty(feedRootPath) ? options.OutputPath : feedRootPath;
         foreach (var name in new[] { "index.xml", "rss.xml" })
         {
             await File.WriteAllTextAsync(
-                Path.Combine(options.OutputPath, name), content, cancellationToken);
+                Path.Combine(root, name), content, cancellationToken);
         }
     }
 
@@ -507,6 +525,24 @@ public sealed partial class SiteBuilder
         return File.Exists(siteCandidate) ? siteCandidate : null;
     }
 
+    /// <summary>**文件形态**辅助输出的落盘路径（robots.txt 这类非页面产物）：
+    /// RelPermalink 即输出文件的相对路径，不再补 <c>index.html</c>（GetOutputPath
+    /// 会把 <c>/robots.txt</c> 解析成目录 <c>robots.txt/index.html</c>，写出时报
+    /// "找不到路径的一部分"——ananke/bearblog 带 robots.txt 模板时实测）</summary>
+    private static string GetFileFormOutputPath(string relPermalink, string outputPath)
+    {
+        var path = relPermalink.TrimStart('/');
+        var combined = Path.Combine(outputPath, path);
+        var outputRoot = Path.GetFullPath(outputPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"页面输出路径逃逸输出目录，已拒绝: {relPermalink}");
+        }
+        return combined;
+    }
+
     private static string GetOutputPath(string relPermalink, string outputPath)
     {
         var path = relPermalink.TrimStart('/');
@@ -625,7 +661,8 @@ public sealed partial class SiteBuilder
                 Title = "404 Page not found",
                 Content = "",
                 Permalink = config.BaseURL.TrimEnd('/') + "/404.html",
-                RelPermalink = "/404.html",
+                // 子路径构建时 rel 带前缀，输出才能落到 /<主题>/404.html
+                RelPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + "/404.html",
                 Date = DateTimeOffset.Now,
                 Tags = [],
                 Categories = [],
@@ -635,7 +672,11 @@ public sealed partial class SiteBuilder
             };
             var ctx = new TemplateContext { Page = notFoundPage, Site = siteContext };
             var html = await _templateRenderer.RenderAsync("404", ctx, cancellationToken);
-            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "404.html"), html, cancellationToken);
+            var notFoundOutput = GetFileFormOutputPath(notFoundPage.RelPermalink, options.OutputPath);
+            // 子路径构建时输出目录（<out>/<sub>/）可能还没有任何页面写过——
+            // 无内容的站点 404 也会产出（Hugo 语义），先建目录再写
+            Directory.CreateDirectory(Path.GetDirectoryName(notFoundOutput)!);
+            await File.WriteAllTextAsync(notFoundOutput, html, cancellationToken);
         }
 
         // 3. robots.txt 模板（layouts/robots.txt 站点优先、主题回退）。
@@ -648,7 +689,8 @@ public sealed partial class SiteBuilder
                 Title = "robots",
                 Content = "",
                 Permalink = config.BaseURL.TrimEnd('/') + "/robots.txt",
-                RelPermalink = "/robots.txt",
+                // 子路径构建时 rel 带前缀，输出才能落到 /<主题>/robots.txt
+                RelPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + "/robots.txt",
                 Date = DateTimeOffset.Now,
                 Tags = [],
                 Categories = [],
@@ -658,7 +700,10 @@ public sealed partial class SiteBuilder
             };
             var ctx = new TemplateContext { Page = robotsPage, Site = siteContext };
             var txt = await _templateRenderer.RenderTemplateFileAsync(robotsSrc, ctx, cancellationToken);
-            await File.WriteAllTextAsync(Path.Combine(options.OutputPath, "robots.txt"), txt, cancellationToken);
+            // 文件形态输出：RelPermalink 即落盘相对路径（不补 index.html）
+            var robotsOutput = GetFileFormOutputPath(robotsPage.RelPermalink, options.OutputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(robotsOutput)!);
+            await File.WriteAllTextAsync(robotsOutput, txt, cancellationToken);
         }
     }
 

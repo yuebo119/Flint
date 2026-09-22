@@ -497,7 +497,8 @@ public sealed partial class SiteBuilder
                 Title = config.Title,
                 Content = "",
                 Permalink = config.BaseURL,
-                RelPermalink = "/",
+                // 子路径构建时首页 rel 带前缀（Hugo 语义）
+                RelPermalink = Flint.Core.Templates.TemplateResource.BasePathOf(config.BaseURL) + "/",
                 Date = DateTimeOffset.MinValue,
                 Tags = [],
                 Categories = [],
@@ -570,10 +571,13 @@ public sealed partial class SiteBuilder
         var list = new List<PageContext>(terms.Count);
         foreach (var term in terms)
         {
+            // 只剥 **origin**：baseURL 子路径要留在 rel 里（Hugo 语义）。
+            // 此前剥整段 baseURL，子路径随 origin 一起丢失
             var rel = term.Permalink ?? "/";
-            if (rel.StartsWith(config.BaseURL, StringComparison.OrdinalIgnoreCase))
+            var termOrigin = Templates.TemplateResource.OriginOf(config.BaseURL);
+            if (rel.StartsWith(termOrigin, StringComparison.OrdinalIgnoreCase))
             {
-                rel = rel[config.BaseURL.TrimEnd('/').Length..];
+                rel = rel[termOrigin.Length..];
             }
             if (!rel.StartsWith('/'))
             {
@@ -705,14 +709,15 @@ public sealed partial class SiteBuilder
                 : rel;
         }
 
-        // 从完整 URL 中提取相对路径（taxonomy/term 页共用）
+        // 从完整 URL 中提取相对路径（taxonomy/term 页共用）。
+        // 只剥 **origin**（保留 baseURL 子路径前缀，Hugo 语义）
         string RelPermalinkOf(TaxonomyPageInfo taxPage)
         {
             var rel = taxPage.Permalink ?? "/";
-            var baseUrl = config.BaseURL.TrimEnd('/');
-            if (rel.StartsWith(baseUrl, StringComparison.OrdinalIgnoreCase))
+            var taxOrigin = Templates.TemplateResource.OriginOf(config.BaseURL);
+            if (rel.StartsWith(taxOrigin, StringComparison.OrdinalIgnoreCase))
             {
-                rel = rel[baseUrl.Length..];
+                rel = rel[taxOrigin.Length..];
             }
             return rel.StartsWith('/') ? rel : "/" + rel;
         }

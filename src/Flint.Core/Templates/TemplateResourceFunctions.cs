@@ -735,7 +735,9 @@ public sealed partial class BuiltinTemplateFunctions
 
             // **Track 落盘**：不 Track 则 rel_permalink 指向的文件不会被写出
             //（loveit 的 /css/style.min.css ×15 页面引用 404，实测）
-            var produced = TemplateResource.Create(target, css, "");
+            // baseUrl 同 js.Build 取资源提供者真实值（子路径构建时 RelPermalink
+            // 才带 /<主题>/ 前缀）——此前传空串，toCSS 产物全掉回站根
+            var produced = TemplateResource.Create(target, css, _resources?.BaseUrl ?? "");
             Track(produced);
             return produced.ToScriptObject();
         });
@@ -1111,7 +1113,9 @@ public sealed partial class BuiltinTemplateFunctions
                         out0 = MinifyJs(out0);
                     }
 
-                    return TemplateResource.Create(name, out0, "");
+                    // baseUrl 用资源提供者的真实值（子路径构建时 RelPermalink
+                    // 才带 /<主题>/ 前缀）——此前传空串，js.Build 产物全掉回站根
+                    return TemplateResource.Create(name, out0, _resources?.BaseUrl ?? "");
                 });
             Track(outRes);
             return outRes.ToScriptObject();

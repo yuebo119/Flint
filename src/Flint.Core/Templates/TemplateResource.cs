@@ -91,8 +91,12 @@ public sealed class TemplateResource
 
         // Hugo v0.166 实测：`assets/x.css` 的 `.RelPermalink` = `/x.css`
         //（资源发布在**站根**，不是 `/assets/` 前缀）——模板链接与 CSS 内相对
-        // 引用都依赖该约定（hugo-paper 的 `url(./theme.png)` 实测）
-        var rel = "/" + name.TrimStart('/');
+        // 引用都依赖该约定（hugo-paper 的 `url(./theme.png)` 实测）。
+        // **baseURL 带子路径时 rel 含该前缀**（Hugo 语义：baseURL
+        // `https://example.com/sub/` → `/sub/x.css`）——多主题站按子路径归并到
+        // 单一端口时资源链接才能落在各自主题目录下
+        var prefix = BasePathOf(baseUrl);
+        var rel = prefix + "/" + name.TrimStart('/');
         return new TemplateResource
         {
             Name = name,
@@ -101,8 +105,33 @@ public sealed class TemplateResource
             MediaType = media,
             Content = content,
             RelPermalink = rel,
-            Permalink = baseUrl.TrimEnd('/') + rel
+            Permalink = OriginOf(baseUrl) + rel
         };
+    }
+
+    /// <summary>baseURL 的子路径前缀（无子路径为空串；如 `/fixit`）</summary>
+    internal static string BasePathOf(string? baseUrl)
+    {
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            return "";
+        }
+        var schemeIdx = baseUrl.IndexOf("://", StringComparison.Ordinal);
+        var pathStart = schemeIdx >= 0 ? baseUrl.IndexOf('/', schemeIdx + 3) : 0;
+        var path = pathStart >= 0 ? baseUrl[pathStart..] : "";
+        return path.TrimEnd('/');
+    }
+
+    /// <summary>baseURL 的 origin（scheme://host[:port]）</summary>
+    internal static string OriginOf(string? baseUrl)
+    {
+        if (string.IsNullOrEmpty(baseUrl))
+        {
+            return "";
+        }
+        var schemeIdx = baseUrl.IndexOf("://", StringComparison.Ordinal);
+        var pathStart = schemeIdx >= 0 ? baseUrl.IndexOf('/', schemeIdx + 3) : -1;
+        return pathStart >= 0 ? baseUrl[..pathStart] : baseUrl;
     }
 
     /// <summary>同名同内容的新实例（用于变换链）</summary>
@@ -163,12 +192,13 @@ public sealed class TemplateResource
         var hex = Convert.ToHexStringLower(hash);
         var shortHash = hex[..8];
 
-        var dir = Path.GetDirectoryName(Name)?.Replace('\\', '/') ?? "";
+        // 指纹产物 = 当前目录前缀 + <文件名>.<hash><ext>。目录取自**当前
+        // RelPermalink**（baseURL 子路径已在里面：/stack/scss/x.css），文件名
+        // 取自 Name 的基名——两者各取一段，避免目录重复（/stack/ts/ts/…）
+        var relDir = Path.GetDirectoryName(RelPermalink)?.Replace('\\', '/') ?? "";
         var file = Path.GetFileNameWithoutExtension(Name);
         var ext = Path.GetExtension(Name);
-        var hashed = (dir.Length > 0 ? dir + "/" : "") + file + "." + shortHash + ext;
-
-        var rel = "/" + hashed;
+        var rel = relDir.TrimEnd('/') + "/" + file + "." + shortHash + ext;
         return With(
             relPermalink: rel,
             fingerprint: $"{algorithm.ToLowerInvariant()}-{Convert.ToBase64String(hash)}");

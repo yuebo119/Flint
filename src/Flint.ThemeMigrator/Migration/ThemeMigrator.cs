@@ -59,6 +59,33 @@ internal sealed class ThemeMigrator
     /// <summary>baseof 序幕 partial 的规范名（无扩展名）</summary>
     private const string BaseofProloguePath = "_partials/__baseof_prologue";
 
+    /// <summary>二进制资产（位图/字体/压缩包等）：压缩数据里随机出现 <c>{{</c>
+    /// 两字节序列是常态（blowfish 的 blowfish_logo.png 实测含 9 处），按模板
+    /// 解析二进制数据会让 Go 词法/语法分析器空转不归（CPU 100% 假死）。
+    /// 双判据：已知二进制扩展名 + 头部含 NUL 字节（文本资产两者都不中）</summary>
+    private static readonly HashSet<string> BinaryAssetExtensions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".tiff",
+            ".woff", ".woff2", ".ttf", ".otf", ".eot",
+            ".pdf", ".zip", ".gz", ".mp4", ".webm", ".mp3", ".ogg", ".wasm"
+        };
+
+    private static bool IsBinaryAsset(string filePath)
+    {
+        if (BinaryAssetExtensions.Contains(Path.GetExtension(filePath)))
+        {
+            return true;
+        }
+        // 内容兜底：无扩展名/扩展名不在表内的资产，读前 8KB 探 NUL 字节
+        // （JS/CSS/JSON/SVG 等文本资产不会命中）。空文件 Read 返回 0 不抛——
+        // ReadAtLeast 对 0 字节文件抛 EndOfStreamException（narrow 主题实测）
+        using var stream = File.OpenRead(filePath);
+        Span<byte> head = stackalloc byte[8192];
+        var read = stream.Read(head);
+        return read > 0 && head[..read].IndexOf((byte)0) >= 0;
+    }
+
     /// <summary>执行迁移</summary>
     /// <param name="sourceRoot">Hugo 主题根目录</param>
     /// <param name="targetRoot">输出目录（Flint 主题布局）</param>
@@ -146,7 +173,8 @@ internal sealed class ThemeMigrator
                 // **解析干净且有动作**才落转换结果；JS 里的 `{{` 可能是对象字面量/
                 // 字符串（解析必然报错），误转比不转更糟 → 落到下方原样复制
                 var normalizedAssetRel = rel.Replace((char)92, '/');
-                if (normalizedAssetRel.StartsWith("assets/", StringComparison.OrdinalIgnoreCase))
+                if (normalizedAssetRel.StartsWith("assets/", StringComparison.OrdinalIgnoreCase) &&
+                    !IsBinaryAsset(file))
                 {
                     var assetText = File.ReadAllText(file);
                     if (assetText.Contains("{{", StringComparison.Ordinal))
