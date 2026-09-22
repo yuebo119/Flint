@@ -138,6 +138,26 @@ public sealed class SubpathAuxOutputTests : IDisposable
         Assert.Contains("/stack/posts/a/", html);
     }
 
+    [Fact]
+    public async Task 子路径构建_GetPage按内容根路径仍能命中段页()
+    {
+        // hugo-book 的 menu-section：`.GetPage .Params.BookSection`（值 "posts"）——
+        // 子路径构建时段页 RelPermalink 是 `/stack/posts/`，查询路径 "posts" 必须先剥掉
+        // baseURL 子路径才能命中。修复前返回 null → errorf "Section 'posts' not found"
+        Write("Flint.toml", "baseURL = \"https://example.com/stack/\"\ntitle = \"T\"\n");
+        Write(Path.Combine("layouts", "_default", "single.html"),
+            "{{ $s = site.get_page \"posts\" }}section=[{{ $s?.title }}] rel=[{{ $s?.rel_permalink }}]");
+        Write(Path.Combine("content", "posts", "_index.md"), "---\ntitle: 文章段\n---\n");
+        Write(Path.Combine("content", "posts", "a.md"), "---\ntitle: A\ndate: 2026-01-01\n---\nbody");
+
+        var result = await BuildAsync("https://example.com/stack/");
+        Assert.True(result.Success, string.Join(";", result.Errors.Select(e => e.Message)));
+
+        var html = File.ReadAllText(Path.Combine(_outputDir, "stack", "posts", "a", "index.html"));
+        Assert.Contains("section=[文章段]", html);
+        Assert.Contains("rel=[/stack/posts/]", html);
+    }
+
     private static PageContext MakePage(string title, string rel) => new()
     {
         Title = title,
