@@ -102,6 +102,7 @@ EOF
       ;;
     stack)
       cat >> "$site/hugo.toml" <<'EOF'
+mainSections = ["posts"]
 sidebar.emoji = "cat"
 sidebar.subtitle = "演示"
 [[widgets.homepage]]

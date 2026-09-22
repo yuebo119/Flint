@@ -90,11 +90,10 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
                 return v;
             }
 
-            // **SetInMap 写入的嵌套映射**：Hugo 的 `SetInMap MAP KEY VALUE` 之后
-            // `Get MAP` 返回该映射本身（monochrome 的 baseof 用 `SetInMap "params" …`
-            // 初始化一串参数、head.html 再 `(.Store.Get "params").enable_open_graph` 读取）。
-            // 此前 Get 只看扁平值表 → 读回 null → 依赖这些参数的整段 head 内容不渲染
-            //（monochrome 的 opengraph/twitter_cards 头标签缺失，实测）
+            // **SetInMap 写入的映射**：SetInMap 现按 Hugo 语义写进 _values 内的
+            // map 值（见 SetInMap 注释），此处 _maps 仅为历史写入的读取兜底
+            // （monochrome 的 baseof 用 SetInMap "params" … 初始化一串参数、
+            // head.html 再 (.Store.Get "params").enable_open_graph 读取）
             if (_maps.TryGetValue(key, out var map))
             {
                 var wrapped = new ScriptObject();
@@ -196,25 +195,67 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
         }
     }
 
-    /// <summary>SetInMap MAP KEY VALUE：嵌套映射写入</summary>
+    /// <summary>
+    /// SetInMap MAP KEY VALUE：嵌套映射写入。
+    ///
+    /// **Hugo Scratch 语义（v0.166 源码）**：Scratch 只有一张 `Values` 表，
+    /// `SetInMap` 取出该键现有值、断言为 `map[string]any` 后把 mapKey 写进去
+    /// （不存在或类型不符则新建 map 整体替换）。即 **Set 与 SetInMap 是同一张表**。
+    ///
+    /// 此前 Flint 分置 _values/_maps 两张表且 Get 优先 _values：主题惯用写法
+    /// 「先 `set "this" dict` 初始化、再 `setinmap "this" "script" …` 累积」
+    /// （FixIt 的 init/index.html + store/script.html 实测）映射写被扁平值
+    /// 永久遮蔽，累积的 script/style 数组读不回来 → 全站 body 脚本一个都不渲染
+    /// （fixit 演示站实测：head 脚本在、主题 JS 全死）。
+    /// </summary>
     public void SetInMap(string map, string key, object? value)
     {
         lock (_gate)
         {
-            if (!_maps.TryGetValue(map, out var inner))
+            if (_values.TryGetValue(map, out var existing))
             {
-                inner = new Dictionary<string, object?>(StringComparer.Ordinal);
-                _maps[map] = inner;
+                // 已存在的 map 值：写进其内部（ScriptObject 含蛇形别名子类）
+                if (existing is ScriptObject inner)
+                {
+                    inner[key] = value;
+                    return;
+                }
+                if (existing is Dictionary<string, object?> plain)
+                {
+                    plain[key] = value;
+                    return;
+                }
+                // 非 map 的既有值：Hugo 同样丢弃并新建 map
             }
-            inner[key] = value;
+
+            var fresh = new ScriptObject();
+            fresh[key] = value;
+            _values[map] = fresh;
         }
     }
 
-    /// <summary>DeleteInMap MAP KEY</summary>
+    /// <summary>
+    /// DeleteInMap MAP KEY：从统一视图里的 map 值中删键（Hugo 语义）。
+    /// 先查 _values 内的 map 值（SetInMap 的现行写入位置），再退回 _maps 历史表
+    /// </summary>
     public void DeleteInMap(string map, string key)
     {
         lock (_gate)
         {
+            if (_values.TryGetValue(map, out var existing))
+            {
+                if (existing is ScriptObject obj)
+                {
+                    obj.Remove(key);
+                    return;
+                }
+                if (existing is Dictionary<string, object?> plain)
+                {
+                    plain.Remove(key);
+                    return;
+                }
+            }
+
             if (_maps.TryGetValue(map, out var inner))
             {
                 inner.Remove(key);
@@ -222,15 +263,34 @@ public sealed class PageStoreObject : ScriptObject, IFlintNonDataObject
         }
     }
 
-    /// <summary>GetSortedMapValues MAP：按 key 排序的值列表（Hugo 语义）</summary>
+    /// <summary>
+    /// GetSortedMapValues MAP：按 key 排序的值列表（Hugo 语义）。
+    /// 读统一视图：_values 内的 map 值优先，_maps 历史表兜底
+    /// </summary>
     public ScriptArray GetSortedMapValues(string map)
     {
         lock (_gate)
         {
             var arr = new ScriptArray();
-            if (_maps.TryGetValue(map, out var inner))
+            IEnumerable<KeyValuePair<string, object?>>? source = null;
+            if (_values.TryGetValue(map, out var existing))
             {
-                foreach (var kv in inner.OrderBy(k => k.Key, StringComparer.Ordinal))
+                if (existing is ScriptObject obj)
+                {
+                    source = obj.ToList();
+                }
+                else if (existing is Dictionary<string, object?> plain)
+                {
+                    source = plain.ToList();
+                }
+            }
+            source ??= _maps.TryGetValue(map, out var legacy)
+                ? legacy.ToList()
+                : null;
+
+            if (source is not null)
+            {
+                foreach (var kv in source.OrderBy(k => k.Key, StringComparer.Ordinal))
                 {
                     arr.Add(kv.Value);
                 }
