@@ -295,6 +295,40 @@ public class HugoCompatSemanticsTests : IDisposable
         Assert.Equal("n=1", html);
     }
 
+    // ---- 9. append：切片实参铺平、非 list 实参单加（Hugo v0.166 实测）----
+
+    [Fact]
+    public async Task append_切片实参铺平非切片实参单加()
+    {
+        // `slice "a" | append (slice "b" "c")` → [a b c]（Hugo append 对 slice 实参铺平）
+        Assert.Equal(
+            "n=3 first=a last=c",
+            await Render("{{ $l = (slice \"a\") | append (slice \"b\" \"c\") }}" +
+                         "n={{ $l | array.size }} first={{ $l[0] }} last={{ $l[2] }}"));
+    }
+
+    [Fact]
+    public async Task append_字典实参按单个元素追加()
+    {
+        // 回归：blowfish 的 `$cssResources | append (resources.get "x.css")` 把**资源
+        // 对象**（ScriptObject，也是 IEnumerable）整体拆成几十个成员塞进数组，Concat
+        // 内容全取空、css 打包成空串（全站无样式）。IList 判据下非 list 实参必须单加
+        Assert.Equal(
+            "n=2 k=v",
+            await Render("{{ $d = dict \"k\" \"v\" }}" +
+                         "{{ $l = (slice \"a\") | append $d }}" +
+                         "n={{ $l | array.size }} k={{ $l[1].k }}"));
+    }
+
+    [Fact]
+    public async Task append_字符串拼接()
+    {
+        // Hugo 语义：append 对字符串做拼接（Ananke 的 $body_classes 实测）
+        Assert.Equal(
+            "s=a b",
+            await Render("{{ $s = \"a\" | append \" b\" }}s={{ $s }}"));
+    }
+
     // ---- 8. .Ancestors：只含**真实容器页**，不含路径段拼接出的假祖先 ----
 
     private static PageContext Node(string title, string rel, string kind) => new()
