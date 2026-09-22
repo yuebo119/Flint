@@ -158,20 +158,22 @@ EOF
   fi
 
   # menus 收尾（TOML 表头后不能追加点号键）
+  # **URL 带主题子路径**：归并单端口后菜单是站内绝对路径，不带 /<主题>/ 前缀
+  # 会跳到统一树根（画廊）或 404（bearblog/stack 的菜单实测）
   {
     echo ""
     echo "[menus]"
     echo "[[menus.main]]"
     echo "name = \"首页\""
-    echo "url = \"/\""
+    echo "url = \"/$name/\""
     echo "weight = 1"
     echo "[[menus.main]]"
     echo "name = \"归档\""
-    echo "url = \"/posts/\""
+    echo "url = \"/$name/posts/\""
     echo "weight = 2"
     echo "[[menus.main]]"
     echo "name = \"关于\""
-    echo "url = \"/about/\""
+    echo "url = \"/$name/about/\""
     echo "weight = 3"
   } >> "$site/hugo.toml"
   cp "$site/hugo.toml" "$site/Flint.toml"
@@ -219,10 +221,12 @@ for name in "${THEMES[@]}"; do
   url="$UNIFIED_BASE/$name/"
   if [ $bexit -eq 0 ] && [ "$pages" -gt 0 ]; then
     printf "%-14s %-8s %-6s %-8s %s\n" "$name" "通过" "$pages" "${minsz:-NA}" "$url"
-    # 合并进单一端口服务树（子路径 baseURL 已在构建期生效，产物可直接归并）
+    # 合并进单一端口服务树：子路径 baseURL 生效后，构建产物整棵树在
+    # public/<主题名>/ 下（public/stack/…），把**该目录内容**并入统一树对应
+    # 主题目录——直接拷 public/ 会多套一层（demo-unified/stack/stack/…）
     rm -rf "$UNIFIED/$name"
     mkdir -p "$UNIFIED/$name"
-    cp -r "$site/public/." "$UNIFIED/$name/"
+    cp -r "$site/public/$name/." "$UNIFIED/$name/"
   else
     printf "%-14s %-8s %-6s %-8s\n" "$name" "失败($bexit)" "$pages" "${minsz:-NA}"
     echo "$build_out" | tail -3 | sed 's/^/    /'
