@@ -1085,17 +1085,54 @@ public sealed partial class BuiltinTemplateFunctions
 
     #region URL 函数 (10+)
 
-    /// <summary>相对 URL：前导 <c>/</c>，绝对 URL 原样返回（Hugo relURL 语义）</summary>
-    private static string RelUrl(string? path) =>
-        string.IsNullOrEmpty(path) ? "/"
-        : IsAbsoluteUrl(path) ? path
-        : "/" + path.TrimStart('/');
+    /// <summary>
+    /// 相对 URL：前导 <c>/</c>，**含 baseURL 的子路径前缀**（Hugo relURL 语义）。
+    /// Hugo 对 `baseURL = https://example.com/sub/` 的 `relURL "css/x.css"`
+    /// 产出 `/sub/css/x.css`（GitHub Pages 项目站的标准用法）——此前 Flint 忽略
+    /// 子路径恒返回 `/css/x.css`，多站按子路径归并到单一端口时全部 404
+    /// </summary>
+    private string RelUrl(string? path)
+    {
+        var prefix = BasePathPrefix;
+        if (string.IsNullOrEmpty(path))
+        {
+            return prefix.Length > 0 ? prefix + "/" : "/";
+        }
+        if (IsAbsoluteUrl(path))
+        {
+            return path;
+        }
+        return prefix + "/" + path.TrimStart('/');
+    }
 
-    /// <summary>绝对 URL：拼到 baseURL（Hugo absURL 语义，baseURL 已含语言前缀时等价 AbsLangURL）</summary>
+    /// <summary>
+    /// 绝对 URL：拼到 baseURL（Hugo absURL 语义，baseURL 已含语言前缀时等价 AbsLangURL）。
+    /// 经 <see cref="RelUrl"/> 派生（子路径只含一份，避免双前缀）
+    /// </summary>
     private string AbsUrl(string? path) =>
         string.IsNullOrEmpty(path) ? _baseUrl
         : IsAbsoluteUrl(path) ? path
-        : _baseUrl + "/" + path.TrimStart('/');
+        : OriginOfBaseUrl + RelUrl(path);
+
+    /// <summary>baseURL 的 origin 部分（scheme://host[:port]）</summary>
+    private string OriginOfBaseUrl =>
+        _baseUrl.Contains("://", StringComparison.Ordinal)
+            ? _baseUrl[..(_baseUrl.IndexOf('/', _baseUrl.IndexOf("://", StringComparison.Ordinal) + 3) is var i and > 0 ? i : _baseUrl.Length)]
+            : _baseUrl;
+
+    /// <summary>baseURL 的子路径前缀（无子路径时为空串；如 `/fixit`）</summary>
+    private string BasePathPrefix
+    {
+        get
+        {
+            var schemeIdx = _baseUrl.IndexOf("://", StringComparison.Ordinal);
+            var pathStart = schemeIdx >= 0
+                ? _baseUrl.IndexOf('/', schemeIdx + 3)
+                : 0;
+            var path = pathStart >= 0 ? _baseUrl[pathStart..] : "";
+            return path.TrimEnd('/');
+        }
+    }
 
     private static bool IsAbsoluteUrl(string path) =>
         path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||

@@ -641,9 +641,14 @@ public sealed class PageContext
     /// </summary>
     public PageContext WithPaginator(PaginatorView paginator, string baseUrl)
     {
+        // rel 即页面自身 RelPermalink（已含 baseURL 子路径前缀，如 /stack/posts/），
+        // 故绝对 URL 只拼**源站**（OriginOf 剥掉子路径）——拼整个 baseURL 会二次
+        // 叠加前缀（http://…/stack/ + /stack/posts/ → /stack/stack/posts/，stack
+        // 主题首页 canonical 实测）。无子路径时 OriginOf 与 TrimEnd('/') 等价，
+        // 历史行为不变
         var rel = paginator.URL;
         return Clone(
-            baseUrl.TrimEnd('/') + rel, rel, Pages, paginator);
+            Flint.Core.Templates.TemplateResource.OriginOf(baseUrl) + rel, rel, Pages, paginator);
     }
 
     /// <summary>共享浅拷贝实现：仅 Permalink/RelPermalink/Pages/Paginator 可变</summary>

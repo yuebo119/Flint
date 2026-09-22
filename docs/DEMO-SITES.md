@@ -1,46 +1,68 @@
 # 多主题演示站与主题画廊
 
-一套测试语料、21 个适配主题、一个画廊入口。用于主题选型对比与渲染验证。
+一套测试语料、21 个适配主题、一个统一入口。用于主题选型对比与渲染验证。
 
 ## 快速开始
 
 ```bash
-# 1. 全量重建 21 个主题演示站（每个主题独立站点，端口 8401-8421）
+# 1. 全量重建 21 个主题演示站，并按子路径归并到单一服务树 demo-unified/
 bash scripts/demo-sites.sh              # 全部主题
 bash scripts/demo-sites.sh narrow       # 仅指定主题
-SERVE=1 bash scripts/demo-sites.sh      # 构建后批量启动静态服务
+SERVE=1 bash scripts/demo-sites.sh      # 构建后启动统一静态服务
 
-# 2. 截 21 张主题预览图（Playwright，1280×800，需演示站服务已启动）
+# 2. 截 21 张主题预览图（Playwright，1280×800，需统一服务已启动）
 #    输出到 demo-gallery/static/shots/<主题>.png
 
-# 3. 构建并启动画廊站（端口 8400）
-SERVE=1 bash scripts/build-gallery.sh
+# 3. 构建画廊并合并进统一树根（画廊即 / 入口）
+bash scripts/build-gallery.sh
 ```
 
-产物位置（均在 git 仓外，属生成物）：`../demo-sites/<主题>/`、`../demo-gallery/`。
+统一入口：`http://127.0.0.1:8400/`（画廊）；各主题在子路径
+`http://127.0.0.1:8400/<主题名>/`（如 `/fixit/`、`/stack/`）。
+
+产物位置（均在 git 仓外，属生成物）：`../demo-sites/<主题>/`（各站独立构建源 +
+`public/`）、`../demo-unified/`（单一端口服务树：根为画廊，`/<主题>/` 为各主题站点）。
 
 ## 主题画廊（案例站）
 
 `scripts/gallery/` 是画廊站源码（Flint 自建，无主题依赖）：`layouts/index.html`
-为单页卡片网格，21 个主题的预览图 + 名称 + 端口 + 风格标签，点击卡片直达对应
-主题演示站，顶部输入框按名称/风格/标签筛选。主题清单硬编码在模板里
-（`$themes` 数组），端口与 `demo-sites.sh` 的 `THEME_PORT` 固定映射一致：
+为单页卡片网格，21 个主题的预览图 + 名称 + 风格标签，点击卡片直达对应主题演示站的
+子路径，顶部输入框按名称/风格/标签筛选。主题清单硬编码在模板里（`$themes` 数组），
+卡片链接与 `demo-sites.sh` 的主题名一一对应：
 
-| 主题 | 端口 | | 主题 | 端口 |
+| 主题 | 统一入口 | | 主题 | 统一入口 |
 |---|---|---|---|---|
-| ananke | 8401 | | m10c | 8414 |
-| bearblog | 8402 | | monochrome | 8415 |
-| blog-awesome | 8403 | | narrow | 8416 |
-| blowfish | 8404 | | papermod | 8417 |
-| clarity | 8405 | | stack | 8418 |
-| console | 8406 | | techdoc | 8419 |
-| even | 8407 | | xmin | 8420 |
-| fixit | 8408 | | yinyang | 8421 |
-| github-style | 8409 | | **画廊** | **8400** |
-| hugo-book | 8410 | | | |
-| hugo-coder | 8411 | | | |
-| hugo-paper | 8412 | | | |
-| loveit | 8413 | | | |
+| ananke | /ananke/ | | m10c | /m10c/ |
+| bearblog | /bearblog/ | | monochrome | /monochrome/ |
+| blog-awesome | /blog-awesome/ | | narrow | /narrow/ |
+| blowfish | /blowfish/ | | papermod | /papermod/ |
+| clarity | /clarity/ | | stack | /stack/ |
+| console | /console/ | | techdoc | /techdoc/ |
+| even | /even/ | | xmin | /xmin/ |
+| fixit | /fixit/ | | yinyang | /yinyang/ |
+| github-style | /github-style/ | | **画廊** | **/** |
+| hugo-book | /hugo-book/ | | | |
+| hugo-coder | /hugo-coder/ | | | |
+| hugo-paper | /hugo-paper/ | | | |
+| loveit | /loveit/ | | | |
+
+## 单端口统一架构
+
+SSG 的主题是**站点级**能力（一个渲染站只能挂一个主题），21 个主题无法进同一渲染
+站；但 Hugo/Flint 的 baseURL 支持**子路径**（GitHub Pages 项目站形态），因此：
+
+1. `demo-sites.sh` 给每个主题站点写 `baseURL = "http://127.0.0.1:8400/<主题>/"`，
+   构建产物的 relURL/RelPermalink/资源链接/feed/canonical 全部落在 `/<主题>/` 下；
+2. 各站 `public/` 归并到 `demo-unified/<主题>/`（子路径 baseURL 的产物天然自包含，
+   不发生重写）；
+3. 画廊构建后合并进 `demo-unified/` 根，成为 `/` 入口；
+4. 单一静态服务（`python -m http.server 8400 --directory demo-unified/`）同时提供
+   画廊与 21 个主题站。
+
+引擎侧关键实现：`TemplateResource.BasePathOf/OriginOf` 统一解析 baseURL 的子路径与
+源站，RelUrl/AbsUrl、页面 permalink、`TemplateResource.Create`（toCSS/js.Build/
+Concat/Copy 等）、`WithFingerprint`、sitemap/feed 输出、404/robots 均基于该前缀
+推导，根 baseURL（无子路径）时行为与历史完全一致（1095 项测试覆盖）。
 
 ## 测试语料库（scripts/fixtures/corpus/）
 
@@ -75,5 +97,6 @@ corpus/
 - `site.webmanifest` / favicon 已由 corpus 静态目录统一提供（`scripts/fixtures/
   corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径）；
   早期"主题引用不存在的文件"问题已修复
-- 重建演示站前需先停掉对应端口的静态服务（Windows 下服务进程 CWD 在 public/
-  内会锁目录）：`netstat -ano | grep :84xx` 找 PID 后 `taskkill /F /PID <pid>`
+- 重建演示站前需先停掉统一服务（Windows 下服务进程 CWD 在 `demo-unified/`
+  外则无锁问题；`--clean` 只清各站自己的 `public/`）：若 8400 已被占用，
+  `netstat -ano | grep :8400` 找 PID 后 `taskkill /F /PID <pid>`

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# 主题画廊案例站：把 scripts/gallery 源码落地为 demo-gallery/，构建并按需启动服务
+# 主题画廊案例站：把 scripts/gallery 源码落地为 demo-gallery/，构建并**合并进
+# 统一服务树**（demo-unified/ 根 = 画廊入口，各主题在 /<主题>/ 子路径）
 #
 # 用法:
-#   bash scripts/build-gallery.sh          # 仅构建
-#   SERVE=1 bash scripts/build-gallery.sh  # 构建后在 8400 端口启动静态服务
+#   bash scripts/build-gallery.sh          # 仅构建并合并
+#   SERVE=1 bash scripts/build-gallery.sh  # 合并后在 8400 端口启动统一服务
 #
 # 注意：static/shots/ 下的主题预览图由截图流程生成（先截图后构建），
 # 本脚本只覆盖 hugo.toml/layouts/content，不触碰 static/。
@@ -24,6 +25,7 @@ FLINT_SRC="$REPO_ROOT/Flint"
 FLINT="$FLINT_SRC/src/Flint.Cli/bin/Release/net10.0/win-x64/Flint.exe"
 GALLERY_SRC="$SELF_DIR/gallery"
 SITE="$REPO_ROOT/demo-gallery"
+UNIFIED="$REPO_ROOT/demo-unified"
 PORT=8400
 
 [ -x "$FLINT" ] || { echo "未找到 Flint.exe: $FLINT" >&2; exit 1; }
@@ -47,8 +49,13 @@ if [ "$bexit" -ne 0 ] || [ "$pages" -eq 0 ]; then
   exit 1
 fi
 
+# 合并到统一服务树根部（index.html + shots/ + favicon 等），与各主题子路径共存
+mkdir -p "$UNIFIED"
+cp -r "$SITE/public/." "$UNIFIED/"
+echo "画廊已合并进统一树: $UNIFIED/（入口 index.html，主题在 /<主题>/）"
+
 if [ "${SERVE:-0}" = "1" ]; then
-  (cd "$SITE/public" && python -m http.server "$PORT" --bind 127.0.0.1 > /dev/null 2>&1 &)
-  echo "画廊已启动: http://127.0.0.1:$PORT/"
+  (cd "$UNIFIED" && python -m http.server "$PORT" --bind 127.0.0.1 > /dev/null 2>&1 &)
+  echo "统一服务已启动: http://127.0.0.1:$PORT/"
 fi
 exit 0

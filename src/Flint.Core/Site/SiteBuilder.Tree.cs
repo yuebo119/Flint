@@ -688,7 +688,11 @@ public sealed partial class SiteBuilder
         }
 
         var kind = node.Key.Length == 0 ? "home" : "section";
-        var relPermalink = node.Key.Length == 0 ? "/" : node.Key + "/";
+        // **baseURL 子路径前缀**（Hugo 语义：relURL/RelPermalink 含 baseURL 路径）——
+        // 多主题站按子路径归并单一端口时（/fixit/、/stack/…），链接必须落在各自
+        // 主题目录下。根 baseURL（历史默认）前缀为空串，输出不变
+        var relPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) +
+            (node.Key.Length == 0 ? "/" : node.Key + "/");
 
         // 合成节点的 cascade 字段兜底（近→远先到先得；合成节点无自身 front matter）
         string? title = node.Title ?? node.Key;
@@ -712,7 +716,7 @@ public sealed partial class SiteBuilder
         {
             Title = title,
             Content = "",
-            Permalink = config.BaseURL.TrimEnd('/') + relPermalink,
+            Permalink = Templates.TemplateResource.OriginOf(config.BaseURL) + relPermalink,
             RelPermalink = relPermalink,
             Date = DateTimeOffset.Now,
             Tags = [],
@@ -802,9 +806,11 @@ public sealed partial class SiteBuilder
         string? nodeKind = null)
     {
         var permalink = PermalinkEngine.GeneratePermalink(content, config);
-        var relPermalink = permalink.StartsWith(config.BaseURL)
-            ? permalink[config.BaseURL.Length..]
-            : permalink;
+        // permalink 恒为根相对路径；relPermalink 需拼上 baseURL 子路径前缀
+        // （Hugo 语义——多主题站按子路径归并单一端口的前提）。此前此处按
+        // StartsWith(config.BaseURL) 剥离整段 baseURL，而 GeneratePermalink 从不
+        // 返回绝对 URL，子路径被静默丢弃
+        var relPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + permalink;
 
         // cascade 合并：祖先级联值先入，页面自身显式 Params 覆盖（对齐 Hugo 优先级）
         var ownParams = content.Metadata.Params;
@@ -842,7 +848,7 @@ public sealed partial class SiteBuilder
         {
             Title = title,
             Content = content.HtmlContent,
-            Permalink = config.BaseURL.TrimEnd('/') + relPermalink,
+            Permalink = Templates.TemplateResource.OriginOf(config.BaseURL) + relPermalink,
             RelPermalink = relPermalink,
             // **无日期页用零值时间**（Hugo 语义）：Hugo 对无 front matter date 的页面给
             // 零值时间 0001-01-01T00:00:00Z，主题据此隐藏日期（`.Date.IsZero` 守卫）或
