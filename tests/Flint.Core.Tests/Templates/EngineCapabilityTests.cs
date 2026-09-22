@@ -241,9 +241,12 @@ public sealed class TemplateResourceTests : IDisposable
         var utilIdx = bundled.IndexOf("return \"hi \" + n;", StringComparison.Ordinal);
         var entryIdx = bundled.IndexOf("console.log(greet(", StringComparison.Ordinal);
         Assert.True(utilIdx >= 0 && entryIdx >= 0 && utilIdx < entryIdx);
-        // 每模块独立作用域（IIFE）+ 导出名转发到顶层
+        // 每模块独立作用域（IIFE）；导出挂模块私有 __flint_exp、经 __flint_mods
+        // 注册表跨模块引用；import 重写为对注册表的 var 声明
         Assert.Contains("(function(){", bundled);
-        Assert.Contains("function greet(){ return __flint_mod['greet']", bundled);
+        Assert.Contains("__flint_exp.greet = greet;", bundled);
+        Assert.Contains("__flint_mods[", bundled);
+        Assert.Contains("var greet = __flint_mods[", bundled);
     }
 
     [Fact]

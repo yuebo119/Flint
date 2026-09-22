@@ -1056,12 +1056,22 @@ public sealed partial class BuiltinTemplateFunctions
             {
                 name = target;
             }
+            else if (TypeScriptEntry(name))
+            {
+                // **Hugo 语义：targetPath 缺省时按 MIME 改扩展名**——.ts 输入的
+                // 产物是 .js（Hugo 文档明示 TypeScript 为例）。stack 的
+                // `resources.get "ts/main.ts" | js.Build $opts | fingerprint`
+                // 不传 targetPath，此前产物保持 main.<hash>.ts，浏览器当 JS 加载
+                // 直接 SyntaxError（实测）
+                name = Path.ChangeExtension(name, ".js");
+            }
 
-            // **ES module 打包**：narrow 的 js.Build 输入是 ES module 入口
+            // **ES module 打包 + TS 剥离**：narrow 的 js.Build 输入是 ES module 入口
             // （import { initX } from "./ui.js"）——不打包则浏览器报
             // "Cannot use import statement outside a module"，全部 JS 失效
-            // （narrow 导航/主题切换/dock 实测全死）。轻量实现：以入口文件为源
-            // 做 import 解析 + 拓扑序拼接 + 去掉 import/export 语句。
+            // （narrow 导航/主题切换/dock 实测全死）。fixit/stack 的入口是 .ts，
+            // 还需剥类型语法（as 转换/interface/成员注解）。轻量实现：以入口文件
+            // 为源做 import 解析 + 拓扑序拼接 + import/export 重写。
             // **必须在 minify 之前**：MinifyJs 把 import 压成单行后逐行解析失效
             var entryPath = resource?.SourcePath;
             if (entryPath is null && !string.IsNullOrEmpty(name))
@@ -1069,19 +1079,27 @@ public sealed partial class BuiltinTemplateFunctions
                 entryPath = TryResolveAssetPath(name);
             }
             var minifyJs = OptsFlag(optionArgs.OfType<object>().ToArray(), "minify", defaultValue: false);
+            // Hugo 的 params 选项 → @params 虚拟模块（`import * as params from '@params'`）
+            var paramsJson = OptsParamsJson(optionArgs);
+            // format=esm：产物保持 ES 模块形态（入口导出翻成 export 语句），
+            // 供 `<script type="module">` 动态 import 消费（stack 的 photoswipe
+            // `import gallery from '/ts/gallery.js'` 实测）
+            var esmOutput = string.Equals(
+                OptsString([.. optionArgs], "format"), "esm", StringComparison.OrdinalIgnoreCase);
 
-            // **整段入缓存**：ES 打包 + minify 是对"入口路径 + 内容"的纯函数，
+            // **整段入缓存**：ES 打包 + minify 是对"入口路径 + 内容 + params"的纯函数，
             // 每页重跑时 700 页各打包一遍主 bundle（fixit 实测为超时主因之一）
             var outRes = CachedByKey(
-                $"js.build|{name}|{entryPath}|{minifyJs}|{content.Length}:{ContentDigest(content)}",
+                "js.build|" + name + "|" + (entryPath ?? "") + "|" + minifyJs + "|" + esmOutput + "|" + (paramsJson?.Length ?? -1) + "|" + content.Length,
                 () =>
                 {
                     var out0 = content;
-                    if (entryPath is not null && File.Exists(entryPath) &&
-                        (out0.Contains("import ", StringComparison.Ordinal) ||
-                         out0.Contains("export ", StringComparison.Ordinal)))
+                    var needsBundle = out0.Contains("import ", StringComparison.Ordinal) ||
+                                      out0.Contains("export ", StringComparison.Ordinal);
+                    var needsStrip = TypeScriptEntry(entryPath);
+                    if (entryPath is not null && File.Exists(entryPath) && (needsBundle || needsStrip))
                     {
-                        var bundled = EsmBundler.Bundle(entryPath, out0);
+                        var bundled = EsmBundler.Bundle(entryPath, out0, paramsJson, esmOutput);
                         if (bundled is not null)
                         {
                             out0 = bundled;
@@ -1100,6 +1118,38 @@ public sealed partial class BuiltinTemplateFunctions
         });
         js.Import("Babel", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
         js.Import("Batch", (params object?[] args) => (object?)FindResourceArg(args) ?? args.FirstOrDefault());
+    }
+
+    /// <summary>js.Build 的 params 选项序列化为 JSON（@params 虚拟模块注入用）</summary>
+    private string? OptsParamsJson(List<object?> optionArgs)
+    {
+        foreach (var o in optionArgs)
+        {
+            if (o is ScriptObject so &&
+                (so.ContainsKey("params") ? so["params"] : null) is { } p)
+            {
+                return p switch
+                {
+                    string s => s,
+                    _ => SerializeToJson(p, indented: false),
+                };
+            }
+        }
+        return null;
+    }
+
+    /// <summary>入口/产物名是否为 TypeScript 源（决定是否剥类型 + 改扩展名）</summary>
+    private static bool TypeScriptEntry(string? nameOrPath)
+    {
+        if (string.IsNullOrEmpty(nameOrPath))
+        {
+            return false;
+        }
+        var ext = Path.GetExtension(nameOrPath);
+        return ext.Equals(".ts", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".tsx", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".mts", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".cts", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -1127,56 +1177,84 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>轻量 ES module 打包器（js.Build 的 ES module 入口形态）</summary>
     internal static partial class EsmBundler
     {
-        /// <summary>导出名终止字符（函数名/变量名的边界）</summary>
-        private static readonly char[] ExportNameStopChars = [' ', '(', '=', ';'];
+        /// <summary>import 无扩展名时的解析候选（Node/esbuild 语义：先精确后补扩展名再目录索引）</summary>
+        private static readonly string[] ModuleExtensions =
+            [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".jsx"];
+
+        /// <summary>Hugo <c>js.Build</c> 的 <c>params</c> 选项虚拟模块固定 specifier</summary>
+        private const string ParamsSpecifier = "@params";
+
+        /// <summary>解析后的模块（虚拟模块 Path 为 null）</summary>
+        private sealed class Module
+        {
+            public required string Key = "";
+            public string? Path;
+            public required string Content = "";
+            public bool IsParams;
+        }
+
         /// <summary>
-        /// 从入口文件出发解析相对 import，按**依赖序**拼接（被依赖者在前），
-        /// 去掉 import/export 语句。循环/解析失败返回 null（调用方回退原文）
+        /// 从入口文件出发解析 import 图，按**依赖序**（被依赖者在前）拼接为单一经典脚本。
+        /// 每模块包 IIFE 独立作用域，导出挂 __flint_exp 对象、经 __flint_mods 注册表
+        /// 跨模块引用；import 语句重写为对注册表的 var 声明（支持默认/命名/别名/
+        /// 命名空间导入）。TS 入口先剥类型再打包。<c>paramsJson</c> 非空时注入
+        /// <c>@params</c> 虚拟模块。解析失败/文件缺失返回 null（调用方回退原文）。
+        /// <paramref name="esmOutput"/> 为 true 时按 ES 模块输出：IIFE 包之后
+        /// 追加入口模块的 ESM 导出语句（stack 的 photoswipe 用
+        /// `format "esm"` + 动态 `import gallery from …` 消费默认导出）
         /// </summary>
-        internal static string? Bundle(string entryPath, string entryContent)
+        internal static string? Bundle(
+            string entryPath, string entryContent, string? paramsJson = null, bool esmOutput = false)
         {
             try
             {
-                var visited = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                var order = new List<string>();
-                if (!Visit(entryPath, entryContent, visited, order))
+                var modules = new Dictionary<string, Module>(StringComparer.OrdinalIgnoreCase);
+                var order = new List<Module>();
+                if (!Load(entryPath, entryContent, modules, order, paramsJson))
                 {
                     return null;
                 }
 
-                // **每模块包一层 IIFE**：多个模块的顶层 `let initialized` 等同名
-                // 声明拼接后冲突（"Identifier 'initialized' has already been
-                // declared"——narrow 的 ui.js/tabs.js/codeblock.js 实测）。
-                // IIFE 给每个模块独立作用域；export 的函数需暴露到外层——
-                // 用显式赋值把**导出的名字**挂到共享命名空间对象
-                var exported = new Dictionary<string, string>(StringComparer.Ordinal);
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine("var __flint_mod = {};");
-                foreach (var path in order)
+                sb.AppendLine("var __flint_mods = {};");
+                Module? entryMod = null;
+                var entryNamed = new List<string>();
+                var entryHasDefault = false;
+                foreach (var mod in order)
                 {
-                    var body = StripModuleSyntax(visited[path]);
-                    var names = ExtractExportedNames(visited[path]);
-                    sb.Append("/* ===== ").Append(Path.GetFileName(path)).AppendLine(" ===== */");
-                    sb.AppendLine("(function(){");
-                    sb.AppendLine(body);
-                    foreach (var n in names)
+                    if (mod.Path is not null && Path.GetFullPath(mod.Path) == Path.GetFullPath(entryPath))
                     {
-                        if (!exported.ContainsKey(n))
-                        {
-                            exported[n] = path;
-                            sb.Append("  try { __flint_mod['").Append(n).Append("'] = ")
-                              .Append(n).Append("; } catch (e) {}");
-                            sb.AppendLine();
-                        }
+                        entryMod = mod;
                     }
+                    sb.Append("/* ===== ").Append(Path.GetFileName(mod.Key)).AppendLine(" ===== */");
+                    sb.AppendLine("(function(){");
+                    sb.AppendLine("  var __flint_exp = {};");
+                    var (body, named, hasDefault) = EmitModuleBody(mod, modules);
+                    if (ReferenceEquals(mod, entryMod))
+                    {
+                        entryNamed = named;
+                        entryHasDefault = hasDefault;
+                    }
+                    sb.Append(body);
+                    sb.Append("  __flint_mods[").Append(JsString(mod.Key)).Append("] = __flint_exp;");
                     sb.AppendLine("})();");
                 }
-                // 把导出名提升为顶层函数声明（import 方直接调用）
-                foreach (var n in exported.Keys)
+
+                if (esmOutput && entryMod is not null)
                 {
-                    sb.Append("function ").Append(n).Append("(){ return __flint_mod['")
-                      .Append(n).Append("'] && __flint_mod['").Append(n).Append("'].apply(null, arguments); }");
-                    sb.AppendLine();
+                    // ESM 输出：把入口模块的导出翻成真正的 export 语句挂在文件尾
+                    var reg = JsString(entryMod.Key);
+                    if (entryHasDefault)
+                    {
+                        sb.Append("export default __flint_mods[").Append(reg).Append("].default;")
+                          .AppendLine();
+                    }
+                    foreach (var n in entryNamed)
+                    {
+                        sb.Append("const ").Append(n).Append(" = __flint_mods[").Append(reg)
+                          .Append("].").Append(n).AppendLine(";");
+                        sb.Append("export { ").Append(n).AppendLine(" };");
+                    }
                 }
                 return sb.ToString();
             }
@@ -1186,125 +1264,2046 @@ public sealed partial class BuiltinTemplateFunctions
             }
         }
 
-        private static bool Visit(
+        /// <summary>深度优先加载模块图（后序 = 依赖序）；失败返回 false</summary>
+        private static bool Load(
             string path, string content,
-            Dictionary<string, string> visited, List<string> order)
+            Dictionary<string, Module> modules, List<Module> order, string? paramsJson)
         {
             var key = Path.GetFullPath(path);
-            if (visited.ContainsKey(key))
+            if (modules.ContainsKey(key))
             {
                 return true; // 已处理（含循环依赖：直接跳过）
             }
 
-            visited[key] = content;
+            var mod = new Module { Key = key, Path = key, Content = content };
+            modules[key] = mod;
+
             var dir = Path.GetDirectoryName(key)!;
-            foreach (var importPath in ExtractImports(content))
+            // **import 与再导出（export … from）都建依赖边**：barrel 文件
+            // （fixit 的 utils/index.ts 全是 `export * from './x'`）不建边则
+            // 目标模块不入队、星型复制循环读到 undefined，全部具名导出丢失
+            // （createCopyText is not a function 实测）
+            foreach (var spec in ExtractDependencySpecifiers(content))
             {
-                if (importPath.StartsWith("./", StringComparison.Ordinal) ||
-                    importPath.StartsWith("../", StringComparison.Ordinal))
+                if (string.Equals(spec, ParamsSpecifier, StringComparison.Ordinal))
                 {
-                    var dep = Path.GetFullPath(Path.Combine(dir, importPath));
-                    if (!File.Exists(dep))
+                    var pkey = ParamsSpecifier;
+                    if (!modules.ContainsKey(pkey))
                     {
-                        return false;
+                        modules[pkey] = new Module
+                        {
+                            Key = pkey,
+                            Content = BuildParamsModuleContent(paramsJson),
+                            IsParams = true,
+                        };
+                        LoadVirtual(modules[pkey], modules, order);
                     }
-                    if (!Visit(dep, File.ReadAllText(dep), visited, order))
-                    {
-                        return false;
-                    }
+                    continue;
+                }
+                if (!spec.StartsWith("./", StringComparison.Ordinal) &&
+                    !spec.StartsWith("../", StringComparison.Ordinal))
+                {
+                    // 裸模块名（node_modules 依赖）：Flint 无 node 依赖解析，打包失败
+                    return false;
+                }
+                var dep = ResolveRelative(dir, spec);
+                if (dep is null)
+                {
+                    return false;
+                }
+                if (!Load(dep, File.ReadAllText(dep), modules, order, paramsJson))
+                {
+                    return false;
                 }
             }
-            order.Add(key);
+
+            order.Add(mod);
             return true;
         }
 
-        /// <summary>提取 `export function NAME` / `export const NAME` 的导出名（IIFE 提升用）</summary>
-        private static List<string> ExtractExportedNames(string content)
+        /// <summary>虚拟模块入队（无依赖可解析）</summary>
+        private static void LoadVirtual(Module mod, Dictionary<string, Module> modules, List<Module> order)
         {
-            var result = new List<string>();
-            foreach (var line in content.Split('\n'))
-            {
-                var trimmed = line.TrimStart();
-                if (!trimmed.StartsWith("export ", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                var rest = trimmed["export ".Length..];
-                string? name = null;
-                if (rest.StartsWith("function ", StringComparison.Ordinal))
-                {
-                    var afterFn = rest["function ".Length..].TrimStart();
-                    var sp = afterFn.IndexOfAny(ExportNameStopChars);
-                    name = sp > 0 ? afterFn[..sp] : (sp < 0 && afterFn.Length > 0 ? afterFn : null);
-                }
-                else if (rest.StartsWith("const ", StringComparison.Ordinal) ||
-                         rest.StartsWith("let ", StringComparison.Ordinal) ||
-                         rest.StartsWith("var ", StringComparison.Ordinal))
-                {
-                    var kw = rest.IndexOf(' ');
-                    var afterKw = rest[(kw + 1)..].TrimStart();
-                    var sp = afterKw.IndexOfAny(ExportNameStopChars);
-                    name = sp > 0 ? afterKw[..sp] : (sp < 0 && afterKw.Length > 0 ? afterKw : null);
-                }
-                if (!string.IsNullOrEmpty(name) && !result.Contains(name, StringComparer.Ordinal))
-                {
-                    result.Add(name);
-                }
-            }
-            return result;
+            order.Add(mod);
         }
 
-        private static List<string> ExtractImports(string content)
+        /// <summary>生成 <c>@params</c> 虚拟模块源码：默认导出 + 顶层键的命名导出</summary>
+        private static string BuildParamsModuleContent(string? paramsJson)
         {
-            var result = new List<string>();
-            foreach (var line in content.Split('\n'))
-            {
-                var trimmed = line.TrimStart();
-                if (!trimmed.StartsWith("import ", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                // import … from "./x.js" 或 import "./x.js"
-                var fromIdx = trimmed.LastIndexOf(" from ", StringComparison.Ordinal);
-                var spec = fromIdx >= 0
-                    ? trimmed[(fromIdx + 6)..].Trim().TrimEnd(';').Trim()
-                    : trimmed["import ".Length..].Trim().TrimEnd(';').Trim();
-                spec = spec.Trim('"', '\'');
-                if (spec.Length > 0)
-                {
-                    result.Add(spec);
-                }
-            }
-            return result;
-        }
-
-        private static string StripModuleSyntax(string content)
-        {
+            var json = string.IsNullOrWhiteSpace(paramsJson) ? "{}" : paramsJson!;
             var sb = new System.Text.StringBuilder();
-            foreach (var line in content.Split('\n'))
+            sb.Append("var __flint_params = ").Append(json).AppendLine(";");
+            sb.AppendLine("export default __flint_params;");
+            foreach (var key in TopLevelJsonKeys(json))
             {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("import ", StringComparison.Ordinal))
+                if (IsJsIdentifier(key))
                 {
+                    sb.Append("export const ").Append(key).Append(" = __flint_params.")
+                      .Append(key).AppendLine(";");
+                }
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>JSON 对象顶层键（用于 @params 命名导出；解析失败返回空）</summary>
+        private static IEnumerable<string> TopLevelJsonKeys(string json)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                {
+                    return [];
+                }
+                return doc.RootElement.EnumerateObject().Select(p => p.Name).ToList();
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                return [];
+            }
+        }
+
+        private static bool IsJsIdentifier(string s) =>
+            s.Length > 0 && (char.IsAsciiLetter(s[0]) || s[0] == '_' || s[0] == '$') &&
+            s.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '$');
+
+        /// <summary>JS 字符串字面量（含引号与转义）</summary>
+        private static string JsString(string s)
+        {
+            var sb = new System.Text.StringBuilder(s.Length + 2);
+            sb.Append('\'');
+            foreach (var c in s)
+            {
+                sb.Append(c switch
+                {
+                    '\\' => "\\\\",
+                    '\'' => "\\'",
+                    '\n' => "\\n",
+                    '\r' => "\\r",
+                    _ => c.ToString(),
+                });
+            }
+            sb.Append('\'');
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 相对 specifier 解析（Node/esbuild 语义）：精确命中 → 补扩展名 →
+        /// 目录索引文件。stack 的 <c>import menu from './menu'</c>（无扩展名）
+        /// 命中 ./menu.ts；fixit 的 <c>'./color-scheme'</c> 命中 ./color-scheme.ts
+        /// </summary>
+        private static string? ResolveRelative(string fromDir, string spec)
+        {
+            var combined = Path.GetFullPath(Path.Combine(fromDir, spec));
+            if (File.Exists(combined))
+            {
+                return combined;
+            }
+            foreach (var ext in ModuleExtensions)
+            {
+                var candidate = combined + ext;
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+            foreach (var ext in ModuleExtensions)
+            {
+                var index = Path.Combine(combined, "index" + ext);
+                if (File.Exists(index))
+                {
+                    return index;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 发射单模块体：剥 TS 类型 → import 语句重写为注册表 var 声明 →
+        /// export 语句转为 __flint_exp 赋值（默认/命名/别名/再导出全覆盖）
+        /// </summary>
+        /// <summary>发射单模块体；同时返回该模块的导出清单（ESM 输出用）</summary>
+        private static (string Body, List<string> Named, bool HasDefault) EmitModuleBody(
+            Module mod, Dictionary<string, Module> modules)
+        {
+            var js = TypeScriptStripper.Strip(mod.Content);
+            var sb = new System.Text.StringBuilder();
+            var endAssignments = new List<string>();
+            var hasDefaultExport = false;
+            var pos = 0;
+            foreach (var stmt in ScanModuleStatements(js))
+            {
+                sb.Append(js, pos, stmt.Start - pos); // 语句间原样输出
+                pos = stmt.End;
+
+                if (stmt.Kind == StmtKind.Import)
+                {
+                    if (stmt.TypeOnly)
+                    {
+                        continue; // import type：纯类型，整体删除
+                    }
+                    var depKey = ResolveStatementKey(stmt.Specifier!, mod, modules);
+                    if (depKey is null)
+                    {
+                        continue; // 解析失败（调用方已在加载期拦住，双保险）
+                    }
+                    var decls = new List<string>();
+                    if (stmt.NamespaceBinding is not null)
+                    {
+                        decls.Add($"var {stmt.NamespaceBinding} = __flint_mods[{JsString(depKey)}];");
+                    }
+                    if (stmt.DefaultBinding is not null)
+                    {
+                        decls.Add($"var {stmt.DefaultBinding} = __flint_mods[{JsString(depKey)}].default;");
+                    }
+                    foreach (var (external, local) in stmt.Named)
+                    {
+                        decls.Add($"var {local} = __flint_mods[{JsString(depKey)}].{external};");
+                    }
+                    sb.AppendLine(string.Join(" ", decls));
                     continue;
                 }
-                if (trimmed.StartsWith("export ", StringComparison.Ordinal))
+
+                if (stmt.Kind == StmtKind.Export)
                 {
-                    // `export function initUI` → `function initUI`（保留实现）；
-                    // `export default`/`export {…}` 整体丢弃
-                    var rest = trimmed["export ".Length..];
-                    if (!rest.StartsWith("default", StringComparison.Ordinal) &&
-                        !rest.StartsWith('{') &&
-                        !rest.StartsWith('*'))
+                    switch (stmt.ExportForm)
                     {
-                        var indent = line[..^trimmed.Length];
-                        sb.Append(indent).Append(rest).Append('\n');
+                        case ExportForm.Default:
+                            hasDefaultExport = true;
+                            if (stmt.DefaultIsDeclaration && stmt.DeclName is not null)
+                            {
+                                // `export default function NAME(...) {...}` → 保留声明 + 末尾挂 default
+                                sb.Append(js, stmt.Start + "export default ".Length,
+                                    stmt.End - stmt.Start - "export default ".Length);
+                                endAssignments.Add($"__flint_exp.default = {stmt.DeclName};");
+                            }
+                            else
+                            {
+                                // 匿名默认导出（`export default function () {…}` /
+                                // `export default class {…}`，stack 的 menu.ts 实测）与
+                                // 表达式默认导出统一走挂载形态：裸 `function () {}`
+                                // 不是合法语句，必须赋给 __flint_exp.default。
+                                // 声明形态的 End 不含分号，这里补一个（表达式形态
+                                // 源自带分号，多一个空语句无害）
+                                sb.Append("__flint_exp.default = ");
+                                sb.Append(js, stmt.Start + "export default ".Length,
+                                    stmt.End - stmt.Start - "export default ".Length);
+                                sb.Append(';');
+                            }
+                            break;
+                        case ExportForm.NamedList:
+                            foreach (var (external, local) in stmt.Named)
+                            {
+                                endAssignments.Add($"__flint_exp.{external} = {local};");
+                            }
+                            break;
+                        case ExportForm.NamedReExport:
+                            foreach (var (external, local) in stmt.Named)
+                            {
+                                var src = ResolveStatementKey(stmt.Specifier!, mod, modules);
+                                if (src is not null)
+                                {
+                                    endAssignments.Add(
+                                        $"__flint_exp.{external} = __flint_mods[{JsString(src)}].{local};");
+                                }
+                            }
+                            break;
+                        case ExportForm.StarReExport:
+                            var starSrc = ResolveStatementKey(stmt.Specifier!, mod, modules);
+                            if (starSrc is not null)
+                            {
+                                endAssignments.Add(
+                                    $"for (var __fk in __flint_mods[{JsString(starSrc)}]) {{ __flint_exp[__fk] = __flint_mods[{JsString(starSrc)}][__fk]; }}");
+                            }
+                            break;
+                        case ExportForm.Declaration:
+                            // `export function NAME …` → 剥 export 前缀，末尾挂名字
+                            sb.Append(js, stmt.Start + "export ".Length,
+                                stmt.End - stmt.Start - "export ".Length);
+                            if (stmt.DeclName is not null)
+                            {
+                                endAssignments.Add($"__flint_exp.{stmt.DeclName} = {stmt.DeclName};");
+                            }
+                            break;
                     }
                     continue;
                 }
-                sb.Append(line.TrimEnd()).Append('\n');
+
+                // 普通语句：原样
+                sb.Append(js, stmt.Start, stmt.End - stmt.Start);
             }
+            sb.Append(js, pos, js.Length - pos);
+            foreach (var a in endAssignments)
+            {
+                sb.Append("  ").AppendLine(a);
+            }
+
+            // 导出清单：默认导出与命名导出（ESM 输出用）。hasDefaultExport 在
+            // Default 语句处理时直接跟踪（默认挂载是内联写的，不在 endAssignments）
+            var named = endAssignments
+                .Select(a => a.StartsWith("__flint_exp.", StringComparison.Ordinal) &&
+                             !a.StartsWith("__flint_exp.default", StringComparison.Ordinal)
+                    ? a["__flint_exp.".Length..a.IndexOf(' ', StringComparison.Ordinal)]
+                    : null)
+                .Where(n => n is not null)
+                .Select(n => n!)
+                .ToList();
+            return (sb.ToString(), named, hasDefaultExport);
+        }
+
+        /// <summary>语句 specifier → 模块键（@params 虚拟模块或绝对路径）</summary>
+        private static string? ResolveStatementKey(string spec, Module mod, Dictionary<string, Module> modules)
+        {
+            if (string.Equals(spec, ParamsSpecifier, StringComparison.Ordinal))
+            {
+                return ParamsSpecifier;
+            }
+            if (mod.Path is null)
+            {
+                return null;
+            }
+            var dir = Path.GetDirectoryName(mod.Path)!;
+            var dep = ResolveRelative(dir, spec);
+            return dep is null ? null : Path.GetFullPath(dep);
+        }
+
+        private enum StmtKind { Other, Import, Export }
+        private enum ExportForm { Declaration, Default, NamedList, NamedReExport, StarReExport }
+
+        private sealed class ModuleStatement
+        {
+            public StmtKind Kind = StmtKind.Other;
+            public int Start;
+            public int End;
+            // import
+            public string? Specifier;
+            public bool TypeOnly;
+            public string? DefaultBinding;
+            public string? NamespaceBinding;
+            /// <summary>命名子句：External = 源模块/对外的名字，Local = 本地绑定名</summary>
+            public List<(string External, string Local)> Named = [];
+            // export
+            public ExportForm ExportForm;
+            public bool DefaultIsDeclaration;
+            public string? DeclName;
+        }
+
+        /// <summary>
+        /// 扫描模块级 import/export 语句（多行安全）：找语句起点（行首或
+        /// <c>;{}`</c> 之后的 <c>import</c>/<c>export</c> 关键字），解析子句到
+        /// 语句结束（裸导入到分号；带 from 的到分号；默认导出声明到体块末）
+        /// </summary>
+        private static List<ModuleStatement> ScanModuleStatements(string js)
+        {
+            var result = new List<ModuleStatement>();
+            var i = 0;
+            while (i < js.Length)
+            {
+                var lineStart = i == 0 || js[i - 1] == '\n';
+                if (lineStart && TryReadKeyword(js, ref i, out var kw))
+                {
+                    var start = i - kw.Length;
+                    if (kw == "import")
+                    {
+                        var stmt = ParseImportStatement(js, start);
+                        if (stmt is not null)
+                        {
+                            result.Add(stmt);
+                            i = stmt.End;
+                            continue;
+                        }
+                    }
+                    else if (kw == "export")
+                    {
+                        var stmt = ParseExportStatement(js, start);
+                        if (stmt is not null)
+                        {
+                            result.Add(stmt);
+                            i = stmt.End;
+                            continue;
+                        }
+                    }
+                }
+                i++;
+            }
+            return result;
+        }
+
+        /// <summary>行首空白后读关键字（import/export）；命中时 i 推到关键字之后</summary>
+        private static bool TryReadKeyword(string s, ref int i, out string keyword)
+        {
+            var j = i;
+            while (j < s.Length && (s[j] == ' ' || s[j] == '\t' || s[j] == '\r'))
+            {
+                j++;
+            }
+            foreach (var kw in new[] { "import", "export" })
+            {
+                if (j + kw.Length <= s.Length && string.CompareOrdinal(s, j, kw, 0, kw.Length) == 0 &&
+                    (j + kw.Length >= s.Length || !IsIdentChar(s[j + kw.Length])))
+                {
+                    i = j + kw.Length;
+                    keyword = kw;
+                    return true;
+                }
+            }
+            keyword = "";
+            return false;
+        }
+
+        private static bool IsIdentChar(char c) =>
+            char.IsAsciiLetterOrDigit(c) || c == '_' || c == '$';
+
+        /// <summary>解析 import 语句（start 指向 import 关键字）</summary>
+        private static ModuleStatement? ParseImportStatement(string js, int start)
+        {
+            var stmt = new ModuleStatement { Kind = StmtKind.Import, Start = start };
+            var i = start + "import".Length;
+            i = SkipWs(js, i);
+            // import type ...
+            if (TryReadWord(js, ref i, "type") && i < js.Length && js[i] != ',')
+            {
+                // `import type from './x'`：type 是绑定名（后跟 from）——再看一个 token
+                var save = i;
+                if (TryReadWord(js, ref i, "from") && i < js.Length && (js[i] == '\'' || js[i] == '"'))
+                {
+                    i = save; // 回退：type 是默认导入名
+                    stmt.DefaultBinding = "type";
+                }
+                else
+                {
+                    i = save;
+                    stmt.TypeOnly = true;
+                }
+            }
+            i = SkipWs(js, i);
+            // 三种 import 形态解析到 specifier
+            while (i < js.Length && js[i] != '\'' && js[i] != '"')
+            {
+                if (js[i] == '{')
+                {
+                    var close = MatchBracket(js, i, '{', '}');
+                    if (close < 0)
+                    {
+                        return null;
+                    }
+                    ParseNamedClause(js, i, close, stmt.Named);
+                    i = close + 1;
+                }
+                else if (js[i] == '*')
+                {
+                    i++;
+                    i = SkipWs(js, i);
+                    if (!TryReadWord(js, ref i, "as"))
+                    {
+                        return null;
+                    }
+                    i = SkipWs(js, i);
+                    var name = ReadIdentifier(js, ref i);
+                    if (name is null)
+                    {
+                        return null;
+                    }
+                    stmt.NamespaceBinding = name;
+                }
+                else if (IsIdentStart(js[i]))
+                {
+                    var name = ReadIdentifier(js, ref i);
+                    if (name is null)
+                    {
+                        return null;
+                    }
+                    // `from` 是关键字不是绑定名（`import X from '...'` 的 X 已在前）。
+                    // 漏掉这判断会把 from 当默认导入、specifier 前的结构全乱
+                    // （`import { a } from './b'` 曾产出 var from = ....default）
+                    if (name == "from")
+                    {
+                        break;
+                    }
+                    if (stmt.TypeOnly && stmt.DefaultBinding is null && stmt.Named.Count == 0 &&
+                        stmt.NamespaceBinding is null && name == "type")
+                    {
+                        // import type X from ... 的 X
+                        stmt.DefaultBinding = name;
+                    }
+                    else
+                    {
+                        stmt.DefaultBinding ??= name;
+                    }
+                }
+                else if (js[i] == ',')
+                {
+                    i++;
+                }
+                else
+                {
+                    return null;
+                }
+                i = SkipWs(js, i);
+            }
+            if (i >= js.Length)
+            {
+                return null;
+            }
+            // from 关键字 break 出循环时 i 停在 from 之后，需再跳过空白
+            i = SkipWs(js, i);
+            var spec = ReadStringLiteral(js, ref i);
+            if (spec is null)
+            {
+                return null;
+            }
+            stmt.Specifier = spec;
+            // from 关键字（裸导入 `import 'x'` 没有）
+            var after = SkipWs(js, i);
+            if (TryReadWord(js, ref after, "from"))
+            {
+                after = SkipWs(js, after);
+                if (after >= js.Length || (js[after] != '\'' && js[after] != '"'))
+                {
+                    return null;
+                }
+                spec = ReadStringLiteral(js, ref after);
+                if (spec is null)
+                {
+                    return null;
+                }
+                stmt.Specifier = spec;
+                i = after;
+            }
+            // 语句结束：分号或行尾（无分号结尾）
+            var end = SkipWs(js, i);
+            if (end < js.Length && js[end] == ';')
+            {
+                end++;
+            }
+            stmt.End = end;
+            return stmt;
+        }
+
+        /// <summary>解析 `{ a, b as c }` 命名导入子句</summary>
+        private static void ParseNamedClause(string js, int open, int close, List<(string, string)> into)
+        {
+            var i = open + 1;
+            while (i < close)
+            {
+                i = SkipWs(js, i);
+                if (i >= close)
+                {
+                    break;
+                }
+                var imported = ReadIdentifier(js, ref i);
+                if (imported is null)
+                {
+                    return;
+                }
+                var local = imported;
+                i = SkipWs(js, i);
+                if (i < close && TryReadWord(js, ref i, "as"))
+                {
+                    i = SkipWs(js, i);
+                    local = ReadIdentifier(js, ref i) ?? imported;
+                    i = SkipWs(js, i);
+                }
+                into.Add((imported, local));
+                if (i < close && js[i] == ',')
+                {
+                    i++;
+                }
+            }
+        }
+
+        /// <summary>解析 export 语句（start 指向 export 关键字）</summary>
+        private static ModuleStatement? ParseExportStatement(string js, int start)
+        {
+            var stmt = new ModuleStatement { Kind = StmtKind.Export, Start = start };
+            var i = start + "export".Length;
+            i = SkipWs(js, i);
+            if (TryReadWord(js, ref i, "default"))
+            {
+                stmt.ExportForm = ExportForm.Default;
+                i = SkipWs(js, i);
+                // export default function/class NAME 或匿名声明 → 体块末
+                var isDecl = TryReadWord(js, ref i, "function") || TryReadWord(js, ref i, "class");
+                if (isDecl)
+                {
+                    i = SkipWs(js, i);
+                    if (TryReadWord(js, ref i, "*"))
+                    {
+                        i = SkipWs(js, i);
+                    }
+                    stmt.DeclName = ReadIdentifier(js, ref i);
+                    // 跳到体块（{…}）末尾；函数体必有大括号
+                    var braceIdx = IndexOfSkippingStrings(js, i, '{');
+                    if (braceIdx < 0)
+                    {
+                        return null;
+                    }
+                    var close = MatchBracket(js, braceIdx, '{', '}');
+                    if (close < 0)
+                    {
+                        return null;
+                    }
+                    stmt.DefaultIsDeclaration = true;
+                    i = close + 1;
+                }
+                else
+                {
+                    // export default <expr>; —— 到行/块层级的分号
+                    var end = FindStatementEnd(js, i);
+                    if (end < 0)
+                    {
+                        return null;
+                    }
+                    i = end;
+                }
+                var semi = SkipWs(js, i);
+                if (semi < js.Length && js[semi] == ';')
+                {
+                    semi++;
+                }
+                stmt.End = semi;
+                return stmt;
+            }
+
+            if (i < js.Length && js[i] == '{')
+            {
+                var close = MatchBracket(js, i, '{', '}');
+                if (close < 0)
+                {
+                    return null;
+                }
+                stmt.ExportForm = ExportForm.NamedList;
+                var named = new List<(string, string)>();
+                ParseNamedClause(js, i, close, named);
+                // 导入子句解析给的是 (源名, 别名)；导出语义翻成 (外部名, 本地名)：
+                // `export { a, b as c }` → 外部 a/本地 a、外部 c/本地 b
+                stmt.Named = named.Select(n => (External: n.Item2, Local: n.Item1)).ToList();
+                i = SkipWs(js, close + 1);
+                string? reExportFrom = null;
+                if (TryReadWord(js, ref i, "from"))
+                {
+                    i = SkipWs(js, i);
+                    reExportFrom = ReadStringLiteral(js, ref i);
+                    if (reExportFrom is null)
+                    {
+                        return null;
+                    }
+                    stmt.ExportForm = ExportForm.NamedReExport;
+                    stmt.Specifier = reExportFrom;
+                }
+                var end = SkipWs(js, i);
+                if (end < js.Length && js[end] == ';')
+                {
+                    end++;
+                }
+                stmt.End = end;
+                return stmt;
+            }
+
+            if (js[i] == '*')
+            {
+                i++;
+                i = SkipWs(js, i);
+                if (TryReadWord(js, ref i, "as"))
+                {
+                    i = SkipWs(js, i);
+                    ReadIdentifier(js, ref i); // ns 名（再导出命名空间，暂按通配处理）
+                }
+                i = SkipWs(js, i);
+                if (!TryReadWord(js, ref i, "from"))
+                {
+                    return null;
+                }
+                i = SkipWs(js, i);
+                var spec = ReadStringLiteral(js, ref i);
+                if (spec is null)
+                {
+                    return null;
+                }
+                stmt.ExportForm = ExportForm.StarReExport;
+                stmt.Specifier = spec;
+                var end = SkipWs(js, i);
+                if (end < js.Length && js[end] == ';')
+                {
+                    end++;
+                }
+                stmt.End = end;
+                return stmt;
+            }
+
+            // export function/class/const/let/var NAME …
+            var declStart = i;
+            var declKeyword = TryReadWord(js, ref i, "function") ? "function"
+                : TryReadWord(js, ref i, "class") ? "class"
+                : TryReadWord(js, ref i, "const") ? "const"
+                : TryReadWord(js, ref i, "let") ? "let"
+                : TryReadWord(js, ref i, "var") ? "var"
+                : null;
+            if (declKeyword is not null)
+            {
+                i = SkipWs(js, i);
+                if (TryReadWord(js, ref i, "*"))
+                {
+                    i = SkipWs(js, i);
+                }
+                stmt.DeclName = ReadIdentifier(js, ref i);
+                stmt.ExportForm = ExportForm.Declaration;
+                // 声明体：function/class 到匹配大括号；const/let/var 到分号或行尾
+                // （按**关键字**判定而非首字母——'c' 同时是 const 与 class 的首字母，
+                // 曾使 `export const v = 1` 走大括号路径找不到 { 而整条语句丢弃）
+                if (declKeyword is "function" or "class")
+                {
+                    var braceIdx = IndexOfSkippingStrings(js, i, '{');
+                    if (braceIdx < 0)
+                    {
+                        return null;
+                    }
+                    var close = MatchBracket(js, braceIdx, '{', '}');
+                    if (close < 0)
+                    {
+                        return null;
+                    }
+                    i = close + 1;
+                }
+                else
+                {
+                    var end = FindStatementEnd(js, i);
+                    if (end < 0)
+                    {
+                        return null;
+                    }
+                    i = end;
+                }
+                stmt.End = i;
+                return stmt;
+            }
+
+            return null; // export type/interface 等已被 TS 剥离器删除，其余形态不支持
+        }
+
+        private static int SkipWs(string s, int i)
+        {
+            while (i < s.Length && char.IsWhiteSpace(s[i]))
+            {
+                i++;
+            }
+            return i;
+        }
+
+        private static bool TryReadWord(string s, ref int i, string word)
+        {
+            if (i + word.Length <= s.Length && string.CompareOrdinal(s, i, word, 0, word.Length) == 0 &&
+                (i + word.Length >= s.Length || !IsIdentChar(s[i + word.Length])))
+            {
+                i += word.Length;
+                return true;
+            }
+            return false;
+        }
+
+        private static string? ReadIdentifier(string s, ref int i)
+        {
+            if (i >= s.Length || !IsIdentStart(s[i]))
+            {
+                return null;
+            }
+            var start = i;
+            while (i < s.Length && IsIdentChar(s[i]))
+            {
+                i++;
+            }
+            return s[start..i];
+        }
+
+        private static bool IsIdentStart(char c) => char.IsAsciiLetter(c) || c == '_' || c == '$';
+
+        private static string? ReadStringLiteral(string s, ref int i)
+        {
+            if (i >= s.Length || (s[i] != '\'' && s[i] != '"'))
+            {
+                return null;
+            }
+            var quote = s[i++];
+            var start = i;
+            while (i < s.Length && s[i] != quote)
+            {
+                if (s[i] == '\\')
+                {
+                    i++;
+                }
+                i++;
+            }
+            if (i >= s.Length)
+            {
+                return null;
+            }
+            var value = s[start..i];
+            i++; // 跳过收尾引号
+            return value;
+        }
+
+        /// <summary>从 i 起找第一个不在字符串/注释里的指定字符</summary>
+        private static int IndexOfSkippingStrings(string s, int i, char target)
+        {
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (c == '\'' || c == '"' || c == '`')
+                {
+                    i = SkipString(s, i);
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '/')
+                {
+                    while (i < s.Length && s[i] != '\n')
+                    {
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
+                {
+                    var close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? s.Length : close + 2;
+                    continue;
+                }
+                if (c == '/' && IsRegexStart(s, i))
+                {
+                    i = SkipRegex(s, i);
+                    continue;
+                }
+                if (c == target)
+                {
+                    return i;
+                }
+                i++;
+            }
+            return -1;
+        }
+
+        private static int SkipString(string s, int i)
+        {
+            var quote = s[i++];
+            while (i < s.Length)
+            {
+                if (s[i] == '\\')
+                {
+                    i += 2;
+                    continue;
+                }
+                if (s[i] == quote)
+                {
+                    return i + 1;
+                }
+                i++;
+            }
+            return i;
+        }
+
+        /// <summary>正则前导关键字（这些标识符后出现 / 是正则字面量而非除号）</summary>
+        private static readonly HashSet<string> RegexPrecedingKeywords = new(StringComparer.Ordinal)
+        {
+            "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+            "throw", "case", "do", "else", "yield", "await",
+        };
+
+        /// <summary>
+        /// 位置 i 的 / 是否正则字面量起点（回溯前一 token：运算符/表达式
+        /// 关键字/起始位 → 正则；值标识符/) ] 引号/数字 → 除号）。
+        /// 不识别会把正则里的引号/括号当字符串或配平符——fixit file.ts 的
+        /// `/[\\/:*?"<>|\r\n]+/g` 实测把 MatchBracket 打到文件尾
+        /// </summary>
+        internal static bool IsRegexStart(string s, int i)
+        {
+            var j = i - 1;
+            while (j >= 0 && char.IsWhiteSpace(s[j]))
+            {
+                j--;
+            }
+            if (j < 0)
+            {
+                return true;
+            }
+            var c = s[j];
+            if (c is '(' or ',' or '=' or ':' or '[' or '!' or '&' or '|' or '?' or
+                    '{' or ';' or '>' or '<' or '+' or '-' or '*' or '%' or '~' or '^')
+            {
+                return true;
+            }
+            if (char.IsAsciiLetter(c) || c == '_' || c == '$')
+            {
+                var end = j;
+                while (j >= 0 && (char.IsAsciiLetterOrDigit(s[j]) || s[j] == '_' || s[j] == '$'))
+                {
+                    j--;
+                }
+                return RegexPrecedingKeywords.Contains(s[(j + 1)..(end + 1)]);
+            }
+            return false; // ) ] " ' ` 数字 → 除号
+        }
+
+        /// <summary>跳过正则字面量（/…/flags）；[...] 类内的 / 不终止；不跨行</summary>
+        internal static int SkipRegex(string s, int i)
+        {
+            i++; // 跳过起始 /
+            var inClass = false;
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (c == '\\')
+                {
+                    i += 2;
+                    continue;
+                }
+                if (c == '\n')
+                {
+                    return i; // 正则不跨行：失败保护
+                }
+                if (c == '[')
+                {
+                    inClass = true;
+                }
+                else if (c == ']')
+                {
+                    inClass = false;
+                }
+                else if (c == '/' && !inClass)
+                {
+                    i++;
+                    while (i < s.Length && char.IsAsciiLetter(s[i]))
+                    {
+                        i++; // flags
+                    }
+                    return i;
+                }
+                i++;
+            }
+            return i;
+        }
+
+        /// <summary>括号/花括号/方括号配平匹配（跳过字符串与注释）</summary>
+        private static int MatchBracket(string s, int open, char openCh, char closeCh)
+        {
+            var depth = 0;
+            var i = open;
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (c == '\'' || c == '"' || c == '`')
+                {
+                    i = SkipString(s, i);
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '/')
+                {
+                    while (i < s.Length && s[i] != '\n')
+                    {
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
+                {
+                    var close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? s.Length : close + 2;
+                    continue;
+                }
+                if (c == '/' && IsRegexStart(s, i))
+                {
+                    i = SkipRegex(s, i);
+                    continue;
+                }
+                if (c == openCh)
+                {
+                    depth++;
+                }
+                else if (c == closeCh)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        return i;
+                    }
+                }
+                i++;
+            }
+            return -1;
+        }
+
+        /// <summary>语句结束位置（跳过字符串/注释后找层级 0 的分号）</summary>
+        private static int FindStatementEnd(string s, int i)
+        {
+            var paren = 0;
+            var brace = 0;
+            var brack = 0;
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (c == '\'' || c == '"' || c == '`')
+                {
+                    i = SkipString(s, i);
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '/')
+                {
+                    while (i < s.Length && s[i] != '\n')
+                    {
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
+                {
+                    var close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? s.Length : close + 2;
+                    continue;
+                }
+                if (c == '/' && IsRegexStart(s, i))
+                {
+                    i = SkipRegex(s, i);
+                    continue;
+                }
+                switch (c)
+                {
+                    case '(': paren++; break;
+                    case ')': paren--; break;
+                    case '{': brace++; break;
+                    case '}': brace--; break;
+                    case '[': brack++; break;
+                    case ']': brack--; break;
+                    case ';' when paren == 0 && brace == 0 && brack == 0:
+                        return i;
+                    case '\n' when paren == 0 && brace == 0 && brack == 0:
+                        return i; // 无分号的语句到行尾
+                }
+                i++;
+            }
+            return s.Length;
+        }
+
+        /// <summary>提取全部 import specifier（模块图加载用，含 type-only）</summary>
+        private static List<string> ExtractImportSpecifiers(string content)
+        {
+            var result = new List<string>();
+            foreach (var stmt in ScanModuleStatements(content))
+            {
+                if (stmt.Kind == StmtKind.Import && stmt.Specifier is not null)
+                {
+                    result.Add(stmt.Specifier);
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// 提取全部依赖 specifier：import + **再导出**（`export { a } from './x'` /
+        /// `export * from './x'`）。barrel 文件靠再导出聚合模块，漏掉再导出
+        /// 依赖边会让目标模块不入队（fixit utils/index.ts 实测）
+        /// </summary>
+        private static List<string> ExtractDependencySpecifiers(string content)
+        {
+            var result = new List<string>();
+            foreach (var stmt in ScanModuleStatements(content))
+            {
+                if (stmt.Kind == StmtKind.Import && stmt.Specifier is not null)
+                {
+                    result.Add(stmt.Specifier);
+                }
+                else if (stmt.Kind == StmtKind.Export && stmt.Specifier is not null &&
+                         (stmt.ExportForm == ExportForm.NamedReExport ||
+                          stmt.ExportForm == ExportForm.StarReExport))
+                {
+                    result.Add(stmt.Specifier);
+                }
+            }
+            return result;
+        }
+    }
+
+    /// <summary>
+    /// TypeScript 类型语法剥离器（js.Build 的 .ts 入口/依赖用）。
+    /// Flint 无 esbuild/tsc，用 token 化 + 上下文规则剥掉主题实际用到的 TS 子集：
+    /// interface/type 别名/declare 声明、as/satisfies 转换、类成员修饰符与类型
+    /// 注解、参数与返回类型注解、泛型形参/实参、非空断言、implements 子句。
+    /// 覆盖 fixit/stack 两主题全部 TS 资产；无法识别的新语法按原样保留
+    /// （浏览器报错好过静默错位），import/export 语句不受影响
+    /// </summary>
+    internal static class TypeScriptStripper
+    {
+        private enum Tok { Ident, Str, Tmpl, Num, Punct }
+
+        private readonly struct Token(Tok kind, string text, int start, int end)
+        {
+            public readonly Tok Kind = kind;
+            public readonly string Text = text;
+            public readonly int Start = start;
+            public readonly int End = end;
+        }
+
+        /// <summary>括号帧（类体/参数组/对象体的上下文判定用）</summary>
+        private sealed class Frame
+        {
+            public char Open;
+            public bool IsClassBody;
+            public bool IsNamedClause; // import/export 的 { a, b as c } 命名子句
+            public bool IsObjectLiteral; // { key: value }（表达式位的大括号）
+            public int Questions; // 组内未配对 ? 计数（三元判定）
+        }
+
+        private static readonly HashSet<string> TsModifiers = new(StringComparer.Ordinal)
+        {
+            "private", "protected", "public", "readonly", "abstract", "override", "declare",
+        };
+
+        internal static string Strip(string source)
+        {
+            var tokens = Tokenize(source);
+            var sb = new System.Text.StringBuilder(source.Length);
+            var frames = new List<Frame>();
+            var lastEnd = 0;
+            var prevMeaningful = ""; // 前一个有意义 token 的文本（跳过空白）
+            var prevMeaningfulWasValue = false; // 前 token 是否为值结尾（标识符/)等）
+            var prevWasIdent = false; // 前 token 是否为标识符（排除 case 标签的字符串值）
+            var pendingClassBody = false; // 见到 class 关键字后下一个 { 是类体
+            var pendingNamedClause = false; // import/export 后下一个 { 是命名子句
+            // 剥掉**返回类型**后下一个 { 是函数/类体（此时 prevMeaningful 已是 ":"，
+            // 而 ":" 又在对象字面量触发集里，不标记会把函数体误判为对象字面量）
+            var pendingBody = false;
+            // 已消费的类型表达式区间：三元检测要排除条件类型（A extends B ? C : D）
+            // 里的 ?——它长得像三元但属类型语法（fixit event-bus.ts 实测：
+            // 漏排除会使后续返回类型 : void 被误判三元而不剥）
+            var skippedTypes = new List<(int From, int To)>();
+            var i = 0;
+            while (i < tokens.Count)
+            {
+                var t = tokens[i];
+                if (t.Kind == Tok.Punct)
+                {
+                    switch (t.Text)
+                    {
+                        case "(" or "[":
+                            // 命名子句期待在 ( 处失效：import/export 的 { a, b }
+                            // 不可能出现在 ( 之后（`export function f(` 是函数声明）
+                            pendingNamedClause = false;
+                            frames.Add(new Frame { Open = t.Text[0] });
+                            break;
+                        case "=":
+                            // `export const x = { … }`：= 之后不可能是命名子句
+                            pendingNamedClause = false;
+                            break;
+                        case "{":
+                            // 对象字面量判定：前 token 在**表达式位**（= ( , [ : return
+                            // 及二元/三元/一元运算符）即 { key: value }；否则是代码块
+                            // （函数体/if/try/类体/=> 箭头体）。
+                            // **=> 不算表达式位**：`=> {` 是箭头函数体（代码块）；
+                            // 箭头返回对象字面量必须写 `=> ({...})`（带括号）。
+                            // **pendingBody 优先**：返回类型剥掉后 prevMeaningful 是 ":"，
+                            // 不靠这个标记会把函数体误判成对象字面量。
+                            // 运算符在列是硬需求：三元 true 分支的对象字面量
+                            // `cond ? { v: x } : y`（fuse.mjs deepGet 实测）——漏掉
+                            // `?` 会把 { 当代码块，对象键 v: 被当类型注解剥掉
+                            frames.Add(new Frame
+                            {
+                                Open = '{',
+                                IsClassBody = pendingClassBody,
+                                IsNamedClause = pendingNamedClause,
+                                IsObjectLiteral = !pendingBody && !pendingClassBody && !pendingNamedClause &&
+                                    (prevMeaningful is "=" or "(" or "," or "[" or ":" or "return"
+                                        or "?" or "&&" or "||" or "??" or "!" or "+" or "-"
+                                        or "*" or "/" or "%" or "==" or "!=" or "===" or "!=="
+                                        or "<" or ">" or "<=" or ">=" or "&" or "|" or "^"
+                                        or "<<" or ">>" or "typeof" or "void" or "delete"
+                                        or "await" or "yield"),
+                            });
+                            pendingClassBody = false;
+                            pendingNamedClause = false;
+                            pendingBody = false;
+                            break;
+                        case ")" or "]" or "}":
+                            if (frames.Count > 0)
+                            {
+                                frames.RemoveAt(frames.Count - 1);
+                            }
+                            break;
+                        case "?":
+                            if (frames.Count > 0)
+                            {
+                                frames[^1].Questions++;
+                            }
+                            break;
+                        case ";":
+                            pendingNamedClause = false; // 语句结束，命名子句期待失效
+                            break;
+                        case "class":
+                            break;
+                    }
+                }
+
+                // import/export 语句起点：记录命名子句期待（{ a, b as c } 内的 as
+                // 是**导入/导出别名**而非类型转换，as 规则见到要放行）
+                if (t.Kind == Tok.Ident && (t.Text == "import" || t.Text == "export") &&
+                    AtStatementStart(prevMeaningful, t, tokens, i, source))
+                {
+                    pendingNamedClause = true;
+                }
+
+                // ---- 语句级删除：interface / type 别名 / declare ----
+                if (t.Kind == Tok.Ident && AtStatementStart(prevMeaningful, t, tokens, i, source))
+                {
+                    if (t.Text == "interface" && i + 1 < tokens.Count &&
+                        tokens[i + 1].Kind == Tok.Ident)
+                    {
+                        i = SkipInterface(tokens, i + 2, ref lastEnd, sb, source);
+                        prevMeaningful = "}";
+                        prevMeaningfulWasValue = false;
+                        continue;
+                    }
+                    // type X = …（别名）· type * from '…' / type { a } from '…'
+                    // （仅类型的再导出）——都整语句删除
+                    if (t.Text == "type" && i + 1 < tokens.Count &&
+                        (tokens[i + 1].Kind == Tok.Ident ||
+                         (tokens[i + 1].Kind == Tok.Punct && tokens[i + 1].Text is "*" or "{")))
+                    {
+                        i = SkipToStatementEnd(tokens, i + 1, ref lastEnd, source);
+                        prevMeaningful = ";";
+                        prevMeaningfulWasValue = false;
+                        continue;
+                    }
+                    if (t.Text == "declare")
+                    {
+                        i = SkipDeclare(tokens, i + 1, ref lastEnd, source);
+                        prevMeaningful = ";";
+                        prevMeaningfulWasValue = false;
+                        continue;
+                    }
+                }
+
+                // export 前缀 + 类型声明（export interface/type/declare）→ 连 export 一起删
+                if (t.Kind == Tok.Ident && t.Text == "export" &&
+                    AtStatementStart(prevMeaningful, t, tokens, i, source) &&
+                    i + 1 < tokens.Count && tokens[i + 1].Kind == Tok.Ident &&
+                    tokens[i + 1].Text is "interface" or "type" or "declare")
+                {
+                    lastEnd = tokens[i + 1].Start; // 跳过 export（保留前导空白由上一span负责）
+                    prevMeaningful = ""; // 让紧随的 interface/type/declare 视为语句起点
+                    i++;
+                    continue;
+                }
+
+                // ---- as / satisfies 转换 ----
+                // 命名子句（import/export 的 { a, b as c }）内的 as 是别名，放行
+                if (t.Kind == Tok.Ident && (t.Text == "as" || t.Text == "satisfies") &&
+                    prevMeaningfulWasValue &&
+                    !(frames.Count > 0 && frames[^1].IsNamedClause))
+                {
+                    var from = i + 1;
+                    i = SkipTypeExpression(tokens, i + 1, ref lastEnd);
+                    skippedTypes.Add((from, i));
+                    prevMeaningful = "as";
+                    prevMeaningfulWasValue = true; // 转换后仍是值
+                    continue;
+                }
+
+                // ---- TS 假 this 参数：`function (this: HTMLElement) {` ----
+                // this 不是可传值，仅用于给函数体标注 this 类型，整体删除名字
+                // （fixit menu.ts/misc.ts 实测）。后随 : 才判——`foo(this)` 是
+                // 合法的 this 实参，不能动
+                if (t.Kind == Tok.Ident && t.Text == "this" && frames.Count > 0 &&
+                    frames[^1].Open == '(' && i + 1 < tokens.Count &&
+                    tokens[i + 1].Kind == Tok.Punct && tokens[i + 1].Text == ":")
+                {
+                    sb.Append(source, lastEnd, t.Start - lastEnd);
+                    lastEnd = t.End;
+                    prevMeaningful = "this";
+                    prevMeaningfulWasValue = false;
+                    prevWasIdent = false;
+                    i++;
+                    continue;
+                }
+
+                // ---- 非空断言 foo!.bar / foo!（行尾）----
+                // 后随 . ) ] ; , } 或**换行**（语句尾）时删除；
+                // `a !== b` 的 !== 是单 token 不受影响；`!foo`（表达式起始）的
+                // 前一 token 不是值结尾，也不受影响。
+                // **先 emit 前导 span 再跳过**：否则 token 前的换行/缩进一起丢失，
+                // 无分号风格的字段/语句会粘成一行（fixit core.ts 的
+                // `readonly config: T` 三字段实测被粘成 `config version isRTL`）
+                if (t.Kind == Tok.Punct && t.Text == "!" && prevMeaningfulWasValue &&
+                    i + 1 < tokens.Count &&
+                    (tokens[i + 1].Kind == Tok.Punct &&
+                     tokens[i + 1].Text is "." or "(" or ")" or "]" or ";" or "," or "}" or ":" ||
+                     NewlineBetween(tokens, i, source)))
+                {
+                    sb.Append(source, lastEnd, t.Start - lastEnd);
+                    lastEnd = t.End;
+                    i++;
+                    continue;
+                }
+
+                // ---- 类成员修饰符 ----
+                if (t.Kind == Tok.Ident && TsModifiers.Contains(t.Text) &&
+                    frames.Count > 0 && frames[^1].IsClassBody &&
+                    AtStatementStart(prevMeaningful, t, tokens, i, source))
+                {
+                    sb.Append(source, lastEnd, t.Start - lastEnd);
+                    lastEnd = t.End;
+                    i++;
+                    continue;
+                }
+
+                // ---- implements 子句 ----
+                if (t.Kind == Tok.Ident && t.Text == "implements" && prevMeaningfulWasValue &&
+                    LooksLikeImplementsClause(tokens, i))
+                {
+                    i = SkipImplements(tokens, i, ref lastEnd);
+                    prevMeaningful = "implements";
+                    prevMeaningfulWasValue = false;
+                    continue;
+                }
+
+                // ---- 泛型形参/实参 <...>（function f<T>( / class A<T> / foo<T>( ）----
+                // lastEnd 推到 > 的**结束**位：整段 <...>（含 >）从输出中扣除
+                if (t.Kind == Tok.Punct && t.Text == "<" && prevMeaningfulWasValue &&
+                    TrySkipGenericArgs(tokens, i, out var afterGeneric))
+                {
+                    lastEnd = tokens[afterGeneric].End;
+                    i = afterGeneric + 1;
+                    prevMeaningful = ">";
+                    prevMeaningfulWasValue = false;
+                    continue;
+                }
+
+                // ---- 类型注解（参数/字段/返回）----
+                if (t.Kind == Tok.Punct && t.Text == ":" &&
+                    ShouldStripColon(tokens, i, frames, prevMeaningful, prevMeaningfulWasValue, prevWasIdent, skippedTypes, source))
+                {
+                    // 返回类型（) 之后）剥掉后，下一个 { 是函数体而非对象字面量
+                    if (prevMeaningful == ")")
+                    {
+                        pendingBody = true;
+                    }
+                    var from = i + 1;
+                    i = SkipTypeExpression(tokens, i + 1, ref lastEnd);
+                    skippedTypes.Add((from, i));
+                    prevMeaningful = ":";
+                    prevMeaningfulWasValue = false;
+                    continue;
+                }
+
+                // ---- 可选参数标记 b?: T —— ? 后随 : 且在参数组内 ----
+                // 删除 ? 的同时必须**撤销**框架的 Questions 计数：这是可选标记
+                // 而非三元，否则紧随的 : 被误判三元、参数类型不剥
+                // （fixit commentsConsent.ts 的 `consent?: State | null` 实测）
+                if (t.Kind == Tok.Punct && t.Text == "?" && frames.Count > 0 &&
+                    frames[^1].Open == '(' && i + 1 < tokens.Count &&
+                    tokens[i + 1].Kind == Tok.Punct && tokens[i + 1].Text == ":")
+                {
+                    frames[^1].Questions--;
+                    sb.Append(source, lastEnd, t.Start - lastEnd);
+                    lastEnd = t.End;
+                    i++;
+                    continue;
+                }
+
+                // ---- class/function 关键字：下一个 { 是类体/函数体 ----
+                // 同时清除命名子句期待：`export class Foo {` / `export default
+                // function () {` 的 { 不是 import/export 命名子句
+                if (t.Kind == Tok.Ident && (t.Text == "class" || t.Text == "function"))
+                {
+                    pendingClassBody = t.Text == "class";
+                    pendingNamedClause = false;
+                }
+
+                // 普通 token：输出（含前导空白/注释）
+                sb.Append(source, lastEnd, t.Start - lastEnd);
+                sb.Append(t.Text);
+                lastEnd = t.End;
+                prevMeaningful = t.Text;
+                prevWasIdent = t.Kind == Tok.Ident;
+                prevMeaningfulWasValue = IsValueEnd(t);
+                i++;
+            }
+            sb.Append(source, lastEnd, source.Length - lastEnd);
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// 语句起点判定：前一有意义 token 是语句边界（空/分号/括号收尾），
+        /// 或本 token 前有换行（TS/JS 声明按行起排）。换行检测覆盖
+        /// "import … './x' 之后紧跟 export interface" 的衔接
+        /// （前一 token 是字符串字面量，不是边界符）
+        /// </summary>
+        private static bool AtStatementStart(
+            string prev, Token t, List<Token> tokens, int i, string source)
+        {
+            if (prev is "" or ";" or "}" or "{")
+            {
+                return true;
+            }
+            var from = i > 0 ? tokens[i - 1].End : 0;
+            for (var j = from; j < t.Start && j < source.Length; j++)
+            {
+                if (source[j] == '\n')
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool IsValueEnd(Token t) =>
+            t.Kind == Tok.Ident || t.Kind == Tok.Str || t.Kind == Tok.Tmpl || t.Kind == Tok.Num ||
+            (t.Kind == Tok.Punct && t.Text is ")" or "]" or "}");
+
+        /// <summary>interface NAME [extends X] [{] —— 跳到匹配闭括号之后</summary>
+        private static int SkipInterface(
+            List<Token> tokens, int i, ref int lastEnd, System.Text.StringBuilder sb, string source)
+        {
+            // 可延续的 extends 子句与泛型形参
+            while (i < tokens.Count)
+            {
+                var t = tokens[i];
+                if (t.Kind == Tok.Punct && t.Text == "{")
+                {
+                    var close = MatchBraceToken(tokens, i);
+                    if (close < 0)
+                    {
+                        return i;
+                    }
+                    lastEnd = tokens[close].End;
+                    return close + 1;
+                }
+                if (t.Kind == Tok.Ident || (t.Kind == Tok.Punct &&
+                    t.Text is "." or "," or "<" or ">" or "|" or "&" or "(" or ")" or "[" or "]"))
+                {
+                    i++;
+                    continue;
+                }
+                return i;
+            }
+            return i;
+        }
+
+        /// <summary>
+        /// type X = …; —— 跳到层级 0 分号或**行尾**（无分号风格）。
+        /// 只认分号会把 `type Mode = 'a' | 'b'`（无分号）后的全部代码吞掉
+        /// （fixit tokens.ts 实测：后续常量定义被整段删除）
+        /// </summary>
+        private static int SkipToStatementEnd(List<Token> tokens, int i, ref int lastEnd, string source)
+        {
+            var depth = 0;
+            while (i < tokens.Count)
+            {
+                var t = tokens[i];
+                if (t.Kind == Tok.Punct)
+                {
+                    switch (t.Text)
+                    {
+                        case "(" or "[" or "{" or "<": depth++; break;
+                        case ")" or "]" or "}" or ">": depth--; break;
+                        case ";" when depth <= 0:
+                            lastEnd = t.End;
+                            return i + 1;
+                    }
+                }
+                // 行尾且下一 token 不是类型续行（| & . , 等）→ 语句结束
+                if (depth <= 0 && i + 1 < tokens.Count &&
+                    NewlineBetween(tokens, i, source) &&
+                    !(tokens[i + 1].Kind == Tok.Punct &&
+                      tokens[i + 1].Text is "|" or "&" or "." or "," or "?" or ":"))
+                {
+                    lastEnd = t.End;
+                    return i + 1;
+                }
+                i++;
+            }
+            lastEnd = tokens.Count > 0 ? tokens[^1].End : lastEnd;
+            return tokens.Count;
+        }
+
+        /// <summary>tokens[i] 与 tokens[i+1] 之间是否有换行</summary>
+        private static bool NewlineBetween(List<Token> tokens, int i, string source)
+        {
+            var from = tokens[i].End;
+            var to = i + 1 < tokens.Count ? tokens[i + 1].Start : source.Length;
+            for (var j = from; j < to && j < source.Length; j++)
+            {
+                if (source[j] == '\n')
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>declare …：全局/模块声明跳块，其余跳到分号</summary>
+        private static int SkipDeclare(List<Token> tokens, int i, ref int lastEnd, string source)
+        {
+            // declare global/module/namespace X { … } → 块；declare var/let/const/function/class … → 分号
+            var j = i;
+            while (j < tokens.Count && tokens[j].Kind == Tok.Ident)
+            {
+                if (tokens[j].Text is "global" or "module" or "namespace")
+                {
+                    // 找下一个 { 块
+                    while (j < tokens.Count && !(tokens[j].Kind == Tok.Punct && tokens[j].Text == "{"))
+                    {
+                        j++;
+                    }
+                    if (j < tokens.Count)
+                    {
+                        var close = MatchBraceToken(tokens, j);
+                        if (close < 0)
+                        {
+                            return j;
+                        }
+                        lastEnd = tokens[close].End;
+                        return close + 1;
+                    }
+                    return j;
+                }
+                j++;
+                break;
+            }
+            return SkipToStatementEnd(tokens, i, ref lastEnd, source);
+        }
+
+        /// <summary>implements 子句形态：implements 后是类型表且以 { 收尾（类头）</summary>
+        private static bool LooksLikeImplementsClause(List<Token> tokens, int i)
+        {
+            var j = i + 1;
+            var depth = 0;
+            while (j < tokens.Count)
+            {
+                var t = tokens[j];
+                if (t.Kind == Tok.Punct)
+                {
+                    switch (t.Text)
+                    {
+                        case "(" or "[" or ";":
+                            return false; // 参数表/语句边界 → 不是类头
+                        case "{":
+                            return depth == 0;
+                        case "<": depth++; break;
+                        case ">": depth--; break;
+                    }
+                }
+                j++;
+            }
+            return false;
+        }
+
+        private static int SkipImplements(List<Token> tokens, int i, ref int lastEnd)
+        {
+            // 跳到 { 之前（含 extends 后的 implements 列表）
+            while (i < tokens.Count && !(tokens[i].Kind == Tok.Punct && tokens[i].Text == "{"))
+            {
+                i++;
+            }
+            if (i < tokens.Count)
+            {
+                lastEnd = tokens[i].Start;
+            }
+            return i;
+        }
+
+        /// <summary>泛型实参/形参：&lt;…&gt; 后紧跟 ( 或 { 才吃（排除 a &lt; b 比较）</summary>
+        private static bool TrySkipGenericArgs(List<Token> tokens, int i, out int closeIdx)
+        {
+            var depth = 0;
+            var j = i;
+            while (j < tokens.Count)
+            {
+                var t = tokens[j];
+                if (t.Kind == Tok.Punct)
+                {
+                    if (t.Text == "<")
+                    {
+                        depth++;
+                    }
+                    else if (t.Text == ">")
+                    {
+                        depth--;
+                        if (depth == 0)
+                        {
+                            // > 后必须紧跟 ( 或 { （调用/声明），否则是比较运算
+                            if (j + 1 < tokens.Count && tokens[j + 1].Kind == Tok.Punct &&
+                                tokens[j + 1].Text is "(" or "{")
+                            {
+                                closeIdx = j;
+                                return true;
+                            }
+                            closeIdx = -1;
+                            return false;
+                        }
+                    }
+                    else if (t.Text is "(" or ")" or "{" or "}" or ";")
+                    {
+                        closeIdx = -1;
+                        return false;
+                    }
+                }
+                if (t.Kind == Tok.Str || t.Kind == Tok.Tmpl)
+                {
+                    closeIdx = -1;
+                    return false;
+                }
+                j++;
+            }
+            closeIdx = -1;
+            return false;
+        }
+
+        /// <summary>冒号是否应剥离（参数类型/字段类型/返回类型；排除三元与对象字面量）</summary>
+        private static bool ShouldStripColon(
+            List<Token> tokens, int i, List<Frame> frames, string prevMeaningful,
+            bool prevWasValue, bool prevWasIdent, List<(int From, int To)> skipped, string source)
+        {
+            // ) 之后：函数/方法**返回类型**（顶层、类体、嵌套括号内均可）。
+            // 三元 `cond ? (a) : b` 也长这样，靠未配对 ? 排除
+            if (prevMeaningful == ")")
+            {
+                return !HasUnmatchedQuestion(tokens, i, skipped, source);
+            }
+            if (frames.Count == 0)
+            {
+                // 顶层变量声明的类型注解：`const $tabs: HTMLElement[] = []`
+                // （fixit modules/toc.ts 实测）。标签 `foo:` 是唯一误判形态，
+                // 主题不用；三元由未配对 ? 排除
+                return prevWasIdent && prevMeaningful is not "case" and not "default" &&
+                    !HasUnmatchedQuestion(tokens, i, skipped, source);
+            }
+            var top = frames[^1];
+            if (top.Open == '(')
+            {
+                if (top.Questions > 0)
+                {
+                    return false; // 三元
+                }
+                // 参数名后的类型注解（排除对象字面量/续接符位置）
+                return prevMeaningful != "{" && prevMeaningful != "," &&
+                       prevMeaningful != "(" && prevMeaningful != ";";
+            }
+            if (top.IsClassBody)
+            {
+                // 类字段类型：name: T（前 token 是字段名，且本成员无未配对 ?）
+                return prevMeaningful != "{" && prevMeaningful != ";" &&
+                       prevMeaningful != "(";
+            }
+            if (top.Open == '{' && !top.IsObjectLiteral)
+            {
+                // 代码块内的变量声明类型注解：`const $tabs: HTMLElement[] = []`
+                // （方法体/箭头函数体内，fixit modules/code.ts 实测）。
+                // case 标签的值是字符串字面量，用 prevWasIdent 排除
+                return prevWasIdent && prevMeaningful is not "case" and not "default" &&
+                    !HasUnmatchedQuestion(tokens, i, skipped, source);
+            }
+            // 对象体/数组/其他：保留（对象字面量 / case 标签）
+            return false;
+        }
+
+        /// <summary>从冒号位置向前（同语句）找未配对 ? ——有三元嫌疑。
+        /// **后随冒号的 ? 是可选参数标记**（`b?: T`），不是三元，须跳过</summary>
+        /// <summary>
+        /// 从冒号位置向前（同表达式）找未配对 ? ——有三元嫌疑。
+        /// 反向扫描带**括号深度配平**：对象字面量的 } 只是表达式内部的闭括号，
+        /// 不能当语句边界（`f(a ? x({k:1}) : y)` 曾因在 } 处误停而漏看 ?，
+        /// 把三元的 : 当返回类型剥掉）。深度转负（遇到无配对的开括号）或分号
+        /// 才是真正的语句边界。
+        /// **两类 ? 不算**：① 后随冒号的可选参数标记（`b?: T`）；
+        /// ② 已消费类型表达式内的条件类型问号（`A extends B ? C : D`，
+        /// 区间由调用方记录）——它们长得像三元但属类型语法
+        /// </summary>
+        private static bool HasUnmatchedQuestion(
+            List<Token> tokens, int i, List<(int From, int To)> skipped, string source)
+        {
+            var depth = 0;
+            for (var j = i - 1; j >= 0; j--)
+            {
+                var t = tokens[j];
+                // **语句起始关键字边界**：反向扫描遇到 const/let/var/return/if 等
+                // 语句关键字（深度 0）说明已跨到另一条语句，必须停。用关键字而非
+                // 换行判定：跨行三元（`detail !== undefined\n ? a\n : b`）的 ? 与 :
+                // 虽在不同行但属同一表达式，不能被换行切断；而上一行语句的三元 ?
+                // 与本行 : 之间必隔着语句关键字（fixit code.ts 实测两种形态）
+                if (depth == 0 && t.Kind == Tok.Ident && StatementKeywords.Contains(t.Text))
+                {
+                    return false;
+                }
+                if (t.Kind != Tok.Punct)
+                {
+                    continue;
+                }
+                switch (t.Text)
+                {
+                    case ")" or "]" or "}":
+                        depth++; // 反向：闭括号表示进入更深的表达式
+                        break;
+                    case "(" or "[" or "{":
+                        if (depth == 0)
+                        {
+                            return false; // 无配对开括号 → 语句边界
+                        }
+                        depth--;
+                        break;
+                    case ";":
+                        if (depth == 0)
+                        {
+                            return false;
+                        }
+                        break;
+                    case "?":
+                        if (depth > 0)
+                        {
+                            break;
+                        }
+                        // 可选标记（? 后紧跟 :）不计入三元
+                        if (j + 1 < tokens.Count && tokens[j + 1].Kind == Tok.Punct &&
+                            tokens[j + 1].Text == ":")
+                        {
+                            break;
+                        }
+                        // 条件类型内的 ?（已被类型消费器吃掉）不计入三元
+                        var inSkipped = false;
+                        foreach (var (from, to) in skipped)
+                        {
+                            if (j >= from && j < to)
+                            {
+                                inSkipped = true;
+                                break;
+                            }
+                        }
+                        if (inSkipped)
+                        {
+                            break;
+                        }
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>跳过类型表达式 token（返回跳过后的下标；lastEnd 推进到表达式末）</summary>
+        private static int SkipTypeExpression(List<Token> tokens, int i, ref int lastEnd)
+        {
+            var depth = 0; // <> () [] {} 配平
+            var expectOperand = false; // 上一 token 是类型运算符（| & . =>），下一 token 必属类型
+            var consumedAny = false; // 是否已吃过类型 token（区分"类型开头的 {" 与"类型后的函数体 {"）
+            var last = i - 1;
+            while (i < tokens.Count)
+            {
+                var t = tokens[i];
+                if (t.Kind == Tok.Ident && TypeOperatorKeywords.Contains(t.Text) && depth == 0)
+                {
+                    // extends/keyof/typeof/infer/is/in：类型运算符，后必跟类型操作数
+                    expectOperand = true;
+                }
+                if (t.Kind == Tok.Punct)
+                {
+                    switch (t.Text)
+                    {
+                        case "(" or "[" or "<":
+                            depth++;
+                            break;
+                        case ")":
+                            if (depth == 0)
+                            {
+                                goto Done;
+                            }
+                            depth--;
+                            // 函数类型 `(…) => T`：类型自有括号闭合后跟 => 要继续吃
+                            // （fixit animation.ts 的 `callback?: () => void` 实测）。
+                            // 返回类型后的 => 不经过这里（那跟在类型 token 之后），不受影响
+                            if (depth == 0 && i + 1 < tokens.Count &&
+                                tokens[i + 1].Kind == Tok.Punct && tokens[i + 1].Text == "=>")
+                            {
+                                expectOperand = true;
+                            }
+                            break;
+                        case "]":
+                            if (depth == 0)
+                            {
+                                goto Done;
+                            }
+                            depth--;
+                            break;
+                        case "}":
+                            if (depth == 0)
+                            {
+                                goto Done;
+                            }
+                            depth--;
+                            break;
+                        case ">":
+                            depth--;
+                            break;
+                        case "," or ";":
+                            if (depth == 0)
+                            {
+                                goto Done;
+                            }
+                            break;
+                        case "=" when depth == 0:
+                            goto Done; // 字段默认值/函数体起点
+                        case "{":
+                            if (depth == 0 && consumedAny)
+                            {
+                                goto Done; // 类型已吃过内容，这个 { 是函数/类体
+                            }
+                            // 类型开头的 { = 对象类型（`let x: { a: string }`，
+                            // fixit search 模块实测多行对象类型）；嵌套 { 恒为对象类型
+                            depth++;
+                            break;
+                        case "|" or "&" or "." or "=>":
+                            if (depth == 0)
+                            {
+                                expectOperand = true; // 联合/交叉/限定/函数类型运算符
+                            }
+                            break;
+                    }
+                }
+                last = i;
+                consumedAny = true;
+                i++;
+                // 括号内或运算符后：无条件继续（类型跨行/链式都在这里活）
+                if (depth > 0 || expectOperand)
+                {
+                    expectOperand = false;
+                    continue;
+                }
+                // 深度 0 且不期待操作数：仅当下一 token 是续行运算符/关键字才继续
+                // （否则吃掉下一行语句——`x: Foo` 后的 `bar()` 不能被吞）。
+                // `?`/`:` 在列：条件类型 `A extends B ? C : D` 的运算符在深度 0
+                if (i < tokens.Count && tokens[i].Kind == Tok.Punct &&
+                    tokens[i].Text is "|" or "&" or "." or "[" or "<" or "?" or ":")
+                {
+                    continue;
+                }
+                if (i < tokens.Count && tokens[i].Kind == Tok.Ident &&
+                    IsTypeContinuation(tokens, i))
+                {
+                    continue;
+                }
+                goto Done;
+            }
+        Done:
+            lastEnd = last >= 0 && last < tokens.Count ? tokens[last].End : lastEnd;
+            return last + 1;
+        }
+
+        private static bool IsTypeContinuation(List<Token> tokens, int i) =>
+            TypeOperatorKeywords.Contains(tokens[i].Text);
+
+        /// <summary>类型表达式内的关键字运算符（后必跟类型操作数）</summary>
+        private static readonly HashSet<string> TypeOperatorKeywords = new(StringComparer.Ordinal)
+        {
+            "extends", "keyof", "typeof", "infer", "is", "in",
+        };
+
+        /// <summary>语句起始关键字（三元检测的边界：反向扫描遇到即止）。
+        /// 只收**语句级**关键字——await/yield/delete/typeof/void/new 是表达式
+        /// 运算符，三元分支里会出现（`a ? await f() : b`），收了会误断边界</summary>
+        private static readonly HashSet<string> StatementKeywords = new(StringComparer.Ordinal)
+        {
+            "const", "let", "var", "return", "if", "else", "for", "while", "do",
+            "switch", "case", "default", "break", "continue", "throw", "try",
+            "catch", "finally", "function", "class", "import", "export",
+        };
+
+        /// <summary>token 索引 → 匹配闭括号索引</summary>
+        private static int MatchBraceToken(List<Token> tokens, int openIdx)
+        {
+            var depth = 0;
+            for (var i = openIdx; i < tokens.Count; i++)
+            {
+                if (tokens[i].Kind != Tok.Punct)
+                {
+                    continue;
+                }
+                switch (tokens[i].Text)
+                {
+                    case "{": depth++; break;
+                    case "}":
+                        depth--;
+                        if (depth == 0)
+                        {
+                            return i;
+                        }
+                        break;
+                }
+            }
+            return -1;
+        }
+
+        private static List<Token> Tokenize(string s)
+        {
+            var tokens = new List<Token>();
+            var i = 0;
+            while (i < s.Length)
+            {
+                var c = s[i];
+                if (char.IsWhiteSpace(c))
+                {
+                    i++;
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '/')
+                {
+                    while (i < s.Length && s[i] != '\n')
+                    {
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '/' && i + 1 < s.Length && s[i + 1] == '*')
+                {
+                    var close = s.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? s.Length : close + 2;
+                    continue;
+                }
+                if (c == '/' && EsmBundler.IsRegexStart(s, i))
+                {
+                    i = EsmBundler.SkipRegex(s, i);
+                    continue;
+                }
+                if (c == '\'' || c == '"')
+                {
+                    var start = i;
+                    i = SkipStringLiteral(s, i);
+                    tokens.Add(new Token(Tok.Str, s[start..i], start, i));
+                    continue;
+                }
+                if (c == '`')
+                {
+                    var start = i;
+                    i = SkipTemplateLiteral(s, i);
+                    tokens.Add(new Token(Tok.Tmpl, s[start..i], start, i));
+                    continue;
+                }
+                if (char.IsAsciiDigit(c) || (c == '.' && i + 1 < s.Length && char.IsAsciiDigit(s[i + 1])))
+                {
+                    var start = i;
+                    while (i < s.Length && (char.IsAsciiLetterOrDigit(s[i]) || s[i] == '.' ||
+                               (s[i] == '+' || s[i] == '-') && start < i && (s[i - 1] == 'e' || s[i - 1] == 'E')))
+                    {
+                        i++;
+                    }
+                    tokens.Add(new Token(Tok.Num, s[start..i], start, i));
+                    continue;
+                }
+                if (char.IsAsciiLetter(c) || c == '_' || c == '$')
+                {
+                    var start = i;
+                    while (i < s.Length && (char.IsAsciiLetterOrDigit(s[i]) || s[i] == '_' || s[i] == '$'))
+                    {
+                        i++;
+                    }
+                    tokens.Add(new Token(Tok.Ident, s[start..i], start, i));
+                    continue;
+                }
+                // 正则字面量：整段按不透明 token（Str 语义）——正则里的
+                // 引号/冒号/as 不能进规则（fixit file.ts 的
+                // `/[\\/:*?"<>|\r\n]+/g` 实测）
+                if (c == '/' && EsmBundler.IsRegexStart(s, i))
+                {
+                    var rstart = i;
+                    i = EsmBundler.SkipRegex(s, i);
+                    tokens.Add(new Token(Tok.Str, s[rstart..i], rstart, i));
+                    continue;
+                }
+                // 多字符运算符
+                var op = ReadOperator(s, i);
+                tokens.Add(new Token(Tok.Punct, op, i, i + op.Length));
+                i += op.Length;
+            }
+            return tokens;
+        }
+
+        private static readonly string[] MultiCharOperators =
+            ["===", "!==", "=>", "?.", "??", "&&", "||", "...", "==", "!=", "<=", ">="];
+
+        private static string ReadOperator(string s, int i)
+        {
+            foreach (var op in MultiCharOperators)
+            {
+                if (string.CompareOrdinal(s, i, op, 0, op.Length) == 0)
+                {
+                    return op;
+                }
+            }
+            return s[i].ToString();
+        }
+
+        private static int SkipStringLiteral(string s, int i)
+        {
+            var quote = s[i++];
+            while (i < s.Length)
+            {
+                if (s[i] == '\\')
+                {
+                    i += 2;
+                    continue;
+                }
+                if (s[i] == quote)
+                {
+                    return i + 1;
+                }
+                i++;
+            }
+            return i;
+        }
+
+        private static int SkipTemplateLiteral(string s, int i)
+        {
+            i++; // 跳过 `
+            while (i < s.Length)
+            {
+                if (s[i] == '\\')
+                {
+                    i += 2;
+                    continue;
+                }
+                if (s[i] == '`')
+                {
+                    return i + 1;
+                }
+                if (s[i] == '$' && i + 1 < s.Length && s[i + 1] == '{')
+                {
+                    // ${...} 表达式：括号配平（嵌套模板字面量简化处理）。
+                    // **depth 从 1 起**：开括号 { 已被上面的 i += 2 消费，
+                    // 配对 } 应把 depth 减到 0 才收尾——从 0 起会使首个 } 后
+                    // depth 变 -1、配平判不上，进而把收尾反引号误当嵌套模板
+                    // 起点递归吞掉后续全部代码（实测 `code.${a}` 后的语句
+                    // 全被并进模板 token，非空断言等规则静默失效）
+                    var depth = 1;
+                    i += 2;
+                    while (i < s.Length)
+                    {
+                        if (s[i] == '{')
+                        {
+                            depth++;
+                        }
+                        else if (s[i] == '}')
+                        {
+                            depth--;
+                            if (depth == 0)
+                            {
+                                i++;
+                                break;
+                            }
+                        }
+                        else if (s[i] == '`')
+                        {
+                            i = SkipTemplateLiteral(s, i);
+                            continue;
+                        }
+                        i++;
+                    }
+                    continue;
+                }
+                i++;
+            }
+            return i;
         }
     }
 
@@ -1471,7 +3470,13 @@ public sealed partial class BuiltinTemplateFunctions
         // 字符串内的 `//`（URL 等），用逐字符状态机：遇字符串/模板字面量跳过，
         // 遇 `//` 跳到行尾
         s = StripJsLineComments(s);
-        s = Regex.Replace(s, @"\s+", " ");
+        // **换行必须保留**：JS 的 ASI（自动分号插入）以换行为触发条件。
+        // 主题 TS 多为无分号风格（fixit 的 banner.ts：`const color = '…'`
+        // 换行即调 console.log），整段压成空格后 `'…' console.log(` 成为
+        // 语法错误（node --check 实测 Unexpected identifier）。保留换行每行
+        // 只多 1 字节，ASI 安全；行内多余空白仍压成单空格
+        s = Regex.Replace(s, @"\s*\r?\n\s*", "\n");
+        s = Regex.Replace(s, @"[^\S\r\n]+", " ");
         return s.Trim();
     }
 

@@ -72,7 +72,8 @@ corpus/
 
 - fixit 是 21 主题中构建最慢的（~5.5 分钟/631 页），`demo-sites.sh` 单站超时
   已放宽到 600s；慢的根因与修复见 `docs/PERFORMANCE-OPTIMIZATION.md` 阶段七
-- 各站 `site.webmanifest` 404 是主题自身引用不存在的文件（Hugo 下同样 404），
-  非 Flint 问题
+- `site.webmanifest` / favicon 已由 corpus 静态目录统一提供（`scripts/fixtures/
+  corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径）；
+  早期"主题引用不存在的文件"问题已修复
 - 重建演示站前需先停掉对应端口的静态服务（Windows 下服务进程 CWD 在 public/
   内会锁目录）：`netstat -ano | grep :84xx` 找 PID 后 `taskkill /F /PID <pid>`

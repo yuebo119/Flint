@@ -137,8 +137,26 @@ internal sealed class ScribanConverter(
         "findRE", "find_re",
         "findRESubmatch", "find_re_submatch",
         "strings.Trim", "strings.TrimLeft", "strings.TrimRight",
-        "strings.TrimPrefix", "strings.TrimSuffix"
+        "strings.TrimPrefix", "strings.TrimSuffix",
+        // add：Hugo v0.166 实测 `"a" | add "b"` → "ba"（管道值末参，按序拼接）。
+        // 不换序则 Scriban 得 "ab"——fixit/loveit 的属性拼接惯用法
+        // `" defer" | add $attrs` 产出 " defersrc=..."，script/link 标签全畸形
+        // （实测浏览器把 defersrc 当布尔属性、src 缺失 → 脚本不加载）。
+        // 数值 add 可交换，换序无副作用。**append 不在此列**：Hugo 的 append
+        // 语义是"末参才是集合"（`X | append Y` = X 追加 Y 的元素），Scriban 管道
+        // 第一参恰好对应，换序反而错（实测 `slice "X" | append (slice "Y")`
+        // → [X, Y]）
+        "add"
     };
+
+    /// <summary>
+    /// Store/Scratch **写入方法**调用（管道末段判定用）：<c>page.store.set</c>、
+    /// <c>page?.scratch.setinmap</c>、<c>$x.store.set</c> 等形态。Hugo 的写入方法
+    /// （.Store.Set / .Store.SetInMap）管道值在**末参**，Scriban 管道注入首参会错位
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex StoreMutatorCallRegex = new(
+        @"^(?:[A-Za-z_$][\w$]*\??\.)?(?:store|scratch)\.(?:set|setinmap)\b",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
     /// partial 名规范化：剥扩展名与路径前缀，使调用名与文件路径可对齐。
@@ -333,6 +351,31 @@ internal sealed class ScribanConverter(
                 // `$page.resources.getmatch` 报 null object）
                 acc = callRes.Text + " " + ParenthesizeIfNeeded(acc);
                 continue;
+            }
+
+            // ---- 管道末段是 Store/Scratch **写入方法**（.Store.Set / .Scratch.SetInMap，
+            // 转换后为 page.store.set / page.scratch.setinmap …）----
+            // Hugo 的 `V | $.Page.Store.SetInMap MAP KEY` = SetInMap(MAP, KEY, V)
+            // （管道值末参）；Scriban 管道把 V 注入**首参** → SetInMap(V, MAP, KEY)，
+            // MAP/KEY 位整体错位——fixit/loveit 的 function/id.html 计数器实测不递增、
+            // scriptArr/styleArr 累积静默丢失。与 partial/include 同族：显式改写为
+            // 调用形态，左值补末位。**只拦写入方法**：date.to_string / compare.Default /
+            // resources.Minify 等点号名函数的 Scriban 管道语义本就正确（或在引擎侧
+            // 做了双序兼容），不能动。先用探针转换判定，非写入方法原样走下方通用路径
+            if (acc is not null && cmd.Operands.Count > 1)
+            {
+                var storeProbe = ConvertCommand(cmd, scope, isPipeSegment: false, resourceContext);
+                if (storeProbe.Kind != ConversionKind.Unsupported
+                    && StoreMutatorCallRegex.IsMatch(storeProbe.Text))
+                {
+                    if (storeProbe.Kind != ConversionKind.Equivalent)
+                    {
+                        kind = storeProbe.Kind;
+                        note = storeProbe.Note;
+                    }
+                    acc = storeProbe.Text + " " + ParenthesizeIfNeeded(acc);
+                    continue;
+                }
             }
 
 
@@ -644,6 +687,26 @@ internal sealed class ScribanConverter(
                 }
                 var joined = string.Join(op == "==" ? " || " : " && ", clauses);
                 return new ConversionResult("(" + joined + ")", ConversionKind.Equivalent);
+            }
+
+            // **与布尔字面量的比较改发函数形式**：Scriban 的 `==`/`!=` 在对象与
+            // bool 之间做真值强转（`dict == true` → true，实测），Hugo 的 eq/ne
+            // 类型严格（map vs true → false，hugo v0.166 实测）。fixit 的
+            // js-build.html `if eq . true` 中缀化成 `$__w0 == true` 后，dict
+            // 形态的 Build 选项被误判为 true → $options 被重置、params 整组
+            // 丢失（@params 虚拟模块实测变空）。Flint 的 eq/ne 函数按
+            // object.Equals 比较，与 Hugo 一致，故布尔字面量比较走函数形式
+            if (name is "eq" or "ne" && args.Count == 2 &&
+                args.Any(a => a is Parsing.LiteralExpr { Kind: Parsing.LiteralKind.Bool }))
+            {
+                var boolL = ConvertExpr(args[0], scope, false);
+                var boolR = ConvertExpr(args[1], scope, false);
+                if (boolL.Kind != ConversionKind.Unsupported && boolR.Kind != ConversionKind.Unsupported)
+                {
+                    return new ConversionResult(
+                        $"{name} {ParenthesizeIfNeeded(boolL.Text)} {ParenthesizeIfNeeded(boolR.Text)}",
+                        ConversionKind.Equivalent);
+                }
             }
 
             var left = ConvertExpr(args[0], scope, false);
