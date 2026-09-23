@@ -190,6 +190,61 @@ public sealed partial class SiteBuilder
         IReadOnlyDictionary<string, object>? siteData = null,
         IReadOnlyDictionary<string, string>? translations = null)
     {
+        // 分类/词条查找注册表：词条页在第 9 阶段才渲染，而列表模板（loveit 的
+        // summary 按 "/categories/xxx" 查词条页拿链接）在第 8 阶段执行。用
+        // TaxonomyService 已建好的分类数据预建最小投影（与 BuildTermPages 同口径），
+        // 供 GetPage 页面列表未命中时回退
+        var lookup = new List<PageContext>();
+        foreach (var (taxName, terms) in taxonomies.Taxonomies)
+        {
+            // 分类列表页自身（/tags、/categories）
+            var listRel = "/" + taxName.Trim('/') + "/";
+            lookup.Add(new PageContext
+            {
+                Title = taxName,
+                Content = "",
+                RelPermalink = listRel,
+                Permalink = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL) + listRel,
+                Date = terms.Count > 0
+                    ? terms.SelectMany(t => t.Pages).Where(p => p.Date != DateTimeOffset.MinValue).Select(p => p.Date).DefaultIfEmpty(DateTimeOffset.Now).Max()
+                    : DateTimeOffset.Now,
+                Tags = [],
+                Categories = [],
+                WordCount = 0,
+                ReadingTime = TimeSpan.Zero,
+                Kind = "taxonomy",
+                Type = taxName
+            });
+            foreach (var term in terms)
+            {
+                var rel = term.Permalink ?? "/";
+                var origin = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL);
+                if (rel.StartsWith(origin, StringComparison.OrdinalIgnoreCase))
+                {
+                    rel = rel[origin.Length..];
+                }
+                if (!rel.StartsWith('/'))
+                {
+                    rel = "/" + rel;
+                }
+                lookup.Add(new PageContext
+                {
+                    Title = term.Name,
+                    Content = "",
+                    RelPermalink = rel,
+                    Permalink = origin + rel,
+                    Date = term.Pages.Count > 0 ? term.Pages.Max(p => p.Date) : DateTimeOffset.Now,
+                    Tags = [],
+                    Categories = [],
+                    WordCount = 0,
+                    ReadingTime = TimeSpan.Zero,
+                    Kind = "term",
+                    Type = taxName
+                });
+            }
+        }
+        ScribanTemplateRenderer.SetTaxonomyLookupPages(lookup.Count > 0 ? lookup : null);
+
         // 当页面列表为空时，使用当前时间作为 LastChange
         var lastChange = pages.Count > 0
             ? pages.Max(p => p.LastMod ?? p.Date)

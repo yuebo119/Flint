@@ -1418,8 +1418,40 @@ public sealed partial class ScribanTemplateRenderer
 
             FlintPageContext? found = first is { Count: > 0 } ? Search(first, a0, a1) : null;
             found ??= second is { Count: > 0 } ? Search(second, a0, a1) : null;
+            // 最后查分类/词条查找注册表：词条页在第 9 构建阶段才渲染，列表模板
+            // （loveit 的 summary 按 "/categories/xxx"、"/tags/xxx" 查找）执行时它们
+            // 还不在任何页面列表里。注册表由第 7 阶段用分类数据预建（最小投影）
+            found ??= SearchTaxonomyLookup(a0, a1);
 
             return found is null ? null : CreatePageObject(found);
+        }
+
+        /// <summary>
+        /// 查分类/词条查找注册表（词条页渲染滞后于列表模板的补偿，见
+        /// <see cref="ScribanTemplateRenderer.SetTaxonomyLookupPages"/>）。
+        /// 只处理**路径形态**（"/tags/xxx"、"/categories/xxx"、"/tags"）——(kind,名)
+        /// 形态（"section" "posts"）本就命中第 8 阶段的常规页列表
+        /// </summary>
+        private FlintPageContext? SearchTaxonomyLookup(string a0, string? a1)
+        {
+            if (a1 is not null)
+            {
+                return null;
+            }
+            var registry = ScribanTemplateRenderer.GetTaxonomyLookupPages();
+            if (registry is not { Count: > 0 })
+            {
+                return null;
+            }
+            var path = a0.Trim('/');
+            if (path.Length == 0)
+            {
+                return null;
+            }
+            var basePrefix = BasePrefixOf(registry);
+            return registry.FirstOrDefault(p =>
+                StripBasePrefix(p.RelPermalink, basePrefix).Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                p.PagePath?.Trim('/').Equals(path, StringComparison.OrdinalIgnoreCase) == true);
         }
 
         /// <summary>在给定页面集合里按 Hugo GetPage 语义查找（kind/名 或 路径形态）</summary>

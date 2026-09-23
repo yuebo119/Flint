@@ -542,6 +542,23 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     internal static void SetCurrentSitePages(IReadOnlyList<Flint.Core.Abstractions.PageContext> pages) => CurrentSitePages = pages;
 
     /// <summary>
+    /// 分类/词条页的**查找注册表**（Hugo 的 .Site.GetPage "/tags/x" 语义）。词条页在
+    /// 构建期第 9 阶段才渲染，而列表模板（loveit 的 summary）在第 8 阶段就要按
+    /// "/categories/xxx" 查它们拿 rel_permalink/title——故第 7 阶段用 TaxonomyService
+    /// 已建好的分类数据预建最小 PageContext 投影登记于此，GetPage 页面列表未命中时
+    /// 回退查本表。**不进 site.Pages**：避免 range site.pages 的主题行为变化
+    /// </summary>
+    private static IReadOnlyList<Flint.Core.Abstractions.PageContext>? TaxonomyLookupPages;
+
+    /// <summary>登记分类/词条查找注册表（每次构建前由 SiteBuilder 调用；null 清空）</summary>
+    internal static void SetTaxonomyLookupPages(IReadOnlyList<Flint.Core.Abstractions.PageContext>? pages) =>
+        TaxonomyLookupPages = pages;
+
+    /// <summary>取分类/词条查找注册表（未登记时为 null）</summary>
+    internal static IReadOnlyList<Flint.Core.Abstractions.PageContext>? GetTaxonomyLookupPages() =>
+        TaxonomyLookupPages;
+
+    /// <summary>
     /// 当前构建的**站点对象**——页面对象上的 <c>.Site</c> 用它（Hugo 的 `.Site` 在任意
     /// 页面上可用；迁移产物里的 `$page.Site.Params…` 形态会落到 `$page.site.params`）。
     /// 与 <see cref="CurrentSitePages"/> 同一模式：页面对象按引用共享、构造时机不定，
