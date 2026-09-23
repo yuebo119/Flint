@@ -1989,18 +1989,10 @@ public sealed partial class ScribanTemplateRenderer
             ["GetPage"] = new GetPageFunction(site.Pages, site.Language),
             // language 是**语言对象**（Hugo 的 .Site.Language.Locale/Lang 链——
             // narrow 的 baseof 取 `site.Language.Locale`；此前给纯字符串 → .locale 空
-            // → <html lang="">）
-            ["language"] = new ScriptObject
-            {
-                ["locale"] = site.Language ?? "",
-                ["Locale"] = site.Language ?? "",
-                ["lang"] = site.Language ?? "",
-                ["Lang"] = site.Language ?? "",
-                ["language_code"] = site.Language ?? "",
-                ["LanguageCode"] = site.Language ?? "",
-                ["language_name"] = site.Language ?? "",
-                ["language_direction"] = "ltr"
-            },
+            // → <html lang="">）。ToString 返回语言码（Hugo 的 Language.String()
+            // = Lang）：模板直接 `{{ site.language }}` 写进属性时得 "zh-cn" 而非
+            // 对象转储（hugo-coder 的 `<html lang="map[Lang:…]">` 实测）
+            ["language"] = new LanguageObject(site.Language),
             ["pages"] = lazyPages,
             ["regular_pages"] = lazyRegularPages,
             ["taxonomies"] = lazyTaxonomies,
@@ -2234,6 +2226,34 @@ public sealed partial class ScribanTemplateRenderer
         ("Reverse", "reverse", "reverse"),
         ("Limit", "limit", "limit")
     ];
+
+    /// <summary>
+    /// 站点语言对象（Hugo <c>.Site.Language</c>）：Lang/Locale/LanguageCode 成员链 +
+    /// <c>LanguageName</c>/<c>LanguageDirection</c> 兼容键。<b>字符串化返回语言码</b>
+    /// （经 <see cref="ILanguageCode"/> 标记 + ObjectToString 分支实现——ScriptObject
+    /// 的 ToString 是密封的）：模板把 <c>{{ site.language }}</c> 直接写进 HTML 属性时
+    /// 得到 "zh-cn"，而非整个对象被印成 <c>map[Lang:…]</c>（hugo-coder 的 baseof 实测）
+    /// </summary>
+    private sealed class LanguageObject : ScriptObject, ILanguageCode
+    {
+        public LanguageObject(string? lang)
+        {
+            var code = lang ?? "";
+            SetValue("locale", code, false);
+            SetValue("Locale", code, false);
+            SetValue("lang", code, false);
+            SetValue("Lang", code, false);
+            SetValue("language_code", code, false);
+            SetValue("LanguageCode", code, false);
+            SetValue("language_name", code, false);
+            SetValue("LanguageName", code, false);
+            SetValue("language_direction", "ltr", false);
+            SetValue("LanguageDirection", "ltr", false);
+        }
+
+        public string LanguageCodeValue =>
+            this.TryGetValue(null, default, "lang", out var v) ? v?.ToString() ?? "" : "";
+    }
 
     private sealed class LazyPageList : ScriptObject, IEnumerable<ScriptObject>, IList<ScriptObject>
     {

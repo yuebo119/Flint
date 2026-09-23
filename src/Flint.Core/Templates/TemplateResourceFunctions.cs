@@ -709,6 +709,15 @@ public sealed partial class BuiltinTemplateFunctions
                 ? targetValue?.ToString()
                 : null;
 
+            // **hugo:vars 虚拟导入的变量源**（Hugo css.Sass 的 vars 选项）：主题把
+            // 变量字典随 toCSS Options 传入，SCSS 里 `@forward "hugo:vars"` /
+            // `"hugo:vars/internal"` 取用（fixit 的 scss-vars.html → _variables.scss）。
+            // 键名兼容 vars / vars_internal / varsInternal（迁移器对 Pascal 键产出
+            // 逐大写字母 snake 形）
+            var varsMap = GetOptionMember(options, "vars") as ScriptObject;
+            var varsInternal = GetOptionMember(options, "vars_internal")
+                               ?? GetOptionMember(options, "varsInternal");
+
             var css = r.Content;
             var ext = r.SourcePath is { } sp ? Path.GetExtension(sp) : null;
             var sassCompilable = File.Exists(r.SourcePath) &&
@@ -720,9 +729,11 @@ public sealed partial class BuiltinTemplateFunctions
                 // 进程单次 ~1-2s，每页重跑时 700 页必然超时
                 var loadPath = Path.GetDirectoryName(r.SourcePath!);
                 var indented = ext == ".sass";
+                // 变量摘要进缓存键：同一 scss 不同 vars 的产出不可互相复用
                 css = CachedText(
-                    $"css.sass|{loadPath}|{indented}|{css.Length}:{ContentDigest(css)}",
-                    () => TryCompileWithSassCli(css, loadPath, indented: indented) ?? css);
+                    $"css.sass|{loadPath}|{indented}|{VarsDigest(varsMap, varsInternal)}|{css.Length}:{ContentDigest(css)}",
+                    () => TryCompileWithSassCli(css, loadPath, indented: indented,
+                        vars: varsMap, varsInternal: varsInternal) ?? css);
             }
 
             var target = targetPath;
@@ -779,7 +790,8 @@ public sealed partial class BuiltinTemplateFunctions
     private static string? _sassExePath;
 
     /// <summary>
-    /// 定位 Dart Sass：环境变量 FLINT_SASS → PATH 上的 sass →
+    /// 定位 Dart Sass：环境变量 FLINT_SASS → 进程目录旁的 dart-sass*/sass.bat
+    /// （CLI 发布布局：Flint.exe 与 dart-sass.win-x64/ 同级）→ PATH 上的 sass →
     /// 进程目录向上找 tools/dart-sass/sass.bat（仓库工具布局）
     /// </summary>
     private static string? LocateSassExecutable()
@@ -795,12 +807,25 @@ public sealed partial class BuiltinTemplateFunctions
             candidates.Add(env);
         }
 
-        // 进程目录向上找仓库工具目录（Flint/src/Flint.Cli/bin/…/win-x64 → 上溯 6 层）
+        // **进程目录同级的 dart-sass*/sass.bat**：CLI 自包含发布把 Dart Sass
+        // 运行时放在 Flint.exe 旁边（…/win-x64/dart-sass.win-x64/sass.bat）。
+        // 此前只找 tools/dart-sass，发布布局下永远找不到 → toCSS 全部退化为
+        // 内容直通（main.css 里剩 `@use "core"` 原样 SCSS，全站无样式——
+        // fixit/loveit 实测）
         var procDir = AppContext.BaseDirectory;
+        foreach (var sassDir in Directory.Exists(procDir)
+                     ? Directory.EnumerateDirectories(procDir, "dart-sass*")
+                     : Array.Empty<string>())
+        {
+            candidates.Add(Path.Combine(sassDir, "sass.bat"));
+        }
+
+        // 进程目录向上找仓库工具目录（Flint/src/Flint.Cli/bin/…/win-x64 → 上溯 8 层）
         var dir = new DirectoryInfo(procDir);
         for (var i = 0; i < 8 && dir is not null; i++)
         {
             candidates.Add(Path.Combine(dir.FullName, "tools", "dart-sass", "sass.bat"));
+            candidates.Add(Path.Combine(dir.FullName, "dart-sass.win-x64", "sass.bat"));
             dir = dir.Parent;
         }
 
@@ -835,9 +860,16 @@ public sealed partial class BuiltinTemplateFunctions
     /// <summary>
     /// 调用 Dart Sass 编译**内存中的 SCSS/Sass 内容**（stdin 模式 + load-path 解析 @import）。
     /// 必须编内容而不是磁盘文件：ExecuteAsTemplate → toCSS 链上磁盘文件含未渲染的
-    /// Scriban 动作，按文件编译必失败（clarity/m10c 实测）
+    /// Scriban 动作，按文件编译必失败（clarity/m10c 实测）。
+    /// <paramref name="vars"/>/<paramref name="varsInternal"/> 是 Hugo css.Sass 的
+    /// vars 选项：经镜像目录把 `@forward "hugo:vars"`（含 `hugo:vars/<子映射>`）
+    /// 替换成生成的 `$k: v;` 声明——Hugo 用自定义 importer 提供该虚拟模块，CLI 版
+    /// sass 没有 importer，且 `hugo:` 前缀含冒号不是合法 Windows 文件名，只能在
+    /// 源码镜像上做替换（fixit 的 _variables.scss 实测）
     /// </summary>
-    private static string? TryCompileWithSassCli(string content, string? loadPath, bool indented = false)
+    private static string? TryCompileWithSassCli(
+        string content, string? loadPath, bool indented = false,
+        ScriptObject? vars = null, object? varsInternal = null)
     {
         var sass = LocateSassExecutable();
         if (sass is null)
@@ -853,6 +885,9 @@ public sealed partial class BuiltinTemplateFunctions
             // 为与 Hugo 产物一致，编译前把行首 tab 转成等宽空格
             content = NormalizeSassIndent(content);
         }
+
+        // hugo:vars 数据（vars 顶层标量 + vars_internal 独立映射 + vars 内的子映射）
+        var hugoVars = CollectHugoVars(vars, varsInternal);
 
         try
         {
@@ -874,6 +909,23 @@ public sealed partial class BuiltinTemplateFunctions
                 {
                     loadPath = mirrorDir;
                 }
+            }
+
+            // **hugo:vars 镜像**：stdin 主文件也被 @import 的磁盘文件同规则替换，
+            // 内存内容里若有 hugo: 导入一并改写（用镜像目录承载替换后的磁盘文件）
+            if (hugoVars.Count > 0 && !string.IsNullOrEmpty(loadPath))
+            {
+                var varsMirror = CreateHugoVarsMirror(loadPath, hugoVars);
+                if (varsMirror is not null)
+                {
+                    if (mirrorDir is not null)
+                    {
+                        TryDeleteMirror(mirrorDir);
+                    }
+                    mirrorDir = varsMirror;
+                    loadPath = varsMirror;
+                }
+                content = RewriteHugoVarsImports(content, hugoVars);
             }
 
             if (!string.IsNullOrEmpty(loadPath))
@@ -921,6 +973,10 @@ public sealed partial class BuiltinTemplateFunctions
 
             if (exitCode != 0 || string.IsNullOrWhiteSpace(stdout))
             {
+                if (Environment.GetEnvironmentVariable("FLINT_SASS_TRACE") == "1")
+                {
+                    Console.Error.WriteLine($"[sass] compile failed exit={exitCode} err={(stderr.Length > 400 ? stderr[..400] : stderr)}");
+                }
                 return null;
             }
 
@@ -981,6 +1037,229 @@ public sealed partial class BuiltinTemplateFunctions
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             // 清理失败无碍正确性（临时目录）
+        }
+    }
+
+    // ---- Hugo css.Sass 的 vars 选项（hugo:vars 虚拟导入）----
+
+    /// <summary>从选项对象取成员（兼容 snake/Pascal 拼写）</summary>
+    internal static object? GetOptionMember(ScriptObject? options, string snakeName)
+    {
+        if (options is null)
+        {
+            return null;
+        }
+        foreach (var candidate in new[] { snakeName, char.ToUpperInvariant(snakeName[0]) + snakeName[1..] })
+        {
+            if (options.TryGetValue(null, default, candidate, out var v) && v is not null)
+            {
+                return v;
+            }
+        }
+        // 逐大写字母 snake 形（vars_internal 也可能是 varsInternal/VarsInternal）
+        var pascal = string.Concat(snakeName.Split('_').Select(p => p.Length > 0
+            ? char.ToUpperInvariant(p[0]) + p[1..] : p));
+        return options.TryGetValue(null, default, pascal, out var pv) ? pv : null;
+    }
+
+    /// <summary>
+    /// 汇总 hugo:vars 变量源：<c>""</c>（空键）= vars 的顶层**标量**项；
+    /// <c>"internal"</c> 等子键 = vars 内对应**子映射**项；另有独立的
+    /// vars_internal 选项合并进 "internal" 命名空间（Hugo 的 VarsInternal）
+    /// </summary>
+    internal static Dictionary<string, Dictionary<string, string?>> CollectHugoVars(
+        ScriptObject? vars, object? varsInternal)
+    {
+        var result = new Dictionary<string, Dictionary<string, string?>>(StringComparer.OrdinalIgnoreCase);
+        if (vars is not null)
+        {
+            foreach (var key in vars.Keys)
+            {
+                if (!vars.TryGetValue(null, default, key, out var v) || v is null)
+                {
+                    continue;
+                }
+                if (v is ScriptObject nested)
+                {
+                    result[key] = ScalarEntries(nested);
+                }
+                else
+                {
+                    if (!result.TryGetValue("", out var scalars))
+                    {
+                        scalars = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                        result[""] = scalars;
+                    }
+                    scalars[key] = v.ToString();
+                }
+            }
+        }
+        if (varsInternal is ScriptObject internalObj)
+        {
+            if (!result.TryGetValue("internal", out var internalScalars))
+            {
+                internalScalars = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                result["internal"] = internalScalars;
+            }
+            foreach (var (k, v) in ScalarEntries(internalObj))
+            {
+                internalScalars[k] = v;
+            }
+        }
+        return result;
+    }
+
+    internal static Dictionary<string, string?> ScalarEntries(ScriptObject obj)
+    {
+        var dict = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in obj.Keys)
+        {
+            if (!obj.TryGetValue(null, default, key, out var v) || v is null)
+            {
+                continue;
+            }
+            // 嵌套映射不再递归（SCSS 侧只用一层：hugo:vars/<子键>）
+            dict[key] = v is ScriptObject ? null : v.ToString();
+        }
+        return dict;
+    }
+
+    /// <summary>变量源的缓存摘要（进 css.sass 缓存键）</summary>
+    internal static string VarsDigest(ScriptObject? vars, object? varsInternal)
+    {
+        if (vars is null && varsInternal is null)
+        {
+            return "novars";
+        }
+        var flat = CollectHugoVars(vars, varsInternal);
+        var sb = new System.Text.StringBuilder();
+        foreach (var (ns, entries) in flat.OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            sb.Append(ns).Append('{');
+            foreach (var (k, v) in entries.OrderBy(p => p.Key, StringComparer.Ordinal))
+            {
+                sb.Append(k).Append('=').Append(v).Append(';');
+            }
+            sb.Append('}');
+        }
+        return sb.Length == 0 ? "novars" : sb.ToString();
+    }
+
+    /// <summary>命名空间 → <c>$k: v;</c> 声明块。</summary>
+    /// <remarks>
+    /// 值格式化对齐 Hugo 的 isTypedCSSValue：hex 颜色（#fff）、CSS 函数
+    /// （rgba(…)）、数字+单位（0.875em/60px）、裸关键字（center/bold）原样输出；
+    /// 其余（含空格的字体名、路径等）包双引号——直接输出 <c>$f: Noto Sans SC;</c>
+    /// 会让 sass 报 "Expected expression"（fixit 的 vars 实测）
+    /// </remarks>
+    internal static string BuildVarsDeclarations(Dictionary<string, string?> entries)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var (k, v) in entries)
+        {
+            if (v is null)
+            {
+                continue;
+            }
+            sb.Append('$').Append(k).Append(": ").Append(FormatSassValue(v)).Append(";\n");
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>SCSS 变量值格式化（见 <see cref="BuildVarsDeclarations"/> 的规则说明）</summary>
+    internal static string FormatSassValue(string value)
+    {
+        var v = value.Trim();
+        if (v.Length == 0)
+        {
+            return "\"\"";
+        }
+        // 已有引号（单/双）→ 原样
+        if ((v.StartsWith('"') && v.EndsWith('"')) || (v.StartsWith('\'') && v.EndsWith('\'')))
+        {
+            return v;
+        }
+        // hex 颜色
+        if (v.StartsWith('#') && System.Text.RegularExpressions.Regex.IsMatch(v, "^#[0-9a-fA-F]{3,8}$"))
+        {
+            return v;
+        }
+        // CSS 函数：rgba(...) / var(...) / calc(...) / linear-gradient(...)
+        if (System.Text.RegularExpressions.Regex.IsMatch(v, "^[a-zA-Z-]+\\(.*\\)$"))
+        {
+            return v;
+        }
+        // 数字 + 单位 / 纯数字
+        if (System.Text.RegularExpressions.Regex.IsMatch(v, "^[+-]?(\\d+\\.?\\d*|\\.\\d+)([a-zA-Z%]*)$"))
+        {
+            return v;
+        }
+        // 裸关键字（无空白的标识符序列）
+        if (System.Text.RegularExpressions.Regex.IsMatch(v, "^[a-zA-Z_][\\w-]*$"))
+        {
+            return v;
+        }
+        // 其余一律引号化（字体名/路径/复合值）；内部双引号转义
+        return "\"" + v.Replace("\"", "\\\"") + "\"";
+    }
+
+    /// <summary>把源码内容里的 <c>@forward/@use "hugo:vars[/子键]"</c> 替换成变量声明</summary>
+    internal static string RewriteHugoVarsImports(
+        string content, Dictionary<string, Dictionary<string, string?>> vars)
+    {
+        if (!content.Contains("hugo:", StringComparison.Ordinal))
+        {
+            return content;
+        }
+        return System.Text.RegularExpressions.Regex.Replace(content,
+            "@(forward|use)\\s+(\"[^\"]*hugo:vars[^\"]*\"|'[^']*hugo:vars[^']*')",
+            m =>
+            {
+                var spec = m.Groups[2].Value.Trim('"', '\'');
+                // "hugo:vars" → 顶层标量；"hugo:vars/internal" → 子映射
+                var ns = spec.Length > "hugo:vars".Length && spec["hugo:vars".Length] == '/'
+                    ? spec[("hugo:vars/".Length)..]
+                    : "";
+                vars.TryGetValue(ns, out var entries);
+                var decls = entries is null ? "" : BuildVarsDeclarations(entries);
+                // 无数据的命名空间留空注释：整块删除会改动 Sass 的模块语义（@use 的
+                // 副作用声明），保留一个空注释让文件结构不变
+                return decls.Length > 0 ? decls : "/* flint: vars 无数据 */";
+            });
+    }
+
+    /// <summary>
+    /// 把 scss 源目录镜像到临时目录并**替换全部文件里的 hugo: 导入**——CLI 版 sass
+    /// 没有自定义 importer，而 <c>hugo:vars</c> 含冒号在 Windows 上不是合法文件名，
+    /// 无法落盘成可导入的路径，只能在镜像源码上做文本替换
+    /// </summary>
+    internal static string? CreateHugoVarsMirror(
+        string sourceDir, Dictionary<string, Dictionary<string, string?>> vars)
+    {
+        try
+        {
+            var mirror = Path.Combine(Path.GetTempPath(), "flint-hugo-vars-" + Guid.NewGuid().ToString("N"));
+            foreach (var file in Directory.EnumerateFiles(sourceDir, "*", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(sourceDir, file);
+                var target = Path.Combine(mirror, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                if (rel.EndsWith(".scss", StringComparison.OrdinalIgnoreCase) ||
+                    rel.EndsWith(".sass", StringComparison.OrdinalIgnoreCase))
+                {
+                    File.WriteAllText(target,
+                        RewriteHugoVarsImports(File.ReadAllText(file), vars));
+                }
+                else
+                {
+                    File.Copy(file, target);
+                }
+            }
+            return mirror;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
         }
     }
 

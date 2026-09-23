@@ -24,3 +24,15 @@ namespace Flint.Core.Templates;
 internal interface IFlintNonDataObject
 {
 }
+
+/// <summary>
+/// 语言对象（.Site.Language）：字符串化时给出**语言码**（Hugo 的
+/// <c>lang.Language.String()</c> 即 Lang）。ScriptObject.ToString 是密封的，
+/// 故用此标记接口让 FlintScribanContext.ObjectToString 走语言码分支，
+/// 模板 `{{ site.language }}` 写进 HTML 属性时得 "zh-cn" 而非 map 转储
+/// </summary>
+internal interface ILanguageCode
+{
+    /// <summary>语言码（如 zh-cn）</summary>
+    string LanguageCodeValue { get; }
+}
