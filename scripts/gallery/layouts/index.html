@@ -52,13 +52,12 @@
 <body>
 <header class="hero">
   <h1>Flint 主题画廊<span class="dot">.</span></h1>
-  <p class="sub">21 个适配主题共用同一套测试语料（100 篇长文 · 每篇 ≥2000 字），全部归并在同一端口下，点击卡片直达对应主题的子路径。</p>
+  <p class="sub">21 个适配主题共用同一套测试语料（100 篇长文 · 每篇 ≥2000 字），点击卡片直达对应主题的演示站。</p>
   <div class="stats">
     <span><b>21</b> 个主题</span>
     <span><b>100</b> 篇公共语料</span>
     <span><b>4</b> 个栏目：posts / weekly / notes / docs</span>
-    <span>统一入口 <b>/主题名/</b> 子路径</span>
-    <span>单端口 <b>8400</b></span>
+    <span>本地演示端口 <b>8401 – 8421</b></span>
   </div>
 </header>
 <div class="toolbar">
@@ -66,36 +65,36 @@
 </div>
 <main class="grid" id="grid">
 {{ $themes = [
-  ["ananke","Ananke 官方经典博客布局","博客 经典"],
-  ["bearblog","极致轻量，纯文本无依赖","极简 轻量"],
-  ["blog-awesome","侧栏导航，标签云丰富","博客 侧栏"],
-  ["blowfish","功能全面的现代主题，暗色模式","现代 暗色"],
-  ["clarity","简洁文档风，Tailwind 样式","文档 简洁"],
-  ["console","终端极客风，等宽字体","终端 极客"],
-  ["even","中文社区经典，Hexo Even 移植","博客 中文"],
-  ["fixit","功能密集，LoveIt 增强分支","博客 功能全"],
-  ["github-style","GitHub 个人主页风格","个人页 极简"],
-  ["hugo-book","文档站首选，侧栏目录树","文档 目录树"],
-  ["hugo-coder","极简开发者个人主页","个人页 极简"],
-  ["hugo-paper","纸感排版，纸媒风格","博客 纸感"],
-  ["loveit","功能全面的中文主题","博客 中文"],
-  ["m10c","杂志式网格布局","杂志 网格"],
-  ["monochrome","黑白灰，无彩色","极简 黑白"],
-  ["narrow","窄栏极简，移动优先","极简 移动"],
-  ["papermod","快速简洁，Fast Paper 移植","博客 简洁"],
-  ["stack","卡片流布局，侧栏组件丰富","卡片 侧栏"],
-  ["techdoc","技术文档风，左侧导航","文档 导航"],
-  ["xmin","学术极简，大留白","学术 极简"],
-  ["yinyang","阴阳太极，黑白对比","博客 对比"]
+  ["ananke","Ananke 官方经典博客布局","8401","博客 经典"],
+  ["bearblog","极致轻量，纯文本无依赖","8402","极简 轻量"],
+  ["blog-awesome","侧栏导航，标签云丰富","8403","博客 侧栏"],
+  ["blowfish","功能全面的现代主题，暗色模式","8404","现代 暗色"],
+  ["clarity","简洁文档风，Tailwind 样式","8405","文档 简洁"],
+  ["console","终端极客风，等宽字体","8406","终端 极客"],
+  ["even","中文社区经典，Hexo Even 移植","8407","博客 中文"],
+  ["fixit","功能密集，LoveIt 增强分支","8408","博客 功能全"],
+  ["github-style","GitHub 个人主页风格","8409","个人页 极简"],
+  ["hugo-book","文档站首选，侧栏目录树","8410","文档 目录树"],
+  ["hugo-coder","极简开发者个人主页","8411","个人页 极简"],
+  ["hugo-paper","纸感排版，纸媒风格","8412","博客 纸感"],
+  ["loveit","功能全面的中文主题","8413","博客 中文"],
+  ["m10c","杂志式网格布局","8414","杂志 网格"],
+  ["monochrome","黑白灰，无彩色","8415","极简 黑白"],
+  ["narrow","窄栏极简，移动优先","8416","极简 移动"],
+  ["papermod","快速简洁，Fast Paper 移植","8417","博客 简洁"],
+  ["stack","卡片流布局，侧栏组件丰富","8418","卡片 侧栏"],
+  ["techdoc","技术文档风，左侧导航","8419","文档 导航"],
+  ["xmin","学术极简，大留白","8420","学术 极简"],
+  ["yinyang","阴阳太极，黑白对比","8421","博客 对比"]
 ] }}
 {{ for $t in $themes }}
-  <a class="card" href="/{{ $t[0] }}/" target="_blank" rel="noopener"
-     data-q="{{ $t[0] }} {{ $t[1] }} {{ $t[2] }}">
+  <a class="card" href="http://127.0.0.1:{{ $t[2] }}/" target="_blank" rel="noopener"
+     data-q="{{ $t[0] }} {{ $t[1] }} {{ $t[3] }}">
     <div class="shot"><img src="/shots/{{ $t[0] }}.png" alt="{{ $t[0] }} 主题预览" loading="lazy" /></div>
     <div class="info">
-      <span class="name">{{ $t[0] }}</span><span class="port">/{{ $t[0] }}</span>
+      <span class="name">{{ $t[0] }}</span><span class="port">:{{ $t[2] }}</span>
       <p class="desc">{{ $t[1] }}</p>
-      <div class="tags">{{ for $tag in ($t[2] | string.split " ") }}<i>{{ $tag }}</i>{{ end }}</div>
+      <div class="tags">{{ for $tag in ($t[3] | string.split " ") }}<i>{{ $tag }}</i>{{ end }}</div>
     </div>
   </a>
 {{ end }}
