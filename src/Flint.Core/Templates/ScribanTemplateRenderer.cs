@@ -1375,7 +1375,52 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             {
                 target[upperFirst] = target[key];
             }
+            // **逐大写字母的 snake 形态**：迁移器把字段名 `.ToCSS` 转成
+            // `to_c_s_s`（每个大写字母前加下划线），而 dict 字面量的键保持源码
+            // 原样（"ToCSS"）——两者对不上时被迁移模板的 snake 查找全部落空：
+            // fixit 的 to-css 守卫 `page?.to_c_s_s` 取不到 → toCSS 整块跳过 →
+            // 页面直接引用未编译的 /scss/main.scss（全站无样式）。这里为含大写的
+            // 键补同一算法形态的别名（ToCSS → to_c_s_s、BookSection →
+            // book_section），与迁移器的 Seg 转换逐字对应
+            if (key.Any(char.IsUpper))
+            {
+                var perCapitalSnake = PerCapitalSnakeForm(key);
+                if (perCapitalSnake != key && !target.ContainsKey(perCapitalSnake))
+                {
+                    target[perCapitalSnake] = target[key];
+                }
+            }
         }
+    }
+
+    /// <summary>
+    /// 迁移器 ToSnakePath 的单段算法镜像：全大写段整体小写，其余逐大写字母加
+    /// 下划线（ToCSS → to_c_s_s、BookSection → book_section、Minify → minify）
+    /// </summary>
+    private static string PerCapitalSnakeForm(string seg)
+    {
+        if (seg.All(char.IsUpper))
+        {
+            return seg.ToLowerInvariant();
+        }
+        var sb = new System.Text.StringBuilder(seg.Length + 4);
+        for (var i = 0; i < seg.Length; i++)
+        {
+            var c = seg[i];
+            if (char.IsUpper(c))
+            {
+                if (i > 0)
+                {
+                    sb.Append('_');
+                }
+                sb.Append(char.ToLowerInvariant(c));
+            }
+            else
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
     }
 
     private static void MergePageMembers(ScriptObject target, ScriptObject source)

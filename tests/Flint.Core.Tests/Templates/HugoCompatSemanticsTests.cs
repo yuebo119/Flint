@@ -329,6 +329,48 @@ public class HugoCompatSemanticsTests : IDisposable
             await Render("{{ $s = \"a\" | append \" b\" }}s={{ $s }}"));
     }
 
+    // ---- 10. dict 键的逐大写字母 snake 别名（迁移器字段名转换的镜像）----
+
+    [Fact]
+    public async Task dict键_ToCSS_按迁移器snake名查找得到值()
+    {
+        // 迁移器把 `.ToCSS` 转成 `to_c_s_s`（逐大写字母加下划线），dict 字面量的键
+        // 保持源码原样（"ToCSS"）。引擎 AddKeyCaseAliases 为含大写的键补同一形态
+        // 别名后两边才对上——修复前 fixit 的 to-css 守卫取不到值，toCSS 整块跳过，
+        // 页面直接引用未编译的 /scss/main.scss（全站无样式）
+        Directory.CreateDirectory(Path.Combine(_tempDir, "_partials"));
+        File.WriteAllText(Path.Combine(_tempDir, "_partials", "zz-css.html"),
+            "guard=[{{ page?.to_c_s_s }}]");
+        Assert.Equal(
+            "guard=[map[transpiler:dartsass]]",
+            await Render(
+                "{{ partial \"_partials/zz-css\" (dict \"Resource\" \"scss/main.scss\" " +
+                "\"ToCSS\" (dict \"transpiler\" \"dartsass\")) }}"));
+    }
+
+    [Fact]
+    public async Task dict键_BookSection_按snake名查找得到值()
+    {
+        // 同类：链式 Pascal 键（BookSection → book_section）同样要在 dict 上下文里可达
+        Directory.CreateDirectory(Path.Combine(_tempDir, "_partials"));
+        File.WriteAllText(Path.Combine(_tempDir, "_partials", "zz-book.html"),
+            "section=[{{ page?.book_section }}]");
+        Assert.Equal(
+            "section=[docs]",
+            await Render(
+                "{{ partial \"_partials/zz-book\" (dict \"Page\" page \"BookSection\" \"docs\") }}"));
+    }
+
+    [Fact]
+    public async Task site_language_字符串化是语言码而非map转储()
+    {
+        // Hugo 的 .Site.Language.String() = Lang。修复前 `<html lang="{{ site.language }}">`
+        // 印出整个对象（hugo-coder 的 lang="map[Lang:zh-cn …]"）
+        Assert.Equal(
+            "lang=en locale=en",
+            await Render("lang={{ site.language }} locale={{ site.language.locale }}"));
+    }
+
     // ---- 8. .Ancestors：只含**真实容器页**，不含路径段拼接出的假祖先 ----
 
     private static PageContext Node(string title, string rel, string kind) => new()

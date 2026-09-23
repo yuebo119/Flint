@@ -75,5 +75,11 @@ corpus/
 - `site.webmanifest` / favicon 已由 corpus 静态目录统一提供（`scripts/fixtures/
   corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径）；
   早期"主题引用不存在的文件"问题已修复
+- fixit/loveit 的 SCSS 经 `toCSS (dict "vars" …)` 传入变量字典，SCSS 侧用
+  `@forward "hugo:vars"`（Hugo Pipes 的虚拟导入）取用。Flint 调外部 sass CLI
+  （无自定义 importer、`hugo:` 含冒号不是合法 Windows 文件名），实现为**源码镜像
+  文本替换**：把全部 .scss 的 hugo: 导入替换成生成的 `$k: v;` 声明，值按 Hugo 的
+  isTypedCSSValue 规则格式化（hex/函数/单位原样，字体名等引号化）。Sass 可执行
+  文件随 CLI 发布在 Flint.exe 旁的 `dart-sass.win-x64/`
 - 重建演示站前需先停掉对应端口的静态服务（Windows 下服务进程 CWD 在 public/
   内会锁目录）：`netstat -ano | grep :84xx` 找 PID 后 `taskkill /F /PID <pid>`

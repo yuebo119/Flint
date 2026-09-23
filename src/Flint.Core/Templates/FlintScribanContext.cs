@@ -47,6 +47,9 @@ internal sealed class FlintScribanContext : Scriban.TemplateContext
     {
         DateTimeOffset dto => GoTimeString(dto),
         DateTime dt => GoTimeString(new DateTimeOffset(dt)),
+        // 语言对象（Hugo .Site.Language）：String() 是语言码而非 map 转储
+        // （hugo-coder baseof 的 `<html lang="{{ site.language }}">` 实测）
+        ILanguageCode lang => lang.LanguageCodeValue,
         Scriban.Runtime.ScriptObject obj
             when obj is not IFlintNonDataObject
                 && obj is not ScribanTemplateRenderer.LazyPageObject
