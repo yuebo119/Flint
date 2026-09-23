@@ -516,10 +516,14 @@ public sealed partial class BuiltinTemplateFunctions
     [GeneratedRegex(@"([A-Z])")]
     private static partial Regex HumanizeRegex();
 
-    [GeneratedRegex(@"[^a-z0-9]+")]
+    // **保留 Unicode 字母/数字**（\p{L}\p{N}）：Hugo 的 urlize/anchorize 不清
+    // 非 ASCII——中文标签 "设计模式" 应得 "设计模式"（与 TaxonomyService 的 slug
+    // 规则一致，词条页 URL 才匹配得上）。此前 [^a-z0-9]+ 把中文全剥成空串，
+    // loveit 的标签查找 "/tags/" 落空、链到分类列表页
+    [GeneratedRegex(@"[^\p{L}\p{N}]+")]
     private static partial Regex UrlizeRegex();
 
-    [GeneratedRegex(@"[^a-z0-9-]+")]
+    [GeneratedRegex(@"[^\p{L}\p{N}-]+")]
     private static partial Regex AnchorizeRegex();
 
     [GeneratedRegex(@"-+")]
@@ -2362,6 +2366,35 @@ public sealed partial class BuiltinTemplateFunctions
         key.StartsWith("__", StringComparison.Ordinal);
 
     /// <summary>
+    /// 键的归一化形式（小写 + 去下划线/连字符）：判定大小写/蛇形别名重复。
+    /// 站点 params、partial 上下文 dict 等对象会同时持有原始键与其别名
+    /// （RSS 与 r_s_s、ToCSS 与 to_c_s_s——别名是为模板**查找**加的），
+    /// 迭代时必须去重：同一配置项被当成两项，第二项的值查不到配套数据，
+    /// fixit 的 social 循环因此多追加一条空链接（href="&lt;nil&gt;"）。
+    /// 去重保留**首个**（原始键总是先于别名插入）
+    /// </summary>
+    private static string NormalizedKeyForDedup(string key) =>
+        key.Replace("_", "").Replace("-", "").ToLowerInvariant();
+
+    /// <summary>对象的数据键序列：跳过函数/内部键，并按归一化形式对别名键去重</summary>
+    private static IEnumerable<string> DistinctDataKeys(ScriptObject obj)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var key in obj.Keys)
+        {
+            if (!seen.Add(NormalizedKeyForDedup(key)))
+            {
+                continue;
+            }
+            if (IsNonDataMember(key, obj[key]))
+            {
+                continue;
+            }
+            yield return key;
+        }
+    }
+
+    /// <summary>
     /// 归一为可迭代的值序列（Hugo 单变量 range 语义，v0.166 实测）：
     /// nil/false → 空、字符串 → 单元素、映射 → **值序列**、序列 → 元素、标量 → 单元素
     /// </summary>
@@ -2381,7 +2414,7 @@ public sealed partial class BuiltinTemplateFunctions
         System.Collections.IList list => list.Cast<object?>().ToList(),
         // 纯映射：ScriptObject 的 IDictionary.Values / DictionaryEntry.Value 返回
         // Scriban 的 InternalValue 包装（渲染成类型名），只有 Keys + 索引器能拿到真实值
-        ScriptObject o => o.Keys.Where(k => !IsNonDataMember(k, o[k])).Select(k => o[k]).ToList(),
+        ScriptObject o => DistinctDataKeys(o).Select(k => o[k]).ToList(),
         System.Collections.IDictionary d => d.Values.Cast<object?>().ToList(),
         System.Collections.IEnumerable e => e.Cast<object?>().ToList(),
         _ => [v]
@@ -2442,14 +2475,9 @@ public sealed partial class BuiltinTemplateFunctions
                 return result;
             // 映射：ScriptObject 的成员要经 Keys + 索引器取真值（见 AsList 注释）
             case ScriptObject obj:
-                foreach (var key in obj.Keys)
+                foreach (var key in DistinctDataKeys(obj))
                 {
-                    var member = obj[key];
-                    if (IsNonDataMember(key, member))
-                    {
-                        continue;
-                    }
-                    result.Add(new ScriptObject { ["Key"] = key, ["Value"] = member });
+                    result.Add(new ScriptObject { ["Key"] = key, ["Value"] = obj[key] });
                 }
                 return result;
             case System.Collections.IDictionary dict:

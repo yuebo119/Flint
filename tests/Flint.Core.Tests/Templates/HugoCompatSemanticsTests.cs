@@ -371,6 +371,21 @@ public class HugoCompatSemanticsTests : IDisposable
             await Render("lang={{ site.language }} locale={{ site.language.locale }}"));
     }
 
+    [Fact]
+    public async Task as_pairs_对大小写蛇形别名键去重()
+    {
+        // 站点 params / partial 上下文 dict 会同时持有原始键与别名（RSS 与 r_s_s、
+        // ToCSS 与 to_c_s_s——别名为模板查找而加）。迭代不去重会把同一配置项当成
+        // 两项：fixit 的 social 循环因此多追加一条查不到配套数据的空链接
+        // （href="<nil>"）。去重保留首个（原始键先于别名插入）
+        Assert.Equal(
+            "keys=[RSS Other ] vals=[true 1 ]",
+            await Render(
+                "{{ $d = dict \"RSS\" true \"r_s_s\" true \"Other\" 1 }}" +
+                "keys=[{{ for $p in as_pairs $d }}{{ $p.Key }} {{ end }}] " +
+                "vals=[{{ for $v in as_list $d }}{{ $v }} {{ end }}]"));
+    }
+
     // ---- 8. .Ancestors：只含**真实容器页**，不含路径段拼接出的假祖先 ----
 
     private static PageContext Node(string title, string rel, string kind) => new()

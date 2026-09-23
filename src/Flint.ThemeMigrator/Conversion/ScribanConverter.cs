@@ -1613,10 +1613,20 @@ internal sealed class ScribanConverter(
                 or Parsing.FieldExpr { Path: "." };
             if (isDotValueCtx)
             {
+                if (args.Count <= 1)
+                {
+                    return new ConversionResult(
+                        $"partialValue \"{PartialPathFor(nameExpr)}\"",
+                        ConversionKind.Equivalent);
+                }
+                // **块内 dot 是块变量**（with/range 的上下文项）而非 page：取最内层
+                // 作用域变量（与普通 partial 分支同判据）。此前恒传 `page`——
+                // `range .Params.categories` 体内 `partialCached "function/path.html" . .`
+                // 把**当前页**当分类名传进 partial，GetPage 查出 nil，loveit 摘要的
+                // 分类链接渲染成 `href="<nil>"`（实测）。块外 dot 就是 page
+                var dotCtxArg = scope.Count > 0 ? scope[^1] : "page";
                 return new ConversionResult(
-                    args.Count <= 1
-                        ? $"partialValue \"{PartialPathFor(nameExpr)}\""
-                        : $"partialValue \"{PartialPathFor(nameExpr)}\" page",
+                    $"partialValue \"{PartialPathFor(nameExpr)}\" {dotCtxArg}",
                     ConversionKind.Equivalent);
             }
             var ctxValue = ConvertExpr(args[1], scope, false);
