@@ -66,6 +66,20 @@ for theme_fonts in "$REPO_ROOT/tools/themes"/*/static/fonts; do
 done
 [ "$font_themes" -gt 0 ] && echo "根级字体兼容: $font_themes 个主题的 static/fonts → $UNIFIED/fonts/"
 
+# 各主题 site.webmanifest 的图标路径改成**带主题子路径的绝对路径**：静态文件按
+# 原样拷贝不过 relURL，相对路径会被 Chrome 按站点根解析（/loveit/site.webmanifest
+# 里的 images/favicon.svg 实测请求 /images/favicon.svg → 404）
+manifest_themes=0
+for theme_dir in "$UNIFIED"/*/; do
+  tname=$(basename "$theme_dir")
+  [ -f "$theme_dir/site.webmanifest" ] || continue
+  sed -e "s|\"src\": \"images/|\"src\": \"/$tname/images/|g" \
+      "$theme_dir/site.webmanifest" > "$theme_dir/site.webmanifest.tmp" &&
+    mv "$theme_dir/site.webmanifest.tmp" "$theme_dir/site.webmanifest"
+  manifest_themes=$((manifest_themes + 1))
+done
+[ "$manifest_themes" -gt 0 ] && echo "manifest 图标路径已带子路径前缀: $manifest_themes 个主题"
+
 if [ "${SERVE:-0}" = "1" ]; then
   (cd "$UNIFIED" && python -m http.server "$PORT" --bind 127.0.0.1 > /dev/null 2>&1 &)
   echo "统一服务已启动: http://127.0.0.1:$PORT/"

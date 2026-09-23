@@ -136,8 +136,10 @@ public sealed class SitemapGenerator
 
     private double DeterminePriority(PageContext page)
     {
-        // 首页优先级最高
-        if (page.RelPermalink == "/" || page.RelPermalink == "/index.html")
+        // 首页优先级最高。按 Kind 判而非 RelPermalink == "/"——baseURL 带子路径时
+        // 首页 rel 是 `/<子路径>/`，字符串比对会漏掉（子路径归并实测）
+        if (page.Kind == "home" ||
+            page.RelPermalink == "/" || page.RelPermalink == "/index.html")
         {
             return 1.0;
         }

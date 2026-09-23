@@ -1227,9 +1227,39 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         {
             if (store is null)
             {
-                AddKeyCaseAliases(ctxObj);
-                AddPageMethodFamily(ctxObj, pageObject);
-                MergePageMembers(ctxObj, ctxObj);
+                // ctxObj 自身是**页面对象**（直接以页面为上下文调用 partial——
+                // hugo-book 的 menu-section-pages 就是 `partialValue "…" page`）时保持
+                // **实例身份**：复制体会让模板里的 `page` 变量指向副本，递归收集链
+                // （book-menu-recurse 以 `page.page ?? page` 把页面存进 Scratch）累积的
+                // 元素就失去 LazyPageObject 身份，`$pages.Next` 实测报
+                // "The function `$pages.Next` was not found"
+                var ctxIsPageLike = ctxObj.ContainsKey("rel_permalink") &&
+                                    ctxObj.ContainsKey("title");
+                if (ctxIsPageLike)
+                {
+                    AddKeyCaseAliases(ctxObj);
+                    AddPageMethodFamily(ctxObj, pageObject);
+                    MergePageMembers(ctxObj, ctxObj);
+                }
+                else
+                {
+                    // **配置类 dict（无页面成员）走复制**：ctxObj 可能是**共享的站点级
+                    // 配置对象**（`site.params.print` 等——fixit 的 camel-case-keys 直接
+                    // 以它为上下文调用）。原地并入页面成员/方法族等于把污染永久写进站点
+                    // params：递归转换键时把整页成员（Fragments/方法族）抄进 config
+                    // （window.config 实测 dump），经 store/style、store/script 的 Data
+                    // 传导后 `src="map[Headings…]"` 样式的死链（404）。store 为 null 时
+                    // 目标 partial 本就不用页面 store，对 dict 自身键的写入无语义，复制安全
+                    var ctxCopy = new ScriptObject();
+                    foreach (var key in ctxObj.Keys)
+                    {
+                        ctxCopy[key] = ctxObj[key];
+                    }
+                    AddKeyCaseAliases(ctxCopy);
+                    AddPageMethodFamily(ctxCopy, pageObject);
+                    MergePageMembers(ctxCopy, ctxObj);
+                    effective = ctxCopy;
+                }
             }
             else
             {

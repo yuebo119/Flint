@@ -542,9 +542,18 @@ internal sealed class ScribanConverter(
             // 映射成 `page` 会把绑定对象自身收进列表 → 元素不是页面对象 → 集合方法族失效
             //（`$pages.Next` 报 function not found）。
             // 双上下文通吃的写法：dict 有 Page 键时取它（引擎把 dict 键并入绑定对象，
-            // 大小写别名齐备），否则回落到页面自身（页面上下文的 `.Page` 就是自己）
+            // 大小写别名齐备），否则回落到页面自身（页面上下文的 `.Page` 就是自己）。
+            // **作用域内（range/with 主体已知）时 resolving 到主体**：Hugo 的
+            // `range .Site.Menus.main` 体内 `.Page` 是**菜单条目的 page 引用**
+            // （URL-only 条目没有 → `with .Page` 整块跳过）。映射成 page 自身会把
+            // 每个菜单项的 URL 覆盖成当前页 rel_permalink——LoveIt/FixIt 的菜单
+            // 实测"归档/关于"全部链回首页。与 `.Date.Format` 同一判据（scope[^1]）
             if (fe.Path.Equals(".Page", StringComparison.OrdinalIgnoreCase))
             {
+                if (scope.Count > 0)
+                {
+                    return new ConversionResult(scope[^1] + "?.page", ConversionKind.Equivalent);
+                }
                 return new ConversionResult("(page.page ?? page)", ConversionKind.Equivalent);
             }
             // 【曾试】把"字段+参数"的接收者也套用作用域变量（scope[^1]）以修 narrow 的
@@ -1855,11 +1864,22 @@ internal sealed class ScribanConverter(
                 if (raw.StartsWith(".Page", StringComparison.OrdinalIgnoreCase) &&
                     (raw.Length == ".Page".Length || raw[".Page".Length] == '.'))
                 {
-                    // 裸 `.Page`（无后续段）：dict 上下文里指的是 **dict 的 Page 键**
-                    //（hugo-book 的 `(slice .Page)` 递归收集章节页），页面上下文里才是
-                    // 页面自身——`page.page ?? page` 两种上下文通吃（与字段+参数分支同一判据）
+                    // 裸 `.Page`（无后续段）：
+                    // - **作用域内**（range/with 主体已知）：Hugo 语义是主体的 `.Page`
+                    //   成员——菜单条目（`range .Site.Menus.main` 体内）的 page 引用
+                    //   （URL-only 条目为 nil，Hugo 的 `with .Page` 据此跳过整块）；
+                    //   页面对象的 `.Page` 是自身（引擎侧 page 成员自引用）。
+                    //   映射成 page 自身会把每个菜单项 URL 覆盖成当前页 rel_permalink
+                    //   ——LoveIt/FixIt 的菜单实测"归档/关于"全部链回首页
+                    // - 页面/dict 顶层：dict 上下文里指 dict 的 Page 键（hugo-book 的
+                    //   `(slice .Page)`），页面上下文里是页面自身——`page.page ?? page`
+                    //   两种通吃（与字段+参数分支同一判据）
                     if (raw.Equals(".Page", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (scope.Count > 0)
+                        {
+                            return new ConversionResult(scope[^1] + "?.page", ConversionKind.Equivalent);
+                        }
                         return new ConversionResult("(page.page ?? page)", ConversionKind.Equivalent);
                     }
                     // 链式段用 nil 安全 `?.`（与普通字段路径一致：Hugo 遇 nil 返回 nil）

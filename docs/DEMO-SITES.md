@@ -103,11 +103,10 @@ corpus/
 - fixit 是 21 主题中构建最慢的（~5.5 分钟/631 页），`demo-sites.sh` 单站超时
   已放宽到 600s；慢的根因与修复见 `docs/PERFORMANCE-OPTIMIZATION.md` 阶段七
 - `site.webmanifest` / favicon 已由 corpus 静态目录统一提供（`scripts/fixtures/
-  corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径，
-  manifest 内用相对路径以适配子路径站点）；早期"主题引用不存在的文件"问题已修复
-- fixit 首页有 4 个 AI 聊天插件的脚本 404（`src="map[Headings:…]"` 形态，
-  MergePageMembers 污染 partial 调用方字典的已知引擎问题，与子路径无关），
-  不影响页面其余部分渲染
+  corpus/static/`：根路径一套 + `images/` 一套，覆盖各主题的不同引用路径）；
+  `build-gallery.sh` 会把各主题 manifest 的图标路径改写成**带子路径的绝对路径**
+  （Chrome 对 manifest 相对图标按站点根解析，实测 `/images/favicon.svg` 404），
+  并在统一树根补一份 manifest + images（loveit 模板硬编码 `/site.webmanifest`）
 - 重建演示站前需先停掉统一服务（Windows 下服务进程 CWD 在 `demo-unified/`
   外则无锁问题；`--clean` 只清各站自己的 `public/`）：若 8400 已被占用，
   `netstat -ano | grep :8400` 找 PID 后 `taskkill /F /PID <pid>`

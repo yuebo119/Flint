@@ -728,7 +728,10 @@ public sealed partial class SiteBuilder
             Kind = kind,
             Language = config.LanguageCode,
             Draft = draft,
-            Section = SectionOfKind(relPermalink),
+            // node.Key 是**根相对**路径（/posts），不含 baseURL 子路径——直接用带
+            // 前缀的 relPermalink 会把子路径名（主题名）当成段名：.Section/.Type
+            // 全错，`where … "Type" "posts"` 过滤落空（loveit 首页空的根因）
+            Section = SectionOfKind(node.Key),
             Params = cascadedParams
         };
     }
@@ -842,7 +845,11 @@ public sealed partial class SiteBuilder
             }
         }
 
-        var sectionName = SectionOfKind(relPermalink);
+        // permalink 是**根相对**形式（GeneratePermalink 的产出），relPermalink 才带
+        // baseURL 子路径前缀——段名/Type 从根相对形式推导，否则子路径名（主题名）
+        // 会被当成段名：.Section/.Type 全错，主题的 `where … "Type" "posts"` 过滤
+        // 落空（loveit 首页只渲染 _index 正文、无文章列表的根因）
+        var sectionName = SectionOfKind(permalink);
 
         return new PageContext
         {

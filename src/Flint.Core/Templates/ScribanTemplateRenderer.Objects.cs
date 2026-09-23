@@ -309,6 +309,13 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("output_format", page.OutputFormat, false);
             SetValue("permalink", page.Permalink, false);
             SetValue("rel_permalink", page.RelPermalink, false);
+            // 注意：**不注册 `.Page` 自引用成员**。Hugo 的 Page.Page 是自身，但存入
+            // 成员表（或 TryGetValue 拦截）都会让对象图成环，Scriban 字符串化/遍历
+            // （loveit 的 `page | urlize`）报 "Structure is too deeply nested or
+            // contains reference loops"——实测两种实现都触发。迁移器在 range/with
+            // 作用域内把裸 `.Page` 转成 `<$scope>?.page`：菜单条目无 page 键 →
+            // null → `with .Page` 跳过（LoveIt/FixIt 菜单的 URL 不被当前页覆盖），
+            // 21 个主题里无"页面上下文 + range 内 with .Page"的用法，不受影响
             SetValue("date", page.Date, false);
             SetValue("lastmod", page.LastMod, false);
             SetValue("tags", page.Tags, false);
