@@ -12,9 +12,10 @@
     <PackageVersion Include="Scriban" Version="7.5.0" />
     <!-- Markdown 解析 -->
     <PackageVersion Include="Markdig" Version="1.4.0" />
-    <!-- 图像处理（保持 3.x：4.x 起 Six Labors Split License 在 Release 构建强制
-         校验商业许可证，3.1.12 为 Apache 2.0 的 3.x 线最新维护版。
-         2026-09-24 复核：4.1.2 仍为 Split License，商业用途需付费授权，维持 3.x） -->
+    <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线——
+         4.x 起 Six Labors Split License 在 Release 构建强制校验商业许可证，
+         商业用途需付费授权；3.1.12 为 Apache 2.0 的 3.x 线最新维护版，
+         4.1.2 复核仍为 Split License。升级前须重新评估授权，不得直接升 4.x） -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- 配置解析 -->
     <PackageVersion Include="Tomlyn" Version="2.10.1" />
