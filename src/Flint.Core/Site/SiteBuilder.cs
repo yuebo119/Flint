@@ -8,6 +8,7 @@ using System.Diagnostics;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Content;
+using Flint.Core.IO;
 using Flint.Core.Models;
 using Flint.Core.Templates;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
@@ -76,6 +77,10 @@ public sealed partial class SiteBuilder : ISiteBuilder
         // 必须在同步前缀（首个 await 前）创建，本次构建的全部并行渲染子任务才会
         // 继承同一实例——同进程并行构建（集成测试多站点 in-process）互不串写
         ScribanTemplateRenderer.BeginBuildScope();
+
+        // 输出目录缓存随构建重置：下方 CleanOutput 会删除输出目录，旧缓存
+        // 若命中会跳过重建导致写入阶段报"目录不存在"
+        OutputDirectoryEnsurer.Reset();
 
         // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr
         // 输出各阶段耗时；默认关闭，仅一个 bool 判断的开销

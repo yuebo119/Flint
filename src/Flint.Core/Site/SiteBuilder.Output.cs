@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
+using Flint.Core.IO;
 using Flint.Core.Models;
 
 namespace Flint.Core.Site;
@@ -316,7 +317,7 @@ public sealed partial class SiteBuilder
 
             var target = Path.Combine(
                 options.OutputPath, baseRel.TrimStart('/').Replace('/', Path.DirectorySeparatorChar), "index.xml");
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(target)!);
 
             if (useTemplate)
             {
@@ -360,7 +361,7 @@ public sealed partial class SiteBuilder
         CancellationToken cancellationToken)
     {
         // 确保输出目录存在
-        Directory.CreateDirectory(options.OutputPath);
+        OutputDirectoryEnsurer.Ensure(options.OutputPath);
 
         // 优化：并行写入页面（去重以避免并发写入同一文件）
         var allPages = pages.Concat(taxonomyPages)
@@ -380,7 +381,7 @@ public sealed partial class SiteBuilder
                 var dir = Path.GetDirectoryName(page.OutputPath);
                 if (!string.IsNullOrEmpty(dir))
                 {
-                    Directory.CreateDirectory(dir);
+                    OutputDirectoryEnsurer.Ensure(dir);
                 }
                 // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
                 var content = page.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
@@ -416,7 +417,7 @@ public sealed partial class SiteBuilder
                 var dir = Path.GetDirectoryName(outputPath);
                 if (!string.IsNullOrEmpty(dir))
                 {
-                    Directory.CreateDirectory(dir);
+                    OutputDirectoryEnsurer.Ensure(dir);
                 }
                 // 添加重试逻辑以处理文件访问冲突
                 await WriteBytesWithRetryAsync(outputPath, asset.Content.ToArray(), ct);
@@ -640,7 +641,7 @@ public sealed partial class SiteBuilder
                 {
                     continue;
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(aliasOutput)!);
+                OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(aliasOutput)!);
                 var redirect = "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">" +
                     $"<title>{System.Net.WebUtility.HtmlEncode(page.Title)}</title>" +
                     $"<link rel=\"canonical\" href=\"{page.Permalink}\">" +
@@ -675,7 +676,7 @@ public sealed partial class SiteBuilder
             var notFoundOutput = GetFileFormOutputPath(notFoundPage.RelPermalink, options.OutputPath);
             // 子路径构建时输出目录（<out>/<sub>/）可能还没有任何页面写过——
             // 无内容的站点 404 也会产出（Hugo 语义），先建目录再写
-            Directory.CreateDirectory(Path.GetDirectoryName(notFoundOutput)!);
+            OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(notFoundOutput)!);
             await File.WriteAllTextAsync(notFoundOutput, html, cancellationToken);
         }
 
@@ -702,7 +703,7 @@ public sealed partial class SiteBuilder
             var txt = await _templateRenderer.RenderTemplateFileAsync(robotsSrc, ctx, cancellationToken);
             // 文件形态输出：RelPermalink 即落盘相对路径（不补 index.html）
             var robotsOutput = GetFileFormOutputPath(robotsPage.RelPermalink, options.OutputPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(robotsOutput)!);
+            OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(robotsOutput)!);
             await File.WriteAllTextAsync(robotsOutput, txt, cancellationToken);
         }
     }
