@@ -361,17 +361,53 @@ bash scripts/demo-stop.sh               # 停止所有服务
 - 改动超过 3 个文件时列出根因清单
 - 提交前跑 §12 验证清单（不写"未验证"提交，除非标注原因）
 
-### 10.2 分支模型
+### 10.2 分支模型（2026-09-24 起为三层流程）
 
 ```
-main（唯一长期分支，origin/main）
-  └── 直接提交（当前形态，单人项目 + 高频小步）
+main      ← 发布分支：只从 dev 合并，不接受日常提交（含直接 push）
+dev       ← 开发主分支：feature 的合并目标，日常集成分支
+feature/* ← 功能/修复分支：从 dev 创建，完成后合并回 dev
 ```
 
-- Flint 当前为**单主干直接提交**（参照 Pal.DDD 的 feature→dev→main 三层模型，
-  在协作者加入前不引入——流程先于规模是浪费）
-- 第一个外部协作者出现时，升级为 `dev` 集成 + PR 流程，升级本身要有 ADR
-- **禁止** `git push --force`、`git reset --hard` 无确认执行（P0 黑名单）
+**确立记录**：2026-09-24 由用户裁决从"单主干直接提交"升级为三层流程
+（`37103be` 之前的 231 个提交均在单主干模式下产生，历史不回改）。
+升级触发条件按原约定是"第一个外部协作者出现时"——本次为用户主动前置。
+
+**日常开发流**（新功能/修复）：
+
+```bash
+git checkout dev && git pull origin dev
+git checkout -b feature/xxx          # 分支名：feature/ 或 fix/ 前缀 + 简短英文
+# ... 开发、按 §12 验证、按 §10.1 提交（一个功能多个 commit 也可以）...
+git checkout dev && git merge --no-ff feature/xxx   # 保留功能上下文
+git branch -d feature/xxx
+git push origin dev
+```
+
+单人高频小步可跳过 feature 分支直接提交 dev（本仓库常态）；预计会有协作者
+review 或需要 CI 兜底的改动，**必须**走 feature 分支 + PR。
+
+**发布流**（仅发版时执行，需用户明确指示）：
+
+```bash
+git checkout main && git pull origin main
+git checkout dev  && git pull origin dev
+git checkout main && git merge dev       # 默认 fast-forward 保持线性
+git push origin main
+# 打 tag（版本号见 Directory.Build.props 的 <Version>）
+```
+
+**硬规则** `[P0]`：
+
+- ❌ 禁止直接 push/提交到 `main`（发布只经 dev 合并）
+- ❌ 禁止 `git push --force`、`git reset --hard` 无确认执行
+- ✅ `dev → main` 合并 = 发布动作，必须**用户明确确认后**才执行（AI 不得自主合并）
+- ✅ feature 分支合并后删除；dev 与 main 是常驻分支，**绝不** `-D` 删除
+
+**GitHub 侧设置**（仓库管理员手动，一次性）：
+
+- Settings → Branches：`main` 添加 protection（require PR, require CI 当 CI 建立后）
+- Settings → General：Default branch 改为 `dev`（日常 clone 落在开发主线）
 
 ### 10.3 提交粒度
 
@@ -458,8 +494,9 @@ bash scripts/demo-sites.sh          # 至少 blast radius 内主题
 | 演示站单进程服务 | `demo-serve.py` | 脚本内建 `[机械]` |
 | NuGet 漏洞审查 | `NuGetAudit=false`，人工定期 | 人工 `[约定]` |
 
-**升级路径预告**：协作者 ≥2 或月提交 ≥50 时，按 §10.2 升级分支模型，
-并把本表中 `[约定]` 的验证清单迁入 CI——在那之前，纪律即门禁。
+**升级路径预告**：分支三层流程已于 2026-09-24 落地（§10.2）。下一级升级触发
+条件：月提交 ≥50 或协作者 ≥2 时，把本表中 `[约定]` 的验证清单迁入 CI，并对
+`dev` 启用分支保护——在那之前，纪律即门禁。
 
 ---
 
