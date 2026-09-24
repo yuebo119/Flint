@@ -8,16 +8,26 @@
 # 1. 全量重建 21 个主题演示站（每个主题独立站点，端口 8401-8421）
 bash scripts/demo-sites.sh              # 全部主题
 bash scripts/demo-sites.sh narrow       # 仅指定主题
-SERVE=1 bash scripts/demo-sites.sh      # 构建后批量启动静态服务
+SERVE=1 bash scripts/demo-sites.sh      # 构建后启动单进程多端口服务
 
 # 2. 截 21 张主题预览图（Playwright，1280×800，需演示站服务已启动）
 #    输出到 demo-gallery/static/shots/<主题>.png
 
-# 3. 构建并启动画廊站（端口 8400）
+# 3. 构建画廊并合并进统一服务（画廊即 8400 端口根）
 SERVE=1 bash scripts/build-gallery.sh
+
+# 停止全部服务（单进程demo-serve.py + 历史遗留per-port http.server）
+bash scripts/demo-stop.sh
 ```
 
 产物位置（均在 git 仓外，属生成物）：`../demo-sites/<主题>/`、`../demo-gallery/`。
+
+**服务架构（2026-09-24 起）**：22 个端口由**一个** asyncio 进程服务
+（`scripts/demo-serve.py`，端口→文档根映射走命令行参数）。此前每端口一个
+`python -m http.server`，实测 22 个解释器进程占 490MB 工作集（空闲 CPU 为零
+——内存全花在解释器自身）；合并后 **21MB**，且并发取文件不再排队。附带
+`scripts/demo-stop.sh` 清理历史僵孤进程（实测出现过 22 listener 对应 26 个
+python 进程）并解除 Windows 下 public/ 目录锁。
 
 ## 主题画廊（案例站）
 
