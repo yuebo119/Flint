@@ -1,5 +1,5 @@
 ﻿# Flint 性能回归门禁
-# 跑性能套件并与基线对比，关键指标劣化超阈值即 FAIL（棘轮：基线只随确认的改进更新）
+# 三轮跑性能套件取逐键中位数并与基线对比，关键指标劣化超阈值即 FAIL（棘轮：基线只随确认的改进更新）
 # 用法: powershell -File scripts/perf-gate.ps1 [-UpdateBaseline]
 
 param(
@@ -19,25 +19,61 @@ if (-not (Test-Path $BaselinePath)) {
 $baseline = Get-Content $BaselinePath -Raw -Encoding UTF8 | ConvertFrom-Json
 $threshold = [double]$baseline.threshold_percent
 
-# 跑性能套件
-Write-Host "🧪 运行性能套件（约 10-15 分钟）..." -ForegroundColor Yellow
-dotnet run --project "tests\Flint.PerformanceTests\Flint.PerformanceTests.csproj" -c Release -- $OutputPath
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "⚠️ 套件自身有未达标项（阈值判定），继续做基线对比" -ForegroundColor Yellow
+# 跑性能套件：三轮取逐键中位数（压 ±19% 级单轮环境摆动；阈值与基线语义不变）
+$runCount = 3
+Write-Host "🧪 运行性能套件 ×$runCount（约 15-20 分钟，逐键三轮中位）..." -ForegroundColor Yellow
+
+function Parse-GateReport([string]$path) {
+    $html = Get-Content $path -Raw -Encoding UTF8
+    $cards = $html -split 'class="test-card'
+    $parsed = @{}
+    foreach ($card in $cards) {
+        $titleMatch = [regex]::Match($card, 'test-title[^>]*>([^<]+)<')
+        if (-not $titleMatch.Success) { $titleMatch = [regex]::Match($card, '<h[23][^>]*>([^<]+)<') }
+        if (-not $titleMatch.Success) { continue }
+        $testName = $titleMatch.Groups[1].Value.Trim()
+        $pairs = [regex]::Matches($card, 'metric-name">([^<]+)</div>(?s).*?metric-actual">([^<]+)<')
+        foreach ($p in $pairs) {
+            $parsed["$testName|$($p.Groups[1].Value.Trim())"] = [double]$p.Groups[2].Value.Trim()
+        }
+    }
+    return $parsed
 }
 
-# 解析 HTML 报告：test-card 内的 metric-name/actual
-$html = Get-Content $OutputPath -Raw -Encoding UTF8
-$cards = $html -split 'class="test-card'
+function Get-Median([double[]]$values) {
+    $sorted = @($values | Sort-Object)
+    $n = $sorted.Count
+    if ($n % 2 -eq 1) { return [double]$sorted[[int](($n - 1) / 2)] }
+    return ([double]$sorted[$n / 2 - 1] + [double]$sorted[$n / 2]) / 2
+}
+
+$runs = @{}
+for ($i = 1; $i -le $runCount; $i++) {
+    # 首轮写标准输出路径（供既有消费方），其余轮写并列文件
+    $runPath = if ($i -eq 1) { $OutputPath } else { "$PSScriptRoot\..\TestResults\perf-gate-run.run$i.html" }
+    Write-Host "  ── 轮 $i/$runCount ──" -ForegroundColor DarkYellow
+    dotnet run --project "tests\Flint.PerformanceTests\Flint.PerformanceTests.csproj" -c Release -- $runPath
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ⚠️ 第 $i 轮套件自身有未达标项（阈值判定），继续做基线对比" -ForegroundColor Yellow
+    }
+    if (-not (Test-Path $runPath)) { throw "第 $i 轮报告未生成: $runPath" }
+    $runs[$i] = Parse-GateReport $runPath
+}
+
+# 逐键三轮中位（某轮缺键时按现有轮取，不整键丢弃）
 $results = @{}
-foreach ($card in $cards) {
-    $titleMatch = [regex]::Match($card, 'test-title[^>]*>([^<]+)<')
-    if (-not $titleMatch.Success) { $titleMatch = [regex]::Match($card, '<h[23][^>]*>([^<]+)<') }
-    if (-not $titleMatch.Success) { continue }
-    $testName = $titleMatch.Groups[1].Value.Trim()
-    $pairs = [regex]::Matches($card, 'metric-name">([^<]+)</div>(?s).*?metric-actual">([^<]+)<')
-    foreach ($p in $pairs) {
-        $results["$testName|$($p.Groups[1].Value.Trim())"] = [double]$p.Groups[2].Value.Trim()
+$allKeys = @($runs.Values | ForEach-Object { $_.Keys } | Sort-Object -Unique)
+foreach ($k in $allKeys) {
+    $vals = @()
+    for ($i = 1; $i -le $runCount; $i++) {
+        if ($runs[$i].ContainsKey($k)) { $vals += [double]$runs[$i][$k] }
+    }
+    if ($vals.Count -eq 0) { continue }
+    $results[$k] = Get-Median $vals
+    if ($vals.Count -gt 1) {
+        $min = ($vals | Measure-Object -Minimum).Minimum
+        $max = ($vals | Measure-Object -Maximum).Maximum
+        Write-Host ("    {0}: 中位 {1:F1}ms（三轮 {2:F1}~{3:F1}）" -f $k, $results[$k], $min, $max) -ForegroundColor DarkGray
     }
 }
 
