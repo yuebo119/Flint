@@ -8,9 +8,9 @@
 
 ## ✨ 特性
 
-- **🚀 极速构建**：万页站点 3.4 秒，增量 43ms，Markdown 解析 188k 文件/秒
-- **🧠 内存高效**：万页构建内存峰值 367MB，14.6k 页技术文档语料 921MB——大站点不再吃满内存
-- **📦 单文件部署**：~18MB AOT 原生 exe，无运行时依赖，Server GC 多核并行回收
+- **🚀 极速构建**：万页站点 6.5 秒，增量 69ms，Markdown 解析 222k 文件/秒
+- **🧠 内存可控**：万页构建内存峰值 483MB，14.6k 页技术文档语料 1589MB——与 Hugo 同量级
+- **📦 单文件部署**：~28MB AOT 原生 exe，无运行时依赖，Server GC 多核并行回收
 - **🔄 全功能站点语义**：目录结构 permalink、Front Matter（YAML/TOML/JSON）、taxonomy、渲染钩子、partialCached、`:git` 日期源、环境变量覆盖
 - **📝 现代内容管线**：CommonMark + GFM、语法高亮、数学公式、渲染钩子（链接/图片/标题）、短码
 - **⚡ 开发体验**：Kestrel 热重载、增量构建、多格式配置、`--missing-layout` 宽容模式
@@ -25,8 +25,8 @@
 |------|------|
 | **.NET 10** | 最新 LTS |
 | **NativeAOT** | 原生编译，单文件发布 |
-| **Scriban 7.4** | 模板引擎（LoopLimit 对齐 Hugo 无限制语义） |
-| **Markdig 1.3** | CommonMark + GFM 解析 |
+| **Scriban 7.5** | 模板引擎（LoopLimit 对齐 Hugo 无限制语义） |
+| **Markdig 1.4** | CommonMark + GFM 解析 |
 | **Kestrel** | 开发服务器（热重载） |
 | **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |
 | **Dart Sass / esbuild** | Sass 编译与 JS 打包（可选组件） |
@@ -42,8 +42,8 @@
 git clone https://github.com/yuebo119/flint.git
 cd flint/Flint
 
-# Windows（NativeAOT 单文件）
-dotnet publish src/Flint.Cli -c Release -r win-x64 -o ./publish
+# Windows（NativeAOT 单文件，~28MB；缺 -p:PublishAot=true 会产出 ~89MB 非 AOT 单文件）
+dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish
 
 # Linux
 dotnet publish src/Flint.Cli -c Release -r linux-x64 -o ./publish
@@ -401,45 +401,54 @@ dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true
 
 ## 📊 性能
 
-> 测试环境：Windows 10 x64 · 32 核 · 同机同语料同模板 · 冷构建 3 次中位数
-> 对照：Hugo v0.165.0 Extended 官方二进制 vs Flint Release+NativeAOT
-> 完整方法论、产物对称性审计与公平性声明见 **[benchmarks/REPORT.md](benchmarks/REPORT.md)**
+> 测试环境：2026-09-24 实测 · Windows 10 x64 · 32 核 · .NET SDK 10.0.401 · 同机同语料同模板 · 冷构建 3 次中位数
+> 对照：Hugo v0.165.0 Extended 官方二进制 vs Flint Release + NativeAOT（`-p:PublishAot=true`，28MB 单文件）
+> 完整方法论、产物对称性审计与公平性声明见 **[benchmarks/REPORT.md](benchmarks/REPORT.md)**（2026-09-08/09 历史三轮基线）
 
-### 端到端构建（三语料 × 双引擎 × 3 次中位数）
+### 端到端构建（双语料 × 双引擎 × 3 次中位数）
 
 | 语料 | 页数（构建产出） | 内容形态 | Hugo | **Flint AOT** | 比值 |
 |------|------|---------|------:|--------------:|:----:|
-| 万页合成 | 10,007 | 同构 lorem | 4530ms | **3433ms** | **0.76x** |
-| MDN Web Docs | 14,576 | 技术文档（HTML/代码密集） | 8058ms | **5431ms** | **0.67x** |
+| 万页合成 | 10,007 | 同构 lorem | 5573ms | **6507ms** | 1.17x |
+| MDN Web Docs | 14,576 | 技术文档（HTML/代码密集） | 8776ms | **9048ms** | 1.03x |
 
-### 内存峰值（构建进程，psutil 采样）
+### 内存峰值（构建进程，psutil 采样，RSS / USS · MB）
 
 | 语料 | Hugo RSS/USS | **Flint RSS/USS** | USS 差异 |
 |------|-------------|-------------------|---------|
-| 万页合成 | 409 / 383 MB | **367 / 326 MB** | **-10%** |
-| MDN 14,621 页 | 1486 / 1416 MB | **921 / 886 MB** | **-38%** |
+| 万页合成 | 449 / 426 | **483 / 465** | +9% |
+| MDN 14,621 页 | 1475 / 1450 | **1589 / 1570** | +8% |
 
 ### 主题复杂度阶梯（1000 页 × L1/L2/L3 × 双语法等价实现）
 
 | 层级 | 主题内容 | Hugo | **Flint** | 比值 |
 | ---- | -------- | ---- | ----- | ---- |
-| L1 基础 | 单页渲染 | 634ms | **546ms** | 0.86x |
-| L2 中等 | + 侧边栏 O(N) 全站循环 | 1087ms | **972ms** | 0.89x |
-| L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1863ms | **1592ms** | 0.85x |
+| L1 基础 | 单页渲染 | 773ms | **723ms** | 0.93x |
+| L2 中等 | + 侧边栏 O(N) 全站循环 | 989ms | **1072ms** | 1.08x |
+| L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1469ms | **1575ms** | 1.07x |
 
-复杂度每升一级两引擎等比例变慢（斜率平行）——主题复杂度增长不会反转
-Flint 的优势。partialCached 双引擎均生效。
+两引擎随复杂度近似线性变慢、斜率接近（Hugo +696ms/级、Flint +852ms/级）：L1 Flint 略快，
+L2/L3 落后 7-8%；峰值 RSS 随层级 Flint 增长更快（102/271/407MB vs Hugo 88/134/168MB）。
+partialCached 双引擎均生效。
 
 ### 进程内套件（Release，11/11 全绿）
 
 | 指标 | 数值 |
 |------|------|
-| Markdown 解析 | 5.3ms/千文件（188k 文件/秒） |
-| 模板渲染 | 20.2ms/千页（49.6k 页/秒） |
-| 增量构建 | 51ms（完整构建 216ms） |
-| 配置加载 | 0.17ms |
-| 并发构建加速比 | 1.04x |
-| 病态检测 | 48/48 全绿 |
+| Markdown 解析 | 4.5ms/千文件（222k 文件/秒） |
+| 模板渲染 | 16.2ms/千页（61.8k 页/秒） |
+| 增量构建 | 69ms（完整构建 290ms） |
+| 配置加载 | 0.21ms |
+| 并发构建加速比 | 1.07x |
+| 病态检测 | 随集成套件全绿（1647/1647，2026-09-24） |
+
+### 与历史基线（REPORT.md）的关系
+
+REPORT.md（2026-09-08/09）记录 Flint 万页 0.74x 领先——**该绝对值在当前工具链下不可复现**：
+同源码（aef42a0）2026-09-24 重建实测 5968ms（SDK 10.0.401）/ 5731ms（SDK 10.0.204）vs 报告 3912ms（+46~52%），
+而对照 Hugo 二进制与报告一致（5573 vs 报告 4530~5540）。差异主因 [推断] 为构建工具链代际
+（报告期 global.json 解析到 SDK 10.0.104，该版本现已残缺不可用），非源码性能回退的直接证据；
+报告源码与当前源码今日实测比值分别为 1.03~1.18x 与 1.17~1.22x，本阶段改动净效应在轮间噪声内。
 
 ---
 
@@ -455,7 +464,7 @@ powershell -File scripts/perf-gate.ps1                   # 性能回归门禁
 ```
 
 📊 **完整性能报告**：[benchmarks/REPORT.md](benchmarks/REPORT.md)
-（三语料矩阵、复杂度阶梯、内存峰值、公平性声明、产物审计、可复现命令）
+（2026-09-08/09 历史轮次：语料矩阵、复杂度阶梯、内存峰值、公平性声明、产物审计、可复现命令）
 
 ---
 

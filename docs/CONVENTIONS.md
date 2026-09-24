@@ -94,7 +94,8 @@ csproj 只写 `<PackageReference Include="..." />`（无 Version——CPM，见 
 <InvariantGlobalization>true</InvariantGlobalization>
 ```
 
-发布链：`dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained`。
+发布链：`dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAot=true`
+（缺 `-p:PublishAot=true` 时 csproj 的 `PublishAot=false` 生效，产出 ~89MB 非 AOT 单文件）。
 **任何引擎改动的验收终点是 AOT 发布成功且产物可用**——调试态通过 ≠ 交付态通过。
 
 ### 2.3 零反射红线（热路径）`[约定+评审]`
@@ -459,7 +460,7 @@ dotnet build Flint.slnx
 dotnet run --project tests/Flint.Core.Tests -c Release
 
 # 3. AOT 发布（引擎改动时）
-dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained
+dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAot=true
 
 # 4. Hugo 兼容改动：跑 §8.1 三层验证（对照 + 浏览器）
 
