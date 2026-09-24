@@ -232,9 +232,12 @@ public class TaxonomyPageGenerationTests : IAsyncLifetime
     [Trait("TestType", "TermPages")]
     public async Task BuildAsync_TermTemplateUsingPages_ListsOnlyTermPages()
     {
-        // Arrange - 站点带 term 模板：经 pages（词条专属集合）渲染标题
+        // Arrange - 站点带 term 模板：经 pages（词条专属集合）渲染标题。
+        // 放 tags/term.html 而非根级 term.html：minimal 夹具自带 _default/taxonomy.html，
+        // 真 Hugo 候选链中 _default/taxonomy 先于根 term（hugo.exe 对探实测），
+        // 根 term.html 会被 taxonomy.html 抢先渲染。
         await _fixture.CreateSiteAsync("minimal");
-        await _fixture.AddTemplateAsync("term.html",
+        await _fixture.AddTemplateAsync("tags/term.html",
             "{{ for p in pages }}[{{ p.title }}]{{ end }}");
 
         await _fixture.AddContentAsync("posts/alpha-post.md", """

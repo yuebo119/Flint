@@ -9,6 +9,7 @@ using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.Models;
+using Flint.Core.Templates;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
 
 namespace Flint.Core.Site;
@@ -70,6 +71,11 @@ public sealed partial class SiteBuilder : ISiteBuilder
         var stopwatch = Stopwatch.StartNew();
         var errors = new ConcurrentBag<BuildError>();
         var warnings = new ConcurrentBag<BuildWarning>();
+
+        // 构建作用域：渲染期登记（分页标记/全量页面/站点对象/分类查找）按执行流隔离。
+        // 必须在同步前缀（首个 await 前）创建，本次构建的全部并行渲染子任务才会
+        // 继承同一实例——同进程并行构建（集成测试多站点 in-process）互不串写
+        ScribanTemplateRenderer.BeginBuildScope();
 
         // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr
         // 输出各阶段耗时；默认关闭，仅一个 bool 判断的开销

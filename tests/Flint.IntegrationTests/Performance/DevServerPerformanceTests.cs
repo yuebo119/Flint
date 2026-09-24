@@ -248,50 +248,98 @@ public sealed class DevServerPerformanceTests : IAsyncLifetime
     [Fact]
     public async Task LongRunning_MemoryUsage_ShouldBeStable()
     {
-        // Arrange
-        var indexPath = Path.Combine(_fixture.OutputPath, "index.html");
-        if (!File.Exists(indexPath))
+        // Arrange - 起真实 dev server **子进程**采样其私有内存。此前在测试进程内
+        // 读文件断言 GC.GetTotalMemory：xUnit 并行套件下其他测试集合的存活数据
+        // 参与读数（实测初始 65→521MB 随并行相位漂移、增长 116~580MB），量具
+        // 测到的是套件噪声而非 dev server——单跑绿/全量红。子进程内存与套件
+        // 并行度解耦，且才对得上测试名（此前从未启动过 dev server）
+        var port = Random.Shared.Next(10000, 60000);
+        var startInfo = new ProcessStartInfo
         {
-            _output.WriteLine("跳过测试：index.html 不存在");
-            return;
+            FileName = _cli.CliPath,
+            WorkingDirectory = _fixture.SiteRoot,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        foreach (var arg in new[] { "serve", "--port", port.ToString(), "--open", "false", "--livereload", "false" })
+        {
+            startInfo.ArgumentList.Add(arg);
         }
 
-        // 记录初始内存
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        var initialMemory = GC.GetTotalMemory(true);
+        using var process = new Process { StartInfo = startInfo };
+        // 排水：不消费管道会撑满缓冲让 serve 阻塞在 Console.WriteLine
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
 
-        // Act - 模拟长时间运行（多次请求）
-        const int iterations = 1000;
-        var memorySnapshots = new List<long>();
-
-        for (int i = 0; i < iterations; i++)
+        try
         {
-            var content = await File.ReadAllTextAsync(indexPath);
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var baseUrl = new Uri($"http://127.0.0.1:{port}/");
 
-            if (i % 100 == 0)
+            // 等就绪（serve 启动期先做一次全站构建，Debug 下需要数秒）
+            var ready = false;
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (DateTime.UtcNow < deadline)
             {
-                memorySnapshots.Add(GC.GetTotalMemory(false));
+                try
+                {
+                    var probe = await http.GetAsync(baseUrl);
+                    if (probe.IsSuccessStatusCode)
+                    {
+                        ready = true;
+                        break;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // 端口尚未监听，重试
+                }
+
+                await Task.Delay(200);
+            }
+
+            ready.Should().BeTrue("dev server 应在 60 秒内就绪");
+
+            // 预热：首轮请求触发 JIT/模板缓存，之后取基线才反映稳态泄漏
+            for (var i = 0; i < 50; i++)
+            {
+                (await http.GetAsync(baseUrl)).EnsureSuccessStatusCode();
+            }
+
+            process.Refresh();
+            var initialPrivate = process.PrivateMemorySize64;
+
+            // Act - 持续请求模拟长时间运行
+            const int iterations = 500;
+            for (var i = 0; i < iterations; i++)
+            {
+                (await http.GetAsync(baseUrl)).EnsureSuccessStatusCode();
+            }
+
+            // Assert
+            process.Refresh();
+            var finalPrivate = process.PrivateMemorySize64;
+            var growthMB = (finalPrivate - initialPrivate) / 1024.0 / 1024.0;
+
+            _output.WriteLine($"初始私有内存: {initialPrivate / 1024.0 / 1024.0:F2} MB");
+            _output.WriteLine($"最终私有内存: {finalPrivate / 1024.0 / 1024.0:F2} MB");
+            _output.WriteLine($"内存增长: {growthMB:F2} MB");
+
+            growthMB.Should().BeLessThan(100, "持续请求后 dev server 私有内存增长应该有限");
+        }
+        finally
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5000);
             }
         }
-
-        // 最终内存
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        var finalMemory = GC.GetTotalMemory(true);
-
-        // Assert
-        var memoryGrowth = finalMemory - initialMemory;
-        var memoryGrowthMB = memoryGrowth / 1024.0 / 1024.0;
-
-        _output.WriteLine($"初始内存: {initialMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"最终内存: {finalMemory / 1024.0 / 1024.0:F2} MB");
-        _output.WriteLine($"内存增长: {memoryGrowthMB:F2} MB");
-
-        // 内存增长应该有限（小于 100MB）
-        memoryGrowthMB.Should().BeLessThan(100, "长时间运行后内存增长应该有限");
     }
 
     #endregion

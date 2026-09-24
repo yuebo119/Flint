@@ -6,6 +6,7 @@ using System.Diagnostics;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Models;
+using Flint.Core.Templates;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
 using PageTreeNode = Flint.Core.Site.PageTrees.PageTreeNode;
 using PageTreeWalker = Flint.Core.Site.PageTrees.PageTreeWalker;
@@ -27,6 +28,9 @@ public sealed partial class SiteBuilder
         var stopwatch = Stopwatch.StartNew();
         var errors = new ConcurrentBag<BuildError>();
         var warnings = new ConcurrentBag<BuildWarning>();
+
+        // 构建作用域：同 BuildAsync 入口（同步前缀开新实例，并行构建执行流隔离）
+        ScribanTemplateRenderer.BeginBuildScope();
 
         // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态
         //（"改模板后立即增量"是测试锁定的高频真实场景）
