@@ -70,3 +70,38 @@
 **总体判断**：Flint 万页 3.2 秒中 ~75% 是 Windows NTFS 小文件物理开销，应用层可压缩
 空间合计约 10%（3200→~2900ms）。更大的优化杠杆在平台侧：Linux（ext4 小文件创建
 显著快于 NTFS，批次 4 Linux 基线将验证）与内存（批次 3）。
+
+## 5. 内存对象归名（2026-09-25 · MDN 14,621 页渲染后堆）
+
+> 方法：`FLINT_HOLD_RENDER=1` 渲染相位后挂起 90s（临时插桩，用后即删）→
+> `dotnet-gcdump collect` → `dotnet-gcdump report` 全量类型聚合（1198 个类型行，
+> 计数合计 9,496,302，与头部 9,497,202 对齐 = 全覆盖）。dev@`848ded4`，JIT 构建。
+> 快照与报告：`%TEMP%\dev-mdn.gcdump`（183MB）/ `dev-mdn-report.txt`。
+
+堆规模：**1,056,651,557 B（1056MB）· 9,497,202 个对象**——对照 09-09 基线
+516MB / 708K 对象，即 **+8.79M 对象 / +540MB** 差值的构成：
+
+| Count | 类型 | 归属 |
+|---:|---|---|
+| **6,525,167** | `System.String` | **占全部对象 69%**（≈446 个/页 @14.6k 页） |
+| 430,712 | `System.Int32` | 装箱值 |
+| 266,722 | `System.Int32[]` | 小数组 |
+| 251,935 | `Dictionary<String, ScriptObject+InternalValue>` | Scriban 脚本对象字典 |
+| 222,666 | `Entry<String, ScriptObject+InternalValue>[]` | 字典内部条目数组 |
+| 219,354 | `System.Boolean` | 装箱值 |
+| 208,049 | `Scriban.Runtime.ScriptObject` | Scriban 脚本对象 |
+| 116,984 | `Flint.Core.Templates.StoreFunction` | Flint 模板函数实例（≈8 个/页） |
+| 116,969 | `List<Object>` | 通用列表 |
+| 105,670 | `Flint.Core.Abstractions.MarkdownHeading` | 内容标题（语料固有） |
+| 102,348 | `Scriban.Runtime.ScriptArray` | Scriban 数组 |
+| 29,244 / 29,242 / 29,242 | `GetPageFunction` / `PagePaginateFunction` / `PageRelationFunction` | Flint 模板函数实例（≈2 个/页） |
+
+**结论**：
+1. 差值大头 = **6.53M 字符串（69%）** + Scriban 簇（ScriptObject + 字典 + 条目数组 +
+   ScriptArray ≈ **785K**）+ Flint 每页函数实例（StoreFunction 117K + 三个 ×29K）。
+2. 逐页规律明显（StoreFunction≈8/页、GetPage≈2/页）——**每页渲染态疑似保留**，
+   符合 ScriptObject 字典增长指纹；字符串约 446 个/页，候选为 front matter 值、
+   标题文本与路径片段。
+3. 局限：gcdump 无对象根（roots）信息，字符串**具体保留链**无法从本报告确定；
+   根因定位需带 roots 的堆快照（VS 打开该 gcdump）或分配栈（dotnet-trace GC-verbose）。
+   归名任务到"类型级"为止，保留链分析维持搁置（2026-09-25 用户裁决）。
