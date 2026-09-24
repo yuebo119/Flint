@@ -46,14 +46,20 @@ sudo cp publish/Flint /usr/local/bin/
 ### 验证安装
 
 ```bash
-Flint version
+Flint version        # 单行版本
+Flint version -v     # 附运行时/操作系统/架构
 ```
 
 输出示例:
 ```
-Flint v0.1.0
-运行时: .NET 10.0.0
-操作系统: Microsoft Windows 10.0.22631
+Flint v0.1.1 (.NET 10)
+```
+
+`-v` 输出:
+```
+Flint v0.1.1
+运行时: .NET 10.0.12
+操作系统: Microsoft Windows 10.0.19045
 架构: X64
 ```
 

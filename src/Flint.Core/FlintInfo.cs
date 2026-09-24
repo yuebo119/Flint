@@ -19,9 +19,11 @@ public static class FlintInfo
     public const string Description = "下一代高性能静态站点生成器";
 
     /// <summary>
-    /// 当前版本
+    /// 当前版本——单源取自 Directory.Build.props 的 <Version>（编译期写入程序集元数据），
+    /// 升版本只改 props 一处，勿在此手写常量
     /// </summary>
-    public const string Version = "0.1.0";
+    public static string Version { get; } =
+        typeof(FlintInfo).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     /// <summary>
     /// 目标运行时
