@@ -48,7 +48,8 @@
     <PackageReference Include="DartSassHost" />
     <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
-    <PackageReference Include="DartSass.Native.osx-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <!-- 包名 macos-x64（旧名 osx-x64 已停更；CPM 下旧名无版本定义，macOS 构建失败） -->
+    <PackageReference Include="DartSass.Native.macos-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
 
     <!-- HTML/CSS/JS 压缩 -->
     <PackageReference Include="NUglify" />

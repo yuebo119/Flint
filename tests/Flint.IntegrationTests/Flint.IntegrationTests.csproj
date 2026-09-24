@@ -62,7 +62,7 @@
     <!-- Sass 编译器 Native 依赖（测试需要） -->
     <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
-    <PackageReference Include="DartSass.Native.osx-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+    <PackageReference Include="DartSass.Native.macos-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
     
     <!-- JavaScript 引擎（DartSassHost 需要） -->
     <PackageReference Include="JavaScriptEngineSwitcher.V8" />
