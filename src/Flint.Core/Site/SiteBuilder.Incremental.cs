@@ -38,6 +38,18 @@ public sealed partial class SiteBuilder
         //（"改模板后立即增量"是测试锁定的高频真实场景）
         _templateRenderer.InvalidateMtimeCache();
 
+        // 阶段计时诊断：同 BuildAsync（SiteBuilder.cs），FLINT_TRACE_PHASES=1
+        // 时向 stderr 输出增量路径各阶段耗时；默认关闭，仅一个 bool 判断的开销
+        var tracePhases = Environment.GetEnvironmentVariable("FLINT_TRACE_PHASES") == "1";
+        var lastPhaseTs = 0L;
+        void Phase(string name)
+        {
+            if (!tracePhases) return;
+            var ts = stopwatch.ElapsedTicks;
+            Console.Error.WriteLine($"[phase] {name,-24} {(ts - lastPhaseTs) * 1000.0 / Stopwatch.Frequency,9:F1}ms");
+            lastPhaseTs = ts;
+        }
+
         try
         {
             var config = await _configLoader.AutoLoadAsync(
@@ -72,6 +84,7 @@ public sealed partial class SiteBuilder
                 .Where(f => !f.EndsWith(".md", StringComparison.OrdinalIgnoreCase) &&
                             !templateChanges.Contains(f, StringComparer.OrdinalIgnoreCase))
                 .ToList();
+            Phase("1.配置+变更分类");
 
             var pagesBuilt = 0;
             var assetsProcessed = 0;
@@ -195,8 +208,7 @@ public sealed partial class SiteBuilder
                 var siteData = await LoadSiteDataAsync(options, config.ThemeNames, cancellationToken);
                 var translations = Translations.Load(
                     options.SourcePath, config.ThemeNames, config.LanguageCode);
-                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations);
-// 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
+                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations);// 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
                 //    （列表页聚合"最新内容"，任何内容变化都可能影响；数量 = section 数，远小于页数。
                 //     Hugo 以运行时依赖追踪精确到页，此处为无追踪前提下的保守折中）
                 var changedPathSet = new HashSet<string>(
@@ -208,8 +220,8 @@ public sealed partial class SiteBuilder
                         (context.SourcePath is not null &&
                          changedPathSet.Contains(context.SourcePath)))
                     {
-                        renderSet.Add(context);
-                    }
+                    renderSet.Add(context);
+                }
                 }
 
                 // fast render mode（T4.4）：模板变化时受影响内容页可能很多（如改 single 模板影响全部页），
@@ -244,6 +256,7 @@ public sealed partial class SiteBuilder
                 // affectedFiles（后者经依赖图传播，改模板时全部依赖页都被卷入）
                 var hasContentChanges = changedFiles.Any(
                     f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+                Phase("2.树更新+装配");
 
                 var renderedPages = await RenderPagesAsync(
                     renderSet, siteContext, config, options, errors, cancellationToken);
@@ -254,7 +267,8 @@ public sealed partial class SiteBuilder
                 var taxonomyPagesIncremental = templateChanges.Count > 0 || taxonomyDataChanged
                     ? await GenerateTaxonomyPagesAsync(
                         taxonomies, siteContext, config, options, errors, cancellationToken)
-                    : [];
+                        : [];
+                Phase("3.渲染+分类页");
 
                 await WriteOutputAsync(renderedPages, taxonomyPagesIncremental, [], options, cancellationToken);
 
@@ -266,6 +280,7 @@ public sealed partial class SiteBuilder
                     await GenerateSitemapAndFeedsAsync(
                         allPageContexts, siteContext, config, options, cancellationToken);
                 }
+                Phase("4.写入+聚合产物");
 
                 pagesBuilt = renderedPages.Count + taxonomyPagesIncremental.Count;
             }
@@ -299,6 +314,8 @@ public sealed partial class SiteBuilder
                     assetsProcessed++;
                 }
             }
+            Phase("5.资产");
+            Phase("总计");
 
             stopwatch.Stop();
 
