@@ -23,8 +23,8 @@
 git clone https://github.com/your-org/Flint.git
 cd Flint/Flint
 
-# 构建 Native AOT 版本 (Windows)
-dotnet publish src/Flint.Cli -c Release -r win-x64 -o ./publish
+# 构建 Native AOT 版本 (Windows)——必须显式 -p:PublishAot=true，否则产出 ~89MB 非 AOT 单文件
+dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish
 
 # Linux
 dotnet publish src/Flint.Cli -c Release -r linux-x64 -o ./publish
