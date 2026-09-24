@@ -1,32 +1,58 @@
 {
-  "updated": "2026-09-08",
-  "note": "基线固化自四批重构完成后的实测（perf-after-refactor.html）。门禁只拦显著劣化（超阈值 20%），不拦噪声。",
+  "updated": "2026-09-25",
+  "note": "环境换代重录（安静窗口双跑取较慢值；渲染项顺手收紧至 15ms）。SDK/runtime 已从 10.0.104 时代不可逆变更到 SDK 10.0.401 / runtime 10.0.12，旧 epoch 数值本机不可复现，故整体换代而非改进上调。相对旧 epoch 的稳定劣化项见 known_regressions（仍在跟踪，未消失）。门禁只拦显著劣化（超阈值 20%），不拦噪声。",
   "threshold_percent": 20,
+  "known_regressions": [
+    {
+      "key": "incremental_build",
+      "label": "增量构建时间",
+      "old_epoch_ms": 49,
+      "new_epoch_ms": 76,
+      "evidence": "负载轮 +101.7% / 安静A +52.6% / 安静B +55%（三轮稳定）",
+      "status": "跟踪中：真实回归 vs 环境换代不可分解（同源重编译已证可差 46%）"
+    },
+    {
+      "key": "complex_theme_1000",
+      "label": "复杂主题 1000 页",
+      "old_epoch_ms": 318,
+      "new_epoch_ms": 456.6,
+      "evidence": "负载轮 +42.5% / 安静A +39.3% / 安静B +43.6%（三轮稳定）",
+      "status": "跟踪中：真实回归 vs 环境换代不可分解"
+    },
+    {
+      "key": "site_build_100",
+      "label": "小型站点构建 100 页",
+      "old_epoch_ms": 71,
+      "new_epoch_ms": 93.5,
+      "evidence": "负载轮 +52.8% / 安静A +27.7% / 安静B +31.6%（三轮稳定）",
+      "status": "跟踪中：真实回归 vs 环境换代不可分解"
+    }
+  ],
   "metrics": {
     "site_build_100": {
       "label": "小型站点构建 100 页",
-      "ms": 71,
+      "ms": 93.5,
       "source": "构建时间"
     },
     "site_build_500": {
       "label": "中型站点构建 500 页",
-      "ms": 333
+      "ms": 413.3
     },
     "site_build_1000": {
       "label": "大型站点构建 1000 页",
-      "ms": 610
+      "ms": 744
     },
     "site_build_10000": {
       "label": "超大型站点构建 10000 页",
-      "ms": 5603
+      "ms": 6694
     },
     "complex_theme_1000": {
       "label": "复杂主题 1000 页",
-      "ms": 318
+      "ms": 456.6
     },
     "incremental_build": {
       "label": "增量构建时间",
-      "ms": 49
+      "ms": 76
     },
     "markdown_parse_1000": {
       "label": "Markdown 解析 1000 文件",
@@ -34,11 +60,11 @@
     },
     "template_render_1000": {
       "label": "模板渲染 1000 次",
-      "ms": 18
+      "ms": 15
     },
     "concurrent_build": {
       "label": "并发构建",
-      "ms": 594
+      "ms": 680.7
     }
   }
 }
