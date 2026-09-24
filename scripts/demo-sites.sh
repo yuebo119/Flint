@@ -229,12 +229,26 @@ done
 
 echo "--------------------------------------------------------------------------"
 if [ "${SERVE:-0}" = "1" ]; then
-  echo "启动全部服务…"
+  echo "启动全部服务（单进程多端口）…"
+  # **单进程服务 22 个端口**：21 主题 + 画廊各起一个 python 解释器实测 490MB
+  # （~19MB/个）；合成一个 asyncio 进程后 ~21MB，且浏览器并行请求不再排队。
+  # 先停掉旧服务（Windows 下 python 的 CWD 在 public/ 内会锁目录，且重复启动
+  # 会残留僵孤进程）
+  "$SELF_DIR/demo-stop.sh" > /dev/null 2>&1
+  # Git Bash 下只有 `python`（无 python3 别名），两者都试
+  if command -v python > /dev/null 2>&1; then
+    PY=python
+  else
+    PY=python3
+  fi
+  # 映射直接走命令行参数（不用临时文件：后台进程可能还没读文件就被 rm，
+  # 实测偶发 FileNotFoundError）
+  serve_args=("8400=$REPO_ROOT/demo-gallery/public")
   for name in "${THEMES[@]}"; do
-    site="$WORK/$name"
-    [ -d "$site/public" ] || continue
-    (cd "$site/public" && python -m http.server "${THEME_PORT[$name]}" --bind 127.0.0.1 > /dev/null 2>&1 &)
+    [ -d "$WORK/$name/public" ] || continue
+    serve_args+=("${THEME_PORT[$name]}=$WORK/$name/public")
   done
-  echo "全部服务已后台启动。"
+  ("$PY" "$SELF_DIR/demo-serve.py" "${serve_args[@]}" > /dev/null 2>&1 &)
+  echo "全部服务已在单进程内启动（画廊 http://127.0.0.1:8400/）。"
 fi
 exit $((fail > 0 ? 1 : 0))
