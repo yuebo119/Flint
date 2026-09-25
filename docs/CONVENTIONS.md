@@ -220,7 +220,7 @@ Flint 的处理对象是**全站页面 × 页面成员**的规模（700+ 页/站
 |------|------|------|
 | 构建/演示编排 | bash | Git Bash 可跑；`set -u`；端口/路径集中头部变量 |
 | 数据处理 | python | 仅数据生成/校验（corpus、bench），不碰引擎 |
-| 单进程服务 | python | `demo-serve.py`（asyncio，零依赖） |
+| 单进程服务 | .NET 10 | `demo-sites/demo-serve`（TcpListener，零依赖） |
 
 **铁律** `[P0]`：不用脚本（sed/perl/heredoc）批量改写**既有** `.cs` 源码或
 配置文件——绕过 Read 前置且无可审查差异。改动一律逐处 Edit。脚本只允许
@@ -461,8 +461,9 @@ http://127.0.0.1:8421/   yinyang
 - **每主题独立端口**（用户裁决 2026-09-23）：SSG 主题是站点级能力，曾经尝试的
   单端口子路径归并方案因根命名空间撞车/同源存储共享被否决，实现保留在
   git 历史（`2c8fc81..ead327f`），教训登记于 cortex 决策记忆
-- **服务是单进程**（`demo-sites/demo-serve.py`，asyncio，22 端口 ~21MB）——
-  每端口一个 python 解释器实测 490MB，合并后降一个数量级
+- **服务是单进程**（`demo-sites/demo-serve/`，.NET 10 TcpListener 手写最小 HTTP，
+  22 端口实测 145MB）——2026-09-25 全面替代 python 版：22 个解释器 490MB →
+  单 python 进程 21MB → .NET 单进程 145MB（以内存换技术栈一致与零 Python 依赖）
 - `demo-stop.sh` 停全部服务并清理僵孤进程；Windows 下重建前**必须先停**
   （解释器 CWD 锁 public/ 目录）
 
@@ -520,7 +521,7 @@ bash demo-sites/demo-sites.sh      # 至少 blast radius 内主题
 | 主题矩阵回归 | `demo-sites.sh` / `theme-matrix20.sh` | 提交前必跑 `[约定]` |
 | 三方一致 | `grep` 旧事实值零残留 | 提交前必跑 `[约定]` |
 | 提交信息格式 | §10 类型清单 | 评审 `[约定]` |
-| 演示站单进程服务 | `demo-serve.py` | 脚本内建 `[机械]` |
+| 演示站单进程服务 | `demo-sites/demo-serve` | 脚本内建 `[机械]` |
 | NuGet 漏洞审查 | `NuGetAudit=false`，人工定期 | 人工 `[约定]` |
 
 **升级路径预告**：分支三层流程已于 2026-09-24 落地（§10.2）。下一级升级触发

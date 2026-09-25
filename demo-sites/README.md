@@ -10,7 +10,7 @@
 demo-sites/
 ├── demo-sites.sh        # 21 主题建站（建站+迁移+构建+报告）
 ├── build-gallery.sh     # 画廊构建（源 → gallery/ 落地）
-├── demo-serve.py        # 单进程多端口静态服务（8400 画廊 + 8401-8421 主题）
+├── demo-serve/           # 单进程多端口静态服务（.NET 10；8400 画廊 + 8401-8421 主题）
 ├── demo-stop.sh         # 停止全部服务
 ├── fixtures/corpus/     # 统一测试语料（100 篇长文 + 静态资源）
 ├── gallery-source/      # 画廊站源码（Flint 自建，无主题依赖）
@@ -33,16 +33,17 @@ SERVE=1 bash demo-sites/demo-sites.sh      # 构建后启动单进程多端口�
 # 3. 构建画廊并合并进统一服务（画廊即 8400 端口根）
 SERVE=1 bash demo-sites/build-gallery.sh
 
-# 停止全部服务（单进程 demo-serve.py + 历史遗留 per-port http.server）
+# 停止全部服务（单进程 demo-serve + 历史遗留 per-port http.server）
 bash demo-sites/demo-stop.sh
 ```
 
-**服务架构（2026-09-24 起）**：22 个端口由**一个** asyncio 进程服务
-（`demo-sites/demo-serve.py`，端口→文档根映射走命令行参数）。此前每端口一个
-`python -m http.server`，实测 22 个解释器进程占 490MB 工作集（空闲 CPU 为零
-——内存全花在解释器自身）；合并后 **21MB**，且并发取文件不再排队。附带
-`demo-sites/demo-stop.sh` 清理历史僵孤进程（实测出现过 22 listener 对应 26 个
-python 进程）并解除 Windows 下 public/ 目录锁。
+**服务架构（2026-09-25 起 .NET 10）**：22 个端口由**一个进程**服务
+（`demo-sites/demo-serve/`，TcpListener 手写最小 HTTP；端口→文档根映射走命令行
+参数，也支持 `--list` 映射文件）。演进：最早每端口一个 `python -m http.server`
+（22 进程实测 490MB 工作集）→ 09-24 合并单 python 进程（21MB）→ 09-25 换
+.NET（实测 145MB，以内存换与仓库技术栈一致、零 Python 依赖），并发取文件不再
+排队。附带 `demo-sites/demo-stop.sh` 清理僵孤进程（按命令行含 demo-serve 匹配，
+通吃历代实现）并解除 Windows 下 public/ 目录锁。
 
 ## 主题画廊（案例站）
 

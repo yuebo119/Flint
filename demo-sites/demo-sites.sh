@@ -224,16 +224,12 @@ echo "--------------------------------------------------------------------------
 if [ "${SERVE:-0}" = "1" ]; then
   echo "启动全部服务（单进程多端口）…"
   # **单进程服务 22 个端口**：21 主题 + 画廊各起一个 python 解释器实测 490MB
-  # （~19MB/个）；合成一个 asyncio 进程后 ~21MB，且浏览器并行请求不再排队。
-  # 先停掉旧服务（Windows 下 python 的 CWD 在 public/ 内会锁目录，且重复启动
+  # （~19MB/个）；合成单进程后内存大降，且浏览器并行请求不再排队。
+  # 2026-09-25 起服务端为 .NET 10 实现（demo-sites/demo-serve/，TcpListener
+  # 手写最小 HTTP，全面替代 python 版 demo-serve.py）。
+  # 先停掉旧服务（Windows 下进程 CWD 在 public/ 内会锁目录，且重复启动
   # 会残留僵孤进程）
   "$SELF_DIR/demo-stop.sh" > /dev/null 2>&1
-  # Git Bash 下只有 `python`（无 python3 别名），两者都试
-  if command -v python > /dev/null 2>&1; then
-    PY=python
-  else
-    PY=python3
-  fi
   # 映射直接走命令行参数（不用临时文件：后台进程可能还没读文件就被 rm，
   # 实测偶发 FileNotFoundError）
   serve_args=("8400=$SELF_DIR/gallery/public")
@@ -241,7 +237,7 @@ if [ "${SERVE:-0}" = "1" ]; then
     [ -d "$WORK/$name/public" ] || continue
     serve_args+=("${THEME_PORT[$name]}=$WORK/$name/public")
   done
-  ("$PY" "$SELF_DIR/demo-serve.py" "${serve_args[@]}" > /dev/null 2>&1 &)
+  ("dotnet" run --project "$SELF_DIR/demo-serve" -c Release -- "${serve_args[@]}" > /dev/null 2>&1 &)
   echo "全部服务已在单进程内启动（画廊 http://127.0.0.1:8400/）。"
 fi
 exit $((fail > 0 ? 1 : 0))
