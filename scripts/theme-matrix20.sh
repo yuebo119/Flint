@@ -26,7 +26,7 @@ THEMES_DIR="$REPO_ROOT/theme-migrator/themes"
 HUGO="$REPO_ROOT/../tools/hugo-bin/hugo.exe"
 MIGRATOR="$FLINT_SRC/src/Flint.ThemeMigrator/bin/Debug/net10.0/Flint.ThemeMigrator.exe"
 FLINT="$FLINT_SRC/src/Flint.Cli/bin/Release/net10.0/win-x64/Flint.exe"
-WORK="$REPO_ROOT/../matrix20"
+WORK="$REPO_ROOT/matrix20"
 
 THEMES=("$@")
 if [ ${#THEMES[@]} -eq 0 ]; then
