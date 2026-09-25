@@ -1,0 +1,62 @@
+# 跨平台发布资产：linux/osx 的 AOT 单文件打包并挂到 Release
+# 两种触发（标准发布流程）：
+#   1. release 页发布（published）→ 自动按标签打包三平台资产
+#   2. workflow_dispatch 手动指定 tag → 存量标签补建资产
+name: release-assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要打包的标签（如 v0.1.1）"
+        required: true
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+          - os: macos-latest
+            rid: osx-x64
+    env:
+      TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.401"
+
+      - name: 安装 linux AOT 工具链
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: 发布 AOT
+        run: dotnet publish src/Flint.Cli -c Release -r ${{ matrix.rid }} --self-contained -p:PublishAot=true
+
+      - name: 整理产物
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "src/Flint.Cli/bin/Release/net10.0/${{ matrix.rid }}/publish/Flint" \
+             "dist/Flint-${TAG}-${{ matrix.rid }}"
+
+      - name: 上传到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "$TAG" "dist/Flint-${TAG}-${{ matrix.rid }}" --clobber

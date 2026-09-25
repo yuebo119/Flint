@@ -2,7 +2,7 @@
 
 > 本文档是 Flint 的唯一规范入口，系统化记录散落在 `.editorconfig`、`Directory.Build.props`、代码注释与提交历史中的隐式规范。
 >
-> **执行口径声明**： Flint 当前**无 CI**（`.github/workflows` 为空），所有"机械强制"均指本地构建期或测试期拦截。凡本文档标注 `[约定]` 的条目靠评审与提交纪律维持，标注 `[机械]` 的条目有确定性守卫。每条规范都经过当前代码库核验（2026-09-24），不写做不到的要求。
+> **执行口径声明**： Flint 的 GitHub Actions 仅含 `release-assets`（跨平台发布资产打包，**不承担验证职责**），验证类"机械强制"仍指本地构建期或测试期拦截。凡本文档标注 `[约定]` 的条目靠评审与提交纪律维持，标注 `[机械]` 的条目有确定性守卫。每条规范都经过当前代码库核验（2026-09-25），不写做不到的要求。
 
 ---
 
@@ -97,6 +97,10 @@ csproj 只写 `<PackageReference Include="..." />`（无 Version——CPM，见 
 发布链：`dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAot=true`
 （缺 `-p:PublishAot=true` 时 csproj 的 `PublishAot=false` 生效，产出 ~89MB 非 AOT 单文件）。
 **任何引擎改动的验收终点是 AOT 发布成功且产物可用**——调试态通过 ≠ 交付态通过。
+
+跨平台资产（linux-x64 / osx-arm64 / osx-x64）由 `.github/workflows/release-assets.yml`
+打包上传：发布 Release 页（published）自动触发，或 `workflow_dispatch` 按标签手动触发；
+win-x64 走上述手动命令。
 
 ### 2.3 零反射红线（热路径）`[约定+评审]`
 
@@ -483,7 +487,7 @@ bash scripts/demo-sites.sh          # 至少 blast radius 内主题
 |------|---------|:--------:|
 | 零警告 | `TreatWarningsAsErrors` + `AnalysisLevel=latest-all` | 构建期 `[机械]` |
 | 单 TFM / C# 版本锁定 | `Directory.Build.props` | 构建期 `[机械]` |
-| AOT 发布 | `PublishAot`+ 手动 publish 命令 | 人工 `[约定]`（无 CI） |
+| AOT 发布 | `PublishAot`+ 手动 publish 命令（win-x64）· `release-assets` Actions（linux/osx 资产） | 人工 `[约定]` + Actions `[机械]` |
 | 热路径零反射 | 评审 + §2.3 例外登记 | 评审 `[约定]` |
 | CPM 版本集中 | `ManagePackageVersionsCentrally` | 构建期 `[机械]` |
 | 禁脚本批量改源码 | 提交审查（P0 纪律） | 评审 `[约定]` |
