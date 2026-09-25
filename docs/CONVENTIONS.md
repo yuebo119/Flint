@@ -404,8 +404,10 @@ git checkout dev && git pull origin dev
 git checkout main && git pull origin main
 git merge dev && git push origin main && git push origin dev
 # 3. 打 tag：名称 = v + props <Version>（如 0.2.0 → v0.2.0）
+#    （步骤 2 合并后位于 main，tag 必须打在 main 的合并提交上）
 git tag -a vX.Y.Z -m "<一句话摘要>" && git push origin vX.Y.Z
-# 4. 建发布页 + 等四平台资产（published 事件自动触发 release-assets 流水线）
+# 4. 建发布页 + 等四平台资产（published 事件触发 release-assets 流水线；
+#    流水线从默认分支 main 读取——因此步骤 2 的合并必须先于建页，否则跑的是旧工作流）
 python scripts/release-github.py --tag vX.Y.Z --notes notes.md
 #    notes.md = 总结式变更日志：主要特性 / 主要更新 / 主要更改
 # 5. 终验
@@ -431,8 +433,9 @@ python scripts/release-github.py --verify
 **GitHub 侧设置**（仓库管理员手动，一次性）：
 
 - Settings → Branches：`main` 添加 protection（require PR, require CI 当 CI 建立后）
-- Settings → General：✅ Default branch = `dev`（2026-09-25 经 API 落实；release 触发的
-  release-assets 工作流自此从 dev 读取，日常 clone 也落开发主线）
+- Settings → General：✅ Default branch = `main`（2026-09-25 用户裁决——release 事件固定从
+  默认分支解析工作流，故默认分支必须为 main；发布流**先 dev → main 合并、再从 main 建 release**，
+  流水线随合并进入 main 后被触发读取）
 
 ### 10.3 提交粒度
 
