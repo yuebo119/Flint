@@ -17,6 +17,9 @@
 
 set -u
 
+# Git Bash 下只有 python（无 python3 别名）——与 demo-sites.sh 同款双试
+if command -v python3 > /dev/null 2>&1; then PY=python3; else PY=python; fi
+
 # 项目内自定位：本脚本位于主题迁移项目根（<repo>/theme-migrator/）
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
@@ -138,7 +141,7 @@ min_html_size() { find "$1" -name "*.html" -exec wc -c {} + 2>/dev/null | sort -
 # 读不到时回落到仓库目录名
 read_theme_name() {
   local site="$1" fallback="$2"
-  python3 - "$site" "$fallback" <<'PY'
+  $PY - "$site" "$fallback" <<'PY'
 import os, re, sys, glob
 site, fallback = sys.argv[1], sys.argv[2]
 cands = (['hugo.toml', 'config.toml', 'hugo.yaml', 'config.yaml', 'hugo.yml', 'config.yml']
@@ -162,7 +165,7 @@ PY
 # 删除 config 里的 themesDir（复制后原相对路径失效）
 strip_themesdir() {
   local site="$1"
-  python3 - "$site" <<'PY'
+  $PY - "$site" <<'PY'
 import os, re, sys, glob
 site = sys.argv[1]
 files = (glob.glob(os.path.join(site, 'hugo.*')) + glob.glob(os.path.join(site, 'config.*'))
