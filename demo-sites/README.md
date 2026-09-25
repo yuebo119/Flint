@@ -41,9 +41,11 @@ bash demo-sites/demo-stop.sh
 （`demo-sites/demo-serve/`，TcpListener 手写最小 HTTP；端口→文档根映射走命令行
 参数，也支持 `--list` 映射文件）。演进：最早每端口一个 `python -m http.server`
 （22 进程实测 490MB 工作集）→ 09-24 合并单 python 进程（21MB）→ 09-25 换
-.NET（实测 145MB，以内存换与仓库技术栈一致、零 Python 依赖），并发取文件不再
-排队。附带 `demo-sites/demo-stop.sh` 清理僵孤进程（按命令行含 demo-serve 匹配，
-通吃历代实现）并解除 Windows 下 public/ 目录锁。
+.NET——**直启 apphost 实测单进程 22MB（与 python 版持平）**，技术栈一致且零
+Python 依赖（注意：经 `dotnet run` 启动会多挂一个 ~160MB 的宿主父进程，脚本
+已改为 build 后直启 `demo-serve.exe`）。附带 `demo-sites/demo-stop.sh`
+清理僵孤进程（按命令行含 demo-serve 匹配，通吃历代实现）并解除 Windows 下
+public/ 目录锁。
 
 ## 主题画廊（案例站）
 

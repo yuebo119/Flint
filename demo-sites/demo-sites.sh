@@ -237,7 +237,10 @@ if [ "${SERVE:-0}" = "1" ]; then
     [ -d "$WORK/$name/public" ] || continue
     serve_args+=("${THEME_PORT[$name]}=$WORK/$name/public")
   done
-  ("dotnet" run --project "$SELF_DIR/demo-serve" -c Release -- "${serve_args[@]}" > /dev/null 2>&1 &)
+  # 直启已构建 apphost（实测：dotnet run 会多挂一个 160MB 的宿主父进程，
+  # 直启 demo-serve.exe 单进程仅 ~22MB，与 python 版持平）
+  dotnet build "$SELF_DIR/demo-serve" -c Release -v q --nologo > /dev/null 2>&1
+  ("$SELF_DIR/demo-serve/bin/Release/net10.0/demo-serve.exe" "${serve_args[@]}" > /dev/null 2>&1 &)
   echo "全部服务已在单进程内启动（画廊 http://127.0.0.1:8400/）。"
 fi
 exit $((fail > 0 ? 1 : 0))

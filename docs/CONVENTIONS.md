@@ -462,8 +462,10 @@ http://127.0.0.1:8421/   yinyang
   单端口子路径归并方案因根命名空间撞车/同源存储共享被否决，实现保留在
   git 历史（`2c8fc81..ead327f`），教训登记于 cortex 决策记忆
 - **服务是单进程**（`demo-sites/demo-serve/`，.NET 10 TcpListener 手写最小 HTTP，
-  22 端口实测 145MB）——2026-09-25 全面替代 python 版：22 个解释器 490MB →
-  单 python 进程 21MB → .NET 单进程 145MB（以内存换技术栈一致与零 Python 依赖）
+  直启 apphost 实测 22 端口 **22MB**，与 python 版持平）——2026-09-25 全面替代
+  python 版：22 个解释器 490MB → 单 python 进程 21MB → .NET 单进程 22MB；
+  教训：经 `dotnet run` 启动会多挂 ~160MB 宿主父进程（曾误测为 145MB），
+  脚本已改为 build 后直启 `demo-serve.exe`
 - `demo-stop.sh` 停全部服务并清理僵孤进程；Windows 下重建前**必须先停**
   （解释器 CWD 锁 public/ 目录）
 
