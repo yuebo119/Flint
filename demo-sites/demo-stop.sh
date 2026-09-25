@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 停掉演示站服务（单进程 demo-serve.py + 历史遗留的 per-port http.server）。
+# 停掉演示站服务（单进程 demo-serve + 历史遗留的 per-port http.server）。
 #
 # 为什么需要：Windows 下 python 解释器的 CWD 位于 public/ 内会锁住目录，
 # 重建时 rm -rf 报 "Device or resource busy"；多轮启动还会残留僵孤进程
@@ -9,10 +9,10 @@
 
 set -u
 
-# 单进程服务：命令行含 demo-serve.py
+# 单进程服务：命令行含 demo-serve（.NET 版 dotnet run 父子进程与历史 python 版通吃）
 powershell.exe -NoProfile -Command "
-  Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" |
-    Where-Object { \$_.CommandLine -like '*demo-serve.py*' } |
+  Get-CimInstance Win32_Process -Filter \"Name='python.exe' or Name='dotnet.exe'\" |
+    Where-Object { \$_.CommandLine -like '*demo-serve*' } |
     ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }
 " > /dev/null 2>&1
 
