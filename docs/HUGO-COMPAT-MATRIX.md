@@ -371,7 +371,7 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 
 回答"这些主题正常可用了吗"时做的第三层检查：不只比页面集合，还把每个 Flint 产物里
 **引用的本地资源**（href/src/url()）逐个核对文件是否存在，并与 Hugo 侧对照
-（脚本见 `scripts/check-broken-assets.py`，与矩阵脚本同级，不在 git 仓内）。
+（脚本见 `scripts/check-broken-assets.py`，与矩阵脚本同级）。
 
 结果暴露两类**Flint 独有**的坏引用（Hugo 侧没有）：
 
