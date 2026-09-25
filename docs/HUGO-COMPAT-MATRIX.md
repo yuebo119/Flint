@@ -4,9 +4,9 @@
 > 每类都写明 Hugo 的真实语义、Flint 当前处理、证据来源与**可执行回归**的位置。
 > 新增差异必须在本文件登记并配回归测试；差异修复后不得删行，只能改状态（防重犯）。
 >
-> 证据基准：**Hugo v0.166.0 extended**（`tools/hugo-bin/hugo.exe`）+ Scriban 7.4.0。
+> 证据基准：**Hugo v0.166.0 extended**（工作区 `../tools/hugo-bin/hugo.exe`）+ Scriban 7.4.0。
 > 文中"实测"均指探针脚本的真实输出，脚本形态见文末「探针方法」。
-> 与 `THEME-MIGRATOR-PLAN.md` 的关系：那份是**逐轮施工日志**（按批次记录做了什么），
+> 与 `theme-migrator/THEME-MIGRATOR-PLAN.md` 的关系：那份是**逐轮施工日志**（按批次记录做了什么），
 > 本文是**按差异类别组织的常驻清单**（现状 + 证据 + 回归位置）。
 
 ## 一、类别总览
@@ -729,7 +729,7 @@ hugo-book 的 html-head 用 `range .AlternativeOutputFormats` 发 RSS 自动发�
 此前未实现（55.6/84.3）。③ **Go 内建转义 `| html`**——papermod head 的
 `{{ .MediaType.Type | html }}` 管道尾映射为 `html_escape`；同批把格式对象的
 `media_type` 从字符串改为**嵌套对象**（`.MediaType.Type` 链——console 的
-baseof 拼链接实测 type="" 空值）。矩阵脚本默认主题列表对齐 tools/themes 目录
+baseof 拼链接实测 type="" 空值）。矩阵脚本默认主题列表对齐 theme-migrator/themes 目录
 （21 个，无跳过）。全矩阵：hugo-coder 74.8/94.3、hugo-paper 75.1/94.1、
 monochrome 64.8/94.0、fixit 69.4/96.0、stack 62.8/96.9、xmin 83.1/95.4。
 

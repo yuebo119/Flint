@@ -231,7 +231,7 @@ Flint 的处理对象是**全站页面 × 页面成员**的规模（700+ 页/站
 | 工具 | 位置 | 用途 |
 |------|------|------|
 | Hugo 参照真源 | `tools/hugo-bin/hugo.exe` | **兼容性判定的唯一仲裁者**（见 §8.2） |
-| 主题源 | `tools/themes/<name>/` | 21 个 Hugo 主题原始码 |
+| 主题源 | `theme-migrator/themes/<name>/` | 21 个 Hugo 主题原始码（迁移项目内缓存） |
 | Dart Sass | 随 CLI 发布 `dart-sass.win-x64/` | SCSS 编译（toCSS） |
 
 新增外部工具必须在本表登记，并在 `global.json`/props 中固定版本。
@@ -298,10 +298,10 @@ Flint 的核心承诺是 Hugo 兼容。本章是与其他项目差异最大的�
 21 个主题是全量回归编队：
 
 ```bash
-bash scripts/demo-sites.sh              # 全量重建 + 逐主题服务
-bash scripts/theme-matrix20.sh          # 结构相似度矩阵
-bash scripts/build-gallery.sh           # 画廊（8400）
-bash scripts/demo-stop.sh               # 停止所有服务
+bash demo-sites/demo-sites.sh            # 全量重建 + 逐主题服务
+bash scripts/theme-matrix20.sh           # 结构相似度矩阵
+bash demo-sites/build-gallery.sh         # 画廊（8400）
+bash demo-sites/demo-stop.sh             # 停止所有服务
 ```
 
 新引擎改动**必须**至少跑 `blast radius` 内的主题（改动涉及的模板函数被哪些
@@ -322,11 +322,11 @@ bash scripts/demo-stop.sh               # 停止所有服务
 | `docs/HUGO-COMPAT-MATRIX.md` | Hugo 兼容矩阵（逐主题逐功能状态） |
 | `docs/FLINT-VS-HUGO.md` | 已知差异登记册 |
 | `docs/HUGO-GAP-TASKS.md` | 差距任务清单 |
-| `docs/THEME-MIGRATOR-PLAN.md` | 迁移器设计与进度 |
+| `theme-migrator/THEME-MIGRATOR-PLAN.md` | 迁移器设计与进度 |
 | `docs/THEME-COMPAT-PLAN.md` | 主题适配进度 |
 | `docs/PERFORMANCE-OPTIMIZATION.md` | 性能优化记录（按阶段） |
 | `docs/PERFORMANCE-PLAN.md` | 性能计划 |
-| `docs/DEMO-SITES.md` | 演示站/画廊/主题矩阵工作流 |
+| `demo-sites/README.md` | 演示站/画廊/主题矩阵工作流 |
 | `docs/PAGE-TREE-DESIGN.md` | 页面树设计 |
 | `docs/AI-QUALITY-AUDIT.md` | AI 产出质量审计 |
 
@@ -461,17 +461,18 @@ http://127.0.0.1:8421/   yinyang
 - **每主题独立端口**（用户裁决 2026-09-23）：SSG 主题是站点级能力，曾经尝试的
   单端口子路径归并方案因根命名空间撞车/同源存储共享被否决，实现保留在
   git 历史（`2c8fc81..ead327f`），教训登记于 cortex 决策记忆
-- **服务是单进程**（`scripts/demo-serve.py`，asyncio，22 端口 ~21MB）——
+- **服务是单进程**（`demo-sites/demo-serve.py`，asyncio，22 端口 ~21MB）——
   每端口一个 python 解释器实测 490MB，合并后降一个数量级
 - `demo-stop.sh` 停全部服务并清理僵孤进程；Windows 下重建前**必须先停**
   （解释器 CWD 锁 public/ 目录）
 
-### 11.2 产物位置（git 仓外）
+### 11.2 两大项目位置（2026-09-25 起入库；生成物不入库）
 
 | 路径 | 内容 |
 |------|------|
-| `../demo-sites/<主题>/` | 各主题独立站点源 + `public/` |
-| `../demo-gallery/` | 画廊站（`static/shots/` 下 21 张预览图，勿整删） |
+| `demo-sites/<主题>/` | 案例站项目：各主题站点源（`public/`、`themes/` 构建生成，gitignore） |
+| `demo-sites/gallery/` | 画廊站（`static/shots/` 下 21 张预览图**入库**，勿整删；`public/` 不入库） |
+| `theme-migrator/themes/` `candidates/` | 迁移项目主题语料缓存（可再生，gitignore） |
 
 ---
 
@@ -492,7 +493,7 @@ dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAo
 # 4. Hugo 兼容改动：跑 §8.1 三层验证（对照 + 浏览器）
 
 # 5. 主题矩阵（模板函数/渲染链改动）
-bash scripts/demo-sites.sh          # 至少 blast radius 内主题
+bash demo-sites/demo-sites.sh      # 至少 blast radius 内主题
 
 # 6. 文档同步（§9.2 的 grep 零残留）
 

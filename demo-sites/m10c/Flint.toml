@@ -1,0 +1,27 @@
+baseURL = "http://127.0.0.1:8414/"
+languageCode = "zh-cn"
+title = "m10c 演示站"
+theme = "m10c"
+paginate = 5
+enableRobotsTXT = true
+
+[pagination]
+pagerSize = 5
+
+[params]
+description = "Flint 演示站点（m10c 主题）"
+author = "演示作者"
+
+[menus]
+[[menus.main]]
+name = "首页"
+url = "/"
+weight = 1
+[[menus.main]]
+name = "归档"
+url = "/posts/"
+weight = 2
+[[menus.main]]
+name = "关于"
+url = "/about/"
+weight = 3

@@ -1,0 +1,30 @@
+baseURL = "http://127.0.0.1:8407/"
+languageCode = "zh-cn"
+title = "even 演示站"
+theme = "even"
+paginate = 5
+enableRobotsTXT = true
+
+[pagination]
+pagerSize = 5
+
+[params]
+description = "Flint 演示站点（even 主题）"
+Author.name = "演示作者"
+version = "4.x"
+archivePaginate = 50
+showArchiveCount = false
+
+[menus]
+[[menus.main]]
+name = "首页"
+url = "/"
+weight = 1
+[[menus.main]]
+name = "归档"
+url = "/posts/"
+weight = 2
+[[menus.main]]
+name = "关于"
+url = "/about/"
+weight = 3
