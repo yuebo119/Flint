@@ -115,6 +115,8 @@ def main():
     ap.add_argument("--timeout", type=int, default=780, help="等待秒数（默认 780）")
     ap.add_argument("--dispatch", action="store_true", help="派发 release-assets 流水线（补建场景）")
     ap.add_argument("--wait-only", action="store_true", help="不建页，只等待既有页的资产")
+    ap.add_argument("--update-notes", action="store_true",
+                    help="更新既有发布页的说明正文（需 --tag 与 --notes，守卫同建页）")
     ap.add_argument("--verify", action="store_true", help="只读体检（无需凭据）")
     args = ap.parse_args()
 
@@ -144,6 +146,21 @@ def main():
     token = git_password()
     if not token:
         sys.exit("错误：git 凭据库中无 github.com 凭据")
+
+    if args.update_notes:
+        if not args.tag:
+            sys.exit("错误：--update-notes 需要 --tag")
+        body = load_notes(args.notes)
+        rels = api(f"{API}/releases", token)
+        rel = next((r for r in rels if r["tag_name"] == args.tag), None)
+        if not rel:
+            sys.exit(f"错误：未找到 {args.tag} 的发布页")
+        out = api(f"{API}/releases/{rel['id']}", token,
+                  data={"body": body}, method="PATCH")
+        if out.get("body") == body:
+            print(f"说明页已更新: {out['html_url']}")
+            return 0
+        sys.exit(f"更新失败: {str(out)[:200]}")
 
     if args.dispatch:
         out = api(f"{API}/actions/workflows/{WF}/dispatches", token,
