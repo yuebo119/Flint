@@ -402,7 +402,7 @@ dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true
 ## 📊 性能
 
 > 测试环境：2026-09-25 安静窗口实测（机器负载 16%；杀软常驻不可关）· Windows 10 x64 · 32 核 · .NET SDK 10.0.401 / runtime 10.0.12 · 同机同语料同模板 · 冷构建 3 次中位数
-> 对照：Hugo v0.165.0 Extended 官方二进制 vs Flint v0.1.0（`13d4b1e`，Release + NativeAOT `-p:PublishAot=true`，28MB 单文件）
+> 对照：Hugo v0.165.0 Extended 官方二进制 vs Flint（构建点 `13d4b1e`，Release + NativeAOT `-p:PublishAot=true`，28MB 单文件）
 > 完整方法论、产物对称性审计与公平性声明见 **[benchmarks/REPORT.md](benchmarks/REPORT.md)**（2026-09-08/09 历史三轮基线）；跨轮次比值解读见下文"与历史基线的关系"
 
 ### 端到端构建（双语料 × 双引擎 × 3 次中位数）
