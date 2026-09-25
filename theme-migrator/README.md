@@ -10,6 +10,8 @@ theme-migrator/
 ├── gotmpl2scriban.py        # Go template → Scriban 转换器（纯 Python，零依赖）
 │                            #   用法: python theme-migrator/gotmpl2scriban.py <hugo主题目录> <flint主题目录>
 ├── clone-themes.sh          # 上游 Hugo 主题抓取（GitHub topic:hugo-theme，浅克隆）
+├── clone-candidates.sh      # 候选池补充抓取（awesome-hugo-themes / star 排序前列）
+├── verify-themes.sh         # 候选主题 Hugo 侧三条件验证（exit=0 + 有页数 + 最小页 >200B）
 ├── THEME-MIGRATOR-PLAN.md   # 逐轮施工日志（历史记录，内部路径按当时布局记载）
 ├── themes/                  # [gitignore] 主题工作池（21 个矩阵主题 + 扩展）
 └── candidates/              # [gitignore] 候选主题池（未入矩阵的备选，独立于 themes/）
@@ -19,12 +21,12 @@ theme-migrator/
 
 ```
 上游 GitHub 主题
-   │  clone-themes.sh（抓取）
+   │  clone-themes.sh / clone-candidates.sh（抓取：基础池 / 候选补充）
    ▼
-candidates/（候选池）──人工遴选──▶ themes/（工作池）
-                                       │  引擎侧迁移器逐站转换（建站时）
-                                       │  src/Flint.ThemeMigrator（C#，AOT 安全）
-                                       ▼
+candidates/（候选池）── verify-themes.sh（三条件验证）+ 人工遴选 ──▶ themes/（工作池）
+                                        │  引擎侧迁移器逐站转换（建站时）
+                                        │  src/Flint.ThemeMigrator（C#，AOT 安全）
+                                        ▼
                               demo-sites/<主题>/themes/<主题>/
 ```
 
