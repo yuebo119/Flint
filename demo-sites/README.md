@@ -15,6 +15,7 @@ demo-sites/
 ├── fixtures/corpus/     # 统一测试语料（100 篇长文 + 静态资源）
 ├── gallery-source/      # 画廊站源码（Flint 自建，无主题依赖）
 ├── gallery/             # 画廊站落地形态（static/shots/ 21 张预览图入库）
+├── screenshots/         # 主题适配过程截图 31 张（验证留档；正式预览图在 gallery/static/shots/）
 └── <主题>/ ×21           # 各主题站点源（public/、themes/ 为生成物，不入库）
 ```
 
