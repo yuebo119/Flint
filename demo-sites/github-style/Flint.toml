@@ -1,0 +1,27 @@
+baseURL = "http://127.0.0.1:8409/"
+languageCode = "zh-cn"
+title = "github-style 演示站"
+theme = "github-style"
+paginate = 5
+enableRobotsTXT = true
+
+[pagination]
+pagerSize = 5
+
+[params]
+description = "Flint 演示站点（github-style 主题）"
+headerIcon = "/images/github-mark.png"
+
+[menus]
+[[menus.main]]
+name = "首页"
+url = "/"
+weight = 1
+[[menus.main]]
+name = "归档"
+url = "/posts/"
+weight = 2
+[[menus.main]]
+name = "关于"
+url = "/about/"
+weight = 3

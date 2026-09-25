@@ -64,3 +64,14 @@ benchmarks/tools/
 temp-*/
 __pycache__/
 *.pyc
+
+# 主题迁移项目（theme-migrator/）：主题语料缓存，可再生不入库
+# （candidates = 上游 Hugo 主题抓取缓存；themes = 转换产出，重建流程见该项目 README）
+/theme-migrator/themes/
+/theme-migrator/candidates/
+
+# 案例站项目（demo-sites/）：构建产物与站点内迁移主题（demo-sites.sh 每次重建生成）
+/demo-sites/*/public/
+/demo-sites/*/themes/
+/demo-sites/gallery/public/
+matrix20/

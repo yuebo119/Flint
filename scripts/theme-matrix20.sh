@@ -12,33 +12,25 @@
 
 set -u
 
-# 工作根探测：脚本可能在仓库内（<repo>/scripts）或工作区外层（<ws>/scripts），
-# 二者都要求能定位 tools/themes 与 Flint/ 源码
+# 工作根探测：脚本固定在仓库 <repo>/scripts/ 下；主题语料读主题迁移项目
+# （theme-migrator/），Hugo/Dart Sass 工具缓存位于工作区外层 tools/
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -d "$SELF_DIR/../tools/themes" ]; then
-  REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"          # 外层工作区形态
-elif [ -d "$SELF_DIR/../../tools/themes" ]; then
-  REPO_ROOT="$(cd "$SELF_DIR/../.." && pwd)"        # 仓库内 <repo>/scripts 形态
-else
-  echo "无法定位 tools/themes（脚本位置: $SELF_DIR）" >&2
-  exit 1
-fi
+REPO_ROOT="$(cd "$SELF_DIR/.." && pwd)"
 # fixit 等主题的 Hugo 基线需要 Dart Sass（to-css.html 写死 transpiler=dartsass）：
-# tools/dart-sass/（官方 windows-x64 发行包，sass.bat 含 --embedded 协议）存在则入 PATH
-if [ -d "$REPO_ROOT/tools/dart-sass" ]; then
-  export PATH="$REPO_ROOT/tools/dart-sass:$PATH"
+# 工作区 ../tools/dart-sass/（官方 windows-x64 发行包）存在则入 PATH
+if [ -d "$REPO_ROOT/../tools/dart-sass" ]; then
+  export PATH="$REPO_ROOT/../tools/dart-sass:$PATH"
 fi
-FLINT_SRC="$REPO_ROOT/Flint"
-[ -d "$FLINT_SRC/src" ] || FLINT_SRC="$REPO_ROOT"
-THEMES_DIR="$REPO_ROOT/tools/themes"
-HUGO="$REPO_ROOT/tools/hugo-bin/hugo.exe"
+FLINT_SRC="$REPO_ROOT"
+THEMES_DIR="$REPO_ROOT/theme-migrator/themes"
+HUGO="$REPO_ROOT/../tools/hugo-bin/hugo.exe"
 MIGRATOR="$FLINT_SRC/src/Flint.ThemeMigrator/bin/Debug/net10.0/Flint.ThemeMigrator.exe"
 FLINT="$FLINT_SRC/src/Flint.Cli/bin/Release/net10.0/win-x64/Flint.exe"
-WORK="$REPO_ROOT/matrix20"
+WORK="$REPO_ROOT/../matrix20"
 
 THEMES=("$@")
 if [ ${#THEMES[@]} -eq 0 ]; then
-  # 与 tools/themes/ 目录的实际 21 个主题保持一致（不存在的主题名会静默跳过）
+  # 与 theme-migrator/themes/ 目录的实际 21 个主题保持一致（不存在的主题名会静默跳过）
   THEMES=(ananke bearblog blog-awesome blowfish clarity console even fixit github-style
           hugo-book hugo-coder hugo-paper loveit m10c monochrome narrow papermod
           stack techdoc xmin yinyang)

@@ -1,0 +1,35 @@
+baseURL = "http://127.0.0.1:8418/"
+languageCode = "zh-cn"
+title = "stack 演示站"
+theme = "stack"
+paginate = 5
+enableRobotsTXT = true
+
+[pagination]
+pagerSize = 5
+
+[params]
+description = "Flint 演示站点（stack 主题）"
+mainSections = ["posts"]
+sidebar.emoji = "cat"
+sidebar.subtitle = "演示"
+[[widgets.homepage]]
+type = "search"
+[[widgets.homepage]]
+type = "archives"
+[[widgets.page]]
+type = "toc"
+
+[menus]
+[[menus.main]]
+name = "首页"
+url = "/"
+weight = 1
+[[menus.main]]
+name = "归档"
+url = "/posts/"
+weight = 2
+[[menus.main]]
+name = "关于"
+url = "/about/"
+weight = 3
