@@ -473,7 +473,7 @@ http://127.0.0.1:8421/   yinyang
 
 | 路径 | 内容 |
 |------|------|
-| `demo-sites/<主题>/` | 案例站项目：各主题站点源（`public/`、`themes/` 构建生成，gitignore） |
+| `demo-sites/<主题>/` | 案例站项目：各主题站点——**整目录生成物**（demo-sites.sh 每次 rm -rf 重建，内容源头 `fixtures/`，gitignore；`gallery-source/` 源码与 `gallery/static/shots` 预览图除外，必须入库） |
 | `demo-sites/gallery/` | 画廊站（`static/shots/` 下 21 张预览图**入库**，勿整删；`public/` 不入库） |
 | `theme-migrator/themes/` `candidates/` | 迁移项目主题语料缓存（可再生，gitignore） |
 

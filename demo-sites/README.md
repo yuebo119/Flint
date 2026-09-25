@@ -16,7 +16,8 @@ demo-sites/
 ├── gallery-source/      # 画廊站源码（Flint 自建，无主题依赖）
 ├── gallery/             # 画廊站落地形态（static/shots/ 21 张预览图入库）
 ├── screenshots/         # 主题适配过程截图 31 张（验证留档；正式预览图在 gallery/static/shots/）
-└── <主题>/ ×21           # 各主题站点源（public/、themes/ 为生成物，不入库）
+└── <主题>/ ×21           # 各主题站点——整目录为生成物（不入库；demo-sites.sh
+                          #   每次 rm -rf 重建，内容源头 = fixtures/，首次运行即生成）
 ```
 
 ## 快速开始
