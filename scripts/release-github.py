@@ -23,7 +23,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 REPO = "yuebo119/Flint"
 API = f"https://api.github.com/repos/{REPO}"
 WF = "release-assets.yml"
-DEFAULT_REF = "dev"          # 默认分支（2026-09-25 起为 dev，release 触发读 dev 的工作流）
+DEFAULT_REF = "main"         # release 触发从默认分支读流水线（2026-09-25 裁决：默认分支=main，
+                              # 发布流先 dev→main 合并再建页；--dispatch 补建也走 main）
 PROXIES = [None, {"https": "http://127.0.0.1:50001", "http": "http://127.0.0.1:50001"}]
 
 
