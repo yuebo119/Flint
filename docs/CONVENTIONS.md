@@ -392,27 +392,47 @@ git push origin dev
 单人高频小步可跳过 feature 分支直接提交 dev（本仓库常态）；预计会有协作者
 review 或需要 CI 兜底的改动，**必须**走 feature 分支 + PR。
 
-**发布流**（仅发版时执行，需用户明确指示）：
+**发布流**（仅发版时执行，需用户明确指示 · 端到端五步）：
 
 ```bash
+# 0. bump（在 dev 上提交）：只改 Directory.Build.props 的 <Version>（单源，
+#    FlintInfo/四平台产物版本自动跟随）；docs 中的当前版本号示例同步，grep 零残留
+git checkout dev && git pull origin dev
+#    …编辑 props 与示例 → 按 §10.1 格式提交
+# 1. 跑 §12 验证清单（build / Core.Tests / AOT 发布 + version 冒烟核对输出）
+# 2. 合并推送（fast-forward 保持线性）
 git checkout main && git pull origin main
-git checkout dev  && git pull origin dev
-git checkout main && git merge dev       # 默认 fast-forward 保持线性
-git push origin main
-# 打 tag（版本号见 Directory.Build.props 的 <Version>）
+git merge dev && git push origin main && git push origin dev
+# 3. 打 tag：名称 = v + props <Version>（如 0.2.0 → v0.2.0）
+git tag -a vX.Y.Z -m "<一句话摘要>" && git push origin vX.Y.Z
+# 4. 建发布页 + 等四平台资产（published 事件自动触发 release-assets 流水线）
+python scripts/release-github.py --tag vX.Y.Z --notes notes.md
+#    notes.md = 总结式变更日志：主要特性 / 主要更新 / 主要更改
+# 5. 终验
+python scripts/release-github.py --verify
+#    （标题纯版本号 / assets=4 / label 全空 / 远端 tags 一致）+ 四平台 version 冒烟
 ```
+
+**场景补充**：
+- **补建资产**（发布页已在、资产缺失）：`python scripts/release-github.py --tag vX.Y.Z --dispatch`
+- **撤销发布**（须用户明确指示）：删 release 页 → 删 tag（远端+本地）；已发布 tag 永不移动、永不重打
 
 **硬规则** `[P0]`：
 
 - ❌ 禁止直接 push/提交到 `main`（发布只经 dev 合并）
 - ❌ 禁止 `git push --force`、`git reset --hard` 无确认执行
+- ❌ 已发布 tag 不可移动/重打（要改就升版本号重发）；删除 release/tag 须用户明确指示
 - ✅ `dev → main` 合并 = 发布动作，必须**用户明确确认后**才执行（AI 不得自主合并）
+- ✅ tag 命名 = `v` + `Directory.Build.props` 的 `<Version>`；发布页标题 = 纯版本号（不带后缀）
+- ✅ 变更日志为总结式（主要特性/主要更新/主要更改），禁止 git 日志直贴与 commit 链接；
+  资产命名 `Flint-<tag>-<rid>[.exe]` 且不带 label（页面直显文件名）
 - ✅ feature 分支合并后删除；dev 与 main 是常驻分支，**绝不** `-D` 删除
 
 **GitHub 侧设置**（仓库管理员手动，一次性）：
 
 - Settings → Branches：`main` 添加 protection（require PR, require CI 当 CI 建立后）
-- Settings → General：Default branch 改为 `dev`（日常 clone 落在开发主线）
+- Settings → General：✅ Default branch = `dev`（2026-09-25 经 API 落实；release 触发的
+  release-assets 工作流自此从 dev 读取，日常 clone 也落开发主线）
 
 ### 10.3 提交粒度
 

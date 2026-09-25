@@ -25,6 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: windows-latest
+            rid: win-x64
           - os: ubuntu-latest
             rid: linux-x64
           - os: macos-latest
@@ -53,8 +55,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp "src/Flint.Cli/bin/Release/net10.0/${{ matrix.rid }}/publish/Flint" \
-             "dist/Flint-${TAG}-${{ matrix.rid }}"
+          P="src/Flint.Cli/bin/Release/net10.0/${{ matrix.rid }}/publish/Flint"
+          NAME="Flint-${TAG}-${{ matrix.rid }}"
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then
+            P="$P.exe"
+            NAME="$NAME.exe"
+          fi
+          cp "$P" "dist/$NAME"
 
       - name: 上传到 Release
         env:
