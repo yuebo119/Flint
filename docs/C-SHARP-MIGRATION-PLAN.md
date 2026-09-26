@@ -188,6 +188,7 @@ flowchart TD
 | CS-4 | P1 | `audit elements`：元素签名多重集差移植 | 对 21 主题输出与 audit-elements.py 一致 | CS-2 |
 | CS-5 | P1 | `corpus fixtures`：count_chars + gen_images 移植（图片用 ImageSharp 3.1.12 生成，与产品同库） | 同尺寸 fixture 输出字节级同尺寸；字数统计一致 | CS-2 |
 | CS-28 | P1 | `corpus convert`：MDN 语料转换移植（含删除前白名单守卫） | 合成 MDN 样本对拍内容一致（行尾差异为 Python Windows 文本模式 CRLF，语料 build 等价）；`layouts/_default` 两分支均创建与 Python 一致 | CS-2 |
+| CS-29 | P4 | gotmpl 差距分析（CS-13 交付物）：ananke 主题双跑对拍 | Python 版 files=332/converted=54/todo=136；C# 版 扫描 317/转换 243/复制 75、表达式 500/不支持 0/降级 38，抽样 filter.html：Python 把 `reflect.IsMap`/`collections.*` 全量 TODO + `if false` 隐藏，C# 输出完整 AST 级转换（collections.Index/Merge、dict、printf、templates.Exists、值返回 partial `__partial_ret_set`/`ret`）。结论：C# ThemeMigrator 是 Python 版严格超集，Python 转换器直接退役，无功能缺口需补齐 | CS-2 |
 | CS-6 | P2 | `bench ssg` 移植（计时/冷构建/预热+中位数/产物对称审计四件套） | 同语料同轮次数字与 ssg-bench.py 相差 ≤10%；用历史不对称事故样本回放能报 FAIL | CS-2 |
 | CS-7 | P2 | `bench complexity` 移植 | 同上对拍 | CS-2 |
 | CS-8 | P2 | `bench memory` 移植（psutil → System.Diagnostics.Process，口径标注 RSS/USS 各自 API 来源） | 同语料峰值内存与 Python 版相差 ≤15% 并附口径说明 | CS-2 |

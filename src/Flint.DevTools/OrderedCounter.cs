@@ -75,4 +75,11 @@ internal static class PyCompat
     {
         return s.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
     }
+
+    /// <summary>bash printf %-Ns 语义的按 UTF-8 字节宽右填充（CJK 按 3 字节计）</summary>
+    public static string PadRightBytes(string s, int width)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(s);
+        return bytes >= width ? s : s + new string(' ', width - bytes);
+    }
 }
