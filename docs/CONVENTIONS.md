@@ -408,15 +408,15 @@ git merge dev && git push origin main && git push origin dev
 git tag -a vX.Y.Z -m "<一句话摘要>" && git push origin vX.Y.Z
 # 4. 建发布页 + 等四平台资产（published 事件触发 release-assets 流水线；
 #    流水线从默认分支 main 读取——因此步骤 2 的合并必须先于建页，否则跑的是旧工作流）
-python scripts/release-github.py --tag vX.Y.Z --notes notes.md
+dotnet run --project src/Flint.DevTools -- release create --tag vX.Y.Z --notes notes.md
 #    notes.md = 总结式变更日志：主要特性 / 主要更新 / 主要更改
 # 5. 终验
-python scripts/release-github.py --verify
+dotnet run --project src/Flint.DevTools -- release verify
 #    （标题纯版本号 / assets=4 / label 全空 / 远端 tags 一致）+ 四平台 version 冒烟
 ```
 
 **场景补充**：
-- **补建资产**（发布页已在、资产缺失）：`python scripts/release-github.py --tag vX.Y.Z --dispatch`
+- **补建资产**（发布页已在、资产缺失）：`dotnet run --project src/Flint.DevTools -- release dispatch --tag vX.Y.Z --wait-only`
 - **撤销发布**（须用户明确指示）：删 release 页 → 删 tag（远端+本地）；已发布 tag 永不移动、永不重打
 
 **硬规则** `[P0]`：

@@ -24,7 +24,7 @@
 | 万页合成 | 409 / 383 | **367 / 326** | **-10%** |
 | MDN 14,621 页 | 1486 / 1416 | **921 / 886** | **-38%** |
 
-采样方式：构建进程存活期每 20ms 轮询 memory_full_info 取峰值；USS = 进程独占内存（不含共享库）。脚本：[scripts/memory-bench.py](../scripts/memory-bench.py)。
+采样方式：构建进程存活期每 20ms 轮询进程内存取峰值；RSS = WorkingSet64，USS = Working Set - Private 性能计数器。命令：`dotnet run --project src/Flint.DevTools -- bench memory`。
 
 ## 表 3 · 主题复杂度阶梯（1000 页 × 双语法等价实现，ms）
 
@@ -83,9 +83,9 @@
 
 ```bash
 python scripts/ssg-bench.py --pages 10000 --runs 3     # 万页合成对比
-python scripts/complexity-bench.py --pages 1000 --runs 3   # 复杂度阶梯对照
-python scripts/corpus-convert.py                        # MDN 语料转换
-python scripts/memory-bench.py                          # 内存峰值采样
+dotnet run --project src/Flint.DevTools -- bench complexity --pages 1000 --runs 3  # 复杂度阶梯对照
+dotnet run --project src/Flint.DevTools -- corpus convert  # MDN 语料转换
+dotnet run --project src/Flint.DevTools -- bench memory  # 内存峰值采样
 dotnet run --project tests/Flint.PerformanceTests -c Release -- TestResults/report.html
 dotnet run --project src/Flint.DevTools -- perf gate # 性能回归门禁
 ```

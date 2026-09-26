@@ -495,7 +495,7 @@ powershell -File scripts/perf-gate.ps1                   # 性能回归门禁
 
 ### Hugo 主题迁移
 
-`theme-migrator/gotmpl2scriban.py <hugo-theme-dir> <flint-theme-dir>` 自动转换
+`src/Flint.ThemeMigrator <hugo-theme-dir> <flint-theme-dir>` 自动转换（C#，AST 级）
 Go template 主题为 Scriban（变量映射/控制流/partial/range/with/日期格式），
 无法静态确定的 Hugo 特有语义输出 `TODO-HUGO` 标记不静默错译。
 

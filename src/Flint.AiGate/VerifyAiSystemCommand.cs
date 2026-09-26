@@ -419,7 +419,7 @@ internal static class VerifyAiSystemCommand
     private static int MaxNumber(MatchCollection matches)
     {
         return matches
-            .Select(m => int.Parse(Regex.Match(m.Value, @"[0-9]+").Value))
+            .Select(m => int.Parse(Regex.Match(m.Value, @"[0-9]+$").Value))
             .DefaultIfEmpty(0)
             .Max();
     }

@@ -371,7 +371,7 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 
 回答"这些主题正常可用了吗"时做的第三层检查：不只比页面集合，还把每个 Flint 产物里
 **引用的本地资源**（href/src/url()）逐个核对文件是否存在，并与 Hugo 侧对照
-（脚本见 `scripts/check-broken-assets.py`，与矩阵脚本同级）。
+（命令见 `dotnet run --project src/Flint.DevTools -- audit assets`，与矩阵命令同级）。
 
 结果暴露两类**Flint 独有**的坏引用（Hugo 侧没有）：
 
@@ -424,7 +424,7 @@ blowfish 201→144、narrow 198→165）。剩余 718 处的四类见 L 节表�
 
 #### 阶段 2：结构性元素差异审计（进行中）
 
-方法：对 21 个主题逐页做元素签名多重集差（`scripts/audit-elements.py`，
+方法：对 21 个主题逐页做元素签名多重集差（`dotnet run --project src/Flint.DevTools -- audit elements`，
 与门禁④的 ElementDiff 同口径），按"涉及页面数"排序 —— 得到的是**系统性**缺口而非
 单页噪声。审计出的头部缺口与处置：
 
@@ -526,7 +526,7 @@ home 用 `where .Site.RegularPages "Type" "in" .Site.Params.mainSections` 得到
 term 页含 taxonomy 祖先、`Reverse` 的面包屑顺序），断言值即上表探针值。
 
 结果：**全语料 Flint 独有坏引用 3 类 → 0 类**（21 主题、约 4000 个页面引用，
-`scripts/check-broken-assets.py` 输出无 "← Flint 独有" 行），21 主题矩阵对称保持 21/21。
+`dotnet run --project src/Flint.DevTools -- audit assets` 输出无 "← Flint 独有" 行），21 主题矩阵对称保持 21/21。
 
 #### 渲染上下文与日期格式（本轮第十二、十三项）
 
