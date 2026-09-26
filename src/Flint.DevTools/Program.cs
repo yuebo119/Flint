@@ -5,6 +5,7 @@
 using System.CommandLine;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using Flint.DevTools.Commands;
 
 namespace Flint.DevTools;
@@ -19,6 +20,22 @@ internal static class Program
     /// </summary>
     public static async Task<int> Main(string[] args)
     {
+        // 统一 LF 行尾 + UTF-8 无 BOM：Windows 下 Console 默认 \r\n，会让输出与
+        // bash/python 版对拍时行尾不一致；强制 LF 保证跨平台输出确定、git 干净。
+        // writer 为进程生命周期级的 Console 替换，不 Dispose（CA2000 此处不适用）
+#pragma warning disable CA2000
+        Console.SetOut(new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        {
+            NewLine = "\n",
+            AutoFlush = true,
+        });
+        Console.SetError(new StreamWriter(Console.OpenStandardError(), new UTF8Encoding(encoderShouldEmitUTF8Identifier: false))
+        {
+            NewLine = "\n",
+            AutoFlush = true,
+        });
+#pragma warning restore CA2000
+
         var rootCommand = new RootCommand("Flint 开发运维工具集（bench/audit/corpus/release/perf/theme/demo）");
 
         rootCommand.Subcommands.Add(BuildVersionCommand());
@@ -27,6 +44,8 @@ internal static class Program
         rootCommand.Subcommands.Add(BenchCommand.Build());
         rootCommand.Subcommands.Add(PerfCommand.Build());
         rootCommand.Subcommands.Add(ReleaseCommand.Build());
+        rootCommand.Subcommands.Add(ThemeCommand.Build());
+        rootCommand.Subcommands.Add(DemoCommand.Build());
 
         var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync().ConfigureAwait(false);

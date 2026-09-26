@@ -8,10 +8,7 @@
 
 ```
 demo-sites/
-├── demo-sites.sh        # 21 主题建站（建站+迁移+构建+报告）
-├── build-gallery.sh     # 画廊构建（源 → gallery/ 落地）
 ├── demo-serve/           # 单进程多端口静态服务（.NET 10；8400 画廊 + 8401-8421 主题）
-├── demo-stop.sh         # 停止全部服务
 ├── fixtures/corpus/     # 统一测试语料（100 篇长文 + 静态资源）
 ├── gallery-source/      # 画廊站源码（Flint 自建，无主题依赖）
 ├── gallery/             # 画廊站落地形态（static/shots/ 21 张预览图入库）
@@ -24,18 +21,19 @@ demo-sites/
 
 ```bash
 # 1. 全量重建 21 个主题演示站（每个主题独立站点，端口 8401-8421）
-bash demo-sites/demo-sites.sh              # 全部主题
-bash demo-sites/demo-sites.sh narrow       # 仅指定主题
-SERVE=1 bash demo-sites/demo-sites.sh      # 构建后启动单进程多端口服务
+#    （编排入口已 C# 化：src/Flint.DevTools，替代原 demo-sites.sh）
+dotnet run --project ../src/Flint.DevTools -- demo build            # 全部主题
+dotnet run --project ../src/Flint.DevTools -- demo build narrow     # 仅指定主题
+dotnet run --project ../src/Flint.DevTools -- demo build --serve    # 构建后启动单进程多端口服务
 
 # 2. 截 21 张主题预览图（Playwright，1280×800，需演示站服务已启动）
 #    输出到 demo-sites/gallery/static/shots/<主题>.png
 
 # 3. 构建画廊并合并进统一服务（画廊即 8400 端口根）
-SERVE=1 bash demo-sites/build-gallery.sh
+dotnet run --project ../src/Flint.DevTools -- demo gallery --serve
 
-# 停止全部服务（单进程 demo-serve + 历史遗留 per-port http.server）
-bash demo-sites/demo-stop.sh
+# 停止全部服务（单进程 demo-serve + 84xx 端口残留）
+dotnet run --project ../src/Flint.DevTools -- demo stop
 ```
 
 **服务架构（2026-09-25 起 .NET 10）**：22 个端口由**一个进程**服务
