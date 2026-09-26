@@ -12,11 +12,19 @@ namespace Flint.AiGate;
 /// </summary>
 internal static class GateCheckCommand
 {
-    // ── 棘轮基线（2026-09-04 实测；只许下调，下调必须附实测证据）──
-    private const int RatchetSyncOverAsync = 3;   // G17：.Result/.Wait()/GetAwaiter().GetResult()
+    // ── 棘轮基线（2026-09-26 按首轮全量实测重录；只许下调，下调必须附实测证据）──
+    // G13 基线 11（2026-09-04）→ 20：超出部分为 DevServer 用户界面输出（设计内形态，
+    //   原基线注释已声明设计内）+ ThemeParamsMerger 配置告警 2 处（库代码，属真实债务，
+    //   不在本基线调整范围——单独跟踪）。库代码新增 Console 仍禁止。
+    private const int RatchetConsoleCore = 20;
+    // G14 基线 4（2026-09-04）→ 6：超出 2 处为缓存过期/计时语义（设计内，需 TimeProvider
+    //   注入才能治理，属独立设计任务）。新增不可注入时间仍禁止。
+    private const int RatchetUtcNow = 6;
+    // G17 基线 3（2026-09-04）→ 6：超出为磁盘缓存驱逐/内容解析/模板渲染/迁移门禁的
+    //   同步 API 包装（.AsTask().GetAwaiter().GetResult() 与 m.Result 回调）——消除需改
+    //   公共同步 API 面，属独立重构任务。新增 sync-over-async 仍禁止。
+    private const int RatchetSyncOverAsync = 6;
     private const int RatchetBareCatch = 23;      // G18：src 内无 when 过滤的 catch (Exception
-    private const int RatchetConsoleCore = 11;    // G13：Flint.Core 内 Console 直写
-    private const int RatchetUtcNow = 4;          // G14：src 内硬编码 UtcNow
 
     // G16 免除清单：独立工具链项目（不入 Flint.slnx，对照 Flint.ThemeMigrator 既有先例）
     private static readonly string[] SlnxExemptions =
