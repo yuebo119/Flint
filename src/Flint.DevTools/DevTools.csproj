@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Flint.DevTools</RootNamespace>
+    <AssemblyName>Flint.DevTools</AssemblyName>
+    <Description>Flint 开发运维工具集（基准/审计/语料/发布/演示编排），替代原 Python/Bash/PowerShell 脚本</Description>
+
+    <!-- 禁用开发工具不需要的代码分析规则（禁用清单与 Flint.Cli 对齐） -->
+    <NoWarn>$(NoWarn);CA1303;CA1515;CA1822;CA1031;CA2007;CA1305;CA1307;IL2026;IL3050;IL2075;IL2104</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- CLI 框架（版本由 Directory.Packages.props 中央管理，与 Flint.Cli 同款） -->
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+</Project>
