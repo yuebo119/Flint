@@ -12,7 +12,9 @@ namespace Flint.AiGate;
 /// </summary>
 internal static class TestGateCommand
 {
-    private const int T4Baseline = 58; // 2026-09-04 起板实测（中文描述式命名存量）
+    // 2026-09-26 重录（首轮全量门禁实测 264；2026-09-04 起板值 58 之后 ThemeMigrator.Tests
+    // 等大批中文描述式命名入库，门禁长期未跑）。语义不变：存量合法，新增必须三段式。
+    private const int T4Baseline = 264;
 
     internal static Command Build()
     {
