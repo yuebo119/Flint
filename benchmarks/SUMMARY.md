@@ -87,5 +87,5 @@ python scripts/complexity-bench.py --pages 1000 --runs 3   # 复杂度阶梯对�
 python scripts/corpus-convert.py                        # MDN 语料转换
 python scripts/memory-bench.py                          # 内存峰值采样
 dotnet run --project tests/Flint.PerformanceTests -c Release -- TestResults/report.html
-powershell -File scripts/perf-gate.ps1                  # 性能回归门禁
+dotnet run --project src/Flint.DevTools -- perf gate # 性能回归门禁
 ```

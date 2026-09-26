@@ -51,6 +51,7 @@ internal static class ProcessRunner
         IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string>? extraEnv = null,
         bool sampleUss = false,
+        string? workingDirectory = null,
         CancellationToken cancellationToken = default)
     {
         var psi = new ProcessStartInfo
@@ -61,6 +62,11 @@ internal static class ProcessRunner
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
+
+        if (!string.IsNullOrEmpty(workingDirectory))
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
 
         foreach (var arg in args)
         {
