@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- DevTools/AiGate 自身行为回归测试（CS-42）：覆盖本轮移植实测踩过的边界 -->
+    <RootNamespace>Flint.Tools.Tests</RootNamespace>
+    <AssemblyName>Flint.Tools.Tests</AssemblyName>
+    <Description>Flint.DevTools 与 Flint.AiGate 自身单元测试</Description>
+
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+
+    <!-- 禁用清单与 Core.Tests 对齐（测试项目不适用项） -->
+    <NoWarn>$(NoWarn);CA1707;CA1861;CA5394;CA1515;CA1307;CA1063;CA1849;CA1822;CA1031;CA1062;CA1826;CA1308;CA1310;CA1305;xUnit1031</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 被测工具（均为独立于产品解决方案的工程，见方案 D1/G16 免除清单） -->
+    <ProjectReference Include="..\..\src\Flint.DevTools\DevTools.csproj" />
+    <ProjectReference Include="..\..\src\Flint.AiGate\AiGate.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 测试框架与断言库（版本由 Directory.Packages.props 中央管理） -->
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="AwesomeAssertions" />
+  </ItemGroup>
+
+</Project>

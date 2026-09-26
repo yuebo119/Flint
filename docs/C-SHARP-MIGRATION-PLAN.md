@@ -255,7 +255,7 @@ flowchart TD
 | CS-34..CS-40 sibling-map/sister-axis-scan/fix-orchestrator/fix-completeness/post-fix/verify-action-items/refine-scan/probe-template | 完成 | 八命令实跑通过；sibling-map 正确命中 IShortcodeProcessor 16 实现族；verify-action-items 修掉 bash 版布局 B 下 .ai pathspec 让内容搜索恒失败的 bug |
 | CS-23/CS-41 .ai 文档切换 + bash 清零 | 完成 | `.ai/scripts/` 目录清空（20→0）；9 个 .ai 文档 33 处引用切到 C# 命令；verify-ai-system 16/16 |
 | CS-25 文档同步 | 完成 | 全部业务 .py/.sh/.ps1 命令引用清零（仅方案文档自身留历史记录） |
-| CS-26 DevTools/AiGate 自身测试 | **未完成**（登记 CS-42） | 见 11.3 |
+| CS-26/CS-42 DevTools/AiGate 自身测试 | 完成（tests/Flint.Tools.Tests，12/12） | 覆盖：OrderedCounter 同序与 Counter 减法语义、PadRightBytes 字节宽对齐、RepoGuard 三路白名单、ProcessRunner 退出码断言与错误尾部、Scanner 注释/obj-bin 过滤、零断言花括号不配对文末截断（本轮真实 bug 防回归）；过程中 MBP 测试自身即抓到断言写错一处（Counter 减法右侧缺键语义） |
 | CS-27 CONVENTIONS "新脚本一律 C#" 条目 | 完成（§14 三层规则） | 文件型应用/常驻工具/csi 三层 |
 
 ### 11.2 首轮实施中发现并需用户知道的存量问题（均非本次改动引入，已由门禁如实报出）
