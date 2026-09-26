@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Go fmt 语义的格式化器（Hugo 的 printf/warnf/errorf 就是 Go 的 fmt.Sprintf）
 //
 // 为什么不能用 .NET 的 string.Format 翻译 Go 动词：两者的**值渲染规则**不同——

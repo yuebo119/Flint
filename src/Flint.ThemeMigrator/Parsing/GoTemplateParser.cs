@@ -1,4 +1,4 @@
-﻿// Flint 主题迁移工具
+// Flint 主题迁移工具
 // Go template 语法树与递归下降解析器
 //
 // Go template 的语法特性（关键简化）：

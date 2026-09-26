@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // i18n 翻译表加载（主题系统 P3）：站点 i18n 优先、主题回退，
 // 文件形态三类——扁平键值（hello = "你好"）、Hugo 形态（[hello] other = "你好"）、
 // 以及 Hugo 支持的三种文件格式（.toml/.yaml/.json，blowfish 等主题用 YAML）

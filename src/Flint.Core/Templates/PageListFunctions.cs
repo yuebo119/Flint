@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Huffo Pages 集合方法族（Hugo methods/pages）
 //
 // 实测主题高频用法：

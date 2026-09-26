@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 内置模板函数实现
 //
 // IL2026/IL3050：Scriban 7 起 ScriptObjectExtensions.Import 标注

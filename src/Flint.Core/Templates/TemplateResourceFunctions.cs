@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 模板资源提供者与 resources.*/css.*/js.*/images.* 命名空间（Hugo Pipes 子集）
 //
 // 覆盖 Hugo 资源管线的高频链路：

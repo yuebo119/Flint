@@ -1,4 +1,4 @@
-﻿// Flint 主题迁移工具
+// Flint 主题迁移工具
 // Go template 词法器（移植 Go 标准库 text/template/parse/lex.go）
 //
 // 移植理由（实测依据）：现有 Python 转换器用 `re.finditer(r"\{\{.*?\}\}")` 切分，

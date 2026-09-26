@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // ScribanTemplateRenderer 的对象构建部分：page/site/menus ScriptObject 工厂、
 // 惰加载包装器与日期对象注册（从 ScribanTemplateRenderer.cs 按 partial 拆出）
 

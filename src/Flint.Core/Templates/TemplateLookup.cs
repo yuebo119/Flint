@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // TemplateLookup——模板加权匹配查找器（对齐 Hugo 0.146+ 描述符加权模型的简化版）。
 // 与 ScribanTemplateRenderer.ResolveTemplatePath 的文件名约定查找并存，
 // 作为方案五特性开关的查找后端；一致性由 TemplateLookupSnapshotTests 矩阵守护。

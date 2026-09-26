@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 主题默认参数合并（主题系统 P1-2 + A1）：
 //   ① theme.toml 的 [params] 段（旧式元数据形态）
 //   ② config/_default/params.{toml,yaml,json}（Hugo 标准形态，优先级更高）

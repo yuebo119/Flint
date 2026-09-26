@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 主题默认参数合并测试（主题系统 P1-2）：theme.toml [params] 作为默认值，站点深覆盖
 
 using AwesomeAssertions;

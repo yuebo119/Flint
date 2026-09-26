@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Scriban 渲染上下文（Hugo 真值语义）
 //
 // 背景：Scriban 的真值判定与 Go 模板不同——数字 0、空串、空集合在 Scriban 里都算
