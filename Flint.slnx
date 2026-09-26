@@ -8,5 +8,6 @@
     <Project Path="tests/Flint.Core.Tests/Flint.Core.Tests.csproj" />
     <Project Path="tests/Flint.IntegrationTests/Flint.IntegrationTests.csproj" />
     <Project Path="tests/Flint.PerformanceTests/Flint.PerformanceTests.csproj" />
+    <Project Path="tests/Flint.Tools.Tests/Flint.Tools.Tests.csproj" />
   </Folder>
 </Solution>

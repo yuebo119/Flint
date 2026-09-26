@@ -11,6 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 白盒测试可见性（Flint.Tools.Tests，CS-42） -->
+    <InternalsVisibleTo Include="Flint.Tools.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="System.CommandLine" />
   </ItemGroup>
 

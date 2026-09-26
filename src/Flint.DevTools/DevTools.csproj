@@ -11,6 +11,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 白盒测试可见性（Flint.Tools.Tests，CS-42） -->
+    <InternalsVisibleTo Include="Flint.Tools.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- CLI 框架（版本由 Directory.Packages.props 中央管理，与 Flint.Cli 同款） -->
     <PackageReference Include="System.CommandLine" />
     <PackageReference Include="System.Diagnostics.PerformanceCounter" />

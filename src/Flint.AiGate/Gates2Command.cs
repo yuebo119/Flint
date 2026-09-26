@@ -84,8 +84,8 @@ internal static class AssertionStrengthCommand
     private static readonly Regex AssertionRegex = new(
         @"\.Should\(\)|\bThrows(Async|Any)?\s*[<(]|\bAssert\.", RegexOptions.Compiled);
 
-    /// <summary>定位 [Fact]/[Theory] 方法，花括号配对取方法体，无断言调用即命中</summary>
-    private static List<string> FindZeroAssertionMethods(string rootDir)
+    /// <summary>定位 [Fact]/[Theory] 方法，花括号配对取方法体，无断言调用即命中（白盒测试可见）</summary>
+    internal static List<string> FindZeroAssertionMethods(string rootDir)
     {
         var hits = new List<string>();
         foreach (var rel in Scanner.CsFiles(rootDir, "tests"))
