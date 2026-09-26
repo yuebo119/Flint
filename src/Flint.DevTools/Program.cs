@@ -5,6 +5,7 @@
 using System.CommandLine;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using Flint.DevTools.Commands;
 
 namespace Flint.DevTools;
 
@@ -21,6 +22,8 @@ internal static class Program
         var rootCommand = new RootCommand("Flint 开发运维工具集（bench/audit/corpus/release/perf/theme/demo）");
 
         rootCommand.Subcommands.Add(BuildVersionCommand());
+        rootCommand.Subcommands.Add(AuditCommand.Build());
+        rootCommand.Subcommands.Add(CorpusCommand.Build());
 
         var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync().ConfigureAwait(false);
