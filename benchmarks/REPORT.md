@@ -156,7 +156,7 @@ python scripts/corpus-convert.py
 dotnet run --project tests/Flint.PerformanceTests -c Release -- TestResults/report.html
 
 # 性能回归门禁
-powershell -File scripts/perf-gate.ps1
+dotnet run --project src/Flint.DevTools -- perf gate
 ```
 
 报告快照：`benchmarks/reports/`（四轮演进）+ `TestResults/`（本轮明细）。

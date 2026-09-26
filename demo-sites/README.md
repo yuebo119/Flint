@@ -100,7 +100,7 @@ corpus/
 ## 关联工具（仓库 scripts/）
 
 - `scripts/theme-matrix20.sh`——20 主题横向兼容矩阵（结构相似度 TSV 输出）
-- `scripts/run-performance-tests.*`——性能套件入口
+- `src/Flint.DevTools` perf run——性能套件入口
 
 ## 已知事项
 

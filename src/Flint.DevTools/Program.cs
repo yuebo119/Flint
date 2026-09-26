@@ -25,6 +25,8 @@ internal static class Program
         rootCommand.Subcommands.Add(AuditCommand.Build());
         rootCommand.Subcommands.Add(CorpusCommand.Build());
         rootCommand.Subcommands.Add(BenchCommand.Build());
+        rootCommand.Subcommands.Add(PerfCommand.Build());
+        rootCommand.Subcommands.Add(ReleaseCommand.Build());
 
         var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync().ConfigureAwait(false);
