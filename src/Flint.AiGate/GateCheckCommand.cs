@@ -317,7 +317,7 @@ internal static class GateCheckCommand
 
         // ── 汇总 ──
         Console.WriteLine("\n═══════ 扫描完成 ═══════");
-        reporter.Summary(0);
+        reporter.Summary();
         Console.WriteLine("权威依据：Directory.Build.props + Directory.Packages.props + lessons.md");
 
         return reporter.Failed > 0 ? 1 : 0;
