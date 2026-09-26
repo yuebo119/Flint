@@ -22,13 +22,9 @@ internal static class VerifyAiSystemCommand
         "src/Flint.AiGate/VerifyAiSystemCommand.cs",
     };
 
-    // 仍为 bash 的脚本（迁移期逐个消除，登记于 docs/C-SHARP-MIGRATION-PLAN.md CS-30+）
+    // 仍为 bash 的脚本（迁移期逐个消除，登记于 docs/C-SHARP-MIGRATION-PLAN.md CS-34..CS-40）
     private static readonly string[] RemainingBashScripts =
     {
-        "assertion-strength-check.sh",
-        "doc-consistency-check.sh",
-        "tech-debt-scan.sh",
-        "review-snapshot.sh",
         "sibling-map.sh",
         "sister-axis-scan.sh",
         "fix-orchestrator.sh",

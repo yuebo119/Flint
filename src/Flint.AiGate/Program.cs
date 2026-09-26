@@ -32,6 +32,10 @@ internal static class Program
         rootCommand.Subcommands.Add(TestGateCommand.Build());
         rootCommand.Subcommands.Add(EncodingGateCommand.Build());
         rootCommand.Subcommands.Add(FlakyGateCommand.Build());
+        rootCommand.Subcommands.Add(AssertionStrengthCommand.Build());
+        rootCommand.Subcommands.Add(DocConsistencyCommand.Build());
+        rootCommand.Subcommands.Add(TechDebtScanCommand.Build());
+        rootCommand.Subcommands.Add(ReviewSnapshotCommand.Build());
         rootCommand.Subcommands.Add(ReviewGateCommand.Build());
         rootCommand.Subcommands.Add(ReviewScopeCommand.Build());
         rootCommand.Subcommands.Add(VerifyAiSystemCommand.Build());
