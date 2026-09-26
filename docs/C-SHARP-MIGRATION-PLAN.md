@@ -251,7 +251,8 @@ flowchart TD
 | CS-13/CS-14/CS-29 gotmpl 差距分析 | 完成 | ananke 双跑：Python 136 TODO vs C# 0 unsupported/38 downgraded；filter.html 抽样证 C# 为 AST 级严格超集，Python 转换器退役 |
 | CS-15..CS-18 theme clone/verify/matrix + demo build/gallery/stop | 完成 | verify 单主题逐字节一致；matrix 单主题逐字节一致（含门禁④ 83.1/95.4）；demo 单主题一致（362 页、端口 8420） |
 | CS-20/CS-21 .ai 门禁 C# 化（六命令）+ mutation probe | 部分完成 | gate-check 注入 async void 探针可抓；flaky-gate --self-test 通过；verify-ai-system 16/16 |
-| CS-23 .ai 文档引用切换 | 完成 | .ai/README.md、gate/test 提示词、review/engine.md 全部改指 C# 工具；7 个已移植 .sh 删除 |
+| CS-30/CS-31/CS-32/CS-33 assertion-strength/doc-consistency/tech-debt/review-snapshot | 完成 | 四命令实跑通过；assertion-strength 报真实存量（零断言 45>43）；.sh 已删，README 切换 |
+| CS-23 .ai 文档引用切换 | 完成 | .ai/README.md、gate/test 提示词、review/engine.md 全部改指 C# 工具；11 个已移植 .sh 删除 |
 | CS-25 文档同步 | 完成 | 全部业务 .py/.sh/.ps1 命令引用清零（仅方案文档自身留历史记录） |
 | CS-26 DevTools/AiGate 自身测试 | **未完成**（登记 CS-42） | 见 11.3 |
 | CS-27 CONVENTIONS "新脚本一律 C#" 条目 | 未完成（登记 CS-43） | 见 11.3 |
@@ -272,10 +273,6 @@ flowchart TD
 
 | 新编号 | 任务 | 验收标准 |
 |---|---|---|
-| CS-30 | 移植 assertion-strength-check.sh | 与 bash 版同语料对拍；弱断言计数一致 |
-| CS-31 | 移植 doc-consistency-check.sh | 同口径输出；含 README 命令/数字 vs 实现校验 |
-| CS-32 | 移植 tech-debt-scan.sh | 同口径输出 |
-| CS-33 | 移植 review-snapshot.sh | git 不可用时降级路径行为一致 |
 | CS-34 | 移植 sibling-map.sh | 接口→多实现族清单与 bash 版一致；review-scope 姊妹对照联动切换 C# |
 | CS-35 | 移植 sister-axis-scan.sh | 同口径输出 |
 | CS-36 | 移植 fix-orchestrator.sh | 编排流程关键节点输出一致 |
@@ -283,9 +280,10 @@ flowchart TD
 | CS-38 | 移植 post-fix-check.sh | 零残留机械验证同口径 |
 | CS-39 | 移植 verify-action-items.sh | 行动项标识符存在性验证同口径 |
 | CS-40 | 移植 refine-scan.sh + probe-template.sh | 27 项矩阵机械可扫子集同口径；探针骨架生成一致 |
-| CS-41 | .ai/scripts/ 剩余 12 个 bash 全删 + README/prompt 终态切换 | verify-ai-system V2/V9 切到纯 C# 条目后全绿；git ls-files .ai/scripts 计数 0 |
-| CS-42 | DevTools/AiGate 自身测试（lint 规则回归） | 至少覆盖：OrderedCounter.most_common 同序语义、corpus convert 白名单守卫、bench Runner 退出码断言、AiGate Scanner 注释行过滤；红→绿验证 |
-| CS-43 | CONVENTIONS.md 增加"新脚本一律 C#"条目 | 条目明确：新增开发/运维/门禁脚本一律 C#（src/Flint.DevTools 或 src/Flint.AiGate），禁止新增 .py/.sh/.ps1/.cmd；引用本方案文档 |
+| CS-41 | .ai/scripts/ 剩余 8 个 bash 全删 + README/prompt 终态切换 | verify-ai-system V2/V9 切到纯 C# 条目后全绿；`.ai/scripts/` 目录清空 |
+| CS-42 | DevTools/AiGate 自身测试（lint 规则回归） | 至少覆盖：OrderedCounter.most_common 同序语义、corpus convert 白名单守卫、bench Runner 退出码断言、AiGate Scanner 注释行过滤、零断言花括号配对（含不配对文末截断）；红→绿验证 |
+| CS-43 | CONVENTIONS.md 增加"新脚本一律 C#"条目 | 条目明确：新增开发/运维/门禁脚本一律 C#（src/Flint.DevTools 子命令、src/Flint.AiGate 门禁，或 .NET 10 文件型应用 `dotnet run xxx.cs` 一次性脚本），禁止新增 .py/.sh/.ps1/.cmd；引用本方案文档 |
+| CS-30/31/32/33 | ~~assertion-strength/doc-consistency/tech-debt/review-snapshot~~ | **已完成**（v1.1，提交见 git log） |
 
 ### 11.4 中断纪律记录
 
