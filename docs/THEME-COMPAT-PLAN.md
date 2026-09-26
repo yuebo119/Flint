@@ -19,7 +19,7 @@ Hugo 主题兼容的**充分必要条件**是三块，缺一不可：
 | **模板语法** | Go template 语义（define/block/with/range/pipeline/`$`） | Scriban 引擎，语义不同 | **不可完全兼容**，须靠转换器 |
 
 **核心判断**：Flint 用 Scriban 而非 Go template，语法层不可能原生执行 Go template。
-因此"完全兼容"的现实定义是——**主题经 `theme-migrator/gotmpl2scriban.py` 一次性转换后零改动运行**。
+因此"完全兼容"的现实定义是——**主题经 `src/Flint.ThemeMigrator` 一次性转换后零改动运行**。
 兼容性 = 转换器覆盖率 × 引擎数据 API 覆盖率。前者已有实践（Ananke 51 模板 /
 1015 表达式全自动覆盖），后者是本方案的主体。
 
@@ -276,7 +276,7 @@ Hugo Page 共 80+ 方法（官方 methods/page），Flint `PageContext` 约 30 �
 1. 每批次附端到端测试（Hugo 形态主题 fixture + 站点构建断言）。
 2. 每批次后跑 Ananke 迁移站：记录 RENDER 错误数与 TODO 数变化，TODO 只减不增。
 3. 性能门禁 perf-gate 通过；增量构建不劣化（查找链改动后重测模板渲染基线 19.2ms）。
-4. 转换器知识库同步：新支持的能力从 TODO 转自动映射（`theme-migrator/gotmpl2scriban.py`）。
+4. 转换器知识库同步：新支持的能力从 TODO 转自动映射（`src/Flint.ThemeMigrator`）。
 5. **兼容性声明纪律**：只有端到端跑通的能力才写入"已兼容"清单；部分等价的标注降级方式
    （空值/隐藏/注释），不用"基本兼容"这类模糊表述。
 
@@ -447,7 +447,7 @@ BREAKING 面实测（重构后复核）：测试断言无依赖、README/docs �
 2. **转换器 `block`/`define` 处理缺失**（Ananke 产物无 `<!DOCTYPE html>` 的根因）。
    原实现：`block "main" .` 未被识别→原样保留为字面文本；`define "main"` → 自执行
    `func main()...{{ main() }}`，与 baseof 完全脱节。
-   → 已修复 `theme-migrator/gotmpl2scriban.py` 三处：
+   → 已修复主题迁移器（当时为 gotmpl2scriban.py，现已并入 src/Flint.ThemeMigrator）三处：
    - `block "x" .`（含默认内容）→ `capture __def_x` + 块结束处
      `{{ if $.blk_x }}{{ $.blk_x }}{{ else }}{{ __def_x }}{{ end }}`
    - `define "x"`（简单名）→ `capture blk_x` + 文件末尾

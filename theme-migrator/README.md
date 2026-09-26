@@ -7,8 +7,6 @@
 
 ```
 theme-migrator/
-├── gotmpl2scriban.py        # Go template → Scriban 转换器（纯 Python，零依赖）
-│                            #   用法: python theme-migrator/gotmpl2scriban.py <hugo主题目录> <flint主题目录>
 ├── clone-themes.sh          # 上游 Hugo 主题抓取（GitHub topic:hugo-theme，浅克隆）
 ├── clone-candidates.sh      # 候选池补充抓取（awesome-hugo-themes / star 排序前列）
 ├── verify-themes.sh         # 候选主题 Hugo 侧三条件验证（exit=0 + 有页数 + 最小页 >200B）
@@ -30,7 +28,8 @@ candidates/（候选池）── verify-themes.sh（三条件验证）+ 人工�
                               demo-sites/<主题>/themes/<主题>/
 ```
 
-- **一次性批量转换**（离线、深度迁移）：`gotmpl2scriban.py`——转换器知识库与
+- **一次性批量转换**（离线、深度迁移）：`../src/Flint.ThemeMigrator`（C#，AST 级，
+  2026-09-26 起替代原 Python 版 gotmpl2scriban.py）——转换器知识库与
   能力映射见 `../docs/THEME-COMPAT-PLAN.md`
 - **建站时逐站转换**（每次 `demo-sites.sh` 重建执行）：`src/Flint.ThemeMigrator`
 

@@ -7,8 +7,8 @@
 
 - `reports/`：四轮性能套件 HTML 报告快照（2026-02 基线 → 升级后优化前 →
   优化后 → 重构后），对应 docs/HUGO-GAP-TASKS.md 的对比记录
-- `scripts/ssg-bench.py`：万页合成语料 + 双引擎测量（可复现）
-- `scripts/corpus-convert.py`：真实语料转换器（MDN/k8s → 统一站点）
+- `dotnet run --project src/Flint.DevTools -- bench ssg`：万页合成语料 + 双引擎测量（可复现）
+- `dotnet run --project src/Flint.DevTools -- corpus convert`：真实语料转换器（MDN/k8s → 统一站点）
 - `src/Flint.DevTools` perf gate + `scripts/perf-baseline.json`：性能回归门禁
 
 ## 外部工具与语料（已统一保留在 benchmarks/ 下；corpus/ 与 tools/ 不入库）

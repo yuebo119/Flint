@@ -210,7 +210,7 @@ type 显式声明优先，否则按 section 判定接通 Posts 模式），待�
 
 结论：真实异构内容口径下 Flint 略优（0.98x）；与万页合成对比（0.92-0.95x）
 交叉印证——**两种内容形态下 Flint 与 Hugo 持平略优**。万页合成对比
-（ssg-bench.py）与本次真实内容对比共同构成性能对比的完整证据链。
+（dotnet run --project src/Flint.DevTools -- bench ssg）与本次真实内容对比共同构成性能对比的完整证据链。
 
 
 ## MDN+k8s 大规模真实内容（2026-09-08，14970 页）【对比无效，已撤回】
@@ -271,7 +271,7 @@ Markdown 201k 文件/秒。
 方法：固定 1000 页语料，三级复杂度主题（L1 基础单页渲染、L2 侧边栏
 O(N) 全站循环、L3 双 O(N) 循环 + 嵌套 partial + partialCached），
 Hugo 语法与 Scriban 语法**逻辑等价双实现**（产物结构经 diff 验证一致），
-冷构建 3 次中位数 + 进程峰值 RSS 采样。脚本：scripts/complexity-bench.py。
+冷构建 3 次中位数 + 进程峰值 RSS 采样。命令：dotnet run --project src/Flint.DevTools -- bench complexity。
 
 | 层级 | Hugo | Flint | 比值 | 峰值 RSS Hugo / Flint |
 | ---- | ---- | ----- | ---- | ----------------- |
