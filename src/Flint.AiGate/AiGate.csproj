@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Flint.AiGate</RootNamespace>
+    <AssemblyName>Flint.AiGate</AssemblyName>
+    <Description>Flint .ai 工作流门禁工具（gate-check/test-gate/encoding-gate/flaky-gate/review/verify 的 C# 移植）</Description>
+
+    <!-- 禁用门禁工具不需要的代码分析规则（禁用清单与 Flint.Cli 对齐） -->
+    <NoWarn>$(NoWarn);CA1303;CA1515;CA1822;CA1031;CA2007;CA1305;CA1307;IL2026;IL3050;IL2075;IL2104</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+</Project>

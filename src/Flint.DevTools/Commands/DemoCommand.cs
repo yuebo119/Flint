@@ -56,7 +56,7 @@ internal static class DemoCommand
         cmd.Arguments.Add(themesArg);
         cmd.Options.Add(serveOpt);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var requested = parseResult.GetValue(themesArg) ?? Array.Empty<string>();
             var serve = parseResult.GetValue(serveOpt);
@@ -99,8 +99,8 @@ internal static class DemoCommand
                 WriteDemoConfig(name, site, themePort);
 
                 // 迁移主题 → 站点 themes/
-                var mig = Bench.ProcessRunner.RunTimedAsync(
-                    MigratorExe, new[] { src, Path.Combine(site, "themes", name) }).GetAwaiter().GetResult();
+                var mig = await Bench.ProcessRunner.RunTimedAsync(
+                    MigratorExe, new[] { src, Path.Combine(site, "themes", name) }).ConfigureAwait(false);
                 if (mig.ExitCode != 0 || !Directory.Exists(Path.Combine(site, "themes", name)))
                 {
                     Console.WriteLine($"{name,-14} 迁移失败");
@@ -109,10 +109,10 @@ internal static class DemoCommand
                 }
 
                 // 构建：单站 600s 上限（fixit 在 100 篇语料 + 全分类/标签分页下需 ~500s）
-                var build = Bench.ProcessRunner.RunTimedAsync(
+                var build = await Bench.ProcessRunner.RunTimedAsync(
                     FlintExe,
                     FlintBuildArgs,
-                    workingDirectory: site).GetAwaiter().GetResult();
+                    workingDirectory: site).ConfigureAwait(false);
 
                 var publicDir = Path.Combine(site, "public");
                 var pages = CountHtml(publicDir);
@@ -146,7 +146,7 @@ internal static class DemoCommand
 
             if (serve)
             {
-                StartServe(portOf, names);
+                await StartServe(portOf, names).ConfigureAwait(false);
             }
 
             return fail > 0 ? 1 : 0;
@@ -204,7 +204,7 @@ internal static class DemoCommand
         File.Copy(Path.Combine(site, "hugo.toml"), Path.Combine(site, "Flint.toml"), overwrite: true);
     }
 
-    private static void StartServe(Dictionary<string, int> portOf, string[] names)
+    private static async Task StartServe(Dictionary<string, int> portOf, string[] names)
     {
         Console.WriteLine("启动全部服务（单进程多端口）…");
 
@@ -223,10 +223,10 @@ internal static class DemoCommand
         }
 
         // 直启已构建 apphost（dotnet run 会多挂一个宿主父进程，直启单进程 ~22MB）
-        var build = Bench.ProcessRunner.RunTimedAsync(
+        var build = await Bench.ProcessRunner.RunTimedAsync(
             "dotnet",
             new[] { "build", Path.Combine(DemoSitesDir, "demo-serve"), "-c", "Release", "-v", "q", "--nologo" },
-            workingDirectory: RepoPaths.RepoRoot).GetAwaiter().GetResult();
+            workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
         if (build.ExitCode != 0)
         {
             Console.Error.WriteLine("demo-serve 构建失败，服务未启动");
@@ -263,7 +263,7 @@ internal static class DemoCommand
         var cmd = new Command("gallery", "画廊案例站：gallery-source → gallery 构建");
         cmd.Options.Add(serveOpt);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var serve = parseResult.GetValue(serveOpt);
             var flint = FlintExe;
@@ -297,10 +297,10 @@ internal static class DemoCommand
             CopyTree(Path.Combine(gallerySrc, "layouts"), Path.Combine(site, "layouts"));
             CopyTree(Path.Combine(gallerySrc, "content"), Path.Combine(site, "content"));
 
-            var build = Bench.ProcessRunner.RunTimedAsync(
+            var build = await Bench.ProcessRunner.RunTimedAsync(
                 flint,
                 FlintBuildArgs,
-                workingDirectory: site).GetAwaiter().GetResult();
+                workingDirectory: site).ConfigureAwait(false);
 
             // 与 bash 版一致：画廊构建透传 Flint 输出（demo-sites 只在失败时打印）
             if (build.Stdout.Length > 0)
@@ -323,7 +323,7 @@ internal static class DemoCommand
 
             if (serve)
             {
-                StartServe(new Dictionary<string, int>(StringComparer.Ordinal), Array.Empty<string>());
+                await StartServe(new Dictionary<string, int>(StringComparer.Ordinal), Array.Empty<string>()).ConfigureAwait(false);
             }
 
             return 0;
@@ -375,9 +375,8 @@ internal static class DemoCommand
         // 兜底：按 84xx 监听端口反查 PID（netstat 输出解析，与 bash 版同源）
         try
         {
-            var netstat = Bench.ProcessRunner.RunTimedAsync(
-                "netstat", NetstatArgs).GetAwaiter().GetResult();
-            foreach (var line in netstat.Stdout.Split('\n'))
+            var netstatStdout = Bench.ProcessRunner.RunTimedCaptureSync("netstat", NetstatArgs);
+            foreach (var line in netstatStdout.Split('\n'))
             {
                 if (!line.Contains(":84", StringComparison.Ordinal) || !line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase))
                 {
@@ -477,8 +476,7 @@ internal static class DemoCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Bench.ProcessRunner.RunTimedAsync(
-                "cmd", new[] { "/c", $"rmdir /s /q \"{Path.GetFullPath(dir)}\"" }).GetAwaiter().GetResult();
+            Bench.ProcessRunner.RunSyncQuiet("cmd", new[] { "/c", $"rmdir /s /q \"{Path.GetFullPath(dir)}\"" });
         }
     }
 

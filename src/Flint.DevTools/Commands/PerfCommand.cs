@@ -61,7 +61,7 @@ internal static class PerfCommand
         cmd.Options.Add(outputOpt);
         cmd.Options.Add(openOpt);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var outputPath = Path.GetFullPath(parseResult.GetValue(outputOpt)!);
             var open = parseResult.GetValue(openOpt);
@@ -71,10 +71,10 @@ internal static class PerfCommand
             Console.WriteLine();
 
             Console.WriteLine("📦 构建项目...");
-            var build = Bench.ProcessRunner.RunTimedAsync(
+            var build = await Bench.ProcessRunner.RunTimedAsync(
                 "dotnet",
                 BuildArgs,
-                workingDirectory: RepoPaths.RepoRoot).GetAwaiter().GetResult();
+                workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
             if (build.ExitCode != 0)
             {
                 throw new InvalidOperationException($"构建失败: {build.Stderr}");
@@ -92,10 +92,10 @@ internal static class PerfCommand
                 Directory.CreateDirectory(outputDir);
             }
 
-            var suite = Bench.ProcessRunner.RunTimedAsync(
+            var suite = await Bench.ProcessRunner.RunTimedAsync(
                 "dotnet",
                 new[] { "run", "--project", PerfProjectRelative, "-c", "Release", "--", outputPath },
-                workingDirectory: RepoPaths.RepoRoot).GetAwaiter().GetResult();
+                workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
             if (suite.Stdout.Length > 0)
             {
                 Console.WriteLine(suite.Stdout);
@@ -150,11 +150,11 @@ internal static class PerfCommand
         cmd.Options.Add(outputOpt);
         cmd.Options.Add(updateOpt);
 
-        cmd.SetAction(parseResult => RunGateAsync(
+        cmd.SetAction(async parseResult => await RunGateAsync(
             parseResult.GetValue(runsOpt),
             parseResult.GetValue(baselineOpt)!,
             parseResult.GetValue(outputOpt)!,
-            parseResult.GetValue(updateOpt)).GetAwaiter().GetResult());
+            parseResult.GetValue(updateOpt)).ConfigureAwait(false));
 
         return cmd;
     }
