@@ -126,9 +126,10 @@ internal sealed class Reporter
         }
     }
 
-    public void Summary(int totalChecks)
+    public void Summary(int totalChecks = -1)
     {
-        Console.WriteLine($"通过：{_passed}  警告：{_warned}  失败：{_failed}  跳过：{_skipped}  总计：{totalChecks}");
+        var total = totalChecks >= 0 ? totalChecks : _passed + _warned + _failed + _skipped;
+        Console.WriteLine($"通过：{_passed}  警告：{_warned}  失败：{_failed}  跳过：{_skipped}  总计：{total}");
     }
 
     public void PlainSummary(string passedLabel = "通过", string failedLabel = "失败")
