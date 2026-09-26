@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Go fmt 语义的 printf 回归（期望值全部来自 Hugo v0.166 探针）
 //
 // 探针模板（Hugo 侧 layouts/index.html 逐条渲染）：

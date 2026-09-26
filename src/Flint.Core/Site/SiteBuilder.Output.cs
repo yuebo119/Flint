@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // SiteBuilder 输出写入聚合：输出目录清理、资源处理、sitemap/feed、文件写入与输出路径计算
 
 using System.Collections.Concurrent;

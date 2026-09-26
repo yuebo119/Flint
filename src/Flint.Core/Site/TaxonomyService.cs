@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 分类系统服务实现
 
 using System.Text.RegularExpressions;

@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Front Matter 解析器——日期与时区语义部分：Hugo 特殊日期源识别与
 // 无偏移日期按站点时区补偏移（从 FrontMatterParser.cs 按 partial 拆出）
 

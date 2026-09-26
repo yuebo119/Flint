@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 页面级暂存对象（Hugo .Scratch / .Store 的等价物）
 //
 // Hugo 语义：页面渲染期内可变的键值容器，用于跨块/跨 partial 传递状态

@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // permalink 纯函数引擎（从 SiteBuilder 解耦，方法体原样迁移）
 
 using Flint.Core.Configuration;

@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Scriban 模板渲染器实现
 
 using System.Collections.Concurrent;

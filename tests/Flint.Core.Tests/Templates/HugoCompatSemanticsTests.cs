@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Hugo 兼容语义回归（除真值外的其它类别，见 docs/HUGO-COMPAT-MATRIX.md）
 //
 // 每条断言都有 Hugo v0.166 实测依据（探针脚本见 docs 对应行），

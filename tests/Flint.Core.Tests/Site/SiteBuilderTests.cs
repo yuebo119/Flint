@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 站点构建器单元测试
 
 #pragma warning disable CA2000 // 测试代码中不需要处理 Dispose

@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // hugo.* 环境对象与 time.* 补充（Hugo 0.146+ 命名空间）
 //
 // hugo.* 是常量对象（Version/Environment/IsProduction 等），零成本；

@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 站点构建器实现（编排主体：字段/构造/BuildAsync；方法群按聚合拆分于同目录 partial 文件：
 // SiteBuilder.Tree.cs 树装配+cascade+PageContext、SiteBuilder.Incremental.cs 增量、
 // SiteBuilder.Render.cs 渲染调度、SiteBuilder.Output.cs 输出写入）

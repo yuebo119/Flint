@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // i18n 翻译加载与模板函数端到端测试（主题系统 P3）
 
 using AwesomeAssertions;

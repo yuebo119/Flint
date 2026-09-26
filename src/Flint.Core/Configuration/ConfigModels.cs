@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 配置模型（自 Abstractions/IConfigLoader.cs 迁入：配置数据模型归位 Configuration 层）
 
 namespace Flint.Core.Configuration;

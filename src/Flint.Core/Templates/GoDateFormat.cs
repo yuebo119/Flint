@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // Go 时间布局串 → .NET 格式串（Hugo 的 time.Format / .Date.Format 语义）
 
 namespace Flint.Core.Templates;

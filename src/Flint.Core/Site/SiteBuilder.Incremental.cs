@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // SiteBuilder 增量聚合：增量构建主流程、全局 identity 判定、taxonomy 签名
 
 using System.Collections.Concurrent;

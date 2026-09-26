@@ -1,4 +1,4 @@
-﻿// Flint 静态站点生成器
+// Flint 静态站点生成器
 // 带蛇形别名的 dict：`dict "displayName" …` 之类**驼峰键**在迁移产物里常被
 // 以 `display_name`（蛇形）读取——迁移器把模板成员名归一为 snake_case（与
 // BuildParamsObject 对参数表的做法一致），故 dict 值的读取需要同样的别名兜底
