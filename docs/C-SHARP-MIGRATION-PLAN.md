@@ -252,10 +252,11 @@ flowchart TD
 | CS-15..CS-18 theme clone/verify/matrix + demo build/gallery/stop | 完成 | verify 单主题逐字节一致；matrix 单主题逐字节一致（含门禁④ 83.1/95.4）；demo 单主题一致（362 页、端口 8420） |
 | CS-20/CS-21 .ai 门禁 C# 化（六命令）+ mutation probe | 部分完成 | gate-check 注入 async void 探针可抓；flaky-gate --self-test 通过；verify-ai-system 16/16 |
 | CS-30/CS-31/CS-32/CS-33 assertion-strength/doc-consistency/tech-debt/review-snapshot | 完成 | 四命令实跑通过；assertion-strength 报真实存量（零断言 45>43）；.sh 已删，README 切换 |
-| CS-23 .ai 文档引用切换 | 完成 | .ai/README.md、gate/test 提示词、review/engine.md 全部改指 C# 工具；11 个已移植 .sh 删除 |
+| CS-34..CS-40 sibling-map/sister-axis-scan/fix-orchestrator/fix-completeness/post-fix/verify-action-items/refine-scan/probe-template | 完成 | 八命令实跑通过；sibling-map 正确命中 IShortcodeProcessor 16 实现族；verify-action-items 修掉 bash 版布局 B 下 .ai pathspec 让内容搜索恒失败的 bug |
+| CS-23/CS-41 .ai 文档切换 + bash 清零 | 完成 | `.ai/scripts/` 目录清空（20→0）；9 个 .ai 文档 33 处引用切到 C# 命令；verify-ai-system 16/16 |
 | CS-25 文档同步 | 完成 | 全部业务 .py/.sh/.ps1 命令引用清零（仅方案文档自身留历史记录） |
 | CS-26 DevTools/AiGate 自身测试 | **未完成**（登记 CS-42） | 见 11.3 |
-| CS-27 CONVENTIONS "新脚本一律 C#" 条目 | 未完成（登记 CS-43） | 见 11.3 |
+| CS-27 CONVENTIONS "新脚本一律 C#" 条目 | 完成（§14 三层规则） | 文件型应用/常驻工具/csi 三层 |
 
 ### 11.2 首轮实施中发现并需用户知道的存量问题（均非本次改动引入，已由门禁如实报出）
 

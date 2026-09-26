@@ -22,18 +22,9 @@ internal static class VerifyAiSystemCommand
         "src/Flint.AiGate/VerifyAiSystemCommand.cs",
     };
 
-    // 仍为 bash 的脚本（迁移期逐个消除，登记于 docs/C-SHARP-MIGRATION-PLAN.md CS-34..CS-40）
-    private static readonly string[] RemainingBashScripts =
-    {
-        "sibling-map.sh",
-        "sister-axis-scan.sh",
-        "fix-orchestrator.sh",
-        "fix-completeness-check.sh",
-        "post-fix-check.sh",
-        "verify-action-items.sh",
-        "refine-scan.sh",
-        "probe-template.sh",
-    };
+    // .ai/scripts/ 已全部 C# 化（2026-09-26，CS-41 完成）：无剩余 bash 脚本。
+    // 后续新增门禁一律进 src/Flint.AiGate 子命令（CONVENTIONS §14）。
+    private static readonly string[] RemainingBashScripts = Array.Empty<string>();
 
     internal static Command Build()
     {
