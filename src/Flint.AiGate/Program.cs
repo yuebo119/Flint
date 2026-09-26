@@ -36,6 +36,14 @@ internal static class Program
         rootCommand.Subcommands.Add(DocConsistencyCommand.Build());
         rootCommand.Subcommands.Add(TechDebtScanCommand.Build());
         rootCommand.Subcommands.Add(ReviewSnapshotCommand.Build());
+        rootCommand.Subcommands.Add(SiblingMapCommand.Build());
+        rootCommand.Subcommands.Add(VerifyActionItemsCommand.Build());
+        rootCommand.Subcommands.Add(PostFixCheckCommand.Build());
+        rootCommand.Subcommands.Add(SisterAxisScanCommand.Build());
+        rootCommand.Subcommands.Add(FixCompletenessCheckCommand.Build());
+        rootCommand.Subcommands.Add(RefineScanCommand.Build());
+        rootCommand.Subcommands.Add(ProbeTemplateCommand.Build());
+        rootCommand.Subcommands.Add(FixOrchestratorCommand.Build());
         rootCommand.Subcommands.Add(ReviewGateCommand.Build());
         rootCommand.Subcommands.Add(ReviewScopeCommand.Build());
         rootCommand.Subcommands.Add(VerifyAiSystemCommand.Build());
