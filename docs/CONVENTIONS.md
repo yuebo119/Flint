@@ -496,7 +496,7 @@ dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAo
 # 4. Hugo 兼容改动：跑 §8.1 三层验证（对照 + 浏览器）
 
 # 5. 主题矩阵（模板函数/渲染链改动）
-bash demo-sites/demo-sites.sh      # 至少 blast radius 内主题
+dotnet run --project src/Flint.DevTools -- demo build      # 至少 blast radius 内主题
 
 # 6. 文档同步（§9.2 的 grep 零残留）
 
@@ -520,7 +520,8 @@ bash demo-sites/demo-sites.sh      # 至少 blast radius 内主题
 | 禁脚本批量改源码 | 提交审查（P0 纪律） | 评审 `[约定]` |
 | 测试基线 1120+1 | Core.Tests 面板实测 | 提交前必跑 `[约定]` |
 | Hugo 兼容三层验证 | §8.1 流程 | 评审 `[约定]` |
-| 主题矩阵回归 | `demo-sites.sh` / `theme-matrix20.sh` | 提交前必跑 `[约定]` |
+| 主题矩阵回归 | `dotnet run --project src/Flint.DevTools -- theme matrix` | 提交前必跑 `[约定]` |
+| 脚本语言单一（C#） | §14 三层规则 | 评审 `[约定]` |
 | 三方一致 | `grep` 旧事实值零残留 | 提交前必跑 `[约定]` |
 | 提交信息格式 | §10 类型清单 | 评审 `[约定]` |
 | 演示站单进程服务 | `demo-sites/demo-serve` | 脚本内建 `[机械]` |
@@ -536,3 +537,36 @@ bash demo-sites/demo-sites.sh      # 至少 blast radius 内主题
 > 的规范删除，实践与规范冲突时改规范或改代码但**必须同步**。规范先于规模是
 > 浪费，规模先于规范是债务——本文档按当前规模（单人、138 文件、1120 测试）
 > 定制，不预支未来。
+
+---
+
+## 14. 脚本编写规范（2026-09-26 起，替代全部 Python/Bash/PowerShell 脚本）
+
+**铁律：本项目新增脚本一律 C#，不引入其他语言执行环境**（Python/Bash/PowerShell
+仅允许作为被调用的外部程序存在，如 `git`/`hugo` CLI）。依据：2026-09-26 整改
+（docs/C-SHARP-MIGRATION-PLAN.md）已把 22 个历史脚本全部 C# 化并删除，
+发布物不再依赖 python 解释器。
+
+三层落地规则，按脚本寿命选：
+
+| 层 | 形态 | 判定 | 示例 |
+|---|---|---|---|
+| 一次性脚本 | **.NET 10 文件型应用**：单 `.cs` 文件，`#:package` 引包，`dotnet run x.cs` 直接跑，无 csproj | 任务结束即弃、不值得进工程 | 语料格式探测、一次性数据对拍、临时报告生成 |
+| 常驻工具 | 进 `src/Flint.DevTools`（开发运维：bench/audit/corpus/release/perf/theme/demo）或 `src/Flint.AiGate`（质量门禁），子命令形态 | 反复调用、要进提交前流程或 CI | 基准测试、门禁扫描、发布工具 |
+| 交互排查 | `csi`（SDK 自带 Roslyn REPL） | 边写边试的探索 | 正则调参、模板行为验证 |
+
+文件型应用最小形态（本机 .NET 10.0.401 实测可用）：
+
+```csharp
+#:package Humanizer@2.14.1
+using Humanizer;
+Console.WriteLine($"file-based app OK: {"flint_release".Humanize()}");
+```
+
+```
+$ dotnet run --file probe.cs alpha beta    # 目录内有工程文件时需显式 --file
+```
+
+发布纪律：文件型应用不进 git（放 Temp 或 scratch/）；任务需要固化为常驻能力时，
+按第二层迁入 DevTools/AiGate 并在方案文档登记，不允许 `.cs` 脚本长期散落仓库
+（散落脚本 = 新的不可发现债务）。一次性脚本禁止触碰 P0 #5 破坏性操作黑名单。
