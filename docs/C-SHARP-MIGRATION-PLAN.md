@@ -282,7 +282,7 @@ flowchart TD
 | CS-40 | 移植 refine-scan.sh + probe-template.sh | 27 项矩阵机械可扫子集同口径；探针骨架生成一致 |
 | CS-41 | .ai/scripts/ 剩余 8 个 bash 全删 + README/prompt 终态切换 | verify-ai-system V2/V9 切到纯 C# 条目后全绿；`.ai/scripts/` 目录清空 |
 | CS-42 | DevTools/AiGate 自身测试（lint 规则回归） | 至少覆盖：OrderedCounter.most_common 同序语义、corpus convert 白名单守卫、bench Runner 退出码断言、AiGate Scanner 注释行过滤、零断言花括号配对（含不配对文末截断）；红→绿验证 |
-| CS-43 | CONVENTIONS.md 增加"新脚本一律 C#"条目 | 条目明确：新增开发/运维/门禁脚本一律 C#（src/Flint.DevTools 子命令、src/Flint.AiGate 门禁，或 .NET 10 文件型应用 `dotnet run xxx.cs` 一次性脚本），禁止新增 .py/.sh/.ps1/.cmd；引用本方案文档 |
+| CS-43 | CONVENTIONS.md 增加"新脚本一律 C#"条目 | **已完成**（§14 脚本编写规范）：三层规则——一次性脚本用 .NET 10 文件型应用（`#:package` + `dotnet run x.cs`，本机实测）、常驻工具进 DevTools/AiGate 子命令（剩余 8 个 .ai 门禁按此层继续）、交互排查用 csi；禁止新增 .py/.sh/.ps1/.cmd |
 | CS-30/31/32/33 | ~~assertion-strength/doc-consistency/tech-debt/review-snapshot~~ | **已完成**（v1.1，提交见 git log） |
 
 ### 11.4 中断纪律记录
