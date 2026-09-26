@@ -220,4 +220,73 @@ internal static class ProcessRunner
 
     /// <summary>毫秒取整显示（与 Python f"{t:.0f}ms" 一致）</summary>
     public static string Ms(double value) => $"{value:F0}ms";
+
+    /// <summary>
+    /// 同步运行外部进程并捕获 stdout（仅用于无法 await 的清理/兜底路径）。
+    /// 常规调用一律走 RunTimedAsync，避免 sync-over-async（G17 棘轮）
+    /// </summary>
+    public static string RunTimedCaptureSync(string fileName, IReadOnlyList<string> args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi);
+        if (process is null)
+        {
+            return string.Empty;
+        }
+
+        var stdout = process.StandardOutput.ReadToEnd();
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return stdout;
+    }
+
+    /// <summary>
+    /// 同步运行外部进程（仅用于清理兜底等无法 await 的路径：无内存采样、丢弃输出）。
+    /// 常规调用一律走 RunTimedAsync，避免 sync-over-async（G17 棘轮）
+    /// </summary>
+    public static int RunSyncQuiet(string fileName, IReadOnlyList<string> args, string? workingDirectory = null)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        if (!string.IsNullOrEmpty(workingDirectory))
+        {
+            psi.WorkingDirectory = workingDirectory;
+        }
+
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(psi);
+        if (process is null)
+        {
+            return 1;
+        }
+
+        process.StandardOutput.ReadToEnd();
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode;
+    }
 }

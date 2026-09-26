@@ -61,10 +61,10 @@ internal static class ReleaseCommand
     {
         var cmd = new Command("verify", "只读体检（无需凭据）：标题纯度/资产 label/远端 tags");
 
-        cmd.SetAction(_ => Guard(() =>
+        cmd.SetAction(_ => GuardAsync(async () =>
         {
             using var client = GitHubClient.Create();
-            var releases = client.GetJsonArray($"{GitHubClient.ApiBase}/releases").GetAwaiter().GetResult();
+            var releases = await client.GetJsonArray($"{GitHubClient.ApiBase}/releases").ConfigureAwait(false);
             if (releases.NetError is not null || releases.HttpError is not null)
             {
                 Fail($"releases 查询失败: {Describe(releases)}");
@@ -336,8 +336,9 @@ internal static class ReleaseCommand
     private static async Task<int> WaitAssetsAsync(
         GitHubClient client, string token, string tag, int expect, int timeoutSeconds)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
-        while (DateTime.UtcNow < deadline)
+        var deadline = TimeSpan.FromSeconds(timeoutSeconds);
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        while (clock.Elapsed < deadline)
         {
             var releases = await client.GetJsonAsync($"{GitHubClient.ApiBase}/releases", token).ConfigureAwait(false);
             if (releases.NetError is not null || releases.HttpError is not null)

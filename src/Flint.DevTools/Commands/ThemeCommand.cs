@@ -114,7 +114,7 @@ internal static class ThemeCommand
         };
         cmd.Options.Add(poolOpt);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var pool = parseResult.GetValue(poolOpt)!;
             if (pool is "basic" or "both")
@@ -124,7 +124,7 @@ internal static class ThemeCommand
                 Console.WriteLine(new string('-', 79));
                 foreach (var (name, repo, branch) in BaseThemes)
                 {
-                    CloneTheme(ThemesDir, name, repo, branch, 42);
+                    await CloneTheme(ThemesDir, name, repo, branch, 42).ConfigureAwait(false);
                 }
             }
 
@@ -140,7 +140,7 @@ internal static class ThemeCommand
                 Console.WriteLine(new string('-', 84));
                 foreach (var (name, repo) in Candidates)
                 {
-                    CloneTheme(CandidatesDir, name, repo, branch: null, 48);
+                    await CloneTheme(CandidatesDir, name, repo, branch: null, 48).ConfigureAwait(false);
                 }
             }
 
@@ -150,7 +150,7 @@ internal static class ThemeCommand
         return cmd;
     }
 
-    private static void CloneTheme(string destDir, string name, string repo, string? branch, int repoWidth)
+    private static async Task CloneTheme(string destDir, string name, string repo, string? branch, int repoWidth)
     {
         Directory.CreateDirectory(destDir);
         var target = Path.Combine(destDir, name);
@@ -176,7 +176,7 @@ internal static class ThemeCommand
         args.Add($"https://github.com/{repo}.git");
         args.Add(target);
 
-        var result = Bench.ProcessRunner.RunTimedAsync("git", args, workingDirectory: RepoPaths.RepoRoot).GetAwaiter().GetResult();
+        var result = await Bench.ProcessRunner.RunTimedAsync("git", args, workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
         if (result.ExitCode != 0)
         {
             Console.WriteLine($"{PyCompat.PadRightBytes(name, 16)} {PyCompat.PadRightBytes(repo, repoWidth)} 失败");
@@ -199,7 +199,7 @@ internal static class ThemeCommand
         var cmd = new Command("verify", "候选主题 Hugo 侧三条件验证（不影响 Flint）");
         cmd.Arguments.Add(themesArg);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var requested = parseResult.GetValue(themesArg) ?? Array.Empty<string>();
             var names = requested.Length > 0 ? requested : ListThemeNames(ThemesDir).ToArray();
@@ -212,7 +212,7 @@ internal static class ThemeCommand
 
             foreach (var name in names)
             {
-                VerifyOne(name);
+                await VerifyOne(name).ConfigureAwait(false);
             }
 
             Console.WriteLine(new string('-', 95));
@@ -230,7 +230,7 @@ internal static class ThemeCommand
             : new List<string>();
     }
 
-    private static void VerifyOne(string name)
+    private static async Task VerifyOne(string name)
     {
         var src = Path.Combine(ThemesDir, name);
         if (!Directory.Exists(Path.Combine(src, "layouts")))
@@ -269,21 +269,21 @@ internal static class ThemeCommand
         }
 
         // run_hugo + verdict
-        (int ExitCode, string Output, int Pages, int MinSize, int MaxSize) RunHugo()
+        async Task<(int ExitCode, string Output, int Pages, int MinSize, int MaxSize)> RunHugo()
         {
             CleanDir(Path.Combine(site, "public"));
-            var raw = RunHugoAsync(site).GetAwaiter().GetResult();
+            var raw = await RunHugoAsync(site).ConfigureAwait(false);
             var pages = CountHtml(Path.Combine(site, "public"));
             var min = MinHtmlSize(Path.Combine(site, "public"));
             var max = MaxHtmlSize(Path.Combine(site, "public"));
             return (raw.ExitCode, raw.Output, pages, min, max);
         }
 
-        var run = RunHugo();
+        var run = await RunHugo().ConfigureAwait(false);
         if (run.ExitCode != 0)
         {
             // 首次失败重试一次：Hugo 偶发失败不该判主题不可用
-            run = RunHugo();
+            run = await RunHugo().ConfigureAwait(false);
         }
 
         var out_ = run.Output;
@@ -298,7 +298,7 @@ internal static class ThemeCommand
             // exampleSite 失败换最小内容重试（保留配置）：内容过时 ≠ 主题不可用
             CleanDir(Path.Combine(site, "content"));
             MakeMinContent(site);
-            run = RunHugo();
+            run = await RunHugo().ConfigureAwait(false);
             exitCode = run.ExitCode;
             pages = run.Pages;
             minSize = run.MinSize;
@@ -516,10 +516,10 @@ internal static class ThemeCommand
         var cmd = new Command("matrix", "21 主题横向兼容矩阵（Hugo 基线 × Flint 迁移产物 + 门禁④）");
         cmd.Arguments.Add(themesArg);
 
-        cmd.SetAction(parseResult =>
+        cmd.SetAction(async parseResult =>
         {
             var requested = parseResult.GetValue(themesArg) ?? Array.Empty<string>();
-            RunMatrix(requested.Length > 0 ? requested : MatrixThemes);
+            await RunMatrix(requested.Length > 0 ? requested : MatrixThemes).ConfigureAwait(false);
             return 0;
         });
 
@@ -533,7 +533,7 @@ internal static class ThemeCommand
         "build", "-s", ".", "-o", "public-flint", "--clean", "--missing-layout", "skip",
     };
 
-    private static void RunMatrix(string[] requested)
+    private static async Task RunMatrix(string[] requested)
     {
         var names = requested.Length > 0 ? requested : MatrixThemes;
         var migrator = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.ThemeMigrator", "bin", "Debug", "net10.0", "Flint.ThemeMigrator.exe");
@@ -548,14 +548,14 @@ internal static class ThemeCommand
 
         foreach (var name in names)
         {
-            MatrixOne(name, migrator, flint, hugo);
+            await MatrixOne(name, migrator, flint, hugo).ConfigureAwait(false);
         }
 
         Console.WriteLine(new string('-', 86));
         Console.WriteLine("（hugo/flint构建：通过=exit0 且产出非空；对称=1 表示门禁④通过）");
     }
 
-    private static void MatrixOne(string name, string migrator, string flint, string hugo)
+    private static async Task MatrixOne(string name, string migrator, string flint, string hugo)
     {
         var src = Path.Combine(ThemesDir, name);
         if (!Directory.Exists(Path.Combine(src, "layouts")) && !Directory.Exists(Path.Combine(src, "layout")))
@@ -565,19 +565,19 @@ internal static class ThemeCommand
         }
 
         var site = Path.Combine(MatrixWorkRoot, name);
-        PrepareMatrixSite(name, site, src);
+        await PrepareMatrixSite(name, site, src).ConfigureAwait(false);
 
         var report = Path.Combine(MatrixWorkRoot, $"{name}-report.txt");
         File.WriteAllText(report, string.Empty);
 
         // ---- Hugo 侧 ----
-        var hugoRun = Bench.ProcessRunner.RunTimedAsync(hugo, HugoQuietArgs, workingDirectory: site).GetAwaiter().GetResult();
+        var hugoRun = await Bench.ProcessRunner.RunTimedAsync(hugo, HugoQuietArgs, workingDirectory: site).ConfigureAwait(false);
         var hugoPages = CountHtml(Path.Combine(site, "public"));
         var hugoOk = hugoRun.ExitCode == 0 && hugoPages > 0 ? "通过" : "失败";
 
         // ---- 迁移 + Flint 侧 ----
         var migratedDir = Path.Combine(site, "themes-migrated", name);
-        var mig = Bench.ProcessRunner.RunTimedAsync(migrator, new[] { src, migratedDir }).GetAwaiter().GetResult();
+        var mig = await Bench.ProcessRunner.RunTimedAsync(migrator, new[] { src, migratedDir }).ConfigureAwait(false);
         var migOk = "OK";
         var rateMatch = Regex.Match(mig.Stdout + mig.Stderr, @"rate=([0-9.]+)");
         if (!rateMatch.Success)
@@ -592,10 +592,10 @@ internal static class ThemeCommand
             CopyTree(migratedDir, siteTheme);
         }
 
-        var build = Bench.ProcessRunner.RunTimedAsync(
+        var build = await Bench.ProcessRunner.RunTimedAsync(
             flint,
             FlintMatrixBuildArgs,
-            workingDirectory: site).GetAwaiter().GetResult();
+            workingDirectory: site).ConfigureAwait(false);
 
         var flintPages = CountHtml(Path.Combine(site, "public-flint"));
         var flintMin = MinHtmlSize(Path.Combine(site, "public-flint"));
@@ -630,9 +630,9 @@ internal static class ThemeCommand
         var sim = "-";
         if (hugoOk == "通过" && flintPages > 0)
         {
-            var gate = Bench.ProcessRunner.RunTimedAsync(
+            var gate = await Bench.ProcessRunner.RunTimedAsync(
                 migrator,
-                new[] { src, migratedDir, "--verify", site, "--site-output", Path.Combine(site, "public-flint"), "--hugo-output", Path.Combine(site, "public") }).GetAwaiter().GetResult();
+                new[] { src, migratedDir, "--verify", site, "--site-output", Path.Combine(site, "public-flint"), "--hugo-output", Path.Combine(site, "public") }).ConfigureAwait(false);
             var gateOut = gate.Stdout + gate.Stderr;
             var symMatch = Regex.Match(gateOut, @"symmetric=([01])");
             var stMatch = Regex.Match(gateOut, @"struct=([0-9.]+)");
@@ -657,7 +657,7 @@ internal static class ThemeCommand
     }
 
     /// <summary>准备矩阵站点：统一内容集 + 基础配置 + 主题专属 params + menus 收尾 + junction 挂载</summary>
-    private static void PrepareMatrixSite(string name, string site, string themeSrc)
+    private static async Task PrepareMatrixSite(string name, string site, string themeSrc)
     {
         CleanDir(Path.Combine(site, "themes", name));
         CleanDir(site);
@@ -668,10 +668,10 @@ internal static class ThemeCommand
 
         // 主题用 junction 挂载（零拷贝；失败回退复制）——与 bash 版 mklink /J 同机制
         var themeTarget = Path.Combine(site, "themes", name);
-        var junction = Bench.ProcessRunner.RunTimedAsync(
+        var junction = await Bench.ProcessRunner.RunTimedAsync(
             "cmd",
             new[] { "/c", $"mklink /J \"{themeTarget}\" \"{themeSrc}\"" },
-            workingDirectory: RepoPaths.RepoRoot).GetAwaiter().GetResult();
+            workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
         if (junction.ExitCode != 0)
         {
             CopyTree(themeSrc, themeTarget);
@@ -804,8 +804,7 @@ internal static class ThemeCommand
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            Bench.ProcessRunner.RunTimedAsync(
-                "cmd", new[] { "/c", $"rmdir /s /q \"{Path.GetFullPath(dir)}\"" }).GetAwaiter().GetResult();
+            Bench.ProcessRunner.RunSyncQuiet("cmd", new[] { "/c", $"rmdir /s /q \"{Path.GetFullPath(dir)}\"" });
         }
 
         if (Directory.Exists(dir))
