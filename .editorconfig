@@ -218,3 +218,13 @@ trim_trailing_whitespace = false
 # 降为 suggestion，其余 xunit analyzers 维持 error。
 [*.cs]
 dotnet_diagnostic.xUnit1051.severity = suggestion
+
+# ---------- EPSL L1 性能规则段（2026-10-11 T1.4，基线制接入）----------
+# 接入协议：先 error 探针清点存量 → 有违例则降 suggestion + gate-baseline 豁免登记 → 存量清零后升 error。
+[*.cs]
+dotnet_diagnostic.CA1834.severity = error
+dotnet_diagnostic.CA1841.severity = error
+dotnet_diagnostic.CA1845.severity = error
+dotnet_diagnostic.CA1847.severity = error
+dotnet_diagnostic.CA1861.severity = error
+dotnet_diagnostic.CA2012.severity = error
