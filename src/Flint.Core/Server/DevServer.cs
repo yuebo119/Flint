@@ -462,21 +462,49 @@ public sealed class DevServer : IDevServer, IDisposable
 
             if (File.Exists(filePath))
             {
-                var content = await File.ReadAllBytesAsync(filePath, context.RequestAborted);
+                var info = new FileInfo(filePath);
                 context.Response.ContentType = GetContentType(filePath);
 
-                // 注入热重载脚本
-                if (options.LiveReload && filePath.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                // ETag/304（T7.2）：弱验证 = 文件 mtime+大小，构建刷新后自动失效；
+                // 浏览器二次访问零传输（此前每次全量重取）
+                var etag = $"W/\"{info.LastWriteTimeUtc.Ticks:x}-{info.Length:x}\"";
+                context.Response.Headers.ETag = etag;
+                if (context.Request.Headers.IfNoneMatch == etag)
                 {
-                    var html = Encoding.UTF8.GetString(content);
-                    var wsProtocol = options.UseHttps ? "wss" : "ws";
-                    var wsUrl = $"{wsProtocol}://{context.Request.Host}/__livereload";
-                    var script = $"<script>{LiveReloadScript.Generate(wsUrl)}</script>";
-                    html = html.Replace("</body>", $"{script}</body>");
-                    content = Encoding.UTF8.GetBytes(html);
+                    context.Response.StatusCode = 304;
+                    return;
                 }
 
-                await context.Response.Body.WriteAsync(content, context.RequestAborted);
+                // 热重载注入（T7.1/T7.3）：HTML 才注入；非 HTML 走 SendFileAsync
+                // 零拷贝（此前 ReadAllBytesAsync 全量进托管内存）
+                if (options.LiveReload && filePath.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                {
+                    var head = await File.ReadAllBytesAsync(filePath, context.RequestAborted);
+                    // SearchValues 定位 </body> 字节序列：命中则分两段夹住脚本写入
+                    //（免去 bytes→UTF8 string→Replace→UTF8 bytes 的三重拷贝）；
+                    // 未命中回退整体直出（无注入点）
+                    var tail = "</body>"u8;
+                    var injectAt = head.AsSpan().LastIndexOf(tail);
+                    if (injectAt >= 0)
+                    {
+                        var wsProtocol = options.UseHttps ? "wss" : "ws";
+                        var wsUrl = $"{wsProtocol}://{context.Request.Host}/__livereload";
+                        var script = $"<script>{LiveReloadScript.Generate(wsUrl)}</script>";
+                        context.Response.ContentLength = head.Length + Encoding.UTF8.GetByteCount(script);
+                        await context.Response.Body.WriteAsync(head.AsMemory(0, injectAt), context.RequestAborted);
+                        await context.Response.WriteAsync(script, context.RequestAborted);
+                        await context.Response.Body.WriteAsync(
+                            head.AsMemory(injectAt), context.RequestAborted);
+                        return;
+                    }
+
+                    context.Response.ContentLength = head.Length;
+                    await context.Response.Body.WriteAsync(head, context.RequestAborted);
+                }
+                else
+                {
+                    await context.Response.SendFileAsync(filePath, context.RequestAborted);
+                }
             }
             else
             {
