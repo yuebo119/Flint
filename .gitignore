@@ -86,3 +86,4 @@ __pycache__/
 !/demo-sites/gallery/static/**
 matrix20/
 theme-verify/
+/tmp/
