@@ -1,0 +1,24 @@
+{
+  "schema": "epsl-history-v1",
+  "recorded": "2026-10-11T13:10+08:00",
+  "source": "dotnet run --project src/Flint.DevTools -c Release -- perf gate",
+  "verdict": "PASS 9/9，无显著劣化",
+  "environment": {
+    "machine": "<machine>",
+    "os": "Windows 10 19045 x64",
+    "cores": 32,
+    "note": "测试套件口径（tests/Flint.PerformanceTests 进程内，三轮中位数），与 AOT 冷构建端到端口径不可混比"
+  },
+  "measurements": {
+    "site_build_100": { "median_ms": 92.0, "baseline_ms": 93.5, "delta_pct": -1.7, "gate": "PASS" },
+    "site_build_500": { "median_ms": 397.3, "baseline_ms": 413.3, "delta_pct": -3.9, "gate": "PASS" },
+    "site_build_1000": { "median_ms": 747.9, "baseline_ms": 744.0, "delta_pct": 0.5, "gate": "PASS" },
+    "site_build_10000": { "median_ms": 6951.7, "baseline_ms": 6694.0, "delta_pct": 3.8, "gate": "PASS" },
+    "complex_theme_1000": { "median_ms": 454.6, "baseline_ms": 456.6, "delta_pct": -0.4, "gate": "PASS" },
+    "incremental_build": { "median_ms": 78.5, "baseline_ms": 76.0, "delta_pct": 3.3, "gate": "PASS" },
+    "markdown_parse_1000": { "median_ms": 4.4, "baseline_ms": 4.2, "delta_pct": 4.0, "gate": "PASS" },
+    "template_render_1000": { "median_ms": 15.7, "baseline_ms": 15.0, "delta_pct": 4.7, "gate": "PASS" },
+    "concurrent_build": { "median_ms": 714.5, "baseline_ms": 680.7, "delta_pct": 5.0, "gate": "PASS" }
+  },
+  "epsl": { "milestone": "T1.5 首批基线数据点", "curve": "数据点以 epsl-history-v1 累积；≥3 点后可用 perf-template/tools/curve.py 适配出图" }
+}
