@@ -849,7 +849,7 @@ public sealed partial class BuiltinTemplateFunctions
     /// （CLI 发布布局：Flint.exe 与 dart-sass.win-x64/ 同级）→ PATH 上的 sass →
     /// 进程目录向上找 tools/dart-sass/sass.bat（仓库工具布局）
     /// </summary>
-    private static string? LocateSassExecutable()
+    internal static string? LocateSassExecutable()
     {
         if (_sassExePath is not null)
         {

@@ -40,23 +40,47 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
         var sourceContent = Encoding.UTF8.GetString(sassFile.Content.Span);
         var compileOptions = CreateCompileOptions(sassFile, options);
 
-        CompilationResult result;
-        await _compileLock.WaitAsync(cancellationToken);
+        string cssContent;
         try
         {
-            result = await Task.Run(() =>
+            CompilationResult result;
+            await _compileLock.WaitAsync(cancellationToken);
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                return _compiler.Value.Compile(sourceContent, sassFile.SourcePath, compileOptions);
-            }, cancellationToken);
+                result = await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return _compiler.Value.Compile(sourceContent, sassFile.SourcePath, compileOptions);
+                }, cancellationToken);
+            }
+            finally
+            {
+                _compileLock.Release();
+            }
+
+            cssContent = result.CompiledContent;
         }
-        finally
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _compileLock.Release();
+            // T5.1：裁剪发布下 DartSassHost 反射初始化即抛（"Reflection-based
+            // serialization has been disabled"）——assets/ 目录的 SCSS 此前全部退化为
+            // 直通不编译，而渲染期 css.Sass 走外部 dart-sass CLI 正常。回退同一 CLI
+            // 定位链（FLINT_SASS → PATH → 进程目录 dart-sass*/）补齐分裂；
+            // CLI 也不可用时重抛，交由 AssetPipeline 的 IsFallback 直通语义处理
+            var cliCss = TryCompileViaCli(
+                sourceContent, sassFile.SourcePath,
+                indented: sassFile.Extension == ".sass",
+                compressed: options.OutputStyle == SassOutputStyle.Compressed,
+                cancellationToken);
+            if (cliCss is null)
+            {
+                throw;
+            }
+
+            cssContent = cliCss;
         }
 
         stopwatch.Stop();
-        var cssContent = result.CompiledContent;
 
         if (options.Minify && options.OutputStyle != SassOutputStyle.Compressed)
             cssContent = MinifyCss(cssContent);
@@ -64,11 +88,7 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
         var outputPath = GenerateOutputPath(sassFile.SourcePath);
         // source map 局限：ProcessedAsset 是单文件产物模型，map 内容无法随产物落地；
         // 此前写 sourceMappingURL 注释但 map 文件不存在，浏览器端表现为 404——
-        // 在管线支持多文件产物之前省略引用注释
-        if (options.GenerateSourceMap && !string.IsNullOrEmpty(result.SourceMap))
-        {
-            _ = result.SourceMap;
-        }
+        // 在管线支持多文件产物之前省略引用注释（T5.1 CLI 回退路径不产 source map）
 
         var contentBytes = Encoding.UTF8.GetBytes(cssContent);
         var content = new ReadOnlyMemory<byte>(contentBytes);
@@ -215,6 +235,65 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
             _compiler.Value.Dispose();
         _compileLock.Dispose();
         _disposed = true;
+    }
+
+    /// <summary>
+    /// 经外部 dart-sass CLI 以 stdin 模式编译（T5.1 回退路径）。
+    /// 返回 null = CLI 不可用或编译失败（调用方重抛宿主异常走直通）
+    /// </summary>
+    private static string? TryCompileViaCli(
+        string content, string sourcePath, bool indented, bool compressed, CancellationToken ct)
+    {
+        var sass = Flint.Core.Templates.BuiltinTemplateFunctions.LocateSassExecutable();
+        if (sass is null)
+        {
+            return null;
+        }
+
+        var args = (compressed ? "--style=compressed " : "") + "--no-source-map --quiet "
+                   + (indented ? "--indented " : "") + "--stdin";
+        if (!string.IsNullOrEmpty(sourcePath))
+        {
+            var loadPath = Path.GetDirectoryName(Path.GetFullPath(sourcePath));
+            if (!string.IsNullOrEmpty(loadPath))
+            {
+                args += " --load-path=\"" + loadPath + "\"";
+            }
+        }
+
+        try
+        {
+            using var process = new System.Diagnostics.Process
+            {
+                StartInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ? "cmd.exe" : sass,
+                    Arguments = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)
+                        ? "/c \"\"" + sass + "\" " + args + "\""
+                        : args,
+                    UseShellExecute = false,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                },
+                EnableRaisingEvents = false,
+            };
+
+            process.Start();
+            var inputTask = process.StandardInput.WriteAsync(content);
+            var outputTask = process.StandardOutput.ReadToEndAsync(ct);
+            var errorTask = process.StandardError.ReadToEndAsync(ct);
+            inputTask.Wait(ct);
+            process.StandardInput.Close();
+            process.WaitForExit(120_000);
+
+            return process.ExitCode == 0 ? outputTask.Result : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 }
 

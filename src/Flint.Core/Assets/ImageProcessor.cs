@@ -180,20 +180,21 @@ public sealed class ImageProcessor : IImageProcessor
     }
 
     /// <summary>
-    /// 加载图像
+    /// 加载图像（T5.2：非泛型加载保留**源像素格式**——JPEG 解码为 L8/RGB24（1-3B/px），
+    /// 此前恒定 Rgba32 全量物化 4B/px，R6 批次 4.1 实测图片语料内存 +68%）
     /// </summary>
-    private static async Task<Image<Rgba32>> LoadImageAsync(
+    private static async Task<Image> LoadImageAsync(
         ReadOnlyMemory<byte> content,
         CancellationToken cancellationToken)
     {
         using var stream = new MemoryStream(content.ToArray());
-        return await Image.LoadAsync<Rgba32>(stream, cancellationToken);
+        return await Image.LoadAsync(stream, cancellationToken);
     }
 
     /// <summary>
     /// 应用图像变换
     /// </summary>
-    private static void ApplyTransformations(Image<Rgba32> image, ImageProcessingOptions options)
+    private static void ApplyTransformations(Image image, ImageProcessingOptions options)
     {
         // 如果指定了尺寸，进行缩放
         if (options.Width.HasValue || options.Height.HasValue)
@@ -284,7 +285,7 @@ public sealed class ImageProcessor : IImageProcessor
     /// 编码图像
     /// </summary>
     private static async Task<(ReadOnlyMemory<byte> Content, string MediaType, string Extension)> EncodeImageAsync(
-        Image<Rgba32> image,
+        Image image,
         ImageFormat format,
         int quality,
         string originalExtension,
