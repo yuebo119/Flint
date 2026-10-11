@@ -60,6 +60,12 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
     //（DoIt 主题 22 处实测，触发点 resources.get）。双重检查加锁
     private readonly Lock _indexGate = new();
 
+    // 文本内容缓存（mtime 验效，FileTemplateLoader._textCache 同款模式）：
+    // resources.Get/Match/ByType 高频重入下免全文读盘——mtime 变更自动失效，
+    // serve 模式热更新语义保留（blowfish 单构建 9313 次重复读盘实测，地毯审计 #3）
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Text, DateTime MtimeUtc)> _textCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public FileSystemResourceProvider(string baseUrl, params string[] assetRoots)
     {
         BaseUrl = baseUrl.TrimEnd('/');
@@ -171,8 +177,15 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
         var list = new List<TemplateResource>();
         foreach (var (rel, full) in _index)
         {
+            // 先以零 IO 探针判型（Create 纯按扩展名判型，与 Load 返回实例一致），
+            // 命中才 Load 读文本——原序对全索引逐条读盘后才过滤（地毯审计 #5）
+            var probe = TemplateResource.Create(rel, "", BaseUrl);
+            if (!probe.ResourceType.Equals(resourceType, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
             var r = Load(rel, full);
-            if (r is not null && r.ResourceType.Equals(resourceType, StringComparison.OrdinalIgnoreCase))
+            if (r is not null)
             {
                 list.Add(r);
             }
@@ -196,7 +209,13 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
                 return res.WithSourcePath(full);
             }
 
+            var mtime = File.GetLastWriteTimeUtc(full);
+            if (_textCache.TryGetValue(full, out var cachedText) && cachedText.MtimeUtc == mtime)
+            {
+                return TemplateResource.Create(rel, cachedText.Text, BaseUrl).WithSourcePath(full);
+            }
             var text = File.ReadAllText(full);
+            _textCache[full] = (text, mtime);
             return TemplateResource.Create(rel, text, BaseUrl).WithSourcePath(full);
         }
         catch (IOException)
@@ -209,8 +228,15 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
         }
     }
 
-    /// <summary>Hugo glob → 正则（** 跨目录，* 限单段，? 单字符）</summary>
-    internal static Regex GlobToRegex(string pattern)
+    /// <summary>Hugo glob → 正则（** 跨目录，* 限单段，? 单字符）；按模式缓存
+    ///（Match 每调用重建解释型正则，地毯审计 #5）</summary>
+    internal static Regex GlobToRegex(string pattern) =>
+        GlobRegexCache.GetOrAdd(pattern, static p => BuildGlobRegex(p));
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> GlobRegexCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static Regex BuildGlobRegex(string pattern)
     {
         var p = pattern.Replace('\\', '/').TrimStart('/');
         var sb = new System.Text.StringBuilder("^");
@@ -250,6 +276,23 @@ public sealed partial class BuiltinTemplateFunctions
     // 触发点：plugin/fontawesome.html 生成资源）。加锁保护写入；
     // 读取（GeneratedResources）在渲染完成后单线程进行，无需锁
     private readonly Lock _generatedGate = new();
+
+    // fileExists 结果缓存（构建级）：主题守卫 partial 每页重放同一常量路径探测
+    //（fixit 单构建 1865 次实测，地毯审计 #6）。构建入口（InvalidateMtimeCache）
+    // 清空——文件增删在下次增量构建重新探测，watch 热更新语义保持
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _fileExistsCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    internal void InvalidateFileExistsCache() => _fileExistsCache.Clear();
+
+    private bool FileExistsCached(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return false;
+        }
+        return _fileExistsCache.GetOrAdd(path, static p => File.Exists(p) || Directory.Exists(p));
+    }
 
     /// <summary>本实例产生的模板资源产物（Concat/FromString 结果），供输出阶段落盘</summary>
     public IReadOnlyList<TemplateResource> GeneratedResources => _generated;
@@ -426,24 +469,34 @@ public sealed partial class BuiltinTemplateFunctions
             }
 
             var sb = new System.Text.StringBuilder();
+            // 键按成员身份链构造（各成员摘要走按源记忆化），不对拼接产物做全量
+            // SHA256——joined 每次新拼引用不稳，blowfish 实测 3070 次/构建是
+            // digest 大头（地毯审计 #4 收尾）。非资源成员拼空内容，键零贡献
+            var keyBuilder = new System.Text.StringBuilder("concat|").Append(target).Append('|');
             foreach (var it in args.Skip(itemStart))
             {
                 var r = TemplateResource.FromScriptObject(it);
                 if (r is not null)
                 {
+                    AppendMemberKey(keyBuilder, r);
                     sb.Append(r.Content);
                 }
                 else if (it is System.Collections.IEnumerable en and not string)
                 {
                     foreach (var inner in en)
                     {
-                        sb.Append(TemplateResource.FromScriptObject(inner)?.Content ?? "");
+                        var ir = TemplateResource.FromScriptObject(inner);
+                        if (ir is not null)
+                        {
+                            AppendMemberKey(keyBuilder, ir);
+                            sb.Append(ir.Content);
+                        }
                     }
                 }
             }
             var joined = sb.ToString();
             var result = CachedByKey(
-                $"concat|{target}|{joined.Length}:{ContentDigest(joined)}",
+                keyBuilder.ToString(),
                 () => TemplateResource.Create(target, joined, provider.BaseUrl));
             Track(result);
             return result.ToScriptObject();
@@ -729,9 +782,11 @@ public sealed partial class BuiltinTemplateFunctions
                 // 进程单次 ~1-2s，每页重跑时 700 页必然超时
                 var loadPath = Path.GetDirectoryName(r.SourcePath!);
                 var indented = ext == ".sass";
-                // 变量摘要进缓存键：同一 scss 不同 vars 的产出不可互相复用
+                // 变量摘要进缓存键：同一 scss 不同 vars 的产出不可互相复用；
+                // 内容摘要走按源记忆化（css 引用在资源文本缓存命中时稳定，
+                // 命中即免每次键构造的全量 SHA256——blowfish 实测 digest 大头）
                 css = CachedText(
-                    $"css.sass|{loadPath}|{indented}|{VarsDigest(varsMap, varsInternal)}|{css.Length}:{ContentDigest(css)}",
+                    $"css.sass|{loadPath}|{indented}|{VarsDigest(varsMap, varsInternal)}|{css.Length}:{ContentDigestCached(r.SourcePath!, css)}",
                     () => TryCompileWithSassCli(css, loadPath, indented: indented,
                         vars: varsMap, varsInternal: varsInternal) ?? css);
             }
@@ -3669,8 +3724,35 @@ public sealed partial class BuiltinTemplateFunctions
         var content = source.Content ?? "";
         var identity = source.SourcePath is { Length: > 0 } sp ? sp : source.Name ?? "";
         return CachedByKey(
-            $"{kind}|{optionsKey}|{identity}|{content.Length}:{ContentDigest(content)}",
+            $"{kind}|{optionsKey}|{identity}|{content.Length}:{ContentDigestCached(identity, content)}",
             transform);
+    }
+
+    // ContentDigest 的按源记忆化：变换缓存（toCSS/Minify/Fingerprint/css.Sass）的键
+    // 构造在**命中路径**也对全内容 UTF8+SHA256（blowfish 单构建 230MB 哈希实测，
+    // 地毯审计 #4）——文本缓存命中时同一资源的 Content 是同一 string 引用，
+    // ReferenceEquals 命中即免哈希；内容更新（新引用）自动重算
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string? Content, string Digest)> _digestCache =
+        new(StringComparer.Ordinal);
+
+    private string ContentDigestCached(string identity, string content)
+    {
+        if (_digestCache.TryGetValue(identity, out var hit) && ReferenceEquals(hit.Content, content))
+        {
+            return hit.Digest;
+        }
+        var digest = ContentDigest(content);
+        _digestCache[identity] = (content, digest);
+        return digest;
+    }
+
+    /// <summary>Concat 缓存键的成员段：身份 + 长度 + 按源记忆化摘要</summary>
+    private void AppendMemberKey(System.Text.StringBuilder kb, TemplateResource r)
+    {
+        var identity = r.SourcePath is { Length: > 0 } sp ? sp : (r.Name ?? "");
+        var content = r.Content ?? "";
+        kb.Append(identity).Append(':').Append(content.Length).Append(':')
+            .Append(ContentDigestCached(identity, content)).Append('|');
     }
 
     /// <summary>内容摘要（SHA-256 前 8 字节十六进制）——摘要碰撞即错配缓存产物，用 SHA-256 保底</summary>

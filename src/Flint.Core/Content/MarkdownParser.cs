@@ -293,41 +293,78 @@ public sealed partial class MarkdownParser : IMarkdownParser
     }
 
     /// <summary>
-    /// P4 优化：检测内容是否需要完整管道
+    /// P4 优化：检测内容是否需要完整管道（单遍围栏感知扫描）
     /// </summary>
-    private static bool NeedsFullPipeline(string markdown)
+    internal static bool NeedsFullPipeline(string markdown)
     {
-        // 快速检测是否包含需要完整管道的特性
-        // 使用 Contains 进行简单检测
-
-        // 数学公式（$...$）- 单个 $ 符号即可触发
-        if (markdown.Contains('$'))
-            return true;
-
-        // 脚注（[^...）
-        if (markdown.Contains("[^"))
-            return true;
-
-        // 自定义容器（:::）
-        if (markdown.Contains(":::"))
-            return true;
-
-        // 缩写定义（*[...）
-        if (markdown.Contains("*["))
-            return true;
-
-        // 定义列表（: 开头的行）
-        if (markdown.Contains("\n: ") || markdown.StartsWith(": "))
-            return true;
-
-        // 网格表格（+---+）
-        if (markdown.Contains("+---"))
-            return true;
-
-        // 图表（```mermaid）
-        if (markdown.Contains("```mermaid"))
-            return true;
-
+        // fenced code block 内的标记（shell 提示符 $ 等）不触发全管道：MDN 语料
+        // 粗口径 15.3% 的 $ 命中 99% 在围栏内（3000 样本围栏外仅 5 文件，地毯
+        // 审计 #7 实测）——误切全管道是数倍解析成本的放大器。顶格 ``` 切换围栏
+        // 状态（缩进 fence 不识别，方向保守：多触发不少触发）
+        var inFence = false;
+        var lineStart = true;
+        var i = 0;
+        while (i < markdown.Length)
+        {
+            var c = markdown[i];
+            if (c == '\n')
+            {
+                lineStart = true;
+                i++;
+                continue;
+            }
+            if (lineStart && c == '`' &&
+                i + 2 < markdown.Length && markdown[i + 1] == '`' && markdown[i + 2] == '`')
+            {
+                // fence 开始/结束行：开始行的 info string 为 mermaid 直接命中
+                //（mermaid 块本身要求全管道）；跳过整行切换围栏状态
+                var lineEnd = markdown.IndexOf('\n', i);
+                if (lineEnd < 0)
+                {
+                    lineEnd = markdown.Length;
+                }
+                if (!inFence)
+                {
+                    var info = markdown.AsSpan(i + 3, lineEnd - i - 3).Trim();
+                    if (info.SequenceEqual("mermaid"))
+                    {
+                        return true;
+                    }
+                }
+                inFence = !inFence;
+                i = lineEnd + 1;
+                lineStart = true;
+                continue;
+            }
+            if (lineStart)
+            {
+                lineStart = false;
+                // 行首定义列表（": "，含文件首行 StartsWith 形态）
+                if (!inFence && c == ':' && i + 1 < markdown.Length && markdown[i + 1] == ' ')
+                {
+                    return true;
+                }
+            }
+            if (!inFence)
+            {
+                switch (c)
+                {
+                    case '$':
+                        return true;
+                    case '[' when i + 1 < markdown.Length && markdown[i + 1] == '^':
+                        return true;
+                    case '*' when i + 1 < markdown.Length && markdown[i + 1] == '[':
+                        return true;
+                    case ':' when i + 2 < markdown.Length &&
+                                 markdown[i + 1] == ':' && markdown[i + 2] == ':':
+                        return true;
+                    case '+' when i + 3 < markdown.Length &&
+                                 markdown[i + 1] == '-' && markdown[i + 2] == '-' && markdown[i + 3] == '-':
+                        return true;
+                }
+            }
+            i++;
+        }
         return false;
     }
     /// <inheritdoc />

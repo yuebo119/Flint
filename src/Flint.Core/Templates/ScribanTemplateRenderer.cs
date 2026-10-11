@@ -2050,6 +2050,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     {
         _mtimeCache.Clear();
         _lookup?.Invalidate();
+        // fileExists 结果随构建入口失效（文件增删在下次构建重新探测）
+        _builtinFunctions.InvalidateFileExistsCache();
     }
 
     /// <summary>

@@ -2,6 +2,7 @@
 // Front Matter 解析器——字典映射部分：FrontMatter 与字典的双向转换
 // （从 FrontMatterParser.cs 按 partial 拆出）
 
+using System.Collections.Frozen;
 using Flint.Core.Abstractions;
 using Flint.Core.Models;
 
@@ -335,24 +336,26 @@ public sealed partial class FrontMatterParser
         };
     }
 
+    // 标准字段集（FrozenSet 常量：本方法在每个内容文件的 FM 转换路径上，
+    // 原 HashSet 每调用重建 26 键——地毯审计 #21，Reader.SimpleScalarKeys 同族先例）
+    // 日期别名键（modified/unpublishdate/pubdate/published）：解析端均会生效，
+    // 不剔除则同一值既进别名字段又泄漏进 params，写回后持久重复
+    private static readonly System.Collections.Frozen.FrozenSet<string> StandardFrontMatterKeys = new[]
+    {
+        "title", "date", "lastmod", "draft", "expirydate", "publishdate",
+        "modified", "unpublishdate", "pubdate", "published",
+        "tags", "categories", "layout", "slug", "aliases", "description",
+        "summary", "weight", "author", "authors", "keywords", "type",
+        "outputs", "menu", "cascade"
+    }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+
     private static Dictionary<string, object> GetDictParams(Dictionary<string, object> dict)
     {
         // 收集所有非标准字段作为 params
-        var standardKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            "title", "date", "lastmod", "draft", "expirydate", "publishdate",
-            // 日期别名键：解析端 modified/unpublishdate/pubdate/published 均会生效，
-            // 不剔除则同一值既进别名字段又泄漏进 params，写回后持久重复
-            "modified", "unpublishdate", "pubdate", "published",
-            "tags", "categories", "layout", "slug", "aliases", "description",
-            "summary", "weight", "author", "authors", "keywords", "type",
-            "outputs", "menu", "cascade"
-        };
-
         var result = new Dictionary<string, object>();
         foreach (var kvp in dict)
         {
-            if (!standardKeys.Contains(kvp.Key))
+            if (!StandardFrontMatterKeys.Contains(kvp.Key))
             {
                 result[kvp.Key] = kvp.Value;
             }

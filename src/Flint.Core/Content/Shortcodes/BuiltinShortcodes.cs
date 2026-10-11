@@ -191,7 +191,7 @@ public sealed class FigureShortcode : ShortcodeProcessorBase
 /// highlight 短代码 - 代码高亮
 /// 用法: {{&lt; highlight go "linenos=table,hl_lines=8 15-17" &gt;}}代码{{&lt; /highlight &gt;}}
 /// </summary>
-public sealed class HighlightShortcode : ShortcodeProcessorBase
+public sealed partial class HighlightShortcode : ShortcodeProcessorBase
 {
     /// <inheritdoc />
     public override string Name => "highlight";
@@ -234,6 +234,12 @@ public sealed class HighlightShortcode : ShortcodeProcessorBase
         return ValueTask.FromResult(sb.ToString());
     }
 
+    /// <summary>hl_lines 参数模式（T1.4 第十处：运行时 Regex 改 source-gen，地毯审计 #22）</summary>
+    [System.Text.RegularExpressions.GeneratedRegex(
+        @"hl_lines\s*=\s*[""']?([^""'\s,]+)[""']?",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex HighlightLinesPattern();
+
     /// <summary>
     /// 解析高亮行配置
     /// </summary>
@@ -242,10 +248,7 @@ public sealed class HighlightShortcode : ShortcodeProcessorBase
         var lines = new List<int>();
 
         // 查找 hl_lines 参数
-        var hlMatch = System.Text.RegularExpressions.Regex.Match(
-            options,
-            @"hl_lines\s*=\s*[""']?([^""'\s,]+)[""']?",
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var hlMatch = HighlightLinesPattern().Match(options);
 
         if (!hlMatch.Success)
         {

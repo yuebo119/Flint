@@ -485,11 +485,9 @@ public sealed partial class BuiltinTemplateFunctions
 
         // ---- os ----
         Add("getenv", (string? name) => Environment.GetEnvironmentVariable(name ?? "") ?? "");
-        Add("file_exists", (string? p) =>
-            !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p)));
+        Add("file_exists", (string? p) => FileExistsCached(p));
         // Hugo 的全局 camelCase 形态（主题直接写 fileExists，不经 os. 命名空间）
-        Add("fileExists", (string? p) =>
-            !string.IsNullOrEmpty(p) && (File.Exists(p) || Directory.Exists(p)));
+        Add("fileExists", (string? p) => FileExistsCached(p));
         Add("read_file", (string? p) =>
             !string.IsNullOrEmpty(p) && File.Exists(p) ? File.ReadAllText(p) : "");
         Add("read_dir", (string? p) =>

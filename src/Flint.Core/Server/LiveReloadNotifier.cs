@@ -20,6 +20,8 @@ public sealed class LiveReloadNotifier : ILiveReloadNotifier, IDisposable
     // WebSocket 不允许对同一 socket 并发 SendAsync——广播必须串行化，
     // 否则并发通知互相抛 InvalidOperationException，健康客户端被误标 dead 移除
     private readonly SemaphoreSlim _broadcastLock = new(1, 1);
+    // 单客户端发送超时：超时按死客户端摘除，防挂起对端持锁冻结整条热重载链
+    private static readonly TimeSpan BroadcastSendTimeout = TimeSpan.FromSeconds(2);
     private bool _isDisposed;
 
     /// <inheritdoc />
@@ -170,18 +172,28 @@ public sealed class LiveReloadNotifier : ILiveReloadNotifier, IDisposable
                 {
                     if (socket.State == WebSocketState.Open)
                     {
+                        // 单发送超时守卫：挂起客户端（TCP 窗口满/死代理）无限等待会
+                        // 持锁冻结整条热重载链——StopAsync 路径有 5s 保护，广播没有
+                        //（地毯审计 #28）
+                        using var sendTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        sendTimeout.CancelAfter(BroadcastSendTimeout);
                         await socket.SendAsync(
                             segment,
                             WebSocketMessageType.Text,
                             endOfMessage: true,
-                            cancellationToken);
+                            sendTimeout.Token);
                     }
                     else
                     {
                         deadClients.Add(clientId);
                     }
                 }
-                catch
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // 超时触发（外层取消向上传播，不在此吞）
+                    deadClients.Add(clientId);
+                }
+                catch (Exception ex) when (ex is WebSocketException or IOException or ObjectDisposedException)
                 {
                     deadClients.Add(clientId);
                 }

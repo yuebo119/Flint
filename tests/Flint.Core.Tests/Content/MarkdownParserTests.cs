@@ -22,6 +22,33 @@ public class MarkdownParserTests
     #region ToHtml 基础测试
 
     [Fact]
+    public void NeedsFullPipeline_围栏内标记_不触发全管道()
+    {
+        // fenced code block 内的 $（shell 提示符）不触发数学公式全管道：
+        // MDN 语料粗口径 15.3% 的 $ 命中 99% 在围栏内（3000 样本围栏外仅 5
+        // 文件，地毯审计 #7）——旧实现 Contains('$') 对本用例返回 true
+        Assert.False(MarkdownParser.NeedsFullPipeline("```\n$ npm install\n```\nplain"));
+        Assert.False(MarkdownParser.NeedsFullPipeline("```js\nconst a = `$x`;\n```\ntext"));
+        Assert.False(MarkdownParser.NeedsFullPipeline("```bash\n$ echo hi\n```\n```js\nlet b = 1;\n```"));
+        Assert.False(MarkdownParser.NeedsFullPipeline("no markers at all\nsecond line"));
+        // 围栏闭合后正文标记仍要触发（防止围栏状态吞掉后续检测）
+        Assert.True(MarkdownParser.NeedsFullPipeline("```\nfoo\n```\n$x$"));
+    }
+
+    [Fact]
+    public void NeedsFullPipeline_八标记形态_围栏外全部触发()
+    {
+        Assert.True(MarkdownParser.NeedsFullPipeline("$x^2$ inline math"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("text [^1] footnote"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("::: warning\ncontent\n:::"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("an *[HTML] abbreviation"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("term\n: definition"));
+        Assert.True(MarkdownParser.NeedsFullPipeline(": first line definition"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("+---+---+\n| a | b |"));
+        Assert.True(MarkdownParser.NeedsFullPipeline("```mermaid\ngraph TD\n```"));
+    }
+
+    [Fact]
     public void ToHtml_空字符串_返回空字符串()
     {
         // Arrange
