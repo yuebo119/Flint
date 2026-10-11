@@ -571,6 +571,16 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         /// 故由站点渲染入口统一登记
         /// </summary>
         public Flint.Core.Abstractions.SiteContext? CurrentSite { get; set; }
+
+        /// <summary>构建级共享的 i18n 函数（T3.4）：只依赖构建翻译表，每构建一个、
+        /// 全部页面复用（原每页 new 一次）</summary>
+        public I18nFunction? SharedI18nFunction { get; set; }
+
+        /// <summary>构建级共享的 templates.Exists 探测函数（T3.4，无构建态）</summary>
+        public TemplateExistsFunction? SharedTemplateExistsFunction { get; set; }
+
+        /// <summary>构建级共享的 partialCached/includeCached 函数（T3.4，无页面态）</summary>
+        public PartialCachedFunction? SharedPartialCachedFunction { get; set; }
     }
 
     private static readonly AsyncLocal<BuildRenderState> BuildScope = new();
@@ -2357,8 +2367,14 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // i18n 翻译函数（主题系统 P3）：按站点 Translations 查键，缺键返回空串（对齐 Hugo）。
         // IScriptCustomFunction 显式实现（不经反射，AOT 安全——PartialCachedFunction 同模式）；
         // 捕获本页 siteContext 的翻译表，随 SiteContext 每构建装配
+        // 构建级函数对象共享化（T3.4）：i18n/template_exists/partialCached 只依赖
+        // 构建级数据，经 BuildRenderState 每构建一次、全部页面复用（原每页 new 三个）
+        var scopeState = Scope;
+        scopeState.SharedI18nFunction ??= new I18nFunction(context.Site.Translations);
+        scopeState.SharedTemplateExistsFunction ??= new TemplateExistsFunction((FileTemplateLoader)_templateLoader);
+        scopeState.SharedPartialCachedFunction ??= new PartialCachedFunction(this);
         globals.TrySetValue(scribanContext, default, "i18n",
-            new I18nFunction(context.Site.Translations), readOnly: true);
+            scopeState.SharedI18nFunction, readOnly: true);
 
         // 内容视图函数（主题兼容批次二 #7，对齐 Hugo .Render "view"）：
         // 按当前页查找视图模板（{section}/{view} → {view}）并渲染当前页上下文
@@ -2383,11 +2399,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             new PartialRetSetFunction(), readOnly: true);
         // templates.Exists 接真实 loader（覆盖全局的恒真实现）
         globals.TrySetValue(scribanContext, default, "template_exists",
-            new TemplateExistsFunction((FileTemplateLoader)_templateLoader), readOnly: true);
+            scopeState.SharedTemplateExistsFunction, readOnly: true);
         globals.TrySetValue(scribanContext, default, "includeCached",
-            new PartialCachedFunction(this), readOnly: true);
+            scopeState.SharedPartialCachedFunction, readOnly: true);
         globals.TrySetValue(scribanContext, default, "include_cached",
-            new PartialCachedFunction(this), readOnly: true);
+            scopeState.SharedPartialCachedFunction, readOnly: true);
         scribanContext.PushGlobal(globals);
         return scribanContext;
     }
@@ -2436,14 +2452,34 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             return "";
         }
 
-        public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
+        public async System.Threading.Tasks.ValueTask<object?> InvokeAsync(
             Scriban.TemplateContext context,
             Scriban.Syntax.ScriptNode? callerContext,
             Scriban.Runtime.ScriptArray arguments,
             Scriban.Syntax.ScriptBlockStatement? blockStatement)
         {
-            return new System.Threading.Tasks.ValueTask<object?>(
-                Invoke(context, callerContext, arguments, blockStatement));
+            // 真异步路径（T3.3）：Scriban 对异步函数调用走本方法——此前回退同步
+            // Invoke 在异步渲染链上 GetResult 阻塞（高并行度下的线程池饥饿隐患）。
+            // 候选探测逻辑与同步版一致，命中即异步渲染返回
+            var view = arguments.Count > 0 ? arguments[0]?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(view))
+            {
+                return "";
+            }
+
+            var receiver = arguments.Count >= 2 && arguments[1] is LazyPageObject receiverObj
+                ? receiverObj.PageContext
+                : page;
+
+            foreach (var candidate in ViewCandidates(receiver.SourcePath, view))
+            {
+                if (renderer.TemplateExistsExact(candidate))
+                {
+                    var childCtx = new FlintTemplateContext { Page = receiver, Site = site };
+                    return await renderer.RenderAsync(candidate, childCtx);
+                }
+            }
+            return "";
         }
 
         public int RequiredParameterCount => 1;

@@ -2300,46 +2300,39 @@ public sealed partial class ScribanTemplateRenderer
             _pages = pages;
             // 集合方法（Hugo Pages 方法族）：主题在集合上调用，如
             // {{ range .Pages.ByDate }} / {{ .Site.RegularPages.Related . }} / {{ first 5 .Pages }}
-            // 集合方法（Hugo Pages 方法族）：主题在集合上调用，如
-            // {{ range .Pages.ByDate }} / {{ .Site.RegularPages.Related . }}。
-            // Scriban 成员查找不区分大小写，单一注册即可覆盖 ByDate/by_date 两种写法
-            SetValue("bydate", new PagesByDateFunction(pages), false);
-            SetValue("bytitle", new PagesByTitleFunction(pages), false);
+            // Scriban 成员查找不区分大小写，单一注册即可覆盖 ByDate/by_date 两种写法。
+            // 同类函数单实例多键注册（T3.5）：bydate/bypublishdate/byexpirydate 共享一个
+            // PagesByDateFunction（原 new 三次）
+            var byDate = new PagesByDateFunction(pages);
+            var byTitle = new PagesByTitleFunction(pages);
+            var groupByDate = new PagesGroupByDateFunction(pages);
+            SetValue("bydate", byDate, false);
+            SetValue("bytitle", byTitle, false);
             SetValue("byweight", new PagesByWeightFunction(pages), false);
             SetValue("bylength", new PagesByLengthFunction(pages), false);
             SetValue("bylastmod", new PagesByLastmodFunction(pages), false);
-            SetValue("bypublishdate", new PagesByDateFunction(pages), false);
-            SetValue("byexpirydate", new PagesByDateFunction(pages), false);
+            SetValue("bypublishdate", byDate, false);
+            SetValue("byexpirydate", byDate, false);
             SetValue("byparam", new PagesByParamFunction(pages), false);
-            SetValue("bylinktitle", new PagesByTitleFunction(pages), false);
+            SetValue("bylinktitle", byTitle, false);
             SetValue("related", new PagesRelatedFunction(pages), false);
             SetValue("reverse", new PagesReverseFunction(pages), false);
             SetValue("limit", new PagesLimitFunction(pages), false);
             SetValue("groupby", new PagesGroupByFunction(pages), false);
-            SetValue("groupbydate", new PagesGroupByDateFunction(pages), false);
+            SetValue("groupbydate", groupByDate, false);
             // Hugo 方法名的下划线拼写别名：转换器对链式方法名有两条归一化路径，
             // 一条产出折叠形（groupbydate）、一条产出下划线形（group_by_publish_date，
             // monochrome 的 list.html 实测 "The function `page?.pages?.group_by_publish_date`
             // was not found" 20 处）。Scriban 成员查找不区分大小写但**不**忽略下划线，
             // 故两种拼写都要注册。
-            // 这里**系统化**补齐：遍历已注册成员，为折叠形补 snake_case 形态
-            //（bypublishdate → by_publish_date）——手写别名必漏，而漏掉的形态不报错、
-            //  只是静默返回空（monochrome 的 _partials/list.html
-            //  `$pages.by_publish_date?.reverse` 实测：整段列表被静默清空）
-            foreach (var key in Keys.ToList())
+            // snake 别名键对**所有实例相同**（上方注册序列固定）→ 静态预计算一次（T3.5），
+            // 构造期只做引用拷贝，不再每实例跑 ToSnakeCaseKey 遍历
+            foreach (var (collapsed, snake) in SnakeAliasMap)
             {
-                if (key.Length == 0)
-                {
-                    continue;
-                }
-                var snake = ToSnakeCaseKey(key);
-                if (!string.Equals(snake, key, StringComparison.Ordinal) && !ContainsKey(snake))
-                {
-                    SetValue(snake, this[key], false);
-                }
+                SetValue(snake, this[collapsed], false);
             }
-            SetValue("groupbypublishdate", new PagesGroupByDateFunction(pages), false);
-            SetValue("group_by_publish_date", new PagesGroupByDateFunction(pages), false);
+            SetValue("groupbypublishdate", groupByDate, false);
+            SetValue("group_by_publish_date", groupByDate, false);
             SetValue("indexof", new PagesIndexOfFunction(pages), false);
             SetValue("next", new PagesNextPrevFunction(pages, forward: true), false);
             SetValue("prev", new PagesNextPrevFunction(pages, forward: false), false);
@@ -2376,6 +2369,34 @@ public sealed partial class ScribanTemplateRenderer
                     SetValue(snake, spellingValue, false);
                 }
             }
+        }
+
+        /// <summary>
+        /// 折叠形 → snake_case 的静态别名映射（T3.5）：按构造器别名段之前的固定注册
+        /// 序列静态生成一次，全部实例共享。生成规则与原实例期遍历一致：
+        /// ToSnakeCaseKey(key) != key 时补别名（snake 形态均不在显式注册键内，无覆盖冲突）
+        /// </summary>
+        private static readonly List<KeyValuePair<string, string>> SnakeAliasMap = BuildSnakeAliasMap();
+
+        private static List<KeyValuePair<string, string>> BuildSnakeAliasMap()
+        {
+            // 与主构造别名段之前注册的键保持同一序列（新增注册键时同步维护）
+            string[] registered =
+            [
+                "bydate", "bytitle", "byweight", "bylength", "bylastmod",
+                "bypublishdate", "byexpirydate", "byparam", "bylinktitle",
+                "related", "reverse", "limit", "groupby", "groupbydate"
+            ];
+            var map = new List<KeyValuePair<string, string>>();
+            foreach (var key in registered)
+            {
+                var snake = ToSnakeCaseKey(key);
+                if (!string.Equals(snake, key, StringComparison.Ordinal))
+                {
+                    map.Add(new(key, snake));
+                }
+            }
+            return map;
         }
 
         // IList<ScriptObject> 实现 - 用于 Scriban 的 len 过滤器

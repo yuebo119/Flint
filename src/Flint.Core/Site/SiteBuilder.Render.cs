@@ -528,10 +528,19 @@ public sealed partial class SiteBuilder
 
         if (extraTargets.Count > 0)
         {
-            foreach (var batch in extraTargets.Chunk(batchSize))
-            {
-                await RenderBatchAsync(batch, cancellationToken).ConfigureAwait(false);
-            }
+            // 补页并行渲染（T3.2，原串行 Chunk 逐批 await）：补页间无次序依赖
+            //（分页确证已完成，页面级 Store 独立），序号已预分配故确定性不受影响
+            await Parallel.ForEachAsync(
+                extraTargets.Chunk(batchSize),
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = options.Parallelism,
+                    CancellationToken = cancellationToken
+                },
+                async (batch, ct) =>
+                {
+                    await RenderBatchAsync(batch, ct).ConfigureAwait(false);
+                });
         }
 
         // 按确定性序号输出（E7）：并发完成顺序不影响列表顺序与去重胜者
@@ -701,6 +710,10 @@ public sealed partial class SiteBuilder
         CancellationToken cancellationToken)
     {
         var results = new List<RenderedPage>();
+        // 并行渲染段的收集容器（T3.1）：渲染完成后按确定性序号合并进 results
+        var concurrentResults = new ConcurrentBag<RenderedPage>();
+        // TaxonomyFeedContexts 是实例 List 字段（sitemap/feed 消费），并行首屏渲染下加锁保护
+        var feedGate = new object();
 
         // disableKinds 消费点：taxonomy/term 分类页可被配置禁用（对齐 Hugo kind 语义）。
         // 两者独立判定——此前 && 连接，只禁 taxonomy 或只禁 term 单独配置时不生效
@@ -722,7 +735,8 @@ public sealed partial class SiteBuilder
         // 跳转页待确认"该词条/分类页的模板确实分页"（访问过 .Paginate/.Paginator）
         // 再产出——Hugo 的分页页由模板调用驱动，不是站点级预生成
         var deferred = new List<TaxonomyPageInfo>();
-        var firstPages = new List<TaxonomyPageInfo>();
+        var firstRenders = new List<(TaxonomyPageInfo Page, int Seq)>();
+        var seqCounter = TaxonomySequenceBase;
         foreach (var taxPage in taxonomyPages)
         {
             // 列表页（无 TermName）受 "taxonomy" 控制，term 页受 "term" 控制
@@ -735,12 +749,29 @@ public sealed partial class SiteBuilder
                 deferred.Add(taxPage);
                 continue;
             }
-            await RenderTaxonomyPageAsync(taxPage).ConfigureAwait(false);
-            firstPages.Add(taxPage);
+            // 序号在进入并行渲染前预分配（T3.1）：循环顺序确定 → 序确定，
+            // 并发完成顺序不影响产物顺序与去重胜者
+            firstRenders.Add((taxPage, seqCounter++));
         }
 
+        // 首屏页并行渲染（T3.1，原完全串行）：页间无次序依赖——页面级 Store
+        // 每页独立实例（LazyPageObject 构造期建），home-first 的跨页写读次序约束
+        // 只存在于第 8 阶段且已单独处理；Scriban 渲染路径并发安全（第 8 阶段
+        // 同机制已并行）
+        await Parallel.ForEachAsync(
+            firstRenders,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, options.Parallelism),
+                CancellationToken = cancellationToken
+            },
+            async (entry, ct) =>
+            {
+                await RenderTaxonomyPageAsync(entry.Page, entry.Seq, ct).ConfigureAwait(false);
+            });
+
         // `/page/1/` 跳转页：模板确实分页的 term/分类列表页都要（与总页数无关）
-        foreach (var firstPage in firstPages)
+        foreach (var (firstPage, _) in firstRenders)
         {
             var baseRel = BaseRelPermalinkOf(firstPage);
             if (!ScribanTemplateRenderer.WasPaginateInvoked(baseRel))
@@ -753,11 +784,12 @@ public sealed partial class SiteBuilder
                     $"{baseRel.TrimEnd('/')}/{config.PaginatePath}/1/", OutputFormats.Html, options.OutputPath),
                 Content = BuildPaginationRedirectPage($"{config.BaseURL.TrimEnd('/')}{baseRel}"),
                 // 高段位确定性序号（E7）：分类页段从 10⁹ 起，去重时不与主渲染序抢胜
-                Sequence = TaxonomySequenceBase + results.Count
+                Sequence = seqCounter++
             });
         }
 
         // `/page/N/`(N≥2)：同为模板分页确证后才产出
+        var deferredRenders = new List<(TaxonomyPageInfo Page, int Seq)>();
         foreach (var taxPage in deferred)
         {
             var baseRel = BaseRelPermalinkOf(taxPage);
@@ -781,8 +813,25 @@ public sealed partial class SiteBuilder
                 }
             }
 
-            await RenderTaxonomyPageAsync(taxPage).ConfigureAwait(false);
+            deferredRenders.Add((taxPage, seqCounter++));
         }
+
+        await Parallel.ForEachAsync(
+            deferredRenders,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Math.Max(1, options.Parallelism),
+                CancellationToken = cancellationToken
+            },
+            async (entry, ct) =>
+            {
+                await RenderTaxonomyPageAsync(entry.Page, entry.Seq, ct).ConfigureAwait(false);
+            });
+
+        results.AddRange(concurrentResults);
+        // 确定性序输出（E7/T3.1）
+        results.Sort(static (a, b) => a.Sequence.CompareTo(b.Sequence));
+        return results;
 
         string BaseRelPermalinkOf(TaxonomyPageInfo taxPage)
         {
@@ -806,7 +855,7 @@ public sealed partial class SiteBuilder
             return rel.StartsWith('/') ? rel : "/" + rel;
         }
 
-        async Task RenderTaxonomyPageAsync(TaxonomyPageInfo taxPage)
+        async Task RenderTaxonomyPageAsync(TaxonomyPageInfo taxPage, int seq, CancellationToken ct)
         {
             try
             {
@@ -883,7 +932,10 @@ public sealed partial class SiteBuilder
                 // 仅**第 1 页**入列：RSS 只对列表页本体产出（/tags/index.xml、/tags/x/index.xml）
                 if (taxPage.PageNumber == 1)
                 {
-                    TaxonomyFeedContexts.Add(pageContext);
+                    lock (feedGate)
+                    {
+                        TaxonomyFeedContexts.Add(pageContext);
+                    }
                 }
 
                 var context = new TemplateContext
@@ -899,14 +951,14 @@ public sealed partial class SiteBuilder
                 // A 组候选链：{taxonomy}/terms → {taxonomy}/taxonomy → ... → list，
                 // 未命中物理模板时渲染器回退内置模板（taxonomy/term/list）
                 var query = BuildPageTemplateQuery(pageContext);
-                var html = await _templateRenderer.RenderPageAsync(query, context, cancellationToken);
+                var html = await _templateRenderer.RenderPageAsync(query, context, ct);
                 RegisterRenderedDependencies(context);
-                results.Add(new RenderedPage
+                concurrentResults.Add(new RenderedPage
                 {
                     OutputPath = GetOutputPath(relPermalink, options.OutputPath),
                     Content = html,
-                    // 高段位确定性序号（E7）：串行循环本身确定，results.Count 即序
-                    Sequence = TaxonomySequenceBase + results.Count
+                    // 高段位确定性序号（E7/T3.1）：进入并行前已预分配
+                    Sequence = seq
                 });
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -921,7 +973,5 @@ public sealed partial class SiteBuilder
                 });
             }
         }
-
-        return results;
     }
 }
