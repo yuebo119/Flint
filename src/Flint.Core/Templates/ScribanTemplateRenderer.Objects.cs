@@ -229,7 +229,26 @@ public sealed partial class ScribanTemplateRenderer
         /// <summary>站点常规页集合（Hugo 的 .RegularPages 在任何页面都可用）</summary>
         private readonly IReadOnlyList<FlintPageContext>? _siteRegularPages;
         private readonly object? _pagesValue;
-        private readonly object? _termsValue;
+        // .terms 惰性缓存（T6.2）：构造期为 null，首次访问构建（原构造期每页 Select 分配）
+        private object? _termsValue;
+        private object? _paramsObject;
+        private object? _resourcesObject;
+        private object? _markupFn;
+        private object? _fileObject;
+        private object? _pageData;
+        private object? _languageObject;
+        private object? _outputFormats;
+        private object? _altOutputFormats;
+        private object? _plainWords;
+        private object? _fragments;
+        private object? _getPageFn;
+        private object? _paginateFn;
+        private object? _getTermsFn;
+        private object? _isAncestorFn;
+        private object? _isDescendantFn;
+        private object? _hasShortcodeFn;
+        private object? _renderStringFn;
+        private object? _paramFn;
         private readonly object? _paginatorValue;
 
         /// <summary>页面级 Store（partial 返回值的传递通道，供 partialValue 读取）</summary>
@@ -296,9 +315,8 @@ public sealed partial class ScribanTemplateRenderer
             // .Pages 同理：Hugo 恒为切片（普通内容页上是空切片）——传 null 会让
             // `union .Pages …` 之类的组合退化成"回落到本页 Pages"
             _pagesValue = GetSharedPageList(page.Pages ?? []);
-            _termsValue = page.Terms is not null
-                ? page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
-                : null;
+            // .terms：T6.2 委托化——构造期每页 Select 分配 LazyTaxonomyTerm 列表，
+            // 转首次访问构建（惰性字段 _termsValue，见 TryGetValue 分发）
             // C1：列表页的 pager 渲染实例携带本页分页器（page.paginator，对齐 Hugo）
             _paginatorValue = page.Paginator is not null
                 ? BuildPaginatorObject(page.Paginator)
@@ -328,13 +346,11 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("layout", page.Layout, false);
             SetValue("draft", page.Draft, false);
             SetValue("weight", page.Weight, false);
-            // .Params：Hugo 语义是「front matter 全量并入 + 自定义参数」，
-            // 故 .Params.Title / .Params.Date 也可用（Ananke 用 .Params.Title 取标题，
-            // 缺此兼容时 baseof 的 <title> 退化为站点名——差分验证实测发现）
-            SetValue("params", BuildParamsObject(BuildParamsDict(page)), false);
-            // .Resources：包装为带方法的集合（Hugo 的 .Resources.ByType/GetMatch/Match
-            // 是 method 调用；裸列表无这些方法，主题会报 "function ... not found"）
-            SetValue("resources", new PageResourcesObject(page.Resources), false);
+            // .Params / .Resources / .terms / .markup / .file / .data / .language /
+            // .output_formats / .plain_words 及页面方法族：**T6.2 委托化**——转
+            // TryGetValue 惰性（首次访问构建 + 实例字段缓存），未访问页面零成本。
+            // 保留急切的只有廉价标量与 CWT 共享集合（pages/sections）、构造后即非
+            // null 契约的 store
             SetValue("pages", _pagesValue, false);
             // .Sections：本页直属的 section 子页集合（Hugo 语义，树阶段装配）。
             // 与 pages 一样包装成带方法族的集合——主题直接调 .ByWeight / .ByTitle
@@ -345,32 +361,10 @@ public sealed partial class ScribanTemplateRenderer
             // 传 null 会让 union 退化成"回落到本页 Pages"（在 /tags/ 上多出词条页 →
             // 多产出 /tags/page/2/）。空集合同样满足 `{{ with .Sections }}` 的假值语义
             SetValue("sections", GetSharedPageList(page.Sections ?? []), false);
-            SetValue("terms", _termsValue, false);
             SetValue("section", page.Section, false);
             SetValue("table_of_contents", page.TableOfContents, false);
             SetValue("plain", page.Plain, false);
-            // .Markup FORMAT（Hugo v0.146+ 的内容渲染作用域）：返回对象带
-            // `.Render.Summary.Text` / `.Render.Content` 等，主题在"摘要按输出格式渲染"
-            // 场景使用（FixIt 的 summary.html：`with .Markup "home"` → `with .Render`
-            // → `dict "Content" .Summary.Text`）。缺此成员时报
-            // "The function `page?.markup` was not found"
-            SetValue("markup", new PageMarkupFunction(page), false);
-            SetValue("Markup", new PageMarkupFunction(page), false);
             SetValue("raw_content", page.RawContent, false);
-            // B4：Hugo .File.* 方法族（主题常用 .File.Path / .File.ContentBaseName）
-            SetValue("file", BuildFileObject(page.SourcePath), false);
-
-            // taxonomy 页数据对象（对齐 Hugo .Data）：Singular/Plural/Terms/Pages。
-            // Ananke 的 terms.html 迭代 page.Data.pages 枚举词条（词条对象含
-            // title/rel_permalink/pages），taxonomy.html 用 page.pages 枚举内容页——
-            // 缺此对象时 terms.html 报 "Cannot get the member page.Data.pages for a null object"
-            // Hugo 语义：.Data 在任何页面都存在（普通页为空 map，taxonomy/term 页含
-            // Singular/Plural/Terms/Pages）。此前非分类页不注册，导致主题的
-            // `.Data.Integrity` 等链式访问报 "Cannot get the member ... for a null object"
-            var pageData = BuildPageDataObject(page) ?? new ScriptObject();
-            AddListPageDataPages(page, pageData);
-            SetValue("data", pageData, false);
-            SetValue("Data", pageData, false);
 
             // ---- Hugo Page 派生键投影（D 组）----
             // kind 判定谓词（主题高频：{{ if .IsPage }} / {{ if .IsHome }}）
@@ -404,24 +398,6 @@ public sealed partial class ScribanTemplateRenderer
                         + (isPage ? 1 : 0);
             SetValue("level", level, false);
             SetValue("Level", level, false);
-
-            // .Language：语言对象（主题用 .Language.LanguageDirection 判断 rtl）
-            var langObj = new ScriptObject
-            {
-                ["lang"] = page.Language ?? "",
-                ["Lang"] = page.Language ?? "",
-                ["language_code"] = page.Language ?? "",
-                ["LanguageCode"] = page.Language ?? "",
-                ["language_name"] = page.Language ?? "",
-                ["LanguageName"] = page.Language ?? "",
-                ["locale"] = page.Language ?? "",
-                ["Locale"] = page.Language ?? "",
-                // RTL 判断：主题读 language_direction；未知时给 ltr（安全默认）
-                ["language_direction"] = "ltr",
-                ["LanguageDirection"] = "ltr"
-            };
-            SetValue("language", langObj, false);
-            SetValue("Language", langObj, false);
             SetValue("Path", page.PagePath ?? "/", false);
             SetValue("bundle_type", page.BundleType ?? "", false);
             SetValue("BundleType", page.BundleType ?? "", false);
@@ -434,25 +410,7 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("aliases", page.Aliases, false);
             SetValue("Aliases", page.Aliases, false);
 
-            // .OutputFormats：输出格式集合 + Get(NAME) 方法（Hugo 语义；
-            // 主题用 `{{ with .OutputFormats.Get "RSS" }}` 判断/取链接）
-            var outputFormats = BuildOutputFormatsObject(page);
-            SetValue("output_formats", outputFormats, false);
-            SetValue("OutputFormats", outputFormats, false);
-            // .AlternativeOutputFormats：除当前 HTML 之外的输出格式
-            //（hugo-book 的 html-head 用 range .AlternativeOutputFormats 发 RSS 链接）
-            var altFormats = BuildAlternativeOutputFormatsObject(page);
-            SetValue("alternative_output_formats", altFormats, false);
-            SetValue("AlternativeOutputFormats", altFormats, false);
-
-            // .Plain 的派生：词列表与模糊字数
-            var plainWords = page.Plain is null
-                ? new ScriptArray()
-                : new ScriptArray(page.Plain
-                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(w => (object)w).ToArray());
-            SetValue("plain_words", plainWords, false);
-            SetValue("PlainWords", plainWords, false);
+            // .OutputFormats / .plain_words / 页面方法族 / .fragments：T6.2 委托化，见上方注释
             SetValue("fuzzy_word_count", page.FuzzyWordCount, false);
             SetValue("FuzzyWordCount", page.FuzzyWordCount, false);
 
@@ -463,7 +421,8 @@ public sealed partial class ScribanTemplateRenderer
 
             // .Scratch / .Store：页面级可变暂存（Hugo 语义，跨块/跨 partial 状态传递）。
             // 同时作为 partial 返回值的传递通道（partialValue 机制）——Store 是
-            // 真实对象容器，跨 include 保真（无需序列化往返）
+            // 真实对象容器，跨 include 保真（无需序列化往返）。
+            // **保留急切**：构造后即非 null 是 Store 属性的对外契约（partial 通道直读）
             var store = new PageStoreObject();
             _store = store;
             SetValue("store", store, false);
@@ -471,54 +430,6 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("scratch", store, false);
             SetValue("Scratch", store, false);
 
-            // .GetPage / .Paginate：Hugo 的**页面方法**（矩阵验证中 Ananke/Stack/
-            // PaperMod/LoveIt 均命中——主题用 `.GetPage "section" .Section` 取 section 页，
-            // 用 `.Paginate .Pages` 做分页）。引擎此前只在 site 对象上暴露 get_page
-            var sitePages = _siteRegularPages ?? [];
-            // 单实例双注册（与下方 getTerms 同模式）：GetPage/Paginate 各 new 一次
-            var getPageFn = new GetPageFunction(_siteAllPages ?? sitePages);
-            SetValue("get_page", getPageFn, false);
-            SetValue("GetPage", getPageFn, false);
-            var paginateFn = new PagePaginateFunction(_page, _paginateSize, _paginatePath);
-            SetValue("paginate", paginateFn, false);
-            SetValue("Paginate", paginateFn, false);
-
-            // .GetTerms / .GetTerms "taxonomy"：Hugo 页面方法——返回**当前页所属**的
-            // 该分类词条页（按站点分类表过滤 Pages 含本页的词条）。Stack/PaperMod
-            // 用 `$Page.GetTerms "tags"` 取标签页列表（缺此方法报 function not found）
-            var getTerms = new PageGetTermsFunction(_page, _siteTaxonomies);
-            SetValue("get_terms", getTerms, false);
-            SetValue("GetTerms", getTerms, false);
-
-            // .IsAncestor PAGE / .IsDescendant PAGE（Hugo 页面方法）：
-            // hugo-book 的 menu-filetree 用 `.Page.IsAncestor .CurrentPage` 决定
-            // 侧边菜单是否展开；缺它时报 function not found
-            var isAncestorFn = new PageRelationFunction(_page, isAncestor: true);
-            SetValue("is_ancestor", isAncestorFn, false);
-            SetValue("IsAncestor", isAncestorFn, false);
-            var isDescendantFn = new PageRelationFunction(_page, isAncestor: false);
-            SetValue("is_descendant", isDescendantFn, false);
-            SetValue("IsDescendant", isDescendantFn, false);
-
-            // .HasShortcode / .RenderString / .Param：Hugo 的页面方法族
-            //（hugo-coder 42 处 `page?.has_shortcode`、archie `page.render_string`、
-            //  fixit `page?.param` 实测——主题按方法调用，缺则整页渲染失败）
-            var hasShortcode = new PageHasShortcodeFunction(_page);
-            SetValue("has_shortcode", hasShortcode, false);
-            SetValue("HasShortcode", hasShortcode, false);
-
-            var renderString = new PageRenderStringFunction();
-            SetValue("render_string", renderString, false);
-            SetValue("RenderString", renderString, false);
-
-            var pageParam = new PageParamFunction(_page);
-            SetValue("param", pageParam, false);
-            SetValue("Param", pageParam, false);
-
-            var fragments = new PageFragmentsObject(page.Headings);
-            fragments.Populate();
-            SetValue("fragments", fragments, false);
-            SetValue("Fragments", fragments, false);
             // Hugo 兼容别名（大写开头）
             SetValue("Title", page.Title, false);
             SetValue("Content", page.Content, false);
@@ -539,7 +450,6 @@ public sealed partial class ScribanTemplateRenderer
             SetValue("Params", page.Params, false);
             SetValue("Resources", page.Resources, false);
             SetValue("Pages", _pagesValue, false);
-            SetValue("Terms", _termsValue, false);
             SetValue("Section", page.Section, false);
             SetValue("TableOfContents", page.TableOfContents, false);
             SetValue("Plain", page.Plain, false);
@@ -732,6 +642,14 @@ public sealed partial class ScribanTemplateRenderer
 
         public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
+            // **急切成员字典优先**（T6.2 性能教训）：title/content 等高频成员每次
+            // 成员访问都命中，必须走字典 O(1)；特殊路径与惰性 switch 都不在字典，
+            // 查不到再走，语义等价。外部的显式 SetValue 覆盖（partial 合并等）天然优先
+            if (base.TryGetValue(context, span, member, out value))
+            {
+                return true;
+            }
+
             // .Paginator：**读取即视为"本页被模板分页"**（Hugo 语义：分页在首次访问
             // `.Paginate` 或 `.Paginator` 时惰性建立，随后才产出 /page/N/）。
             // Ananke 用 `.Paginator.Pages` 而非 `.Paginate`，只在 .Paginate 上打标记
@@ -881,7 +799,277 @@ public sealed partial class ScribanTemplateRenderer
                 return true;
             }
 
-            return base.TryGetValue(context, span, member, out value);
+            // ---- T6.2 委托化成员分发：首次访问构建 + 双检锁缓存（_lazyGate 与
+            // 容器链共用；页面对象按 CWT 跨渲染线程共享）----
+            switch (member)
+            {
+                // .terms：词条页对象列表（taxonomy/term 页有值，普通页 null）
+                case "terms" or "Terms":
+                    if (_termsValue is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _termsValue ??= _page.Terms is not null
+                                ? _page.Terms.Select(t => (object)new LazyTaxonomyTerm(t)).ToList()
+                                : null;
+                        }
+                    }
+
+                    value = _termsValue;
+                    return true;
+
+                // .Params：front matter 全量并入 + 自定义参数的**包装对象**。
+                // 注意尾部别名段仍会 SetValue("Params", page.Params 原始字典)——
+                // 与改造前相同的覆盖/共存语义，此处只服务 "params" 精确键
+                case "params":
+                    if (_paramsObject is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _paramsObject ??= BuildParamsObject(BuildParamsDict(_page));
+                        }
+                    }
+
+                    value = _paramsObject;
+                    return true;
+
+                // .Resources：带 ByType/GetMatch/Match 方法族的集合包装
+                case "resources":
+                    if (_resourcesObject is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _resourcesObject ??= new PageResourcesObject(_page.Resources);
+                        }
+                    }
+
+                    value = _resourcesObject;
+                    return true;
+
+                // .Markup FORMAT（Hugo v0.146+ 内容渲染作用域；FixIt summary.html）
+                case "markup" or "Markup":
+                    if (_markupFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _markupFn ??= new PageMarkupFunction(_page);
+                        }
+                    }
+
+                    value = _markupFn;
+                    return true;
+
+                // .File.* 方法族
+                case "file":
+                    if (_fileObject is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _fileObject ??= BuildFileObject(_page.SourcePath);
+                        }
+                    }
+
+                    value = _fileObject;
+                    return true;
+
+                // .Data：taxonomy 页含 Singular/Plural/Terms/Pages，普通页空 map
+                //（Hugo 语义：任何页面都有 .Data）
+                case "data" or "Data":
+                    if (_pageData is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            if (_pageData is null)
+                            {
+                                var pageData = BuildPageDataObject(_page) ?? new ScriptObject();
+                                AddListPageDataPages(_page, pageData);
+                                _pageData = pageData;
+                            }
+                        }
+                    }
+
+                    value = _pageData;
+                    return true;
+
+                // .Language：语言对象（.LanguageDirection 判断 rtl）
+                case "language" or "Language":
+                    if (_languageObject is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _languageObject ??= new ScriptObject
+                            {
+                                ["lang"] = _page.Language ?? "",
+                                ["Lang"] = _page.Language ?? "",
+                                ["language_code"] = _page.Language ?? "",
+                                ["LanguageCode"] = _page.Language ?? "",
+                                ["language_name"] = _page.Language ?? "",
+                                ["LanguageName"] = _page.Language ?? "",
+                                ["locale"] = _page.Language ?? "",
+                                ["Locale"] = _page.Language ?? "",
+                                // RTL 判断：主题读 language_direction；未知时给 ltr（安全默认）
+                                ["language_direction"] = "ltr",
+                                ["LanguageDirection"] = "ltr"
+                            };
+                        }
+                    }
+
+                    value = _languageObject;
+                    return true;
+
+                // .OutputFormats / .AlternativeOutputFormats（hugo-book html-head）
+                case "output_formats" or "OutputFormats":
+                    if (_outputFormats is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _outputFormats ??= BuildOutputFormatsObject(_page);
+                        }
+                    }
+
+                    value = _outputFormats;
+                    return true;
+                case "alternative_output_formats" or "AlternativeOutputFormats":
+                    if (_altOutputFormats is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _altOutputFormats ??= BuildAlternativeOutputFormatsObject(_page);
+                        }
+                    }
+
+                    value = _altOutputFormats;
+                    return true;
+
+                // .PlainWords：全文分词（长文上是**全文切分**，委托化最大内存项）
+                case "plain_words" or "PlainWords":
+                    if (_plainWords is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _plainWords ??= _page.Plain is null
+                                ? new ScriptArray()
+                                : new ScriptArray(_page.Plain
+                                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                                    .Select(w => (object)w).ToArray());
+                        }
+                    }
+
+                    value = _plainWords;
+                    return true;
+
+                // .Fragments：标题树（Populate 遍历全部标题）
+                case "fragments" or "Fragments":
+                    if (_fragments is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            if (_fragments is null)
+                            {
+                                var fragments = new PageFragmentsObject(_page.Headings);
+                                fragments.Populate();
+                                _fragments = fragments;
+                            }
+                        }
+                    }
+
+                    value = _fragments;
+                    return true;
+
+                // ---- 页面方法族（Hugo .GetPage/.Paginate/.GetTerms/.IsAncestor/...）----
+                case "get_page" or "GetPage":
+                    if (_getPageFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _getPageFn ??= new GetPageFunction(_siteAllPages ?? _siteRegularPages ?? []);
+                        }
+                    }
+
+                    value = _getPageFn;
+                    return true;
+                case "paginate" or "Paginate":
+                    if (_paginateFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _paginateFn ??= new PagePaginateFunction(_page, _paginateSize, _paginatePath);
+                        }
+                    }
+
+                    value = _paginateFn;
+                    return true;
+                case "get_terms" or "GetTerms":
+                    if (_getTermsFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _getTermsFn ??= new PageGetTermsFunction(_page, _siteTaxonomies);
+                        }
+                    }
+
+                    value = _getTermsFn;
+                    return true;
+                case "is_ancestor" or "IsAncestor":
+                    if (_isAncestorFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _isAncestorFn ??= new PageRelationFunction(_page, isAncestor: true);
+                        }
+                    }
+
+                    value = _isAncestorFn;
+                    return true;
+                case "is_descendant" or "IsDescendant":
+                    if (_isDescendantFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _isDescendantFn ??= new PageRelationFunction(_page, isAncestor: false);
+                        }
+                    }
+
+                    value = _isDescendantFn;
+                    return true;
+                case "has_shortcode" or "HasShortcode":
+                    if (_hasShortcodeFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _hasShortcodeFn ??= new PageHasShortcodeFunction(_page);
+                        }
+                    }
+
+                    value = _hasShortcodeFn;
+                    return true;
+                case "render_string" or "RenderString":
+                    if (_renderStringFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _renderStringFn ??= new PageRenderStringFunction();
+                        }
+                    }
+
+                    value = _renderStringFn;
+                    return true;
+                case "param" or "Param":
+                    if (_paramFn is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _paramFn ??= new PageParamFunction(_page);
+                        }
+                    }
+
+                    value = _paramFn;
+                    return true;
+            }
+
+            // base 已在方法开头查过（急切字典优先），此处即成员不存在
+            value = null;
+            return false;
         }
 
         /// <summary>

@@ -581,6 +581,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
         /// <summary>构建级共享的 partialCached/includeCached 函数（T3.4，无页面态）</summary>
         public PartialCachedFunction? SharedPartialCachedFunction { get; set; }
+
+        /// <summary>构建级共享的 __partial_ret_set 函数（T6.3，无状态）</summary>
+        public PartialRetSetFunction? SharedPartialRetSetFunction { get; set; }
     }
 
     private static readonly AsyncLocal<BuildRenderState> BuildScope = new();
@@ -1514,10 +1517,22 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     target[member] = pageObj[member];
                 }
             }
+            // T6.2 委托化：页面方法族不在 LazyPageObject 实例字典里（TryGetValue
+            // 惰性分发），Keys 枚举拿不到——按 PageMethodKeys 显式经 TryGetValue 补齐
+            foreach (var methodKey in PageMethodKeys)
+            {
+                if (!target.ContainsKey(methodKey) &&
+                    pageObj.TryGetValue(null, default, methodKey, out var lazyMethod))
+                {
+                    target[methodKey] = lazyMethod;
+                }
+            }
         }
     }
 
-    /// <summary>把调用者页面的方法族补给 dict 上下文（缺则补，dict 已有键不覆盖）</summary>
+    /// <summary>把调用者页面的方法族补给 dict 上下文（缺则补，dict 已有键不覆盖）。
+    /// T6.2 起 LazyPageObject 的方法族走 TryGetValue 惰性分发（不在实例字典），
+    /// ContainsKey/索引器直读会拿不到——统一走 TryGetValue</summary>
     private static void AddPageMethodFamily(ScriptObject target, ScriptObject? source)
     {
         if (source is null)
@@ -1526,11 +1541,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
         foreach (var key in PageMethodKeys)
         {
-            if (target.ContainsKey(key) || !source.ContainsKey(key))
+            if (target.ContainsKey(key) ||
+                !source.TryGetValue(null, default, key, out var methodValue))
             {
                 continue;
             }
-            target[key] = source[key];
+            target[key] = methodValue;
         }
     }
 
@@ -2373,6 +2389,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         scopeState.SharedI18nFunction ??= new I18nFunction(context.Site.Translations);
         scopeState.SharedTemplateExistsFunction ??= new TemplateExistsFunction((FileTemplateLoader)_templateLoader);
         scopeState.SharedPartialCachedFunction ??= new PartialCachedFunction(this);
+        scopeState.SharedPartialRetSetFunction ??= new PartialRetSetFunction();
         globals.TrySetValue(scribanContext, default, "i18n",
             scopeState.SharedI18nFunction, readOnly: true);
 
@@ -2393,10 +2410,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // 本函数渲染后取回。Store 是真实容器，完全保真且零序列化成本（实测验证）
         globals.TrySetValue(scribanContext, default, "partialValue",
             new PartialValueFunction(this, pageObject), readOnly: true);
-        // 返回值通道：每页独立的 store + 写入函数（转换器的 `{{ return X }}` 改写用）
+        // 返回值通道：每页独立的 store + 写入函数（转换器的 `{{ return X }}` 改写用；
+        // ret_set 函数无状态，T6.3 起构建级共享）
         globals[RetStoreKey] = new PageStoreObject();
         globals.TrySetValue(scribanContext, default, "__partial_ret_set",
-            new PartialRetSetFunction(), readOnly: true);
+            scopeState.SharedPartialRetSetFunction, readOnly: true);
         // templates.Exists 接真实 loader（覆盖全局的恒真实现）
         globals.TrySetValue(scribanContext, default, "template_exists",
             scopeState.SharedTemplateExistsFunction, readOnly: true);
