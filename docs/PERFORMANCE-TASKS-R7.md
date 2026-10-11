@@ -96,26 +96,26 @@
   - 做法：改异步链路或确认调用点为 Dispose/同步上下文后显式注明。
   - 验收：G17 类门禁（sync-over-async 清零）复跑通过。
 
-- [ ] **T1.12（地毯审计 #21）GetDictParams 常量集合 FrozenSet 化**
+- [x] **T1.12（地毯审计 #21）GetDictParams 常量集合 FrozenSet 化**（2026-10-11 修复轮，提交 421b7c8）
   - 问题：`FrontMatterParser.DictMapping.cs:341-360` 每文件 FM 转换重建 26 键 HashSet（`Reader.cs:59` SimpleScalarKeys 是同族已做范本）。
   - 做法：改静态 FrozenSet；验收：主题矩阵对称。
 
-- [ ] **T1.13（地毯审计 #3/#4/#5，本轮最高价值）资源读盘与内容哈希缓存**
+- [x] **T1.13（地毯审计 #3/#4/#5，本轮最高价值）资源读盘与内容哈希缓存**（2026-10-11 修复轮，提交 421b7c8）
   - 问题：① `TemplateResourceFunctions.cs:112-122,184-210` resources.Get/Match/ByType 每次调用 `File.ReadAllText` 全文读盘无内容缓存；② `:3666-3683` 变换缓存（toCSS/Minify/Fingerprint/css.Sass）**命中前**对全内容 UTF8 GetBytes+SHA256；③ `:168-182` ByType 读盘先于类型过滤；`:213-239` glob 正则每次重建。
   - 探针实测（2026-10-11 四负载面）：blowfish 单构建 **9313 次重复读盘 + 230MB 内容哈希**、fixit 5660 次/138MB + fileExists 1865 次；万页合成与 MDN 14.6k 双零（负载面=资产密集主题专属）。量级封顶 ≈210-340ms/构建级。
   - 做法：① Load 加 (text, mtime) 验效缓存（`FileTemplateLoader._textCache` 同款模式，十行级）；② 摘要按 (identity, mtime) 记忆化（形态实施时裁决）；③ ByType 先 Create(rel,"") 探针判型再读盘 + glob→Regex 缓存。
   - 验收：blowfish/fixit 构建墙钟对比（修前基线用本轮探针方法重录计数）；主题矩阵对称；watch 模式改资源文件热更新不回归。
   - 关联：fileExists 缓存（T1.14）同批。
 
-- [ ] **T1.14（地毯审计 #6）fileExists 构建期路径缓存**
+- [x] **T1.14（地毯审计 #6）fileExists 构建期路径缓存**（2026-10-11 修复轮，提交 421b7c8）
   - 问题：`NamespacedFunctionImplementations.cs:491-492` 每页 partial 双 stat；fixit 实测 1865 次/构建。
   - 做法：按路径缓存结果，失效口径同 `_mtimeCache`（InvalidateMtimeCache 构建入口清空）。验收：fixit 构建对比；主题矩阵对称。
 
-- [ ] **T1.15（地毯审计 #28）LiveReload 广播单发送超时**
+- [x] **T1.15（地毯审计 #28）LiveReload 广播单发送超时**（2026-10-11 修复轮，提交 421b7c8）
   - 问题：`LiveReloadNotifier.cs:162-199` 全局信号量持有期间逐客户端 await SendAsync 无超时——挂起客户端冻结整条热重载链（StopAsync 有 5s 保护，Broadcast 没有）。
   - 做法：单发送超时（如 2s）+ 超时客户端摘除；验收：暂停客户端进程后改文件，rebuild 不停摆。
 
-- [ ] **T1.16（地毯审计 #27）esbuild 常驻进程/服务模式**
+- [ ] **T1.16（地毯审计 #27）esbuild 常驻进程/服务模式**（终裁不做：5 代表主题 EsbuildCalls 全零，触发器=ES module/TS 资产主题出现，见 ledger 表 5）
   - 问题：`JavaScriptBundler.cs:171-220` 每个 JS 资产一次进程 spawn + 临时目录建/写/读/删（AssetPipeline.cs:231 逐资产调用）。
   - 做法：esbuild serve 常驻模式（T5.1 dart-sass 进程池同族）；验收：JS 密集主题构建时间与产物对称。
 

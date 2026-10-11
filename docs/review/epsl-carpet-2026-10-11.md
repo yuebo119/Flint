@@ -108,3 +108,28 @@
 - 分片消耗：5 agents（1 次模型失败原样重派成功），主审抽查 7 条。
 - 时长：阶段 1 基准约 25 分钟（与深读分片并行）；探针四负载约 3 分钟。
 - 下轮触发建议：T1.13 实施后跑 blowfish/fixit 墙钟对比（探针计数复用本轮方法）。
+
+## 9. 修复轮附录（2026-10-11 晚，用户令"根据报告完整修复"，提交 421b7c8 + 3dd9173）
+
+**已实施**（发现总表状态更新）：
+
+| 项 | 修复 | 修后实测 |
+| --- | --- | --- |
+| #3/#4/#5（T1.13） | Load (text,mtime) 缓存 + ByType 零 IO 预筛 + glob 正则缓存 + ContentDigestCached 按源记忆化（CachedTransform/css.Sass）+ Concat 键改成员身份链 | 真读盘 **9313→19（-99.8%）**；fixit digest 4057→337（-92%）；同环境 stash 配对 A/B blowfish 中位 4894 vs 5190 = **-5.7% 每轮同向** |
+| #6（T1.14） | fileExists 构建期路径缓存（失效挂 InvalidateMtimeCache） | fixit 真探测 1865→5 |
+| #21（T1.12） | GetDictParams 26 键 FrozenSet 常量 | 行为等价（测试全绿） |
+| #22（T1.4 第十处） | highlight hl_lines → GeneratedRegex | 行为等价 |
+| #28（T1.15） | LiveReload 广播单发送 2s 超时 + 死客户端摘除 + 裸 catch 改精确列表 | 结构验证（dev server 健壮性） |
+| #7 | NeedsFullPipeline 单遍围栏感知重写 | **实测裁决数据：MDN 粗口径 15.3% 的 $ 命中 99% 在 fenced 内**（3000 样本围栏外仅 5 文件）；2 个八标记行为锁定测试（旧码围栏内 $ 用例红）；量化墙钟收益 Not-Tested |
+
+**终裁更新**：
+- #27（T1.16 esbuild 批量化）：**不做（当前负载面）**——5 代表主题（blowfish/fixit/yinyang/techdoc/bearblog/console）EsbuildCalls 全零；触发器 = ES module/TS 资产主题出现。原 R7 立项降为触发器登记。
+- #26/#24/#25（资产内存三件）：维持 R7 T5 组归并（L3 RSS 2.4x 主线）。
+- 环境税归因（perf-budgets §6 执行）：修复轮 perf gate 9/9 PASS 但傍晚时段数字 +9~19%（万页 7991ms 距红线 0.5%），同轮 stash 配对证明非代码回归（新码更快）；下轮安静窗口复测预期回落，基线不重录。
+
+**验证总账**：1128 测试全绿（+2）；21 主题矩阵 Flint 臂 21/21；gate-check 17/18（G15 剩余失败 = 外部写入者的 AGENTS.md 改动，留用户处置）；G18 裸 catch 棘轮 20→19（LiveReload 精确化）。
+
+**未决移交（更新）**：
+1. fixit Hugo 基线臂失败：确认为**矩阵工具自身缺陷**（与全部产品修复无关：源头 theme-migrator/themes/fixit 干净、Flint 臂通过、20 主题双臂全过）。疑点收敛在 PrepareMatrixSite 的 mklink junction 与迁移 CopyTree 的交互（junction 成功时 CleanDir+CopyTree(migrated→junction 路径) 存在写穿源头的风险面；mklink 失败回退复制时 Hugo 臂仍读到迁移版的机制未闭环）。**移交 R7 T0.3 量具组**：matrix 工具改用显式目录复制（弃 junction）或迁移产物写入独立路径。
+2. tmp/ 已入 .gitignore（EPSL 探针/A-B 工作目录惯例）。
+3. perf gate 万页余量 0.5%：下轮安静窗口复测，若仍 >19% 触发端点归因。
