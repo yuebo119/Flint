@@ -1,7 +1,7 @@
 # Flint 项目级 AI 规范
 
 > 本文件被 ZCode 自动加载。与全局 `~/.zcode/AGENTS.md` 分工：全局管行为准则，本文件管 Flint 项目规范。
-> 性能工程走 EPSL v1.1（方案：`C:\Users\Andy\ZCodeProject\extreme-performance-system.md`；模板：`C:\Users\Andy\ZCodeProject\perf-template\`）。
+> 性能工程走 EPSL v1.1（方案：`~/.zcode/references/EXTREME_PERF_SYSTEM.md`；审计 SOP 独立件：`~/.zcode/perf-template/audit/carpet-audit-sop.md`）。
 
 ## 启动清单（每次会话开始确认）
 
