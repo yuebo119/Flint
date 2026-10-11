@@ -1118,23 +1118,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             ReportTemplateError($"partial 未找到（已按空输出处理）: {name}");
             return string.Empty;
         }
-        string? content;
-        try
-        {
-            content = _templateLoader.Load(callerContext, default, path);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            // loader 未命中时返回「候选路径」交 Load 抛错（带上下文）；
-            // 此处兜住并降级——IO/路径异常不该让整页失败
-            ReportTemplateError($"partial 未找到（已按空输出处理）: {name} — {ex.Message}");
-            return string.Empty;
-        }
-        if (content is null)
-        {
-            ReportTemplateError($"partial 内容不可读（已按空输出处理）: {name}");
-            return string.Empty;
-        }
         // partial 模板按物理路径**缓存解析结果**：每次调用都 Template.Parse 时，
         // ① 深调用链下解析器自身的递归会顶到栈（"The parser recursive depth limit
         // was reached near a stack overflow"，hugo-book 的 title.html 实测）；
@@ -1142,33 +1125,45 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         var cacheKey = "partial:" + path;
         // 内置模板的 path 是**哨兵**（U+0001builtin:xxx）而非物理文件：不能走 mtime
         // （File.GetLastWriteTimeUtc 内部 Path.GetFullPath 会把哨兵当相对路径解析并抛
-        // ArgumentException），改为固定 mtime 缓存
+        // ArgumentException），改为固定 mtime 缓存（SourcePath=null → IsStale 恒 false）
         CachedTemplate? cached;
-        if (path.StartsWith(FileTemplateLoader.BuiltinPrefix, StringComparison.Ordinal))
+        if (_templateCache.TryGetValue(cacheKey, out cached) &&
+            (cached.SourcePath is null || !IsStale(cached)))
         {
-            if (!_templateCache.TryGetValue(cacheKey, out var builtinCached))
-            {
-                var builtinParsed = Template.Parse(content, path);
-                if (builtinParsed.HasErrors)
-                {
-                    throw new TemplateParseException(
-                        name, builtinParsed.Messages.Select(m => m.ToString()).ToList());
-                }
-                builtinCached = new CachedTemplate(builtinParsed, null, DateTime.MinValue);
-                _templateCache[cacheKey] = builtinCached;
-            }
-            cached = builtinCached;
+            // 解析缓存命中：完全跳过 Load——否则每次 partial 调用（即使解析缓存
+            // 命中）都要付一次 FileTemplateLoader 的 mtime stat + 全文读（其文本
+            // 缓存按每次裸 stat 验效，无 TTL）。依赖收集原经 Load 内 Track 完成，
+            // 命中分支补登记（HashSet.Add 幂等，key 形态与 Load 内 fullPath 一致）
+            RenderDependencyTracker.Track(callerContext, Path.GetFullPath(path));
         }
-        else if (!_templateCache.TryGetValue(cacheKey, out cached) || IsStale(cached))
+        else
         {
+            string? content;
+            try
+            {
+                content = _templateLoader.Load(callerContext, default, path);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // loader 未命中时返回「候选路径」交 Load 抛错（带上下文）；
+                // 此处兜住并降级——IO/路径异常不该让整页失败
+                ReportTemplateError($"partial 未找到（已按空输出处理）: {name} — {ex.Message}");
+                return string.Empty;
+            }
+            if (content is null)
+            {
+                ReportTemplateError($"partial 内容不可读（已按空输出处理）: {name}");
+                return string.Empty;
+            }
             var parsedPartial = Template.Parse(content, path);
             if (parsedPartial.HasErrors)
             {
                 throw new TemplateParseException(
-                    name,
-                    parsedPartial.Messages.Select(m => m.ToString()).ToList());
+                    name, parsedPartial.Messages.Select(m => m.ToString()).ToList());
             }
-            cached = new CachedTemplate(parsedPartial, path, GetMtimeUtc(path));
+            cached = path.StartsWith(FileTemplateLoader.BuiltinPrefix, StringComparison.Ordinal)
+                ? new CachedTemplate(parsedPartial, null, DateTime.MinValue)
+                : new CachedTemplate(parsedPartial, path, GetMtimeUtc(path));
             _templateCache[cacheKey] = cached;
         }
         // 两个分支都赋了非空值（缓存未命中时当场解析）

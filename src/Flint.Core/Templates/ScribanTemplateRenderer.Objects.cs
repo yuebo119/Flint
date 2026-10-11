@@ -2451,6 +2451,10 @@ public sealed partial class ScribanTemplateRenderer
     {
         private readonly FlintTaxonomyCollection _taxonomies;
         private readonly Dictionary<string, object> _convertedTaxonomies = new();
+        // 与 LazyPageList._conversionLock 同族：site ScriptObject 经 SharedSiteObjects
+        // 跨并行页面渲染共享，惰性转换写普通 Dictionary 必须持锁——无锁并发写会抛
+        // "non-concurrent collections" 或损坏桶结构（同族其余包装器均有锁，此处曾漏）
+        private readonly object _conversionLock = new();
 
         public LazyTaxonomies(FlintTaxonomyCollection taxonomies)
         {
@@ -2459,19 +2463,25 @@ public sealed partial class ScribanTemplateRenderer
 
         public override bool TryGetValue(Scriban.TemplateContext? context, SourceSpan span, string member, out object? value)
         {
-            if (_convertedTaxonomies.TryGetValue(member, out var cached))
+            // 键是逐个填充的（不同页访问不同 taxonomy 成员）：填充期间锁外读普通
+            // Dictionary 不安全（扩容窗口读者可异常），与单值懒加载范本不同，全程持锁。
+            // 成员访问频率低（每页模板一次量级），锁开销不可测
+            lock (_conversionLock)
             {
-                value = cached;
-                return true;
-            }
+                if (_convertedTaxonomies.TryGetValue(member, out var cached))
+                {
+                    value = cached;
+                    return true;
+                }
 
-            if (_taxonomies.Taxonomies.TryGetValue(member, out var terms))
-            {
-                // 使用懒加载的术语列表
-                var lazyTerms = terms.Select(t => new LazyTaxonomyTerm(t)).ToList();
-                _convertedTaxonomies[member] = lazyTerms;
-                value = lazyTerms;
-                return true;
+                if (_taxonomies.Taxonomies.TryGetValue(member, out var terms))
+                {
+                    // 使用懒加载的术语列表
+                    var lazyTerms = terms.Select(t => new LazyTaxonomyTerm(t)).ToList();
+                    _convertedTaxonomies[member] = lazyTerms;
+                    value = lazyTerms;
+                    return true;
+                }
             }
 
             return base.TryGetValue(context, span, member, out value);

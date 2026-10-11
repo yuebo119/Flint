@@ -70,6 +70,31 @@ public class RenderDependencyTests : IDisposable
         Assert.Contains("single", deps); // 顶层模板逻辑名也在依赖中
     }
 
+    [Fact]
+    public async Task RenderAsync_PartialFunction_DepsTrackedOnCacheHitToo()
+    {
+        // partial（非 partialcached）解析缓存命中时跳过 FileTemplateLoader.Load
+        //（省每次调用的 stat+全文读），依赖登记改由命中分支补——第二次渲染的
+        // 依赖集仍必须含 partial 物理路径，否则增量构建改 partial 时漏重渲
+        WriteLayout("single.html", "{{ partial \"head\" }}");
+        File.WriteAllText(Path.Combine(_layoutsDir, "partials", "head.html"), "<head>");
+
+        var deps1 = await RenderAndGetDependencies(new TemplateContext
+        {
+            Page = NewPage(draft: false),
+            Site = NewSite()
+        });
+        // 第二次渲染：partial 解析缓存必命中（同 renderer 实例），走跳过 Load 的分支
+        var deps2 = await RenderAndGetDependencies(new TemplateContext
+        {
+            Page = NewPage(draft: false),
+            Site = NewSite()
+        });
+
+        Assert.Contains(deps1, d => d.EndsWith("head.html", StringComparison.Ordinal));
+        Assert.Contains(deps2, d => d.EndsWith("head.html", StringComparison.Ordinal));
+    }
+
     private async Task<IReadOnlySet<string>> RenderAndGetDependencies(TemplateContext context)
     {
         await _renderer.RenderAsync("single", context).ConfigureAwait(false);
