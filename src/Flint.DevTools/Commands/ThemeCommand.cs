@@ -540,6 +540,16 @@ internal static class ThemeCommand
         var flint = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint.exe");
         var hugo = Path.GetFullPath(HugoExe);
 
+        // Hugo 的 Dart Sass（TOCSS-DART）要求 dart-sass 可执行在 PATH——extended
+        // 二进制已不内嵌（fixit 基线排查实证：main.scss 走 toCSS 的主题 Hugo 侧
+        // 恒失败 "You need to install Dart Sass"）。注入 Flint 自带的 dart-sass 分发
+        var dartSassDir = Path.Combine(RepoPaths.RepoRoot, "benchmarks", "tools", "flint-aot", "dart-sass.win-x64");
+        if (Directory.Exists(dartSassDir))
+        {
+            Environment.SetEnvironmentVariable(
+                "PATH", dartSassDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"));
+        }
+
         Console.WriteLine(
             $"{PyCompat.PadRightBytes("主题", 14)} {PyCompat.PadRightBytes("hugo", 6)} {PyCompat.PadRightBytes("页数", 6)} " +
             $"{PyCompat.PadRightBytes("flint构建", 11)} {PyCompat.PadRightBytes("页数", 6)} " +
@@ -571,6 +581,19 @@ internal static class ThemeCommand
         File.WriteAllText(report, string.Empty);
 
         // ---- Hugo 侧 ----
+        // Hugo 前状态诊断（fixit 基线排查遗留项）：Hugo 读到的关键钩子文件首行，
+        // 用于区分"干净源"与"迁移产物残留"（迁移器私有函数 partialValue 是标记）
+        var diagHook = Path.Combine(site, "themes", name, "layouts", "_markup", "render-passthrough.html");
+        if (File.Exists(diagHook))
+        {
+            var diagLine = File.ReadLines(diagHook).FirstOrDefault() ?? "";
+            File.AppendAllText(report, $"[diag] passthrough[:80] = {diagLine[..Math.Min(80, diagLine.Length)]}\n");
+        }
+        else
+        {
+            File.AppendAllText(report, $"[diag] passthrough 不存在: {diagHook}\n");
+        }
+
         var hugoRun = await Bench.ProcessRunner.RunTimedAsync(hugo, HugoQuietArgs, workingDirectory: site).ConfigureAwait(false);
         var hugoPages = CountHtml(Path.Combine(site, "public"));
         var hugoOk = hugoRun.ExitCode == 0 && hugoPages > 0 ? "通过" : "失败";
@@ -659,23 +682,28 @@ internal static class ThemeCommand
     /// <summary>准备矩阵站点：统一内容集 + 基础配置 + 主题专属 params + menus 收尾 + junction 挂载</summary>
     private static async Task PrepareMatrixSite(string name, string site, string themeSrc)
     {
-        CleanDir(Path.Combine(site, "themes", name));
         CleanDir(site);
+        // 清理失败必须显式失败（T6 遗留排查实证）：CleanDir 静默失败时上一轮的
+        // 迁移产物残留（themes/fixit 与 themes-migrated）会存活到 Hugo 构建——
+        // Hugo 拿迁移产物当基线，fixit 的 render-passthrough 含迁移器私有函数
+        // partialValue 而恒失败；残留也会让"对称"对比失真（Hugo 侧不再是原版主题基线）
+        if (Directory.Exists(site))
+        {
+            throw new InvalidOperationException(
+                $"矩阵站点目录清理失败（被进程占用/锁定）：{site}。请关闭占用该目录的进程后重跑。");
+        }
+
         Directory.CreateDirectory(Path.Combine(site, "themes"));
 
         MakeMatrixContent(site);
         WriteMatrixConfig(name, site);
 
-        // 主题用 junction 挂载（零拷贝；失败回退复制）——与 bash 版 mklink /J 同机制
+        // 主题用 junction 挂载（零拷贝；失败回退复制）。junction 直连源目录——
+        // 迁移后的 CleanDir+CopyTree 不得穿透写源，故迁移产物一律走真实副本目录
+        //（MatrixOne 的 siteTheme 挂载点；junction 场景下为防写穿源目录，此处
+        // 改为始终真实副本：零拷贝收益不值得基线污染风险）
         var themeTarget = Path.Combine(site, "themes", name);
-        var junction = await Bench.ProcessRunner.RunTimedAsync(
-            "cmd",
-            new[] { "/c", $"mklink /J \"{themeTarget}\" \"{themeSrc}\"" },
-            workingDirectory: RepoPaths.RepoRoot).ConfigureAwait(false);
-        if (junction.ExitCode != 0)
-        {
-            CopyTree(themeSrc, themeTarget);
-        }
+        CopyTree(themeSrc, themeTarget);
     }
 
     private static void MakeMatrixContent(string site)

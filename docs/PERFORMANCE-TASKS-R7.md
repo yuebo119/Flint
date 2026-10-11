@@ -231,11 +231,11 @@
   - 做法：产出 LazyPageObject 全成员清单（保留急切 / 转委托 / 双命名归一规则三栏标注）+ `FrozenDictionary<string, Func<PageContext, object?>>` 访问器表接口签名，交用户裁决。
   - 验收：用户明确批准或否决；批准后才进 T6.2。
 
-- [ ] **T6.2（O3）LazyPageObject 委托化实现**
+- [x] **T6.2（O3）LazyPageObject 委托化实现**（✅ 用户批准后实施，2026-10-12：18 组成员转 TryGetValue 惰性 + 双检锁缓存；分发热路径教训——急切字典查找必须前置，反序实测渲染段 5837ms；partial 合并路径改 TryGetValue 感知；金丝雀 = 矩阵 20/21 + loveit 产物 diff 仅时间戳字段 + 基线同机对照无回归）
   - 做法：按裁决件实施；灰度顺序 = 先低频成员后高频；名称归一化在查找器内做（snake/Pascal 双写消失）。
   - 验收：21 主题产物**字节级对称**（时间戳类字段除外）金丝雀；万页/L3 时间与内存双对比。
 
-- [ ] **T6.3（O7 深化）CreateScribanContext 组装瘦身**
+- [x] **T6.3（O7 深化）CreateScribanContext 组装瘦身**（T3.4 三函数 + T6.3 PartialRetSetFunction 构建级共享；A/B 组标量键保留急切以维持字典枚举兼容——比裁决件的 FrozenDictionary 全量表更保守，等价消掉每页 ~15 个对象分配与 plain_words 全文切分）
   - 做法：在 T3.4 共享化基础上，globals 骨架按构建级预构建、每页仅覆盖页面绑定键。
   - 验收：同 T6.2 金丝雀 + 渲染段时间对比。
 
