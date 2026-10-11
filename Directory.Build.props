@@ -14,7 +14,11 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
-  <!-- Native AOT 配置 -->
+  <!-- Native AOT 配置（T1.11 澄清，2026-10-11）：对 Release 生效于全部项目——
+       DevTools/AiGate/ThemeMigrator 无覆盖即真 AOT 发布；唯一例外是 Flint.Cli
+       显式 PublishAot=false（无参 publish = R2R 单文件），其正式 AOT 发布走
+       命令行 -p:PublishAot=true 覆盖（README「构建」节口径）。IsAotCompatible
+       分析在 Flint.Core 常开，与发布形态解耦 -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <PublishAot>true</PublishAot>
     <OptimizationPreference>Size</OptimizationPreference>

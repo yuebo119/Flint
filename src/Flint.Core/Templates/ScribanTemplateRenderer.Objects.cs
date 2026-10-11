@@ -475,10 +475,13 @@ public sealed partial class ScribanTemplateRenderer
             // PaperMod/LoveIt 均命中——主题用 `.GetPage "section" .Section` 取 section 页，
             // 用 `.Paginate .Pages` 做分页）。引擎此前只在 site 对象上暴露 get_page
             var sitePages = _siteRegularPages ?? [];
-            SetValue("get_page", new GetPageFunction(_siteAllPages ?? sitePages), false);
-            SetValue("GetPage", new GetPageFunction(_siteAllPages ?? sitePages), false);
-            SetValue("paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
-            SetValue("Paginate", new PagePaginateFunction(_page, _paginateSize, _paginatePath), false);
+            // 单实例双注册（与下方 getTerms 同模式）：GetPage/Paginate 各 new 一次
+            var getPageFn = new GetPageFunction(_siteAllPages ?? sitePages);
+            SetValue("get_page", getPageFn, false);
+            SetValue("GetPage", getPageFn, false);
+            var paginateFn = new PagePaginateFunction(_page, _paginateSize, _paginatePath);
+            SetValue("paginate", paginateFn, false);
+            SetValue("Paginate", paginateFn, false);
 
             // .GetTerms / .GetTerms "taxonomy"：Hugo 页面方法——返回**当前页所属**的
             // 该分类词条页（按站点分类表过滤 Pages 含本页的词条）。Stack/PaperMod
@@ -2429,15 +2432,16 @@ public sealed partial class ScribanTemplateRenderer
                 return true;
             }
 
-            // 处理 first/last 等常用属性
-            switch (member.ToLowerInvariant())
+            // 处理 first/last 等常用属性（OrdinalIgnoreCase 直比，避免热路径 ToLowerInvariant 分配）
+            if (member.Equals("first", StringComparison.OrdinalIgnoreCase))
             {
-                case "first":
-                    value = _pages.Count > 0 ? CreatePageObject(_pages[0]) : null;
-                    return true;
-                case "last":
-                    value = _pages.Count > 0 ? CreatePageObject(_pages[^1]) : null;
-                    return true;
+                value = _pages.Count > 0 ? CreatePageObject(_pages[0]) : null;
+                return true;
+            }
+            if (member.Equals("last", StringComparison.OrdinalIgnoreCase))
+            {
+                value = _pages.Count > 0 ? CreatePageObject(_pages[^1]) : null;
+                return true;
             }
 
             return base.TryGetValue(context, span, member, out value);

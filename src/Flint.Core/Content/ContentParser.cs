@@ -12,7 +12,7 @@ namespace Flint.Core.Content;
 /// 内容解析器实现
 /// 整合 Front Matter、Markdown、短代码解析，构建 ParsedContent
 /// </summary>
-public sealed class ContentParser : IContentParser
+public sealed partial class ContentParser : IContentParser
 {
     /// <summary>
     /// 默认摘要长度（字符数）
@@ -130,7 +130,8 @@ public sealed class ContentParser : IContentParser
     /// <inheritdoc />
     public ParsedContent Parse(ContentFile file)
     {
-        // 同步版本，直接调用异步方法
+        // 同步测试上下文入口（FsCheck Property 无法 async 化）：解析全程 CPU 操作，
+        // ParseAsync 的 ValueTask 同步完成，GetResult 无线程阻塞（非 sync-over-async 债务）
         return ParseAsync(file).AsTask().GetAwaiter().GetResult();
     }
 
@@ -247,27 +248,60 @@ public sealed class ContentParser : IContentParser
         var result = markdown;
 
         // 移除标题标记
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"^#{1,6}\s+", "", System.Text.RegularExpressions.RegexOptions.Multiline);
+        result = SummaryHeadingMarkers().Replace(result, "");
 
         // 移除粗体和斜体
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"\*\*([^*]+)\*\*", "$1");
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"\*([^*]+)\*", "$1");
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"__([^_]+)__", "$1");
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"_([^_]+)_", "$1");
+        result = SummaryBold().Replace(result, "$1");
+        result = SummaryItalic().Replace(result, "$1");
+        result = SummaryBoldUnderscore().Replace(result, "$1");
+        result = SummaryItalicUnderscore().Replace(result, "$1");
 
         // 移除链接，保留文本
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"\[([^\]]+)\]\([^)]+\)", "$1");
+        result = SummaryLink().Replace(result, "$1");
 
         // 移除图片
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"!\[([^\]]*)\]\([^)]+\)", "");
+        result = SummaryImage().Replace(result, "");
 
         // 移除代码块
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"```[\s\S]*?```", "");
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"`([^`]+)`", "$1");
+        result = SummaryFencedCode().Replace(result, "");
+        result = SummaryInlineCode().Replace(result, "$1");
 
         // 移除多余空白
-        result = System.Text.RegularExpressions.Regex.Replace(result, @"\s+", " ");
+        result = SummaryWhitespace().Replace(result, " ");
 
         return result.Trim();
     }
+
+    // 摘要剥离的正则族（source-gen 预编译）：运行时 Regex.Replace 静态缓存默认
+    // 15 条，全仓 pattern 数超限后逐调用重建（模式解析 × 每页），故全部转
+    // [GeneratedRegex]（HtmlOutputNormalizer 同模式）
+    [System.Text.RegularExpressions.GeneratedRegex(@"^#{1,6}\s+", System.Text.RegularExpressions.RegexOptions.Multiline)]
+    private static partial System.Text.RegularExpressions.Regex SummaryHeadingMarkers();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\*\*([^*]+)\*\*")]
+    private static partial System.Text.RegularExpressions.Regex SummaryBold();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\*([^*]+)\*")]
+    private static partial System.Text.RegularExpressions.Regex SummaryItalic();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"__([^_]+)__")]
+    private static partial System.Text.RegularExpressions.Regex SummaryBoldUnderscore();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"_([^_]+)_")]
+    private static partial System.Text.RegularExpressions.Regex SummaryItalicUnderscore();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[([^\]]+)\]\([^)]+\)")]
+    private static partial System.Text.RegularExpressions.Regex SummaryLink();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"!\[([^\]]*)\]\([^)]+\)")]
+    private static partial System.Text.RegularExpressions.Regex SummaryImage();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"```[\s\S]*?```")]
+    private static partial System.Text.RegularExpressions.Regex SummaryFencedCode();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"`([^`]+)`")]
+    private static partial System.Text.RegularExpressions.Regex SummaryInlineCode();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
+    private static partial System.Text.RegularExpressions.Regex SummaryWhitespace();
 }

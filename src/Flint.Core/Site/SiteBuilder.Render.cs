@@ -15,6 +15,9 @@ namespace Flint.Core.Site;
 /// </summary>
 public sealed partial class SiteBuilder
 {
+    /// <summary>分类页确定性序号段基（E7）：与主渲染序（renderTargets × 8）隔离</summary>
+    private const int TaxonomySequenceBase = 1_000_000_000;
+
     /// <summary>
     /// 注册短代码：主题 layouts/shortcodes 先注册（低优先），站点后注册覆盖同名——
     /// 对齐 Hugo 主题语义（站点覆盖主题）。模板语法错误 fail-fast
@@ -308,7 +311,10 @@ public sealed partial class SiteBuilder
         ConcurrentBag<BuildError> errors,
         CancellationToken cancellationToken)
     {
-        var results = new ConcurrentBag<RenderedPage>();
+        // 渲染产物按确定性序号收集（E7）：键 = renderTargets 序 × 8 + 格式序，
+        // 并发完成顺序不影响去重胜者与最终列表顺序（跨构建产物稳定）
+        var results = new System.Collections.Concurrent.ConcurrentDictionary<int, RenderedPage>();
+        const int slotsPerTarget = 8;
 
         // 分页标记按构建清空：跨构建残留会让"这轮没分页"的列表页被误判为分页
         if (_templateRenderer is ScribanTemplateRenderer)
@@ -327,6 +333,8 @@ public sealed partial class SiteBuilder
         // 故先只放第 1 页，其余等渲染完、看标记再补。
         // paginate <= 0 显式关闭分页（非列表页不受影响）
         var renderTargets = new List<PageContext>(pages.Count);
+        // renderTargets 序（确定性序号来源，E7）
+        var renderTargetIndexes = new Dictionary<PageContext, int>(ReferenceEqualityComparer.Instance);
         var paginatedLists = new List<(PageContext Page, IReadOnlyList<PageContext> Items, int TotalPages)>();
         // **隐式分页器的集合 = RegularPages**（Hugo v0.166 实测）：home 模板只读
         // `.Paginator`（不调 `.Paginate`）时，Hugo 按 **.RegularPages** 切片——
@@ -349,10 +357,14 @@ public sealed partial class SiteBuilder
                 var firstPager = PaginatorView.Create(
                     items, 1, config.Paginate,
                     page.RelPermalink, config.PaginatePath);
-                renderTargets.Add(page.WithPaginator(firstPager, config.BaseURL));
+                // WithPaginator 返回克隆实例：确定性序号以进 renderTargets 的实例为键
+                var paginatedTarget = page.WithPaginator(firstPager, config.BaseURL);
+                renderTargetIndexes.Add(paginatedTarget, renderTargets.Count);
+                renderTargets.Add(paginatedTarget);
                 paginatedLists.Add((page, items, totalPages));
                 continue;
             }
+            renderTargetIndexes.Add(page, renderTargets.Count);
             renderTargets.Add(page);
         }
 
@@ -386,6 +398,8 @@ public sealed partial class SiteBuilder
         {
                 foreach (var page in batch)
                 {
+                    // 确定性序号（E7）：键 = renderTargets 序 × 槽位数 + 格式序
+                    renderTargetIndexes.TryGetValue(page, out var targetIndex);
                     try
                     {
                         // A 组：页面感知候选链（对齐 Hugo lookup order）。
@@ -400,6 +414,7 @@ public sealed partial class SiteBuilder
                             ? page.Outputs
                             : (IReadOnlyList<string>)["html"];
 
+                        var formatOrdinal = 0;
                         foreach (var formatName in formats)
                         {
                             var format = OutputFormats.Resolve(formatName);
@@ -439,11 +454,14 @@ public sealed partial class SiteBuilder
                                 ct);
 
                             RegisterRenderedDependencies(context);
-                            results.Add(new RenderedPage
+                            var seq = targetIndex * slotsPerTarget + formatOrdinal;
+                            results[seq] = new RenderedPage
                             {
                                 OutputPath = GetOutputPathForFormat(page.RelPermalink, format, options.OutputPath),
-                                Content = html
-                            });
+                                Content = html,
+                                Sequence = seq
+                            };
+                            formatOrdinal++;
                         }
                     }
                     catch (Flint.Core.Templates.TemplateNotFoundException) when (options.MissingLayout == MissingLayoutBehavior.Skip)
@@ -465,6 +483,10 @@ public sealed partial class SiteBuilder
                 }
         }
 
+        // 补页段确定性序号：从 renderTargets 槽位之后的连续段分配（循环确定 → 序确定），
+        // 与主序号共用一张索引表（RenderBatchAsync 单表查询）
+        var extraSeq = renderTargets.Count * slotsPerTarget;
+
         // 模板确证分页的列表页：补 /page/1/ 跳转页与 /page/2..N/
         var extraTargets = new List<PageContext>();
         foreach (var (listPage, defaultItems, _) in paginatedLists)
@@ -484,19 +506,23 @@ public sealed partial class SiteBuilder
                 (int)Math.Ceiling(items.Count / (double)Math.Max(1, pageSize)));
 
             var firstPagePath = $"{listPage.RelPermalink.TrimEnd('/')}/{config.PaginatePath}/1/";
-            results.Add(new RenderedPage
+            results[extraSeq++] = new RenderedPage
             {
                 OutputPath = GetOutputPathForFormat(firstPagePath, OutputFormats.Html, options.OutputPath),
                 Content = BuildPaginationRedirectPage(
-                    listPage.Permalink ?? listPage.RelPermalink)
-            });
+                    listPage.Permalink ?? listPage.RelPermalink),
+                Sequence = extraSeq - 1
+            };
 
             for (var pageNumber = 2; pageNumber <= totalPages; pageNumber++)
             {
                 var pager = PaginatorView.Create(
                     items, pageNumber, pageSize,
                     listPage.RelPermalink, config.PaginatePath);
-                extraTargets.Add(listPage.WithPaginator(pager, config.BaseURL));
+                var pagerTarget = listPage.WithPaginator(pager, config.BaseURL);
+                renderTargetIndexes.Add(pagerTarget, extraSeq);
+                extraTargets.Add(pagerTarget);
+                extraSeq += slotsPerTarget;
             }
         }
 
@@ -508,7 +534,8 @@ public sealed partial class SiteBuilder
             }
         }
 
-        return [.. results];
+        // 按确定性序号输出（E7）：并发完成顺序不影响列表顺序与去重胜者
+        return [.. results.Values.OrderBy(p => p.Sequence)];
     }
 
     /// <summary>
@@ -724,7 +751,9 @@ public sealed partial class SiteBuilder
             {
                 OutputPath = GetOutputPathForFormat(
                     $"{baseRel.TrimEnd('/')}/{config.PaginatePath}/1/", OutputFormats.Html, options.OutputPath),
-                Content = BuildPaginationRedirectPage($"{config.BaseURL.TrimEnd('/')}{baseRel}")
+                Content = BuildPaginationRedirectPage($"{config.BaseURL.TrimEnd('/')}{baseRel}"),
+                // 高段位确定性序号（E7）：分类页段从 10⁹ 起，去重时不与主渲染序抢胜
+                Sequence = TaxonomySequenceBase + results.Count
             });
         }
 
@@ -875,7 +904,9 @@ public sealed partial class SiteBuilder
                 results.Add(new RenderedPage
                 {
                     OutputPath = GetOutputPath(relPermalink, options.OutputPath),
-                    Content = html
+                    Content = html,
+                    // 高段位确定性序号（E7）：串行循环本身确定，results.Count 即序
+                    Sequence = TaxonomySequenceBase + results.Count
                 });
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

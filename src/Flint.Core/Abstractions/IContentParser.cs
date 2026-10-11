@@ -22,7 +22,9 @@ public interface IContentParser
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// 同步解析内容（用于性能关键路径）
+    /// 同步解析内容：仅供**同步测试上下文**（FsCheck Property 等无法 async 化的场景）
+    /// 使用，生产管线一律走 <see cref="ParseAsync"/>。
+    /// 解析全程 CPU 操作，ValueTask 同步完成，GetResult 无线程阻塞
     /// </summary>
     /// <param name="file">内容文件</param>
     /// <returns>解析后的内容</returns>

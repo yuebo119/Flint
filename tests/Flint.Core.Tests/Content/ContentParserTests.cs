@@ -410,7 +410,7 @@ public class ContentParserTests
             """;
         var file = CreateContentFile("sync-test.md", content);
 
-        // Act
+        // Act（同步 Parse：仅供同步测试上下文，语义见接口注释）
         var result = _parser.Parse(file);
 
         // Assert

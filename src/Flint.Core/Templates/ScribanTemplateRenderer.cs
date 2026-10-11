@@ -375,6 +375,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templateCache[templateName] = new CachedTemplate(parsed, templatePath, mtimeUtc);
         // 模板重载说明磁盘模板可能变化，partialCached 结果缓存必须失效
         _partialResultCache.Clear();
+        _storeUseCache.Clear();
         return parsed;
     }
 
@@ -927,6 +928,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _dependencyCache.Clear();
         // partialCached 结果缓存：模板文件变化后必须失效（结果按 build 生命周期缓存）
         _partialResultCache.Clear();
+        _storeUseCache.Clear();
     }
 
     /// <summary>partialCached 结果缓存：键 = name + variants（对齐 Hugo partialCached 语义）</summary>
@@ -1252,11 +1254,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // FixIt 的 camel-case-keys.html 实测：递归转换 map 键时输入里出现
         // `{"a_b":1,"store":{…}}`，逐层下钻到 `{"to_html":…}` 类内部对象，
         // 200 层后触发 partial 深度守卫（转换率与产出双降）。
-        // 判据复用既有的 UsesPageStore（按 partial 源文本 + include 链判定）
-        var contextUsesStore = UsesPageStore(source);
+        // 判据复用既有的 UsesPageStore（按 partial 源文本 + include 链判定），
+        // 按 path 缓存判定结果（高频 partial 逐调用全文四连 Contains 纯浪费）
+        var contextUsesStore = UsesPageStoreCached(path, source);
         object? store = contextUsesStore && pageObject.ContainsKey("store") ? pageObject["store"] : null;
 
-        if (context is not ScriptObject && UsesPageStore(source))
+        if (context is not ScriptObject && contextUsesStore)
         {
             return RenderPartialWithType(callerContext, name);
         }
@@ -1364,7 +1367,23 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         }
     }
 
-    /// <summary>partial 是否依赖页面 Store（返回值通道 / .Scratch 暂存）</summary>
+    /// <summary>partial 是否依赖页面 Store（返回值通道 / .Scratch 暂存）。
+    /// 按 path 缓存判定（源文本 mtime 缓存同口径失效，见 ClearCache 与
+    /// GetOrLoadTemplateAtPathAsync 的重载清理点）</summary>
+    private bool UsesPageStoreCached(string path, string source)
+    {
+        if (path.Length == 0)
+        {
+            return UsesPageStore(source);
+        }
+
+        return _storeUseCache.GetOrAdd(path, static (_, s) => UsesPageStore(s), source);
+    }
+
+    /// <summary>UsesPageStore 判定缓存（键 = partial 物理路径）</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _storeUseCache =
+        new(StringComparer.Ordinal);
+
     private static bool UsesPageStore(string source) =>
         source.Contains("page.store", StringComparison.Ordinal) ||
         source.Contains("page.Store", StringComparison.Ordinal) ||
@@ -2497,7 +2516,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// 缺失的键渲染为 <c>&lt;no value&gt;</c>（Hugo 同样如此）</item>
     /// </list>
     /// </summary>
-    private sealed class I18nFunction(IReadOnlyDictionary<string, string> translations)
+    private sealed partial class I18nFunction(IReadOnlyDictionary<string, string> translations)
         : Scriban.Runtime.IScriptCustomFunction
     {
         private static readonly string[] PluralForms =
@@ -2554,7 +2573,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         /// <summary>按键取形：有复数子表时按计数选形，否则取主键</summary>
         private string? Resolve(string key, object? contextValue)
         {
-            if (PluralForms.Any(form => translations.ContainsKey(key + "." + form)))
+            if (HasPluralForms(key))
             {
                 var count = ExtractCount(contextValue);
                 var form = count == 1 ? "one" : "other";
@@ -2575,6 +2594,20 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             }
 
             return translations.TryGetValue(key, out var value) ? value : null;
+        }
+
+        /// <summary>复数子表探测（LINQ Any 的委托开销去掉，拼接避免不了但无接口分发）</summary>
+        private bool HasPluralForms(string key)
+        {
+            foreach (var form in PluralForms)
+            {
+                if (translations.ContainsKey(string.Concat(key, ".", form)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /// <summary>计数：第二参是数字时直接取；是 dict 时取它的 <c>Count</c> 键</summary>
@@ -2601,9 +2634,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 return value;
             }
 
-            return System.Text.RegularExpressions.Regex.Replace(
+            return PlaceholderRegex().Replace(
                 value,
-                @"\{\{\s*\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}",
                 match =>
                 {
                     var field = match.Groups[1].Value;
@@ -2620,6 +2652,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     return replacement?.ToString() ?? "<no value>";
                 });
         }
+
+        [System.Text.RegularExpressions.GeneratedRegex(@"\{\{\s*\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")]
+        private static partial System.Text.RegularExpressions.Regex PlaceholderRegex();
 
         public System.Threading.Tasks.ValueTask<object?> InvokeAsync(
             Scriban.TemplateContext context,

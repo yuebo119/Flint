@@ -327,4 +327,11 @@ public sealed class RenderedPage
     /// HTML 内容
     /// </summary>
     public required string Content { get; init; }
+
+    /// <summary>
+    /// 确定性排序键：renderTargets 序 × 8 + 输出格式序（补页/分类页取高段位）。
+    /// 并发渲染完成顺序不定，同路径去重时按本键取先序者胜——
+    /// 胜者由页面集合顺序决定，与线程调度无关，跨构建产物稳定
+    /// </summary>
+    public int Sequence { get; init; }
 }

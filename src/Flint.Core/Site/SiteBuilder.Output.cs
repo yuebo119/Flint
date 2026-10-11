@@ -363,10 +363,11 @@ public sealed partial class SiteBuilder
         // 确保输出目录存在
         OutputDirectoryEnsurer.Ensure(options.OutputPath);
 
-        // 优化：并行写入页面（去重以避免并发写入同一文件）
+        // 去重以避免并发写入同一文件；胜者 = 确定性序号最小者（E7）——
+        // 序号由 renderTargets 顺序驱动，与并发完成顺序无关，跨构建产物稳定
         var allPages = pages.Concat(taxonomyPages)
             .GroupBy(p => p.OutputPath)
-            .Select(g => g.First())  // 去重：相同路径只保留第一个
+            .Select(g => g.MinBy(p => p.Sequence)!)
             .ToArray();
 
         await Parallel.ForEachAsync(

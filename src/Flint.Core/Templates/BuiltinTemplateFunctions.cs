@@ -1683,7 +1683,7 @@ public sealed partial class BuiltinTemplateFunctions
         // ---- B9 内容处理 ----
         obj.Import("markdownify", (string? text) => MarkdownifyInline(text ?? ""));
         obj.Import("plainify", (string? text) =>
-            string.IsNullOrEmpty(text) ? "" : Regex.Replace(text, "<[^>]+>", ""));
+            string.IsNullOrEmpty(text) ? "" : HtmlTagRegex().Replace(text, ""));
         obj.Import("emojify", (string? text) => Emojify(text ?? ""));
         obj.Import("htmlUnescape", (string? text) =>
             string.IsNullOrEmpty(text) ? "" : System.Net.WebUtility.HtmlDecode(text));
@@ -1754,17 +1754,30 @@ public sealed partial class BuiltinTemplateFunctions
         obj.Import("paramLookup", (object? ctx, string path) => ParamLookup(ctx, path));
     }
 
-    /// <summary>markdownify 行内受限实现（行内代码/粗体/斜体/链接——主题最常用形态）</summary>
+    /// <summary>markdownify 行内受限实现（行内代码/粗体/斜体/链接——主题最常用形态）
+    /// （固定模式走 source-gen 预编译，运行时 Regex 静态缓存 15 条易被挤掉）</summary>
     private static string MarkdownifyInline(string text)
     {
         if (text.Length == 0)
             return "";
-        var html = Regex.Replace(text, "`([^`]+)`", "<code>$1</code>");
-        html = Regex.Replace(html, @"\*\*([^*]+)\*\*", "<strong>$1</strong>");
-        html = Regex.Replace(html, @"\*([^*]+)\*", "<em>$1</em>");
-        html = Regex.Replace(html, @"\[([^\]]+)\]\(([^)]+)\)", "<a href=\"$2\">$1</a>");
+        var html = MdInlineCodeRegex().Replace(text, "<code>$1</code>");
+        html = MdInlineBoldRegex().Replace(html, "<strong>$1</strong>");
+        html = MdInlineItalicRegex().Replace(html, "<em>$1</em>");
+        html = MdInlineLinkRegex().Replace(html, "<a href=\"$2\">$1</a>");
         return html;
     }
+
+    [GeneratedRegex(@"`([^`]+)`")]
+    private static partial Regex MdInlineCodeRegex();
+
+    [GeneratedRegex(@"\*\*([^*]+)\*\*")]
+    private static partial Regex MdInlineBoldRegex();
+
+    [GeneratedRegex(@"\*([^*]+)\*")]
+    private static partial Regex MdInlineItalicRegex();
+
+    [GeneratedRegex(@"\[([^\]]+)\]\(([^)]+)\)")]
+    private static partial Regex MdInlineLinkRegex();
 
     private static readonly Dictionary<string, string> EmojiMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -1775,8 +1788,11 @@ public sealed partial class BuiltinTemplateFunctions
     };
 
     private static string Emojify(string text) =>
-        Regex.Replace(text, @":([a-z0-9_+\-]+):", m =>
+        EmojiRegex().Replace(text, m =>
             EmojiMap.TryGetValue(m.Groups[1].Value, out var emoji) ? emoji : m.Value);
+
+    [GeneratedRegex(@":([a-z0-9_+\-]+):")]
+    private static partial Regex EmojiRegex();
 
     /// <summary>urlize/anchorize：小写、非字母数字转连字符、去首尾连字符（保留非 ASCII）</summary>
     private static string Urlize(string text)

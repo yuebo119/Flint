@@ -67,7 +67,7 @@ public sealed class DiskAssetCache : IContentAddressableCache
                 File.GetLastWriteTimeUtc(metaPath) + maxAge < DateTime.UtcNow)
             {
                 Interlocked.Increment(ref _missCount);
-                await RemoveEntryAsync(metaPath, binPath, cancellationToken);
+                RemoveEntry(metaPath, binPath);
                 return null;
             }
 
@@ -101,7 +101,7 @@ public sealed class DiskAssetCache : IContentAddressableCache
             // 清理自身的权限/IO 异常同样吞掉（对齐"缓存损坏不影响构建"的注释承诺）
             Interlocked.Increment(ref _missCount);
             try
-            { await RemoveEntryAsync(metaPath, binPath, cancellationToken); }
+            { RemoveEntry(metaPath, binPath); }
             catch (Exception cleanupEx) when (cleanupEx is IOException or UnauthorizedAccessException or System.Security.SecurityException) { }
             return null;
         }
@@ -171,7 +171,9 @@ public sealed class DiskAssetCache : IContentAddressableCache
         {
             return ValueTask.FromResult(false);
         }
-        RemoveEntryAsync(metaPath, binPath, cancellationToken).AsTask().GetAwaiter().GetResult();
+        // 真同步删除（File.Delete 毫秒级，此前经 Task.Run 的假异步徒增调度与
+        // sync-over-async 债务）；接口保持 ValueTask 以兼容异步调用方
+        RemoveEntry(metaPath, binPath);
         return ValueTask.FromResult(true);
     }
 
@@ -243,14 +245,14 @@ public sealed class DiskAssetCache : IContentAddressableCache
         return (Path.Combine(dir, safeKey + ".json"), Path.Combine(dir, safeKey + ".bin"));
     }
 
-    private static async ValueTask RemoveEntryAsync(string metaPath, string binPath, CancellationToken ct)
+    private static void RemoveEntry(string metaPath, string binPath)
     {
         try
         {
             if (File.Exists(metaPath))
-                await Task.Run(() => File.Delete(metaPath), ct);
+                File.Delete(metaPath);
             if (File.Exists(binPath))
-                await Task.Run(() => File.Delete(binPath), ct);
+                File.Delete(binPath);
         }
         catch (IOException)
         {

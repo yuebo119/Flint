@@ -91,7 +91,12 @@ public static class GoDateFormat
         ("Mon", "ddd"),
     ];
 
-    /// <summary>转换 Go 布局串为 .NET 格式串</summary>
+    /// <summary>转换缓存（键 = Go 布局串；站点实际 layout 数量极小）</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> ConvertCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>转换 Go 布局串为 .NET 格式串（结果按布局串缓存：
+    /// 表内 ~50 个 token 逐次 string.Replace 纯重复，站点实际 layout 只有几个）</summary>
     public static string Convert(string goLayout)
     {
         if (string.IsNullOrEmpty(goLayout))
@@ -99,6 +104,11 @@ public static class GoDateFormat
             return goLayout;
         }
 
+        return ConvertCache.GetOrAdd(goLayout, static layout => ConvertCore(layout));
+    }
+
+    private static string ConvertCore(string goLayout)
+    {
         var result = goLayout;
         // 先替换长模式（已按长度降序排列），再替换残留单词边界上的短 token
         foreach (var (go, net) in Tokens)
