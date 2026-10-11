@@ -107,11 +107,13 @@
 
 - [ ] **T2.1（O1）容器链索引**
   - 问题：`Objects.cs:570-611` 每个首次访问 `.Ancestors/.Parent/.CurrentSection/.FirstSection` 的页面对象执行 `allPages.Where(...).OrderByDescending(...)` 全站扫描排序，全站 O(N²)；万页级数亿次谓词求值（时间占比待 T0.2 实测确认）。
+  - **EPSL 探针实测（2026-10-11，负载面现状）**：合成套件（含万页）chainBuilt=0；MDN 14,622 页 chainBuilt=0；blowfish 21 页 chainBuilt=5（扫描 40 页次）——三个现有负载的总开销趋零，本条时间占比问题在现有语料组合下不成立；重开触发器与探针方法见 `.ai/perf-ledger.md` 表 4。
   - 做法：`BuildSiteContext` 一次性收集容器页（section + taxonomy，通常几十至几百个）按 RelPermalink 长度降序构建共享不可变数组，经 BuildRenderState 下发；`ContainerChain` 改为对小数组前缀过滤（O(C)），惰性缓存与锁语义保留。
   - 验收：面包屑/CurrentSection 主题（narrow/hugo-book）产物对称；等价性单测覆盖探针表内全部形态（`Objects.cs:559-568` 注释表）；万页与 L3 端到端对比 T0 基线（S3：撤索引退回基线）。
 
 - [ ] **T2.2（O2）GetPage 双索引与 basePrefix 一次计算**
   - 问题：`Objects.cs:1395-1546` 每次 `.GetPage` 调用做全站线性 `FirstOrDefault` + `BasePrefixOf` 全站 LCP 逐字符重算 + 每候选 `StripBasePrefix` 子串分配；菜单/related 密集主题每页多次调用。
+  - **EPSL 探针实测（2026-10-11，负载面现状）**：合成套件 invoke=0；MDN 14,622 页 invoke=0；blowfish 21 页 invoke=15（扫描 120 页次，密度 0.7 次/页）——"密集主题"前提在现有语料组合下未出现（blowfish 密度外推万页理论秒级 [推断]，该组合当前不存在）；触发器与探针方法见 `.ai/perf-ledger.md` 表 4。
   - 做法：建站期构建 `FrozenDictionary<string, PageContext>`（归一化路径键，归一化规则复用现有 StripBasePrefix / MatchesIgnoringLanguagePrefix 语义）与 `(kind, name)` 字典；`BasePrefixOf` 结果按页面集合 CWT 缓存一次；查找次序保持"先闭包集合后静态表后分类注册表"。
   - 验收：子路径构建（hugo-book）+ 多语言前缀形态等价单测；loveit/fixit 产物对称；GetPage 密集主题渲染段对比。
   - 依赖：无（与 T2.1 同批但独立提交）。
