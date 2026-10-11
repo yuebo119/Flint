@@ -128,12 +128,14 @@ internal static class BuildHandler
             jsBundler: new JavaScriptBundler());
 #pragma warning restore CA2000
 
-            // 创建站点构建器
+            // 创建站点构建器（T4.3：一次性构建关闭渲染期依赖登记，省每页 stat；
+            // serve/watch 路径经 DevServer 用默认值保持精确增量反查）
             var siteBuilder = new SiteBuilder(
                 contentParser,
                 templateRenderer,
                 assetPipeline,
-                configLoader);
+                configLoader,
+                new SiteBuilderOptions { EnableDependencyTracking = false });
 
             // 清理输出目录
             if (clean && Directory.Exists(outputPath))

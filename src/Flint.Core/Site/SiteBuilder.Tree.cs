@@ -59,12 +59,15 @@ public sealed partial class SiteBuilder
             async (i, ct) =>
             {
                 var filePath = mdFiles[i];
+                // FileInfo 构造即完成一次 stat（T4.6）：与 ReadAllBytes 合并后
+                // 每文件省一次 GetLastWriteTimeUtc 系统调用（万页级省数千次 stat）
+                var info = new FileInfo(filePath);
                 var content = await File.ReadAllBytesAsync(filePath, ct);
                 files[i] = new ContentFile
                 {
                     Path = filePath,
                     RawContent = content,
-                    ModifiedTime = File.GetLastWriteTimeUtc(filePath)
+                    ModifiedTime = info.LastWriteTimeUtc
                 };
             });
 

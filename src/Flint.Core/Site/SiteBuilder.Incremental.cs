@@ -33,6 +33,7 @@ public sealed partial class SiteBuilder
         // 构建作用域：同 BuildAsync 入口（同步前缀开新实例，并行构建执行流隔离）
         ScribanTemplateRenderer.BeginBuildScope();
         OutputDirectoryEnsurer.Reset();
+        _writtenPaths.Clear();
 
         // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态
         //（"改模板后立即增量"是测试锁定的高频真实场景）

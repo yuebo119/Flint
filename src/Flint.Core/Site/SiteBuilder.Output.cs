@@ -353,6 +353,36 @@ public sealed partial class SiteBuilder
         }
     }
 
+    /// <summary>
+    /// 渲染即写盘（T4.1）：页面渲染完成后由渲染线程直接落盘（normalize 前移到此），
+    /// 消除"全部渲染完才开始写盘"的阶段分割——渲染尾部的 CPU 时间与磁盘 IO 重叠。
+    /// <paramref name="rendered"/> 的 Content 落盘后置空（收集列表只留统计信息，
+    /// 万页站点不再驻留全部 HTML）。重复路径以 TryAdd 先到者胜（先完成渲染者），
+    /// 正常站点无重复路径，产物顺序完全确定
+    /// </summary>
+    /// <returns>是否由本次调用赢得写入权（去重败者 false）</returns>
+    private async Task<bool> TryWriteRenderedPageNowAsync(RenderedPage rendered, CancellationToken ct)
+    {
+        if (!_writtenPaths.TryAdd(rendered.OutputPath, 0))
+        {
+            rendered.Content = "";
+            return false;
+        }
+
+        var dir = Path.GetDirectoryName(rendered.OutputPath);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            OutputDirectoryEnsurer.Ensure(dir);
+        }
+        // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
+        var content = rendered.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+            ? HtmlOutputNormalizer.Normalize(rendered.Content)
+            : rendered.Content;
+        await WriteFileWithRetryAsync(rendered.OutputPath, content, ct);
+        rendered.Content = "";
+        return true;
+    }
+
     private async Task WriteOutputAsync(
         List<RenderedPage> pages,
         List<RenderedPage> taxonomyPages,
@@ -363,34 +393,9 @@ public sealed partial class SiteBuilder
         // 确保输出目录存在
         OutputDirectoryEnsurer.Ensure(options.OutputPath);
 
-        // 去重以避免并发写入同一文件；胜者 = 确定性序号最小者（E7）——
-        // 序号由 renderTargets 顺序驱动，与并发完成顺序无关，跨构建产物稳定
-        var allPages = pages.Concat(taxonomyPages)
-            .GroupBy(p => p.OutputPath)
-            .Select(g => g.MinBy(p => p.Sequence)!)
-            .ToArray();
-
-        await Parallel.ForEachAsync(
-            allPages,
-            new ParallelOptions
-            {
-                MaxDegreeOfParallelism = Environment.ProcessorCount,
-                CancellationToken = cancellationToken
-            },
-            async (page, ct) =>
-            {
-                var dir = Path.GetDirectoryName(page.OutputPath);
-                if (!string.IsNullOrEmpty(dir))
-                {
-                    OutputDirectoryEnsurer.Ensure(dir);
-                }
-                // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
-                var content = page.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
-                    ? HtmlOutputNormalizer.Normalize(page.Content)
-                    : page.Content;
-                // 添加重试逻辑以处理文件访问冲突
-                await WriteFileWithRetryAsync(page.OutputPath, content, ct);
-            });
+        // T4.1 起 HTML 页面在渲染点即写盘（渲染/写盘重叠），本方法只剩资产写入；
+        // pages/taxonomyPages 参数保留以兼容调用方统计口径（内容已在渲染点置空）
+        _ = pages; _ = taxonomyPages;
 
         // 优化：并行写入资源（去重以避免并发写入同一文件）
         // 资源产物路径由 ProcessAssetsAsync 统一计算（含 static 剥前缀），

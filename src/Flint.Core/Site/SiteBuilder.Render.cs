@@ -98,7 +98,11 @@ public sealed partial class SiteBuilder
     /// </summary>
     private void RegisterRenderedDependencies(TemplateContext context)
     {
-        if (context.RenderedDependencies is not { } deps || string.IsNullOrEmpty(context.Page.SourcePath))
+        // T4.3：渲染期精确登记服务对象是 watch 模式的依赖反查；一次性构建
+        // （EnableDependencyTracking=false）每页跳过 N 次 File.Exists stat
+        if (!_dependencyTracking ||
+            context.RenderedDependencies is not { } deps ||
+            string.IsNullOrEmpty(context.Page.SourcePath))
         {
             return;
         }
@@ -118,7 +122,33 @@ public sealed partial class SiteBuilder
         List<PageContext> pages,
         SiteConfig config,
         string sourcePath)
-    {        var layoutsDir = Path.Combine(sourcePath, string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir);
+    {
+        var layoutsDir = Path.Combine(sourcePath, string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir);
+
+        // 模板闭包只按模板名区分（T4.4）：先按名展开一次物理路径表，
+        // 再广播到同模板页面（原每页 GetDependencies + GetFullPath 一套小分配）
+        var closureByTemplate = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        List<string> ClosureFor(string templateName)
+        {
+            if (closureByTemplate.TryGetValue(templateName, out var cached))
+            {
+                return cached;
+            }
+
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { templateName };
+            foreach (var dep in _templateRenderer.GetDependencies(templateName))
+            {
+                names.Add(dep);
+            }
+
+            var physical = names
+                .Select(name => Path.GetFullPath(Path.Combine(
+                    layoutsDir,
+                    name.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ? name : name + ".html")))
+                .ToList();
+            closureByTemplate[templateName] = physical;
+            return physical;
+        }
 
         foreach (var page in pages)
         {
@@ -127,26 +157,7 @@ public sealed partial class SiteBuilder
                 continue;
             }
 
-            var templateName = page.Layout ?? "single";
-            var templateNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                templateName
-            };
-
-            // 收集模板的 include/partial 闭包（递归）
-            foreach (var dep in _templateRenderer.GetDependencies(templateName))
-            {
-                templateNames.Add(dep);
-            }
-
-            // 逻辑模板名 → layouts 目录下的物理路径（与 FileTemplateLoader 的搜索规则一致）
-            var physicalPaths = templateNames
-                .Select(name => Path.GetFullPath(Path.Combine(
-                    layoutsDir,
-                    name.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ? name : name + ".html")))
-                .ToList();
-
-            _dependencyGraph.RegisterDependency(page.SourcePath, physicalPaths);
+            _dependencyGraph.RegisterDependency(page.SourcePath, ClosureFor(page.Layout ?? "single"));
         }
     }
 
@@ -455,12 +466,16 @@ public sealed partial class SiteBuilder
 
                             RegisterRenderedDependencies(context);
                             var seq = targetIndex * slotsPerTarget + formatOrdinal;
-                            results[seq] = new RenderedPage
+                            var rendered = new RenderedPage
                             {
                                 OutputPath = GetOutputPathForFormat(page.RelPermalink, format, options.OutputPath),
                                 Content = html,
                                 Sequence = seq
                             };
+                            // 渲染即写盘（T4.1）：normalize+落盘在渲染线程完成，渲染尾部
+                            // 与磁盘 IO 重叠；Content 落盘后置空（万页不驻留全部 HTML）
+                            await TryWriteRenderedPageNowAsync(rendered, ct);
+                            results[seq] = rendered;
                             formatOrdinal++;
                         }
                     }
@@ -506,13 +521,16 @@ public sealed partial class SiteBuilder
                 (int)Math.Ceiling(items.Count / (double)Math.Max(1, pageSize)));
 
             var firstPagePath = $"{listPage.RelPermalink.TrimEnd('/')}/{config.PaginatePath}/1/";
-            results[extraSeq++] = new RenderedPage
+            var redirect = new RenderedPage
             {
                 OutputPath = GetOutputPathForFormat(firstPagePath, OutputFormats.Html, options.OutputPath),
                 Content = BuildPaginationRedirectPage(
                     listPage.Permalink ?? listPage.RelPermalink),
-                Sequence = extraSeq - 1
+                Sequence = extraSeq
             };
+            await TryWriteRenderedPageNowAsync(redirect, cancellationToken);
+            results[extraSeq] = redirect;
+            extraSeq++;
 
             for (var pageNumber = 2; pageNumber <= totalPages; pageNumber++)
             {
@@ -625,11 +643,15 @@ public sealed partial class SiteBuilder
                 return null;
             }
 
-            return new RenderedPage
+            var homePage = new RenderedPage
             {
                 OutputPath = Path.Combine(options.OutputPath, "index.html"),
                 Content = html
             };
+            // 渲染即写盘（T4.1）：与常规页同路径；序号 0 段位（home 兜底页与树版 home
+            // 互斥生成，路径不冲突）
+            await TryWriteRenderedPageNowAsync(homePage, cancellationToken);
+            return homePage;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -778,14 +800,16 @@ public sealed partial class SiteBuilder
             {
                 continue;
             }
-            results.Add(new RenderedPage
+            var redirect = new RenderedPage
             {
                 OutputPath = GetOutputPathForFormat(
                     $"{baseRel.TrimEnd('/')}/{config.PaginatePath}/1/", OutputFormats.Html, options.OutputPath),
                 Content = BuildPaginationRedirectPage($"{config.BaseURL.TrimEnd('/')}{baseRel}"),
                 // 高段位确定性序号（E7）：分类页段从 10⁹ 起，去重时不与主渲染序抢胜
                 Sequence = seqCounter++
-            });
+            };
+            await TryWriteRenderedPageNowAsync(redirect, cancellationToken);
+            results.Add(redirect);
         }
 
         // `/page/N/`(N≥2)：同为模板分页确证后才产出
@@ -953,13 +977,16 @@ public sealed partial class SiteBuilder
                 var query = BuildPageTemplateQuery(pageContext);
                 var html = await _templateRenderer.RenderPageAsync(query, context, ct);
                 RegisterRenderedDependencies(context);
-                concurrentResults.Add(new RenderedPage
+                var rendered = new RenderedPage
                 {
                     OutputPath = GetOutputPath(relPermalink, options.OutputPath),
                     Content = html,
                     // 高段位确定性序号（E7/T3.1）：进入并行前已预分配
                     Sequence = seq
-                });
+                };
+                // 渲染即写盘（T4.1/T3.1）：并行分类页同样在渲染线程落盘
+                await TryWriteRenderedPageNowAsync(rendered, ct);
+                concurrentResults.Add(rendered);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

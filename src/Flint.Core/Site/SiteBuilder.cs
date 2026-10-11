@@ -45,6 +45,14 @@ public sealed partial class SiteBuilder : ISiteBuilder
     // "拼缓存条目 + 一次排序哈希"（500 页站点省 499 次条目格式化）
     private readonly Dictionary<string, string> _taxonomyEntryCache = new(StringComparer.Ordinal);
 
+    // 渲染即写盘（T4.1）的路径去重表：先完成渲染者赢得写入权（TryAdd），
+    // 防止重复输出路径的并发双写；每次构建开头清空
+    private readonly ConcurrentDictionary<string, byte> _writtenPaths = new(StringComparer.Ordinal);
+
+    // 依赖追踪开关（T4.3）：watch 模式需要渲染期精确登记供增量反查；
+    // 一次性构建跳过每页 File.Exists stat
+    private readonly bool _dependencyTracking;
+
     /// <summary>
     /// 创建站点构建器
     /// </summary>
@@ -62,6 +70,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
         _options = options ?? new SiteBuilderOptions();
         // P3 优化：只在 watch 模式下启用内容哈希缓存
         _contentCache = _options.EnableContentCache ? new ContentHashCache() : null;
+        _dependencyTracking = _options.EnableDependencyTracking;
     }
 
     /// <inheritdoc />
@@ -81,6 +90,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
         // 输出目录缓存随构建重置：下方 CleanOutput 会删除输出目录，旧缓存
         // 若命中会跳过重建导致写入阶段报"目录不存在"
         OutputDirectoryEnsurer.Reset();
+        _writtenPaths.Clear();
 
         // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr
         // 输出各阶段耗时；默认关闭，仅一个 bool 判断的开销
@@ -154,7 +164,13 @@ public sealed partial class SiteBuilder : ISiteBuilder
             var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations);
             Phase("7.站点上下文");
 
-            // 8. 渲染页面
+            // 8. 渲染页面。资产路提前并行扇出（T4.2）：static/assets 的拷贝压缩
+            // 与页面渲染无数据依赖（只读 config 与源目录），两路线程池互不阻塞，
+            // 渲染完成后汇合
+            var assetsTask = ProcessAssetsAsync(
+                options.SourcePath, config.ThemeNames, options, errors, cancellationToken,
+                Flint.Core.Templates.TemplateResource.BasePathOf(config.BaseURL));
+
             var renderedPages = await RenderPagesAsync(
                 pageContexts, siteContext, config, options, errors, cancellationToken);
             Phase("8.渲染页面");
@@ -178,10 +194,8 @@ public sealed partial class SiteBuilder : ISiteBuilder
                 taxonomies, siteContext, config, options, errors, cancellationToken);
             Phase("9.分类页");
 
-            // 10. 处理资源文件（含主题 static/assets 合并，站点覆盖主题）
-            var processedAssets = await ProcessAssetsAsync(
-                options.SourcePath, config.ThemeNames, options, errors, cancellationToken,
-                Flint.Core.Templates.TemplateResource.BasePathOf(config.BaseURL));
+            // 10. 汇合资产路（T4.2：与阶段 8 并行启动，此处只等剩余部分）
+            var processedAssets = await assetsTask;
 
             // 10.5 模板函数生成的资源产物（resources.Concat/FromString/Fingerprint）：
             // 模板引用的 RelPermalink 必须真实存在，否则 404。渲染已完成，此时收集
@@ -308,6 +322,12 @@ public sealed class SiteBuilderOptions
     public bool EnableContentCache { get; init; }
 
     /// <summary>
+    /// 渲染期依赖精确登记（T4.3）：watch/serve 模式保持默认 true（增量反查依赖图
+    /// 需要精确依赖）；一次性 CLI 构建显式 false，跳过每页 File.Exists 过滤
+    /// </summary>
+    public bool EnableDependencyTracking { get; init; } = true;
+
+    /// <summary>
     /// 缓存目录
     /// </summary>
     public string? CacheDirectory { get; init; }
@@ -324,9 +344,10 @@ public sealed class RenderedPage
     public required string OutputPath { get; init; }
 
     /// <summary>
-    /// HTML 内容
+    /// HTML 内容。T4.1 起渲染即写盘，落盘后由 <c>TryWriteRenderedPageNowAsync</c>
+    /// 置空（万页站点不再驻留全部 HTML）——故可变 set 而非 init
     /// </summary>
-    public required string Content { get; init; }
+    public required string Content { get; set; }
 
     /// <summary>
     /// 确定性排序键：renderTargets 序 × 8 + 输出格式序（补页/分类页取高段位）。
