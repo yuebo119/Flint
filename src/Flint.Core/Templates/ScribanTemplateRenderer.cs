@@ -1423,9 +1423,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     ];
 
     /// <summary>
-    /// LazyPageObject 委托化成员的**全键集**（T6.2 回退后暂不用于合并路径：
-    /// C 组恢复急切注册后 Keys 枚举自足，D 组由 PageMethodKeys 覆盖。保留定义供
-    /// 后续 C 组再委托化时恢复使用——见 docs/PERFORMANCE-TASKS-R7.md 观察项）
+    /// LazyPageObject 委托化成员的**全键集**（C 组对象 + D 组方法族，双拼写）。
+    /// MergePageMembers 按本表经 TryGetValue 显式补齐（Keys 枚举拿不到惰性成员）
     /// </summary>
     internal static readonly string[] LazyMemberKeys =
     [
@@ -1532,14 +1531,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     target[member] = pageObj[member];
                 }
             }
-            // T6.2 委托化（D 组）：页面方法族不在实例字典里（TryGetValue 惰性
-            // 分发），Keys 枚举拿不到——按 PageMethodKeys 显式经 TryGetValue 补齐
-            foreach (var methodKey in PageMethodKeys)
+            // T6.2 委托化：C 组对象成员 + D 组方法族都不在实例字典里（TryGetValue
+            // 惰性分发），Keys 枚举拿不到——按 LazyMemberKeys 全集显式经 TryGetValue
+            // 补齐。**两层嵌套 partial 链**（list → summary(dict) → get-cover(dict)）
+            // 中内层 page.page 解析到外层 merged dict，其成员来自 Keys 枚举，
+            // 只补 D 组会丢 C 组 → $p.resources.getmatch null（矩阵 16/21 事故根因，
+            // 锁定单测 PartialDictPageMemberTests 复现并防回归）
+            foreach (var lazyKey in LazyMemberKeys)
             {
-                if (!target.ContainsKey(methodKey) &&
-                    pageObj.TryGetValue(null, default, methodKey, out var lazyMethod))
+                if (!target.ContainsKey(lazyKey) &&
+                    pageObj.TryGetValue(null, default, lazyKey, out var lazyValue))
                 {
-                    target[methodKey] = lazyMethod;
+                    target[lazyKey] = lazyValue;
                 }
             }
         }
