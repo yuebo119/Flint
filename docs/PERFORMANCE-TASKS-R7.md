@@ -278,9 +278,10 @@
 - R6 批次 4.2②：增量删除极低频文件级残留 1/100（根因待查）——独立缺陷，用户裁决处置。
 - R6 批次 4.3：Linux 基线缺失（NTFS 74.5% 写入占比在 ext4 是否收窄），需 CI 或 Linux 机器。
 - 发布矩阵：net11 硬件基线若采纳，2013 年前 CPU 与部分 Arm64 设备淘汰（T8.2 报告须含此项）。
-- ~~AOT 口径基线与 T1-T5 收益复测~~：**ILC 环境阻塞登记**（2026-10-12，四种条件稳定复现：ILC 阶段无内存增长死锁 ≥8 分钟，嫌疑 = 杀软实时扫描锁 ILC 输出，与本机 git pack 被锁同族）。自操作指引：杀软加排除目录（仓库 + `%TEMP%` + `C:\Program Files\dotnet`）或重启后执行 `dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o benchmarks/tools/flint-aot`，然后 `bench ssg` 复测 AOT 口径。
+- ~~AOT 口径基线与 T1-T5 收益复测~~：**已完成**（2026-10-12 上午，ILC 阻塞自行解除）：AOT 万页 4294ms vs Hugo 5764ms = **0.74x**（历史规律一致，T1-T6 无 AOT 口径回归）。**新画像**：AOT 形态扫描段 1106-1277ms vs R2R 同机同代码 140ms（8x，AOT 特异 IO 差异；嫌疑 = 杀软对 NativeAOT 直接系统调用 IO 的差异化 hook，环境级非产品缺陷；R2R 链路全正常，T4 轮 133ms 亦为 R2R 口径）。若需 AOT 扫描段收窄：杀软排除目录后重测分段对比。
 - ~~fixit Hugo 基线异常~~：**已修复**（2026-10-12，矩阵三缺陷：junction 挂载穿透污染源主题 / Hugo TOCSS-DART 缺 dart-sass / CleanDir 静默失败；矩阵恢复 21/21 真基线）。
 - ~~全量集成偶发 DevServer 端口失败~~：环境类已分类（Socket 权限，单跑复绿），维持观察。
+- **R6 批次 4.3 Linux 基线**：**阻塞**（2026-10-12 复核）：WSL 无发行版；wslc 四件套容器全部 Exited，启动脚本 `wslc-start-containers.cmd` 的 timeout 语法在 Git Bash 下失效。待用户在本机装 WSL 发行版或修启动脚本后执行：linux-x64 R2R 发布 + `bench ssg` 对比 ext4 写入占比是否收窄（回答 NTFS 74.5% 的分布问题）。
 - **工具坑（跨会话）**：`dotnet run --project X --no-build` 默认 **Debug** 配置——Release 验证必须显式 `-c Release`，否则静默跑旧 Debug exe（本轮排查耗时的根因）。
 
 ---
