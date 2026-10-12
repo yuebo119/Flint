@@ -1423,6 +1423,21 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     ];
 
     /// <summary>
+    /// LazyPageObject 委托化成员的**全键集**（T6.2 回退后暂不用于合并路径：
+    /// C 组恢复急切注册后 Keys 枚举自足，D 组由 PageMethodKeys 覆盖。保留定义供
+    /// 后续 C 组再委托化时恢复使用——见 docs/PERFORMANCE-TASKS-R7.md 观察项）
+    /// </summary>
+    internal static readonly string[] LazyMemberKeys =
+    [
+        .. PageMethodKeys,
+        "params", "resources", "terms", "Terms", "markup", "Markup",
+        "file", "data", "Data", "language", "Language",
+        "output_formats", "OutputFormats",
+        "alternative_output_formats", "AlternativeOutputFormats",
+        "plain_words", "PlainWords"
+    ];
+
+    /// <summary>
     /// 把 dict 里"装着页面"的键（Hugo 惯用 `dict "Page" . | partial "x"`）的页面成员
     /// 并入绑定对象（dict 自身键优先）。Hugo 语义下 `.Page.X` 取的是该页面的 X，
     /// 而迁移产物里的 `.Page.X` 被写成 `page.x`（page 即 dict 本身）→ 取不到页面成员。
@@ -1517,8 +1532,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     target[member] = pageObj[member];
                 }
             }
-            // T6.2 委托化：页面方法族不在 LazyPageObject 实例字典里（TryGetValue
-            // 惰性分发），Keys 枚举拿不到——按 PageMethodKeys 显式经 TryGetValue 补齐
+            // T6.2 委托化（D 组）：页面方法族不在实例字典里（TryGetValue 惰性
+            // 分发），Keys 枚举拿不到——按 PageMethodKeys 显式经 TryGetValue 补齐
             foreach (var methodKey in PageMethodKeys)
             {
                 if (!target.ContainsKey(methodKey) &&
