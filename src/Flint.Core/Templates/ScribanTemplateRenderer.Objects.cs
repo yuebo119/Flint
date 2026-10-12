@@ -648,11 +648,6 @@ public sealed partial class ScribanTemplateRenderer
             // **急切成员字典优先**（T6.2 性能教训）：title/content 等高频成员每次
             // 成员访问都命中，必须走字典 O(1)；特殊路径与惰性 switch 都不在字典，
             // 查不到再走，语义等价。外部的显式 SetValue 覆盖（partial 合并等）天然优先
-            if (member == "resources" && Environment.GetEnvironmentVariable("FLINT_TRACE_CHAIN") == "1")
-            {
-                var bh = base.TryGetValue(context, span, member, out var bv);
-                Console.Error.WriteLine($"[res] baseHit={bh} val={bv?.GetType().Name ?? "NULL"} dictHas={ContainsKey("resources")}");
-            }
             if (base.TryGetValue(context, span, member, out value))
             {
                 return true;
