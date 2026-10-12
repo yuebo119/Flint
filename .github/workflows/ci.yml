@@ -1,0 +1,71 @@
+# CI：push/PR 快检（windows 构建+单测+门禁 / ubuntu 冒烟）+ nightly 全量抓偶发
+# 测试执行说明：xUnit v3 + Microsoft.Testing.Platform 在 .NET 10 SDK 上拒绝
+# VSTest 通道（dotnet test 报 NETSDK1045 同类错误），故用 dotnet run 直跑
+# MTP 可执行文件（退出码即测试结果，CI 门禁语义不变）
+name: ci
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  schedule:
+    - cron: "0 18 * * *"   # 每日 02:00（UTC+8）nightly 全量
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 快检：push/PR 必过。构建 + 单元测试 + AiGate 门禁 18 项
+  test-windows:
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: 构建（Release）
+        run: dotnet build -c Release
+      - name: 单元测试（Flint.Core.Tests）
+        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build
+      - name: 质量门禁（AiGate gate-check 18 项）
+        run: dotnet run --project src/Flint.AiGate -c Release --no-build -- gate-check
+
+  # Linux 冒烟：证明 ext4 下可构建可测试（R6 4.3 Linux 基线的 CI 承载）
+  test-ubuntu:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: 构建（Release）
+        run: dotnet build -c Release
+      - name: 单元测试（Flint.Core.Tests）
+        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build
+
+  # nightly：全量深检。单测连跑 3 轮抓偶发（SubpathAuxOutputTests ~3% 观察项），
+  # 集成测试全量（1647 项，本地约 12 分钟），门禁复核
+  nightly:
+    if: github.event_name == 'schedule'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: 构建（Release）
+        run: dotnet build -c Release
+      - name: 单元测试 × 3 轮（抓偶发）
+        run: |
+          for i in 1 2 3; do
+            echo "=== 第 $i 轮 ==="
+            dotnet run --project tests/Flint.Core.Tests -c Release --no-build || exit 1
+          done
+      - name: 集成测试全量（Flint.IntegrationTests）
+        run: dotnet run --project tests/Flint.IntegrationTests -c Release --no-build
+      - name: 质量门禁（AiGate gate-check 18 项）
+        run: dotnet run --project src/Flint.AiGate -c Release --no-build -- gate-check
