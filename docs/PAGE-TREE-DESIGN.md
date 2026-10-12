@@ -1,7 +1,8 @@
-# T2.0 页面树设计提案（待裁决）
+# T2.0 页面树设计提案（已实施）
 
-> 状态：**设计稿，未实现**。本提案基于 Hugo 源码研究（`hugolib/doctree/`、`content_map*.go`、`common/paths/pathparser.go`）与 Flint 消费面分析。
-> 裁决通过后进入 T2.1（装配）→ T2.2（查询+cascade）→ T2.3（增量精确替换）。
+> 状态：**T2.0~T2.3 全部实施完成**（2026-09-08 起分批落地）。本提案基于 Hugo 源码研究（`hugolib/doctree/`、`content_map*.go`、`common/paths/pathparser.go`）与 Flint 消费面分析。
+> 落地形态：`src/Flint.Core/Site/PageTree/PageTree.cs`（325 行）+ `RadixTree.cs`（369 行）+ `PageTreeWalker`；装配与 cascade 在 `SiteBuilder.Tree.cs`，增量精确替换在 `SiteBuilder.Incremental.cs`。
+> 2026-10-12 回填说明：原状态行"设计稿，未实现"是文档滞后——代码早已完整落地，下方第 8 节"待裁决问题"的实际选择已在实施中按推荐项确定，保留作设计复盘。
 > 配套研究材料：Hugo doctree API 面细节见对话记录（agent 输出含全部文件行号佐证）。
 
 ---
@@ -157,7 +158,7 @@ public IReadOnlyList<PageTreeNode> GetPagesInSection(string sectionKey, bool rec
 | 排序语义漂移（现有 List 顺序 = 文件扫描序 → 树序 = 字典序） | 输出前按 weight+date 排序（现有 BuildPageContexts 已有排序逻辑，保持一致） |
 | T2.1 与 T2.2/T2.3 之间过渡态的性能回退 | T2.1 本身不提速也不减速（纯结构替换）；提速在 T2.2/T2.3 兑现 |
 
-## 8. 待裁决问题（请逐项勾选）
+## 8. 设计裁决项（已按推荐实施，2026-10-12 回填）
 
 - **[A] radix 实现方式**：自写紧凑 radix（推荐，~250 行无依赖） / 引入第三方库 / 暂用有序字典前缀扫描（性能目标打折）
 - **[B] PageTreeNode 持有 ParsedContent**（推荐） / 引入新中间类型（解耦但多一层转换）

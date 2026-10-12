@@ -1,7 +1,10 @@
 # CI：push/PR 快检（windows 构建+单测+门禁 / ubuntu 冒烟）+ nightly 全量抓偶发
 # 测试执行说明：xUnit v3 + Microsoft.Testing.Platform 在 .NET 10 SDK 上拒绝
 # VSTest 通道（dotnet test 报 NETSDK1045 同类错误），故用 dotnet run 直跑
-# MTP 可执行文件（退出码即测试结果，CI 门禁语义不变）
+# MTP 可执行文件（退出码即测试结果，CI 门禁语义不变）。
+# -parallelMode none：单测套件强制串行——并行模式下偶发失败约 4%
+# （AsyncLocal 构建态被并发测试交错读写，串行 12/12 复测坐实），根因
+# （污染源测试）待查，串行为既定缓解；34s vs 10s 的成本可接受
 name: ci
 
 on:
@@ -29,7 +32,7 @@ jobs:
       - name: 构建（Release）
         run: dotnet build -c Release
       - name: 单元测试（Flint.Core.Tests）
-        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build
+        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build -- -parallelMode none
       - name: 质量门禁（AiGate gate-check 18 项）
         run: dotnet run --project src/Flint.AiGate -c Release --no-build -- gate-check
 
@@ -45,7 +48,7 @@ jobs:
       - name: 构建（Release）
         run: dotnet build -c Release
       - name: 单元测试（Flint.Core.Tests）
-        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build
+        run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build -- -parallelMode none
 
   # nightly：全量深检。单测连跑 3 轮抓偶发（SubpathAuxOutputTests ~3% 观察项），
   # 集成测试全量（1647 项，本地约 12 分钟），门禁复核
@@ -63,7 +66,7 @@ jobs:
         run: |
           for i in 1 2 3; do
             echo "=== 第 $i 轮 ==="
-            dotnet run --project tests/Flint.Core.Tests -c Release --no-build || exit 1
+            dotnet run --project tests/Flint.Core.Tests -c Release --no-build -- -parallelMode none || exit 1
           done
       - name: 集成测试全量（Flint.IntegrationTests）
         run: dotnet run --project tests/Flint.IntegrationTests -c Release --no-build

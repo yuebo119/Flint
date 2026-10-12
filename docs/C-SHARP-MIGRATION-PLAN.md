@@ -270,19 +270,19 @@ flowchart TD
 | F6 | **G16 规则修订**（需用户确认）：磁盘 4 个 csproj 不在 slnx。其中 ThemeMigrator 系为既有独立工具先例；DevTools/AiGate 对齐同一形态（对应 D1）。已在 GateCheckCommand 增加免除清单并注释说明。若用户要求产品解决方案全覆盖，改为把两项目加入 Flint.slnx |
 | F7 | D1 决策实际落点：DevTools/AiGate 未并入 Flint.slnx（与方案推荐一致），发布命令仍只 `dotnet publish src/Flint.Cli`，产品发布面不受影响 |
 
-### 11.3 未完成登记（下一轮任务，均带验收标准）
+### 11.3 已完成登记（2026-10-12 回填：全部完成，表格为历史登记）
 
-| 新编号 | 任务 | 验收标准 |
+| 新编号 | 任务 | 状态 |
 |---|---|---|
-| CS-34 | 移植 sibling-map.sh | 接口→多实现族清单与 bash 版一致；review-scope 姊妹对照联动切换 C# |
-| CS-35 | 移植 sister-axis-scan.sh | 同口径输出 |
-| CS-36 | 移植 fix-orchestrator.sh | 编排流程关键节点输出一致 |
-| CS-37 | 移植 fix-completeness-check.sh | 同口径输出 |
-| CS-38 | 移植 post-fix-check.sh | 零残留机械验证同口径 |
-| CS-39 | 移植 verify-action-items.sh | 行动项标识符存在性验证同口径 |
-| CS-40 | 移植 refine-scan.sh + probe-template.sh | 27 项矩阵机械可扫子集同口径；探针骨架生成一致 |
-| CS-41 | .ai/scripts/ 剩余 8 个 bash 全删 + README/prompt 终态切换 | verify-ai-system V2/V9 切到纯 C# 条目后全绿；`.ai/scripts/` 目录清空 |
-| CS-42 | DevTools/AiGate 自身测试（lint 规则回归） | 至少覆盖：OrderedCounter.most_common 同序语义、corpus convert 白名单守卫、bench Runner 退出码断言、AiGate Scanner 注释行过滤、零断言花括号配对（含不配对文末截断）；红→绿验证 |
+| CS-34 | 移植 sibling-map.sh | ✅ 完成（57a387a，AiGate sibling-map 命令） |
+| CS-35 | 移植 sister-axis-scan.sh | ✅ 完成（57a387a，AiGate sister-axis-scan 命令） |
+| CS-36 | 移植 fix-orchestrator.sh | ✅ 完成（57a387a） |
+| CS-37 | 移植 fix-completeness-check.sh | ✅ 完成（57a387a，AiGate fix-completeness-check 命令） |
+| CS-38 | 移植 post-fix-check.sh | ✅ 完成（57a387a，AiGate post-fix-check 命令） |
+| CS-39 | 移植 verify-action-items.sh | ✅ 完成（57a387a，AiGate verify-action-items 命令） |
+| CS-40 | 移植 refine-scan.sh + probe-template.sh | ✅ 完成（57a387a） |
+| CS-41 | .ai/scripts/ 剩余 8 个 bash 全删 + README/prompt 终态切换 | ✅ 完成（57a387a/f2471b6，.ai/scripts/ 已空） |
+| CS-42 | DevTools/AiGate 自身测试（lint 规则回归） | ✅ 完成（a846039，tests/Flint.Tools.Tests 12/12） |
 | CS-43 | CONVENTIONS.md 增加"新脚本一律 C#"条目 | **已完成**（§14 脚本编写规范）：三层规则——一次性脚本用 .NET 10 文件型应用（`#:package` + `dotnet run x.cs`，本机实测）、常驻工具进 DevTools/AiGate 子命令（剩余 8 个 .ai 门禁按此层继续）、交互排查用 csi；禁止新增 .py/.sh/.ps1/.cmd |
 | CS-30/31/32/33 | ~~assertion-strength/doc-consistency/tech-debt/review-snapshot~~ | **已完成**（v1.1，提交见 git log） |
 

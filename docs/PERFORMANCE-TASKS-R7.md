@@ -281,7 +281,7 @@
 - ~~fixit Hugo 基线异常~~：**已修复**（2026-10-12，矩阵三缺陷：junction 挂载穿透污染源主题 / Hugo TOCSS-DART 缺 dart-sass / CleanDir 静默失败；矩阵恢复 21/21 真基线）。
 - ~~全量集成偶发 DevServer 端口失败~~：环境类已分类（Socket 权限，单跑复绿），维持观察。
 - **R6 批次 4.3 Linux 基线**：**阻塞（待用户决策）**（2026-10-12 复核）：WSL 无发行版；wslc 容器机制可用但四件套均为数据库镜像（mysql84/pg186/kafka431/rabbit436），无 .NET 运行时，装运行时进数据库镜像属污染需用户决策。解除后执行：linux-x64 R2R 发布 + `bench ssg` 对比 ext4 写入占比（回答 NTFS 74.5%/AOT 1106ms 的分布问题）。
-- **观察项：SubpathAuxOutputTests 偶发失败（~3%）**（2026-10-12 立案，未销案）：`子路径构建_GetPage按内容根路径仍能命中段页` 全量套件约 37 轮挂 1 轮（单跑该类 16 轮全绿、全量 20 轮全绿）。二分法：T6 前 5 轮 0 挂（样本不足），T6 diff 两文件人审语义等价；机制假设 = AsyncLocal 执行流读取构建态（CurrentSitePages）的罕见交错窗口，同类历史 = `PaginationMultiPageTests` 偶发丢 /page/2/（Renderer.cs 注释自证）。**未捕获失败详情是当前缺口**；下一步 = CI 或安静机器全量 50 轮抓 detail。按并发 bug 分类学立案不销案，不做无据代码改动。
+- **观察项：单测套件并行偶发（~4%）——已缓解，根因待查**（2026-10-12）：并行模式下全量套件偶发失败（累计约 47 轮挂 2，涉及 SubpathAuxOutputTests.GetPage 命中与 PageAwareLookupE2ETests 文件缺失两种形态）。**隔离实验坐实并行干扰**：xUnit `-parallelMode none` 真串行 12/12 全绿（对照并行约 4%）。机制假设 = AsyncLocal 构建态（CurrentSitePages/CurrentSite）或某静态缓存被并发测试交错读写。**缓解已落地**：ci.yml 全部单测命令固化 `-- -parallelMode none`（34s vs 10s 可接受），nightly 3 轮继续监控。**根因待查**：污染源测试定位需二分法（半量类集并行跑），价值低于成本暂缓；若串行模式下再现即升级为真并发 bug 立案。
 - ~~观察项：T6.2 C 组再委托化的断裂根因~~：**已完整修复**（2026-10-12，见 T6.2 条目）。根因三层：残留裸值注册占位 + case 缺 Pascal 双拼写 + MergePageMembers 直传形态空转。修复后矩阵 21/21 + 完整 fixit 站点通过 + 万页渲染段 -12%。
 - **工具坑（跨会话）**：`dotnet run --project X --no-build` 默认 **Debug** 配置——Release 验证必须显式 `-c Release`，否则静默跑旧 Debug exe（本轮排查耗时的根因）。
 
