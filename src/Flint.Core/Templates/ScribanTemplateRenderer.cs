@@ -1515,8 +1515,43 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         return sb.ToString();
     }
 
+    /// <summary>
+    /// 把页面对象的委托化成员（C 组对象 + D 组方法族）经 TryGetValue 显式补齐到
+    /// target。LazyPageObject 的惰性成员不在实例字典里，Keys 枚举与索引器直读都
+    /// 拿不到——所有"页面成员拷贝到 dict"的路径都必须走本助手
+    /// </summary>
+    private static void EnsureLazyMembers(ScriptObject target, ScriptObject pageObj)
+    {
+        foreach (var lazyKey in LazyMemberKeys)
+        {
+            if (!target.ContainsKey(lazyKey) &&
+                pageObj.TryGetValue(null, default, lazyKey, out var lazyValue))
+            {
+                target[lazyKey] = lazyValue;
+            }
+        }
+    }
+
     private static void MergePageMembers(ScriptObject target, ScriptObject source)
     {
+        // 形态一：source 自身就是页面对象（`partial "x" page` 直传，Hugo 惯用法；
+        // fixit 的 init/index 七个 detection partial 全是此形态）。页面对象刻意不注册
+        // "page"/"Page" 自引用键（防对象图成环，见 LazyPageObject 构造注释），故下方
+        // 按键查找对 this 形态整体空转。C 组惰性下 merged/ctxCopy 路径只复制到急切键，
+        // C 组成员丢失 → 深链（init→head→get-cover）里 $page.resources.getmatch 报
+        // null（矩阵 16/21 根因）。target == source 是分支 1 的原地改（对象自身
+        // TryGetValue 已能解析全部成员），无需也不应拷贝
+        if (!ReferenceEquals(target, source) &&
+            source.ContainsKey("rel_permalink") && source.ContainsKey("title"))
+        {
+            EnsureLazyMembers(target, source);
+            return;
+        }
+
+        // 形态二：dict 携带 page/Page 键（`partial "x" (dict "Page" page)`）。
+        // pageObj 可能是 LazyPageObject，也可能是外层 partial 产出的 merged dict
+        // （多层嵌套）——后者的 C 组键由外层合并时的 EnsureLazyMembers 补齐，
+        // 此处 Keys 枚举即可带到内层；TryGetValue 兜底再补一层
         foreach (var key in new[] { "page", "Page" })
         {
             if (!source.ContainsKey(key) || source[key] is not ScriptObject pageObj ||
@@ -1531,20 +1566,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                     target[member] = pageObj[member];
                 }
             }
-            // T6.2 委托化：C 组对象成员 + D 组方法族都不在实例字典里（TryGetValue
-            // 惰性分发），Keys 枚举拿不到——按 LazyMemberKeys 全集显式经 TryGetValue
-            // 补齐。**两层嵌套 partial 链**（list → summary(dict) → get-cover(dict)）
-            // 中内层 page.page 解析到外层 merged dict，其成员来自 Keys 枚举，
-            // 只补 D 组会丢 C 组 → $p.resources.getmatch null（矩阵 16/21 事故根因，
-            // 锁定单测 PartialDictPageMemberTests 复现并防回归）
-            foreach (var lazyKey in LazyMemberKeys)
-            {
-                if (!target.ContainsKey(lazyKey) &&
-                    pageObj.TryGetValue(null, default, lazyKey, out var lazyValue))
-                {
-                    target[lazyKey] = lazyValue;
-                }
-            }
+            EnsureLazyMembers(target, pageObj);
         }
     }
 
