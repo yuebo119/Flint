@@ -481,6 +481,23 @@ public sealed partial class SiteBuilder
         }
     }
 
+    /// <summary>
+    /// 输出根规范化缓存：GetFullPath 是纯函数（同输入恒同输出）。原实现每页
+    /// 输出路径计算都重算一次（万页站点 = 2 万次 GetFullPath + 分配）——
+    /// 缓存键为输出路径本身，量级为每构建 1-2 个，跨构建驻留无害
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> OutputRootCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>输出根的规范化前缀形式（带尾分隔符，供越界校验的 StartsWith）</summary>
+    private static string OutputRootPrefix(string outputPath) =>
+        OutputRootCache.TryGetValue(outputPath, out var cached)
+            ? cached
+            : OutputRootCache.GetOrAdd(outputPath, static p =>
+                Path.GetFullPath(p)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                    + Path.DirectorySeparatorChar);
+
     /// <summary>按输出格式计算输出路径：非 html 格式用其 BaseName+Extension（index.json 等）</summary>
     private static string GetOutputPathForFormat(
         string relPermalink, Site.OutputFormat format, string outputPath)
@@ -506,9 +523,7 @@ public sealed partial class SiteBuilder
             relPath = relPath[..^5];
         }
         var combined = Path.Combine(outputPath, relPath, format.BaseName + format.Extension);
-        var outputRoot = Path.GetFullPath(outputPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+        var outputRoot = OutputRootPrefix(outputPath);
         if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"页面输出路径逃逸输出目录，已拒绝: {relPermalink}");
@@ -540,9 +555,7 @@ public sealed partial class SiteBuilder
     {
         var path = relPermalink.TrimStart('/');
         var combined = Path.Combine(outputPath, path);
-        var outputRoot = Path.GetFullPath(outputPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+        var outputRoot = OutputRootPrefix(outputPath);
         if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"页面输出路径逃逸输出目录，已拒绝: {relPermalink}");
@@ -571,9 +584,7 @@ public sealed partial class SiteBuilder
         // permalink 里的 slug 源自 front matter（用户可控），含 ".." 时会写出输出目录之外——
         // 组合后做前缀校验，越界即 fail loud（补尾分隔符防兄弟目录前缀误判）
         var combined = Path.Combine(outputPath, path);
-        var outputRoot = Path.GetFullPath(outputPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+        var outputRoot = OutputRootPrefix(outputPath);
         if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException($"页面输出路径逃逸输出目录，已拒绝: {relPermalink}");
@@ -733,9 +744,7 @@ public sealed partial class SiteBuilder
             rel = rel[..^5];
         }
         var combined = Path.Combine(outputRootPath, rel.Replace('/', Path.DirectorySeparatorChar), "index.html");
-        var outputRoot = Path.GetFullPath(outputRootPath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-            + Path.DirectorySeparatorChar;
+        var outputRoot = OutputRootPrefix(outputRootPath);
         if (!Path.GetFullPath(combined).StartsWith(outputRoot, StringComparison.OrdinalIgnoreCase))
         {
             return null; // 逃逸拒绝

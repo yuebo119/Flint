@@ -453,12 +453,16 @@ public sealed partial class MarkdownParser : IMarkdownParser
         var html = _renderHooks is not null
             ? RenderDocumentWithHooks(document, pipeline, _renderHooks)
             : Markdown.ToHtml(document, pipeline);
-        var headings = ExtractHeadingsFromDocument(document);
-        var links = ExtractLinksFromDocument(document);
-        var images = ExtractImagesFromDocument(document);
-
+        // 单遍遍历产出标题/链接/图片/纯文本（此前四个维度四次 Descendants 全树遍历）。
+        // 类型分派语义与原 ExtractPlainText 逐一对应（含忽略 HtmlInline/HtmlBlock、
+        // autolink 不进纯文本）；links 列表的 autolink 尾部追加顺序也与原实现一致
+        var headings = new List<MarkdownHeading>();
+        var links = new List<MarkdownLink>();
+        var autoLinks = new List<MarkdownLink>();
+        var images = new List<MarkdownImage>();
         var plainSb = new StringBuilder();
-        ExtractPlainText(document, plainSb);
+        AnalyzeDocument(document, headings, links, autoLinks, images, plainSb);
+        links.AddRange(autoLinks);
         var plainText = plainSb.ToString().Trim();
 
         var wordCount = CountWordsInText(plainText);
@@ -474,6 +478,172 @@ public sealed partial class MarkdownParser : IMarkdownParser
             WordCount = wordCount,
             ReadingTime = readingTime
         };
+    }
+
+    /// <summary>
+    /// 单遍文档遍历：同时收集标题（含属性 ID）、链接（LinkInline/AutolinkInline）、
+    /// 图片与纯文本。类型分派按最具体类型在前（FencedCodeBlock 先于 CodeBlock、
+    /// ParagraphBlock/HeadingBlock/AutolinkInline/LinkInline 先于各自的容器基类），
+    /// 语义与原 ExtractPlainText/ExtractHeadingsFromDocument/ExtractLinksFromDocument/
+    /// ExtractImagesFromDocument 四次独立遍历的组合严格一致
+    /// </summary>
+    private static void AnalyzeDocument(
+        MarkdownObject obj,
+        List<MarkdownHeading> headings,
+        List<MarkdownLink> links,
+        List<MarkdownLink> autoLinks,
+        List<MarkdownImage> images,
+        StringBuilder plain)
+    {
+        switch (obj)
+        {
+            case LiteralInline literal:
+                plain.Append(literal.Content);
+                break;
+
+            case CodeInline code:
+                plain.Append(code.Content);
+                break;
+
+            case LineBreakInline:
+                plain.Append(' ');
+                break;
+
+            case HtmlInline:
+            case HtmlBlock:
+                // 忽略 HTML 内联元素与块（原实现同）
+                break;
+
+            case FencedCodeBlock fencedCode:
+                if (fencedCode.Lines.Count > 0)
+                {
+                    foreach (var line in fencedCode.Lines)
+                    {
+                        plain.Append(line.ToString());
+                        plain.Append(' ');
+                    }
+                }
+                break;
+
+            case CodeBlock codeBlock:
+                if (codeBlock.Lines.Count > 0)
+                {
+                    foreach (var line in codeBlock.Lines)
+                    {
+                        plain.Append(line.ToString());
+                        plain.Append(' ');
+                    }
+                }
+                break;
+
+            case ParagraphBlock paragraph:
+                if (paragraph.Inline != null)
+                {
+                    foreach (var child in paragraph.Inline)
+                    {
+                        AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                    }
+                }
+                plain.Append(' ');
+                break;
+
+            case HeadingBlock heading:
+                var text = GetInlineText(heading.Inline);
+                var id = GenerateHeadingId(text);
+                var htmlAttributes = heading.TryGetAttributes();
+                if (htmlAttributes?.Id != null)
+                {
+                    id = htmlAttributes.Id;
+                }
+                headings.Add(new MarkdownHeading
+                {
+                    Level = heading.Level,
+                    Text = text,
+                    Id = id,
+                    Line = heading.Line + 1 // 转换为 1-based 行号
+                });
+                if (heading.Inline != null)
+                {
+                    foreach (var child in heading.Inline)
+                    {
+                        AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                    }
+                }
+                plain.Append(' ');
+                break;
+
+            case AutolinkInline autoLink:
+                // autolink 不进纯文本（LeafInline，原实现无对应 case），但计入链接
+                // 列表（尾部统一拼接，保持原 links 列表顺序）
+                autoLinks.Add(new MarkdownLink
+                {
+                    Url = autoLink.Url,
+                    Text = autoLink.Url,
+                    Title = null
+                });
+                break;
+
+            case LinkInline link:
+                if (link.IsImage)
+                {
+                    images.Add(new MarkdownImage
+                    {
+                        Src = link.Url ?? string.Empty,
+                        Alt = GetInlineText(link),
+                        Title = link.Title
+                    });
+                }
+                else
+                {
+                    links.Add(new MarkdownLink
+                    {
+                        Url = link.Url ?? string.Empty,
+                        Text = GetInlineText(link),
+                        Title = link.Title
+                    });
+                }
+                // link 文字进纯文本（LinkInline 是 ContainerInline，原实现经容器递归）
+                foreach (var child in link)
+                {
+                    AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                }
+                break;
+
+            case ListBlock list:
+                foreach (var item in list)
+                {
+                    AnalyzeDocument(item, headings, links, autoLinks, images, plain);
+                }
+                break;
+
+            case ListItemBlock listItem:
+                foreach (var child in listItem)
+                {
+                    AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                }
+                break;
+
+            case QuoteBlock quote:
+                foreach (var child in quote)
+                {
+                    AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                }
+                break;
+
+            case ContainerInline containerInline:
+                foreach (var child in containerInline)
+                {
+                    AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                }
+                break;
+
+            case ContainerBlock containerBlock:
+                foreach (var child in containerBlock)
+                {
+                    AnalyzeDocument(child, headings, links, autoLinks, images, plain);
+                }
+                break;
+        }
     }
 
     /// <summary>

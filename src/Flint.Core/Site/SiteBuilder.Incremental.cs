@@ -209,7 +209,9 @@ public sealed partial class SiteBuilder
                 var siteData = await LoadSiteDataAsync(options, config.ThemeNames, cancellationToken);
                 var translations = Translations.Load(
                     options.SourcePath, config.ThemeNames, config.LanguageCode);
-                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations);// 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
+                // 签名传入 BuildSiteContext：签名一致（纯正文编辑）时 lookup 投影
+                // 整体复用上次构建结果（#12），省全词条遍历与投影重建
+                var siteContext = BuildSiteContext(config, allPageContexts, taxonomies, siteData, translations, taxonomySignatureAfter);// 3. 渲染集合 = 变化页自身 + 全部 section/home 列表页
                 //    （列表页聚合"最新内容"，任何内容变化都可能影响；数量 = section 数，远小于页数。
                 //     Hugo 以运行时依赖追踪精确到页，此处为无追踪前提下的保守折中）
                 var changedPathSet = new HashSet<string>(
@@ -416,12 +418,13 @@ public sealed partial class SiteBuilder
 
     /// <summary>
     /// taxonomy 输入签名：全部内容页的（树 key + 标题 + Slug + 日期 + tags + categories + draft）
-    /// 规范化哈希。签名一致 = term/taxonomy 页的数据输入未变（纯正文编辑），可跳过重产。
-    /// 节点级条目缓存：未变化页复用上次格式化结果，增量只重算变化页
+    /// 聚合哈希。签名一致 = term/taxonomy 页的数据输入未变（纯正文编辑），可跳过重产。
+    /// 聚合方式：每节点条目哈希成 128-bit 后 XOR——顺序无关（去掉原实现的
+    /// 全量 Sort 与 MB 级 Join 分配），节点级条目缓存复用未变化页的哈希
     /// </summary>
     private string ComputeTaxonomySignature(PageTree tree)
     {
-        var entries = new List<string>();
+        ulong lo = 0, hi = 0;
         tree.Walk(new PageTreeWalker
         {
             Tree = tree,
@@ -432,18 +435,41 @@ public sealed partial class SiteBuilder
                 {
                     if (!_taxonomyEntryCache.TryGetValue(node.Key, out var entry))
                     {
-                        entry = string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                        var text = string.Create(System.Globalization.CultureInfo.InvariantCulture,
                             $"{node.Key}|{md.Title}|{md.Slug}|{md.Date:O}|{md.Draft}|{{{string.Join(",", md.Tags.OrderBy(t => t, StringComparer.Ordinal))}}}|{{{string.Join(",", md.Categories.OrderBy(c => c, StringComparer.Ordinal))}}}");
+                        entry = HashTaxonomyEntry(text);
                         _taxonomyEntryCache[node.Key] = entry;
                     }
-                    entries.Add(entry);
+                    lo ^= entry.Lo;
+                    hi ^= entry.Hi;
                 }
                 return false;
             }
         });
-        entries.Sort(StringComparer.Ordinal);
-        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(string.Join("\n", entries))));
+        // 128-bit XOR 聚合：同集合不同遍历序结果恒等（原实现靠 Sort 保证，此处天然成立）
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lo:x16}{hi:x16}");
+    }
+
+    /// <summary>
+    /// 节点条目的 128-bit FNV 哈希：两个独立种子的 64 位 FNV-1a 拼接，零依赖零分配。
+    /// 碰撞概率 2^-128 量级；即便碰撞也仅表现为 taxonomy 页多产/漏产一次，
+    /// 不损构建正确性（词条页始终由分页确证与依赖图兜底）
+    /// </summary>
+    private static (ulong Lo, ulong Hi) HashTaxonomyEntry(ReadOnlySpan<char> entry)
+    {
+        const ulong prime = 1099511628211UL;
+        var lo = 14695981039346656037UL; // FNV-1a 64 标准偏置
+        var hi = 0xC3B0578D2B6A9B4DUL;   // 第二通道独立种子
+        foreach (var c in entry)
+        {
+            lo = (lo ^ c) * prime;
+            hi = (hi ^ c) * prime;
+        }
+        // 第二通道末端雪崩，降低结构相近输入的碰撞
+        hi ^= hi >> 33;
+        hi *= 0xFF51AFD7ED558CCDUL;
+        hi ^= hi >> 33;
+        return (lo, hi);
     }
 
     /// <summary>

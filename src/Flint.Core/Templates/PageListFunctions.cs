@@ -82,46 +82,69 @@ public abstract class PageListFunctionBase : IScriptCustomFunction
         };
 }
 
-/// <summary>按日期升序（Hugo ByDate：旧→新，要新在前用 .Reverse）</summary>
-public sealed class PagesByDateFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+/// <summary>
+/// 无参确定性集合方法（ByXxx/Reverse）的调用结果缓存：函数实例随 LazyPageList
+/// 构造创建并跨渲染共享（CWT），主题在列表/菜单/侧栏多处调 <c>.ByDate</c> 时
+/// 每次都重做 O(N log N) 排序——缓存后同一集合实例全构建只算一次。
+/// 结果对象为只读页面序列（LazyPageList），跨调用复用与 SharedPageLists
+/// 同一风险模型（模板对集合结果对象写键属非常规用法）
+/// </summary>
+public abstract class CachedPageListFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    private readonly object _gate = new();
+    private object? _cached;
+
+    public sealed override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
+        ScriptArray arguments, ScriptBlockStatement? blockStatement)
+    {
+        if (_cached is not null)
+        {
+            return _cached;
+        }
+        lock (_gate)
+        {
+            return _cached ??= Compute(pages);
+        }
+    }
+
+    protected abstract object Compute(IReadOnlyList<FlintPageContext> pages);
+}
+
+/// <summary>按日期升序（Hugo ByDate：旧→新，要新在前用 .Reverse）</summary>
+public sealed class PagesByDateFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
+{
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.OrderBy(p => p.Date));
 }
 
 /// <summary>按标题（忽略大小写、数字感知，Hugo 语义）</summary>
-public sealed class PagesByTitleFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+public sealed class PagesByTitleFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.OrderBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>按权重升序（Hugo ByWeight）；等权重按**日期降序**破平（探针 v0.166：
 /// 等权 Jan/Feb/Mar → [c][b][a]），再按标题——techdoc 的菜单树遍历靠此定 Prev/Next</summary>
-public sealed class PagesByWeightFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+public sealed class PagesByWeightFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.OrderBy(p => p.Weight)
             .ThenByDescending(p => p.Date)
             .ThenBy(p => p.Title, StringComparer.OrdinalIgnoreCase));
 }
 
 /// <summary>按内容长度降序（Hugo ByLength）</summary>
-public sealed class PagesByLengthFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+public sealed class PagesByLengthFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.OrderByDescending(p => p.Content.Length));
 }
 
 /// <summary>按最后修改升序（Hugo ByLastmod：旧→新，要新在前用 .Reverse）</summary>
-public sealed class PagesByLastmodFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+public sealed class PagesByLastmodFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.OrderBy(p => p.LastMod ?? p.Date));
 }
 
@@ -234,10 +257,9 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
 }
 
 /// <summary>反转顺序（Hugo Reverse）</summary>
-public sealed class PagesReverseFunction(IReadOnlyList<FlintPageContext> pages) : PageListFunctionBase
+public sealed class PagesReverseFunction(IReadOnlyList<FlintPageContext> pages) : CachedPageListFunction(pages)
 {
-    public override object? Invoke(Scriban.TemplateContext context, ScriptNode? callerContext,
-        ScriptArray arguments, ScriptBlockStatement? blockStatement) =>
+    protected override object Compute(IReadOnlyList<FlintPageContext> pages) =>
         ToPageSequence(pages.Reverse());
 }
 

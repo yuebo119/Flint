@@ -319,7 +319,6 @@ public sealed partial class SiteBuilder
         var regularByKey = ordered
             .Where(e => e.Page.Kind is not ("home" or "section"))
             .ToList();
-        var regular = regularByKey.Select(e => e.Page).ToList();
 
         var result = new List<PageContext>(ordered.Count);
         // section 页集合（Hugo 的 .Sections）：与 .Pages 同阶段装配，随页面对象流动。
@@ -339,6 +338,67 @@ public sealed partial class SiteBuilder
         // 递归深度上限（"partial 嵌套深度超过 200"）。故先按**层级降序**装配，
         // 让每个 section 装配时能从表里取到已装配好的子 section；再按原顺序产出时
         // 从表里取（顺序语义不变：`ordered` 仍是日期降序）
+        //
+        // #2 分桶装配：原实现每个 section 对全量 regularByKey/allSections 做前缀
+        // 线性扫描（O(S×N)，百 section × 万页 = 百万级判定 + LINQ 逐字符委托）。
+        // 改为一次遍历预分桶：常规页归属其**全部祖先 section**（Hugo descendant
+        // 语义），section 的直接子 section 按父键入桶；桶内顺序 = regularByKey/
+        // allSections 的遍历序（日期降序），与原 Where(prefix) 过滤产出严格一致
+        var sectionPagesBySection = new Dictionary<string, List<PageContext>>(StringComparer.Ordinal);
+        var childSectionsBySection = new Dictionary<string, List<PageContext>>(StringComparer.Ordinal);
+        if (allSections.Count > 0)
+        {
+            var sectionKeySet = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var s in allSections)
+            {
+                sectionKeySet.Add(s.Key);
+            }
+
+            foreach (var entry in regularByKey)
+            {
+                // "/a/b/page" 的祖先前缀 "/a"、"/a/b" 逐级试（IndexOf 推进，零 Split 分配）；
+                // 页面自身段（最后一个 '/' 之后）不入桶
+                var key = entry.Key;
+                for (var slash = key.IndexOf('/'); ; )
+                {
+                    var next = key.IndexOf('/', slash + 1);
+                    if (next < 0)
+                    {
+                        break;
+                    }
+                    var ancestor = key[..next];
+                    if (sectionKeySet.Contains(ancestor))
+                    {
+                        if (!sectionPagesBySection.TryGetValue(ancestor, out var bucket))
+                        {
+                            bucket = new List<PageContext>();
+                            sectionPagesBySection[ancestor] = bucket;
+                        }
+                        bucket.Add(entry.Page);
+                    }
+                    slash = next;
+                }
+            }
+
+            foreach (var entry in allSections)
+            {
+                // 直接父 = 去最后一段（层数差 1 由此天然保证）；一级 section 的
+                // 父是 home，由 home 分支的 homeSections 处理，不入本桶
+                var lastSlash = entry.Key.LastIndexOf('/');
+                if (lastSlash <= 0)
+                {
+                    continue;
+                }
+                var parentKey = entry.Key[..lastSlash];
+                if (!childSectionsBySection.TryGetValue(parentKey, out var bucket))
+                {
+                    bucket = new List<PageContext>();
+                    childSectionsBySection[parentKey] = bucket;
+                }
+                bucket.Add(entry.Page);
+            }
+        }
+
         var assembled = new Dictionary<string, PageContext>(StringComparer.Ordinal);
         foreach (var (key, page) in ordered.OrderByDescending(e => DepthOfKey(e.Key)))
         {
@@ -368,17 +428,12 @@ public sealed partial class SiteBuilder
             }
             else if (page.Kind == "section")
             {
-                var prefix = key + "/";
-                var sectionPages = regularByKey
-                    .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal))
-                    .Select(e => e.Page)
-                    .ToList();
-                // 直属子 section：前缀匹配且层数恰好 +1（深层 section 不属于本页）
-                var childSections = allSections
-                    .Where(e => e.Key.StartsWith(prefix, StringComparison.Ordinal) &&
-                                e.Key.Count(c => c == '/') == key.Count(c => c == '/') + 1)
-                    .Select(e => assembled.TryGetValue(e.Key, out var s) ? s : e.Page)
-                    .ToList();
+                var sectionPages = sectionPagesBySection.TryGetValue(key, out var pagesBucket)
+                    ? pagesBucket
+                    : [];
+                var childSections = childSectionsBySection.TryGetValue(key, out var childBucket)
+                    ? childBucket
+                    : [];
                 var assembledSection = page.WithPages(sectionPages).WithSections(childSections);
                 assembled[key] = WithDerivedListDates(assembledSection, sectionPages, childSections);
             }

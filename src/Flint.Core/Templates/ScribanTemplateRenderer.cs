@@ -1041,6 +1041,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// 纯数字还原为数值，使 <c>{{ if (partial "x" .) }}</c> 的布尔判断语义正确
     /// </summary>
     /// <summary>
+    /// partial 物理路径 → 全路径缓存：GetFullPath 是纯函数（同输入恒同输出），
+    /// 结果永久有效。partial 高频调用（hugo-book 单构建 title.html 1871 次）
+    /// 下每次路径规范化 + 分配是渲染热路径的固定开销
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string> _fullPathCache = new(StringComparer.Ordinal);
+
+    private string FullPathOf(string path) =>
+        _fullPathCache.TryGetValue(path, out var cached)
+            ? cached
+            : _fullPathCache.GetOrAdd(path, static p => Path.GetFullPath(p));
+
+    /// <summary>
     /// partial 嵌套深度守卫（替代已关闭的 Scriban 递归计数）：真无限递归
     /// （partial A → B → A）给出明确错误，而不是无限循环或误导性的
     /// "recursive depth limit 100"
@@ -1149,7 +1161,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 命中）都要付一次 FileTemplateLoader 的 mtime stat + 全文读（其文本
             // 缓存按每次裸 stat 验效，无 TTL）。依赖收集原经 Load 内 Track 完成，
             // 命中分支补登记（HashSet.Add 幂等，key 形态与 Load 内 fullPath 一致）
-            RenderDependencyTracker.Track(callerContext, Path.GetFullPath(path));
+            RenderDependencyTracker.Track(callerContext, FullPathOf(path));
         }
         else
         {

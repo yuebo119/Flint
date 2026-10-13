@@ -21,8 +21,11 @@
        分析在 Flint.Core 常开，与发布形态解耦 -->
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <PublishAot>true</PublishAot>
-    <OptimizationPreference>Size</OptimizationPreference>
-    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <!-- 性能优先（2026-10-13 极致性能轮）：SSG 的热路径是 Scriban 解释循环与
+         Markdig 解析，Size 偏好抑制 ILC 内联/向量化，牺牲稳态吞吐。代价为
+         二进制增大（~28MB → ~35-40MB 量级），构建工具接受该取舍 -->
+    <OptimizationPreference>Speed</OptimizationPreference>
+    <IlcOptimizationPreference>Speed</IlcOptimizationPreference>
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <IlcDisableReflection>false</IlcDisableReflection>
     <StripSymbols>true</StripSymbols>

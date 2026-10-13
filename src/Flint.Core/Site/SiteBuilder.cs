@@ -40,10 +40,15 @@ public sealed partial class SiteBuilder : ISiteBuilder
     // 当前构建周期的页面树（T2.3 增量构建做 section 级精确替换的查询基础）
     private PageTree? _currentPageTree;
     private bool _templatesPrecompiled;
-    // taxonomy 签名的节点级条目缓存（key = 树节点 key）：增量只重算变化页的
-    // 条目，未变化页直接复用——每次增量的全站遍历从"格式化全部条目"降为
-    // "拼缓存条目 + 一次排序哈希"（500 页站点省 499 次条目格式化）
-    private readonly Dictionary<string, string> _taxonomyEntryCache = new(StringComparer.Ordinal);
+    // taxonomy 签名的节点级条目缓存（key = 树节点 key）：条目以 128-bit FNV 哈希
+    // 形态缓存，聚合用 XOR（顺序无关）——增量前后的全站遍历从"格式化全部条目
+    // + 全量排序 + 大字符串拼接 + SHA256"降为"拼缓存哈希 + XOR"（#3：
+    // 原 Sort/Join 每次增量在万页站点产生 MB 级字符串分配）
+    private readonly Dictionary<string, (ulong Lo, ulong Hi)> _taxonomyEntryCache = new(StringComparer.Ordinal);
+
+    // taxonomy lookup 投影缓存（#12）：键 = BaseURL + 签名 + taxonomy 声明键集。
+    // 签名未变（纯正文编辑）时词条查找投影整体复用，省全词条遍历 + 投影构建
+    private readonly Dictionary<string, List<PageContext>> _lookupProjectionCache = new(StringComparer.Ordinal);
 
     // 渲染即写盘（T4.1）的路径去重表：先完成渲染者赢得写入权（TryAdd），
     // 防止重复输出路径的并发双写；每次构建开头清空
@@ -157,11 +162,14 @@ public sealed partial class SiteBuilder : ISiteBuilder
             var taxonomies = taxonomyService.BuildTaxonomies(pageContexts);
             Phase("6.taxonomy");
 
-            // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）
+            // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）。
+            // 签名顺带算出并传给 BuildSiteContext（#12 投影复用；XOR 聚合成本
+            // 为一次全树 Walk，万页毫秒级）
             var siteData = await LoadSiteDataAsync(options, config.ThemeNames, cancellationToken);
             var translations = Translations.Load(
                 options.SourcePath, config.ThemeNames, config.LanguageCode);
-            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations);
+            var taxonomySignature = _currentPageTree is null ? null : ComputeTaxonomySignature(_currentPageTree);
+            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations, taxonomySignature);
             Phase("7.站点上下文");
 
             // 8. 渲染页面。资产路提前并行扇出（T4.2）：static/assets 的拷贝压缩

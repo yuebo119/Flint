@@ -202,59 +202,87 @@ public sealed partial class SiteBuilder
         List<PageContext> pages,
         TaxonomyCollection taxonomies,
         IReadOnlyDictionary<string, object>? siteData = null,
-        IReadOnlyDictionary<string, string>? translations = null)
+        IReadOnlyDictionary<string, string>? translations = null,
+        string? taxonomySignature = null)
     {
         // 分类/词条查找注册表：词条页在第 9 阶段才渲染，而列表模板（loveit 的
         // summary 按 "/categories/xxx" 查词条页拿链接）在第 8 阶段执行。用
         // TaxonomyService 已建好的分类数据预建最小投影（与 BuildTermPages 同口径），
         // 供 GetPage 页面列表未命中时回退
-        var lookup = new List<PageContext>();
-        foreach (var (taxName, terms) in taxonomies.Taxonomies)
+        //
+        // #12 投影复用：条目只依赖 taxName/term 名/slug/词条最大日期，全部在
+        // taxonomy 签名覆盖内（term.Pages 恒非空 → DateTimeOffset.Now 兜底不可达）。
+        // 缓存键额外纳入 BaseURL 与 taxonomy 声明键集——两者变化都走全量重建，
+        // 但签名不含它们，缺了会误命中旧配置的投影
+        string? lookupCacheKey = null;
+        if (taxonomySignature is not null && taxonomies.Taxonomies.Count > 0)
         {
-            // 分类列表页自身（/tags、/categories）
-            var listRel = "/" + taxName.Trim('/') + "/";
-            lookup.Add(new PageContext
+            lookupCacheKey = string.Join("\u0001",
+                config.BaseURL,
+                taxonomySignature,
+                string.Join(",", taxonomies.Taxonomies.Keys.OrderBy(k => k, StringComparer.Ordinal)));
+        }
+
+        var lookup = new List<PageContext>();
+        if (lookupCacheKey is not null &&
+            _lookupProjectionCache.TryGetValue(lookupCacheKey, out var cachedLookup) &&
+            cachedLookup.Count > 0)
+        {
+            lookup = cachedLookup;
+        }
+        else
+        {
+            foreach (var (taxName, terms) in taxonomies.Taxonomies)
             {
-                Title = taxName,
-                Content = "",
-                RelPermalink = listRel,
-                Permalink = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL) + listRel,
-                Date = terms.Count > 0
-                    ? terms.SelectMany(t => t.Pages).Where(p => p.Date != DateTimeOffset.MinValue).Select(p => p.Date).DefaultIfEmpty(DateTimeOffset.Now).Max()
-                    : DateTimeOffset.Now,
-                Tags = [],
-                Categories = [],
-                WordCount = 0,
-                ReadingTime = TimeSpan.Zero,
-                Kind = "taxonomy",
-                Type = taxName
-            });
-            foreach (var term in terms)
-            {
-                var rel = term.Permalink ?? "/";
-                var origin = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL);
-                if (rel.StartsWith(origin, StringComparison.OrdinalIgnoreCase))
-                {
-                    rel = rel[origin.Length..];
-                }
-                if (!rel.StartsWith('/'))
-                {
-                    rel = "/" + rel;
-                }
+                // 分类列表页自身（/tags、/categories）
+                var listRel = "/" + taxName.Trim('/') + "/";
                 lookup.Add(new PageContext
                 {
-                    Title = term.Name,
+                    Title = taxName,
                     Content = "",
-                    RelPermalink = rel,
-                    Permalink = origin + rel,
-                    Date = term.Pages.Count > 0 ? term.Pages.Max(p => p.Date) : DateTimeOffset.Now,
+                    RelPermalink = listRel,
+                    Permalink = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL) + listRel,
+                    Date = terms.Count > 0
+                        ? terms.SelectMany(t => t.Pages).Where(p => p.Date != DateTimeOffset.MinValue).Select(p => p.Date).DefaultIfEmpty(DateTimeOffset.Now).Max()
+                        : DateTimeOffset.Now,
                     Tags = [],
                     Categories = [],
                     WordCount = 0,
                     ReadingTime = TimeSpan.Zero,
-                    Kind = "term",
+                    Kind = "taxonomy",
                     Type = taxName
                 });
+                foreach (var term in terms)
+                {
+                    var rel = term.Permalink ?? "/";
+                    var origin = Flint.Core.Templates.TemplateResource.OriginOf(config.BaseURL);
+                    if (rel.StartsWith(origin, StringComparison.OrdinalIgnoreCase))
+                    {
+                        rel = rel[origin.Length..];
+                    }
+                    if (!rel.StartsWith('/'))
+                    {
+                        rel = "/" + rel;
+                    }
+                    lookup.Add(new PageContext
+                    {
+                        Title = term.Name,
+                        Content = "",
+                        RelPermalink = rel,
+                        Permalink = origin + rel,
+                        Date = term.Pages.Count > 0 ? term.Pages.Max(p => p.Date) : DateTimeOffset.Now,
+                        Tags = [],
+                        Categories = [],
+                        WordCount = 0,
+                        ReadingTime = TimeSpan.Zero,
+                        Kind = "term",
+                        Type = taxName
+                    });
+                }
+            }
+            if (lookupCacheKey is not null && lookup.Count > 0)
+            {
+                _lookupProjectionCache[lookupCacheKey] = lookup;
             }
         }
         ScribanTemplateRenderer.SetTaxonomyLookupPages(lookup.Count > 0 ? lookup : null);
