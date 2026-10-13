@@ -55,6 +55,28 @@ public sealed class TemplateLookup
     {
         _descriptorCache = null;
         _pathIndex = null;
+        _knownFullPaths = null;
+    }
+
+    private HashSet<string>? _knownFullPaths;
+
+    /// <summary>
+    /// 已知模板物理路径集（全路径形态）：供渲染期依赖登记做**零 IO** 判定，
+    /// 替代逐依赖 File.Exists stat（watch 模式每页 N 次磁盘探测）。
+    /// "构建内模板文件集不变"与本类描述符缓存同一安全假设；调用方对
+    /// miss 结果自行决定是否回退 File.Exists（兜住构建开始后新增的模板）
+    /// </summary>
+    public bool IsKnownTemplatePath(string fullPath)
+    {
+        var known = _knownFullPaths;
+        if (known is null)
+        {
+            known = new HashSet<string>(
+                (_descriptorCache ??= ScanAll()).Select(d => Path.GetFullPath(d.PhysicalPath)),
+                StringComparer.OrdinalIgnoreCase);
+            _knownFullPaths = known;
+        }
+        return known.Contains(fullPath);
     }
 
     private IReadOnlyList<TemplateDescriptor> ScanAll()

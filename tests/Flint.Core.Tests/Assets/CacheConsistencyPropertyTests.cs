@@ -296,9 +296,11 @@ public class CacheConsistencyPropertyTests
                 var result1 = pipeline.ProcessAsync(asset1).AsTask().Result;
                 var result2 = pipeline.ProcessAsync(asset2).AsTask().Result;
 
-                // 验证缓存条目数量为 2
-                return pipeline.MemoryCacheCount == 2 &&
-                       result1.ContentHash != result2.ContentHash;
+                // #9 起 passthrough 类型不进缓存（输出=输入无可省成本，缓存化只剩
+                // 哈希与写入开销）：属性意图（不同内容互不串结果）落到结果层断言
+                // ——不同内容产出不同哈希、内容不混淆
+                return result1.ContentHash != result2.ContentHash &&
+                       !result1.Content.Span.SequenceEqual(result2.Content.Span);
             });
     }
 

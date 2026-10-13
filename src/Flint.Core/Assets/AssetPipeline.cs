@@ -93,6 +93,16 @@ public sealed class AssetPipeline : IAssetPipeline
         AssetFile asset,
         CancellationToken cancellationToken = default)
     {
+        // #9 懒哈希：直通语义的类型（无处理开关/无处理器）直接 passthrough，
+        // 跳过全文件 SHA256 与缓存层——原实现所有资产（含字体/pdf/未开启处理
+        // 的图片）都先付一次全量哈希与 64-hex 键拼接。passthrough 不进缓存
+        // 语义（输出=输入），每构建重建条目反而消除了"旧条目携带旧构建
+        // SourcePath"的缓存污染源
+        if (!IsProcessable(asset))
+        {
+            return CreatePassthroughAsset(asset);
+        }
+
         // 计算内容哈希用于缓存；键必须组合选项指纹与资源类型
         var cacheKey = $"{_optionsFingerprint}:{asset.Type}:{ContentHasher.ComputeHash(asset.Content.Span)}";
 
@@ -153,6 +163,22 @@ public sealed class AssetPipeline : IAssetPipeline
 
         return processed;
     }
+
+    /// <summary>
+    /// 该资产是否会走真实处理（进缓存语义）：与三个处理分支的 passthrough
+    /// 前置条件逐一对应（Style 的编译条件含 scss/sass + 编译器 + 开关，
+    /// MinifyCss 对全部样式类型生效）
+    /// </summary>
+    private bool IsProcessable(AssetFile asset) => asset.Type switch
+    {
+        AssetType.Image => _options.ProcessImages && _imageProcessor != null,
+        AssetType.Style =>
+            (_options.CompileSass && _sassCompiler != null &&
+             (asset.Extension is ".scss" or ".sass")) ||
+            _options.MinifyCss,
+        AssetType.Script => _options.ProcessScripts && _jsBundler != null,
+        _ => false
+    };
 
     private async ValueTask<(ProcessedAsset Asset, bool IsFallback)> ProcessImageWithFallbackAsync(
         AssetFile asset, CancellationToken cancellationToken)

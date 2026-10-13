@@ -293,12 +293,14 @@ public sealed partial class SiteBuilder
             {
                 foreach (var assetPath in assetChanges.Where(File.Exists))
                 {
+                    // FileInfo 构造即完成一次 stat（与全量路径 T4.6 同法）
+                    var info = new FileInfo(assetPath);
                     var asset = new AssetFile
                     {
                         SourcePath = assetPath,
                         MediaType = GetMediaType(assetPath),
                         Content = await File.ReadAllBytesAsync(assetPath, cancellationToken),
-                        ModifiedTime = File.GetLastWriteTimeUtc(assetPath)
+                        ModifiedTime = info.LastWriteTimeUtc
                     };
 
                     var processed = await _assetPipeline.ProcessAsync(asset, cancellationToken);

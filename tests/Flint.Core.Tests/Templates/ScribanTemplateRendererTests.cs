@@ -627,8 +627,13 @@ public class ScribanTemplateRendererTests : IDisposable
         var first = await renderer.RenderAsync("page", CreateTestContext());
         Assert.Contains("[OLD]", first, StringComparison.Ordinal);
 
-        // Act - 改模板内容 + 清缓存（dev server 增量路径）
+        // Act - 改模板内容 + 清缓存（dev server 增量路径）。
+        // mtime 推进 + 跨窗等待：连续两次写可能落在 NTFS 同一时间片（mtime 碰撞
+        // → Loader 文本缓存按 mtime 验效误判未变 → 返回旧文本），与下方
+        // PartialCached_PartialFileModified_InvalidatesWithoutClearCache 同款保障
         File.WriteAllText(Path.Combine(partialDir, "note.html"), "NEW");
+        File.SetLastWriteTimeUtc(Path.Combine(partialDir, "note.html"), DateTime.UtcNow.AddSeconds(2));
+        Thread.Sleep(60);
         renderer.ClearCache();
 
         // Assert

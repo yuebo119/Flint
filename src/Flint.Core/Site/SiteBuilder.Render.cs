@@ -107,10 +107,21 @@ public sealed partial class SiteBuilder
             return;
         }
 
-        var physicalPaths = deps
-            .Where(File.Exists)
-            .Select(Path.GetFullPath)
-            .ToList();
+        // #10 零 IO 判定：依赖全部来自模板加载路径（构建内文件集不变，
+        // TemplateLookup 描述符快照判定成立）；miss 时回退 File.Exists 兜住
+        // 构建开始后新增的模板（与原实现行为一致，仅罕见路径付 stat）
+        var scribanRenderer = _templateRenderer as ScribanTemplateRenderer;
+        var physicalPaths = new List<string>();
+        foreach (var dep in deps)
+        {
+            var full = Path.GetFullPath(dep);
+            if ((scribanRenderer is not null &&
+                 scribanRenderer.SharedLookup.IsKnownTemplatePath(full)) ||
+                File.Exists(full))
+            {
+                physicalPaths.Add(full);
+            }
+        }
 
         if (physicalPaths.Count > 0)
         {

@@ -384,7 +384,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
 
     private string? ResolvePageTemplatePath(PageTemplateQuery query)
     {
-        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        var lookup = SharedLookup;
         return lookup.ResolveLayered(PageTemplateCandidates.Build(query));
     }
 
@@ -912,7 +912,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     /// </summary>
     internal bool TemplateExistsExact(string relativeName)
     {
-        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        var lookup = SharedLookup;
         return lookup.ResolveExact(relativeName) is not null;
     }
 
@@ -1469,15 +1469,26 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             {
                 continue;
             }
-            var lowerFirst = char.ToLowerInvariant(key[0]) + key[1..];
-            var upperFirst = char.ToUpperInvariant(key[0]) + key[1..];
-            if (lowerFirst != key && !target.ContainsKey(lowerFirst))
+            // #6 去无谓分配：首字符已是目标形态时别名与自身相同（ContainsKey 恒真），
+            // 跳过该变体的字符串构造——原实现每键无条件构造两个变体串
+            var c0 = key[0];
+            var lowerC0 = char.ToLowerInvariant(c0);
+            if (lowerC0 != c0)
             {
-                target[lowerFirst] = target[key];
+                var lowerFirst = lowerC0 + key[1..];
+                if (!target.ContainsKey(lowerFirst))
+                {
+                    target[lowerFirst] = target[key];
+                }
             }
-            if (upperFirst != key && !target.ContainsKey(upperFirst))
+            var upperC0 = char.ToUpperInvariant(c0);
+            if (upperC0 != c0)
             {
-                target[upperFirst] = target[key];
+                var upperFirst = upperC0 + key[1..];
+                if (!target.ContainsKey(upperFirst))
+                {
+                    target[upperFirst] = target[key];
+                }
             }
             // **逐大写字母的 snake 形态**：迁移器把字段名 `.ToCSS` 转成
             // `to_c_s_s`（每个大写字母前加下划线），而 dict 字面量的键保持源码
@@ -1486,7 +1497,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
             // 页面直接引用未编译的 /scss/main.scss（全站无样式）。这里为含大写的
             // 键补同一算法形态的别名（ToCSS → to_c_s_s、BookSection →
             // book_section），与迁移器的 Seg 转换逐字对应
-            if (key.Any(char.IsUpper))
+            if (HasUpper(key))
             {
                 var perCapitalSnake = PerCapitalSnakeForm(key);
                 if (perCapitalSnake != key && !target.ContainsKey(perCapitalSnake))
@@ -1495,6 +1506,18 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 }
             }
         }
+    }
+
+    private static bool HasUpper(string key)
+    {
+        foreach (var c in key)
+        {
+            if (char.IsUpper(c))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>
@@ -2281,9 +2304,13 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     // 描述符集经快照+一致性测试守护，扫描结果按构建缓存（Invalidate 失效）
     private TemplateLookup? _lookup;
 
+    /// <summary>共享查找器实例（惰性单例）：页面渲染/精确视图查找/依赖登记
+    /// 共用同一份描述符缓存（#10：依赖登记经 IsKnownTemplatePath 零 IO 判定）</summary>
+    internal TemplateLookup SharedLookup => _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+
     private string ResolveTemplatePath(string templateName)
     {
-        var lookup = _lookup ??= new TemplateLookup(_templatesPath, _themeTemplatePaths);
+        var lookup = SharedLookup;
         var resolved = lookup.Resolve(templateName, _templatesPath);
         if (resolved is not null)
         {

@@ -76,9 +76,12 @@ public class AssetPipelineTests
     [Fact]
     public async Task ProcessAsync_WithMemoryCache_ReturnsCachedResult()
     {
-        // Arrange
-        var pipeline = new AssetPipeline(new AssetPipelineOptions { EnableMemoryCache = true });
-        var content = "cached content";
+        // Arrange —— MinifyCss 开启走真实处理（#9 起 passthrough 类型不进缓存：
+        // 输出=输入无可省成本，缓存化只剩哈希与写入开销，且旧条目携带旧构建
+        // 路径）。缓存语义用真实处理场景验证
+        var pipeline = new AssetPipeline(new AssetPipelineOptions { EnableMemoryCache = true, MinifyCss = true });
+        // 合法 CSS（非法样式会压缩失败走 isFallback 降级，按既有语义不写缓存）
+        var content = "body { color: red; }";
         var asset = CreateAsset("test.css", "text/css", content);
 
         // Act - 处理两次
@@ -109,9 +112,9 @@ public class AssetPipelineTests
     [Fact]
     public void ClearMemoryCache_ClearsAllCachedItems()
     {
-        // Arrange
-        var pipeline = new AssetPipeline(new AssetPipelineOptions { EnableMemoryCache = true });
-        var asset = CreateAsset("test.css", "text/css", "content");
+        // Arrange —— 同上：缓存行为用真实处理场景（MinifyCss）验证
+        var pipeline = new AssetPipeline(new AssetPipelineOptions { EnableMemoryCache = true, MinifyCss = true });
+        var asset = CreateAsset("test.css", "text/css", "body { color: red; }");
         _ = pipeline.ProcessAsync(asset).AsTask().Result;
         Assert.Equal(1, pipeline.MemoryCacheCount);
 

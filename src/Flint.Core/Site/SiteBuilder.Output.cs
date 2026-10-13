@@ -103,12 +103,16 @@ public sealed partial class SiteBuilder
                 var (outputRelative, (filePath, _, _)) = entry;
                 try
                 {
+                    // FileInfo 构造即完成一次 stat（与内容扫描 T4.6 同法）：
+                    // LastWriteTimeUtc 从 FileInfo 取，与 ReadAllBytesAsync 合并后
+                    // 每资产省一次独立 GetLastWriteTimeUtc 系统调用
+                    var info = new FileInfo(filePath);
                     var asset = new AssetFile
                     {
                         SourcePath = filePath,
                         MediaType = GetMediaType(filePath),
                         Content = await File.ReadAllBytesAsync(filePath, ct),
-                        ModifiedTime = File.GetLastWriteTimeUtc(filePath)
+                        ModifiedTime = info.LastWriteTimeUtc
                     };
 
                     var processed = await _assetPipeline.ProcessAsync(asset, ct);
@@ -296,42 +300,75 @@ public sealed partial class SiteBuilder
         //（ananke 全站 9 个 index.xml 缺失、fixit/loveit 订阅链接缺失，实测）。
         // 分页信息来自分页注册表（模板调用过 .Paginate/.Paginator 的列表页才登记）
         // **taxonomy/term 页不在 pageContexts 里**（分类渲染阶段单独构建），需并入
-        foreach (var listPage in pages
+        // #11 并行生成：大 taxonomy 站点（千级词条）串行逐页渲染/写盘是构建
+        // 尾部长尾；渲染并发安全与第 8/9 阶段同机制（FeedGenerator 无状态、
+        // RenderAsync 已被并行渲染路径证明）。
+        // **按 target 去重**：同一 index.xml 可能多来源重复入列（TaxonomyFeedContexts
+        // 跨构建累积 + 列表页双集合），串行时后写覆盖先写无碍，并行下同文件
+        // 双写是 IO 竞态（实测 tags/index.xml "being used by another process"）。
+        // 反向遍历保留正序**最后**一条，与串行最终产物一致
+        var listFeedPages = pages
             .Where(p => p.Kind is "home" or "section" or "taxonomy" or "term" &&
                         !string.IsNullOrEmpty(p.RelPermalink))
-            .Concat(TaxonomyFeedContexts.Where(c => c.Pages is { Count: > 0 })))
+            .Concat(TaxonomyFeedContexts.Where(c => c.Pages is { Count: > 0 }))
+            .ToList();
+
+        string FeedTargetOf(PageContext listPage)
         {
             var baseRel = listPage.RelPermalink!.TrimEnd('/');
             if (baseRel.Length == 0)
             {
                 baseRel = "/";
             }
-
-            var registration = Flint.Core.Templates.ScribanTemplateRenderer.GetPaginateCollection(baseRel);
-            var items = registration?.Items ?? listPage.Pages ?? [];
-            var size = registration is { Size: > 0 } reg ? reg.Size : Math.Max(1, config.Paginate);
-            if (items.Count == 0)
-            {
-                size = 1;
-            }
-
-            var target = Path.Combine(
+            return Path.Combine(
                 options.OutputPath, baseRel.TrimStart('/').Replace('/', Path.DirectorySeparatorChar), "index.xml");
-            OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(target)!);
-
-            if (useTemplate)
-            {
-                var rssCtx = new TemplateContext { Page = listPage, Site = siteContext };
-                var content = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
-                await File.WriteAllTextAsync(target, content, cancellationToken);
-            }
-            else
-            {
-                var sectionFeed = new FeedGenerator(feedOptions with { FeedPath = baseRel + "/index.xml" });
-                var sectionRss = sectionFeed.GenerateRss(items);
-                await File.WriteAllTextAsync(target, sectionRss, cancellationToken);
-            }
         }
+
+        var uniqueFeedWrites = new Dictionary<string, PageContext>(StringComparer.OrdinalIgnoreCase);
+        for (var i = listFeedPages.Count - 1; i >= 0; i--)
+        {
+            uniqueFeedWrites.TryAdd(FeedTargetOf(listFeedPages[i]), listFeedPages[i]);
+        }
+
+        await Parallel.ForEachAsync(
+            uniqueFeedWrites,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Environment.ProcessorCount,
+                CancellationToken = cancellationToken
+            },
+            async (write, ct) =>
+            {
+                var (target, listPage) = write;
+                var baseRel = listPage.RelPermalink!.TrimEnd('/');
+                if (baseRel.Length == 0)
+                {
+                    baseRel = "/";
+                }
+
+                var registration = Flint.Core.Templates.ScribanTemplateRenderer.GetPaginateCollection(baseRel);
+                var items = registration?.Items ?? listPage.Pages ?? [];
+                var size = registration is { Size: > 0 } reg ? reg.Size : Math.Max(1, config.Paginate);
+                if (items.Count == 0)
+                {
+                    size = 1;
+                }
+
+                OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(target)!);
+
+                if (useTemplate)
+                {
+                    var rssCtx = new TemplateContext { Page = listPage, Site = siteContext };
+                    var content = await _templateRenderer.RenderAsync("rss", rssCtx, ct);
+                    await File.WriteAllTextAsync(target, content, ct);
+                }
+                else
+                {
+                    var sectionFeed = new FeedGenerator(feedOptions with { FeedPath = baseRel + "/index.xml" });
+                    var sectionRss = sectionFeed.GenerateRss(items);
+                    await File.WriteAllTextAsync(target, sectionRss, ct);
+                }
+            });
     }
 
     /// <summary>
