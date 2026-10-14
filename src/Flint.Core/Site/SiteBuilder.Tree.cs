@@ -2,6 +2,7 @@
 // SiteBuilder 树装配聚合：内容扫描/解析/过滤、页面树装配、cascade 合并、PageContext 构建
 
 using System.Collections.Concurrent;
+using System.IO.Enumeration;
 using System.Threading.Channels;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
@@ -27,7 +28,7 @@ public sealed partial class SiteBuilder
 
         // 内容收集（A2 主题兼容）：站点 content 优先，主题 content 按序补缺——
         // 键 = content/ 下的相对路径，站点已有的路径不被主题覆盖（对齐 Hugo 主题语义）
-        var filesByRelative = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var filesByRelative = new Dictionary<string, (string Path, DateTimeOffset MtimeUtc)>(StringComparer.OrdinalIgnoreCase);
         CollectContentFiles(contentPath, filesByRelative);
         if (themeNames is not null)
         {
@@ -43,14 +44,14 @@ public sealed partial class SiteBuilder
             return [];
         }
 
-        var mdFiles = filesByRelative.Values.ToArray();
+        var entries = filesByRelative.Values.ToArray();
 
         // 预分配数组，避免 List 扩容
-        var files = new ContentFile[mdFiles.Length];
+        var files = new ContentFile[entries.Length];
 
-        // 并行读取文件内容
+        // 并行读取文件内容（mtime 来自目录枚举，不再逐文件 stat）
         await Parallel.ForEachAsync(
-            Enumerable.Range(0, mdFiles.Length),
+            Enumerable.Range(0, entries.Length),
             new ParallelOptions
             {
                 MaxDegreeOfParallelism = Environment.ProcessorCount,
@@ -58,16 +59,13 @@ public sealed partial class SiteBuilder
             },
             async (i, ct) =>
             {
-                var filePath = mdFiles[i];
-                // FileInfo 构造即完成一次 stat（T4.6）：与 ReadAllBytes 合并后
-                // 每文件省一次 GetLastWriteTimeUtc 系统调用（万页级省数千次 stat）
-                var info = new FileInfo(filePath);
+                var (filePath, mtimeUtc) = entries[i];
                 var content = await File.ReadAllBytesAsync(filePath, ct);
                 files[i] = new ContentFile
                 {
                     Path = filePath,
                     RawContent = content,
-                    ModifiedTime = info.LastWriteTimeUtc
+                    ModifiedTime = mtimeUtc
                 };
             });
 
@@ -75,21 +73,43 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>
-    /// 收集 content 目录下的 Markdown 到「相对路径 → 物理路径」字典（A2）；
+    /// 收集 content 目录下的 Markdown 到「相对路径 → (物理路径, mtime)」字典（A2）；
     /// TryAdd 先到先得形成站点覆盖主题的优先级链
     /// </summary>
+    /// <remarks>
+    /// #13 目录枚举直取 mtime：FileSystemEntry.LastWriteTimeUtc 来自目录枚举缓冲区
+    /// （Win32 FIND_DATA / Linux getdents 元数据），零额外 stat。原形态每文件
+    /// FileInfo 构造（一次 stat）与读取完全相加（探针实测 stat≈read≈57μs/文件，
+    /// 14621 文件省约 700ms）。扩展名判定用 OrdinalIgnoreCase + EndsWith 而非
+    /// 平台通配（*.md 在原 Win32 通配下会误收 .mdoc、在 Linux 下又不收 .MD，
+    /// 此处统一为"大小写不敏感的 .md 后缀"，对齐 Hugo 的内容文件识别语义）
+    /// </remarks>
     private static void CollectContentFiles(
-        string contentDir, Dictionary<string, string> filesByRelative)
+        string contentDir, Dictionary<string, (string Path, DateTimeOffset MtimeUtc)> filesByRelative)
     {
         if (!Directory.Exists(contentDir))
         {
             return;
         }
 
-        foreach (var file in Directory.EnumerateFiles(contentDir, "*.md", SearchOption.AllDirectories))
+        // transform 内完成过滤标记：非目录且后缀 .md 才做全路径构造（命中项
+        // 才付 ToFullPath），未命中项返回 Keep=false 由循环跳过
+        var enumerable = new FileSystemEnumerable<(bool Keep, string Path, DateTimeOffset MtimeUtc)>(
+            contentDir,
+            static (ref FileSystemEntry entry) =>
+                !entry.IsDirectory && entry.FileName.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                    ? (true, entry.ToFullPath(), entry.LastWriteTimeUtc)
+                    : (false, string.Empty, default(DateTimeOffset)),
+            new EnumerationOptions { RecurseSubdirectories = true });
+
+        foreach (var (keep, path, mtimeUtc) in enumerable)
         {
-            var rel = Path.GetRelativePath(contentDir, file).Replace('\\', '/');
-            filesByRelative.TryAdd(rel, file);
+            if (!keep)
+            {
+                continue;
+            }
+            var rel = Path.GetRelativePath(contentDir, path).Replace('\\', '/');
+            filesByRelative.TryAdd(rel, (path, mtimeUtc));
         }
     }
 
