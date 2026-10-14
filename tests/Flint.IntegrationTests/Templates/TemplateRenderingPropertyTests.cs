@@ -83,6 +83,11 @@ public class TemplateRenderingPropertyTests : IDisposable
     {
         var path = Path.Combine(_partialsDir, name.EndsWith(".html") ? name : name + ".html");
         File.WriteAllText(path, content, Encoding.UTF8);
+        // mtime 主动前进：渲染器对模板变化有 50ms TTL 短窗缓存（热路径 stat 减频的
+        // 性能契约，ScribanTemplateRenderer.GetMtimeUtc），同进程连续重写落在窗口内
+        // 会被判"未变"而返回旧内容。显式推进 mtime 声明内容已变（与
+        // PartialCached_PartialFileModified_InvalidatesWithoutClearCache 既有写法同型）
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddSeconds(2));
     }
 
     /// <summary>

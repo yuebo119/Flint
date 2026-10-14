@@ -942,6 +942,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         // partialCached 结果缓存：模板文件变化后必须失效（结果按 build 生命周期缓存）
         _partialResultCache.Clear();
         _storeUseCache.Clear();
+        // loader 文本缓存同清（T4.1 后 _textCache 无任何其他失效入口，
+        // 漏清会让 ClearCache 后的重渲染仍拿旧模板文本——同时间粒度改写
+        // mtime 不前进时是静默陈旧输出）
+        ((FileTemplateLoader)_templateLoader).ClearTextCache();
     }
 
     /// <summary>partialCached 结果缓存：键 = name + variants（对齐 Hugo partialCached 语义）</summary>

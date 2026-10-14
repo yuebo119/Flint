@@ -33,8 +33,8 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     private readonly ConcurrentDictionary<string, string> _pathCache =
         new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>模板文本缓存（mtime 不变即命中；保留 serve 模式热更新语义）</summary>
-    private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc)> _textCache =
+    /// <summary>模板文本缓存（(mtime, length) 不变即命中；保留 serve 模式热更新语义）</summary>
+    private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc, long Length)> _textCache =
         new(StringComparer.OrdinalIgnoreCase);
 
     public FileTemplateLoader(string basePath, params string[] themeBasePaths)
@@ -293,16 +293,26 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // 渲染期依赖收集（T4.1）：include/partial 实际命中的物理路径
         RenderDependencyTracker.Track(context, fullPath);
         // **文本缓存**：File.ReadAllText + allowedRoots 重建是 partial 高频调用下
-        // 的固定开销（每次全量读盘）；mtime 不变即命中，保留 serve 模式热更新语义
-        var mtime = File.GetLastWriteTimeUtc(fullPath);
-        if (_textCache.TryGetValue(fullPath, out var tc) && tc.MtimeUtc == mtime)
+        // 的固定开销（每次全量读盘）；mtime 不变即命中，保留 serve 模式热更新语义。
+        // 验效 = (mtime, length) 双字段（一次 FileInfo stat 同时取两者，成本同
+        // 原单 mtime）：同时间粒度内改写文件时 mtime 可能不前进（NTFS 更新时间
+        // 批处理粒度），仅比 mtime 会返回旧文本（FsCheck 同进程快速重写实测），
+        // length 作为第二判据覆盖"内容变了"的绝大多数形态；同粒度 + 同长度的
+        // 内容替换（如 <b>x</b> → <i>x</i>）仍可能漏，属已知残留边界
+        var info = new FileInfo(fullPath);
+        if (_textCache.TryGetValue(fullPath, out var tc) &&
+            tc.MtimeUtc == info.LastWriteTimeUtc && tc.Length == info.Length)
         {
             return tc.Text;
         }
         var text = File.ReadAllText(fullPath);
-        _textCache[fullPath] = (text, mtime);
+        _textCache[fullPath] = (text, info.LastWriteTimeUtc, info.Length);
         return text;
     }
+
+    /// <summary>清空模板文本缓存（渲染器 ClearCache 用：无 mtime 变化的显式
+    /// 失效路径，dev server 模板变化/缓存清理时必须一并清）</summary>
+    internal void ClearTextCache() => _textCache.Clear();
 
     // Scriban 7 的 ITemplateLoader.LoadAsync 返回注解为 ValueTask<string?>
     public ValueTask<string?> LoadAsync(Scriban.TemplateContext context, SourceSpan callerSpan, string templatePath)
