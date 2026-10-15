@@ -89,8 +89,9 @@ public sealed class GitDateProvider : IGitDateProvider
             // （CI 两平台 mapCount=0、repoRoot 正常的根因）。git log 的 stderr 正常
             // 仅数行 hint（远小于 4KB 管道缓冲），stdout 读完顺序排空无死锁风险
             var map = ParseGitLog(process.StandardOutput);
-            process.StandardError.ReadToEnd();
+            _diagStderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
+            _diagExitCode = process.ExitCode;
             return map;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -139,11 +140,16 @@ public sealed class GitDateProvider : IGitDateProvider
     }
 
     /// <summary>
-    /// 诊断探针（CI 失败定位用）：上次加载解析出的仓库根与映射条目数。
-    /// 暴露给测试断言消息，不参与产品逻辑
+    /// 诊断探针（CI 失败定位用）：上次加载解析出的仓库根、映射条目数、
+    /// git log 的 stderr 头部与退出码。暴露给测试断言消息，不参与产品逻辑
     /// </summary>
     internal string? DiagRepoRoot => _repoRoot;
     internal int DiagMapCount => _lastCommitTimes?.Count ?? -1;
+    internal string DiagStderr => _diagStderr.Length <= 300 ? _diagStderr : _diagStderr[..300];
+    internal int DiagExitCode => _diagExitCode;
+
+    private string _diagStderr = "";
+    private int _diagExitCode = -1;
 
     private string? GetRepoRoot()
     {
