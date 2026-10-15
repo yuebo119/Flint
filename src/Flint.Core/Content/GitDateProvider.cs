@@ -89,9 +89,8 @@ public sealed class GitDateProvider : IGitDateProvider
             // （CI 两平台 mapCount=0、repoRoot 正常的根因）。git log 的 stderr 正常
             // 仅数行 hint（远小于 4KB 管道缓冲），stdout 读完顺序排空无死锁风险
             var map = ParseGitLog(process.StandardOutput);
-            _diagStderr = process.StandardError.ReadToEnd();
+            process.StandardError.ReadToEnd();
             process.WaitForExit();
-            _diagExitCode = process.ExitCode;
             return map;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
@@ -116,19 +115,23 @@ public sealed class GitDateProvider : IGitDateProvider
 
         while ((line = output.ReadLine()) is not null)
         {
-            if (_diagLogHead.Length < 200)
-            {
-                _diagLogHead += line + "|";
-            }
             if (string.IsNullOrEmpty(line))
             {
                 continue;
             }
 
-            if (DateTimeOffset.TryParseExact(
+            // %cI 的 UTC 输出形态随 git 版本/提交时区变化：偏移时区为 +hh:mm，
+            // UTC 为 Z（CI/UTC 环境实测 logHead=2026-10-15T08:01:54Z，本地为
+            // +08:00）。只认 zzz 时 Z 行永不匹配、映射恒空（:git 源在 UTC
+            // 环境静默失效），两种形态都接受
+            if ((DateTimeOffset.TryParseExact(
+                    line, "yyyy-MM-dd'T'HH:mm:ssK",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var commitTime) ||
+                 DateTimeOffset.TryParseExact(
                     line, "yyyy-MM-dd'T'HH:mm:sszzz",
                     System.Globalization.CultureInfo.InvariantCulture,
-                    System.Globalization.DateTimeStyles.None, out var commitTime))
+                    System.Globalization.DateTimeStyles.None, out commitTime)))
             {
                 currentTime = commitTime;
                 continue;
@@ -142,20 +145,6 @@ public sealed class GitDateProvider : IGitDateProvider
 
         return map.ToFrozenDictionary(PathComparer);
     }
-
-    /// <summary>
-    /// 诊断探针（CI 失败定位用）：上次加载解析出的仓库根、映射条目数、
-    /// git log 的 stderr 头部与退出码。暴露给测试断言消息，不参与产品逻辑
-    /// </summary>
-    internal string? DiagRepoRoot => _repoRoot;
-    internal int DiagMapCount => _lastCommitTimes?.Count ?? -1;
-    internal string DiagStderr => _diagStderr.Length <= 300 ? _diagStderr : _diagStderr[..300];
-    internal int DiagExitCode => _diagExitCode;
-    internal string DiagLogHead => _diagLogHead.Length <= 200 ? _diagLogHead : _diagLogHead[..200];
-
-    private string _diagStderr = "";
-    private int _diagExitCode = -1;
-    private string _diagLogHead = "";
 
     private string? GetRepoRoot()
     {
