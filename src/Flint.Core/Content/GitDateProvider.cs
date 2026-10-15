@@ -135,6 +135,13 @@ public sealed class GitDateProvider : IGitDateProvider
         return map.ToFrozenDictionary(PathComparer);
     }
 
+    /// <summary>
+    /// 诊断探针（CI 失败定位用）：上次加载解析出的仓库根与映射条目数。
+    /// 暴露给测试断言消息，不参与产品逻辑
+    /// </summary>
+    internal string? DiagRepoRoot => _repoRoot;
+    internal int DiagMapCount => _lastCommitTimes?.Count ?? -1;
+
     private string? GetRepoRoot()
     {
         try
