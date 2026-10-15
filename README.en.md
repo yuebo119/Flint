@@ -69,8 +69,11 @@ dependencies.
 
 **Engineering-grade quality assurance** — the `perf gate` regression gate
 (three-run median ratchet, degradation intercepted before merge); FsCheck
-property testing, integration suite of 1649 tests (green on both CI
-platforms); output path-escape protection and atomic cache-entry writes.
+property testing, 1131 unit tests and 1649 integration tests (fast checks
+cover build + unit tests + gates on both platforms; nightly runs the full
+suite including integration; 2 empty-SCSS compression assertions are
+pre-existing local DartSassHost environment failures, present on the
+baseline too); output path-escape protection and atomic cache-entry writes.
 
 Under the hood: a three-phase parallel pipeline (parse/render/write +
 Server GC), content-signature transform caching (executed once, reused
@@ -398,7 +401,7 @@ runs disperse within ±1% (3505–3540ms); quiet-to-loaded window drift is
 Markdown parsing 238k files/sec · template rendering 69k pages/sec ·
 incremental 75ms (full build 214ms, 2.82x speedup) · config load 0.20ms ·
 concurrency speedup 1.12x · pathological detection green with the
-integration suite (1649 tests, green on both CI platforms).
+integration suite (1649 tests, run in full by nightly).
 
 ### 2026-10 performance round (same-engine version A/B, not vs Hugo)
 
