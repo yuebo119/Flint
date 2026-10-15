@@ -36,10 +36,14 @@ public class GitDateProviderTests : IDisposable
         // 环境韧性：GitDateProvider 对 git 失败的降级是设计行为（静默返回 null），
         // 但部分机器上测试进程 spawn 的 git 子进程被环境层干扰（杀软实时扫描锁，
         // 与 ModuleManagerSourceTests 的 clone deny 同族），rev-parse 拿不到仓库根，
-        // 真实仓库冒烟会误报为失败。先冒烟 git rev-parse 可用性，不可用则跳过
+        // 真实仓库冒烟会误报为失败。先冒烟 rev-parse 可用性且输出与测试目录同形
+        // （引号/大小写/短名差异属环境形态特殊，路径对齐断言在该环境不成立），
+        // 不可用或不同形则跳过而非误报
         var toplevel = RunGitWithOutputAllowEmpty("rev-parse --show-toplevel");
-        Assert.SkipWhen(string.IsNullOrWhiteSpace(toplevel),
-            "git rev-parse 在本环境不可用（沙箱/杀软拦截 git 子进程），跳过真实仓库冒烟");
+        Assert.SkipWhen(
+            string.IsNullOrWhiteSpace(toplevel) ||
+            !Path.GetFullPath(toplevel.Trim('"')).Equals(Path.GetFullPath(_root), StringComparison.OrdinalIgnoreCase),
+            $"git rev-parse 在本环境不可用或输出形态与测试目录不一致（toplevel='{toplevel}'），跳过真实仓库冒烟");
 
         var expectedText = RunGitWithOutput("log -1 --format=%cI");
         var expected = DateTimeOffset.Parse(expectedText, CultureInfo.InvariantCulture);

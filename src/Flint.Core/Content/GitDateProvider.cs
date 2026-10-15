@@ -160,6 +160,10 @@ public sealed class GitDateProvider : IGitDateProvider
 
             var root = process.StandardOutput.ReadLine()?.Trim();
             process.WaitForExit();
+            // git（部分版本，尤其旧版 git-for-windows）对非 ASCII 路径的 rev-parse
+            // 输出加 C 风格双引号，直接 GetFullPath 会得到带引号的畸形根路径，
+            // 与文件路径的前缀比较失败 → 映射 miss → :git 源静默失效。剥引号归一
+            root = root?.Trim('"');
             // Path.GetFullPath 归一化分隔符：git 输出正斜杠，GetRelativePath 需与查询路径同形
             return process.ExitCode == 0 && !string.IsNullOrEmpty(root) ? Path.GetFullPath(root) : null;
         }
