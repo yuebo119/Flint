@@ -53,7 +53,7 @@ public class GitDateProviderTests : IDisposable
         var actual = provider.GetLastCommitTime(file);
 
         Assert.True(actual.HasValue,
-            $"diag: repoRoot={provider.DiagRepoRoot ?? "<null>"}, mapCount={provider.DiagMapCount}, exit={provider.DiagExitCode}, stderr={provider.DiagStderr}, file={file}, tempRoot={_root}");
+            $"diag: repoRoot={provider.DiagRepoRoot ?? "<null>"}, mapCount={provider.DiagMapCount}, exit={provider.DiagExitCode}, stderr={provider.DiagStderr}, logHead={provider.DiagLogHead}, file={file}, tempRoot={_root}");
         Assert.Equal(expected, actual!.Value);
     }
 

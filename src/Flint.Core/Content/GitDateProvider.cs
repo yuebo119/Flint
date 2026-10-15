@@ -108,7 +108,7 @@ public sealed class GitDateProvider : IGitDateProvider
     /// log 从新到旧，路径首见时间即最后提交时间。key 为仓库相对路径。
     /// 空行仅作分隔不清当前时间——下一个提交块的时间行会覆盖它。
     /// </summary>
-    private static FrozenDictionary<string, DateTimeOffset> ParseGitLog(StreamReader output)
+    private FrozenDictionary<string, DateTimeOffset> ParseGitLog(StreamReader output)
     {
         var map = new Dictionary<string, DateTimeOffset>(PathComparer);
         DateTimeOffset? currentTime = null;
@@ -116,6 +116,10 @@ public sealed class GitDateProvider : IGitDateProvider
 
         while ((line = output.ReadLine()) is not null)
         {
+            if (_diagLogHead.Length < 200)
+            {
+                _diagLogHead += line + "|";
+            }
             if (string.IsNullOrEmpty(line))
             {
                 continue;
@@ -147,9 +151,11 @@ public sealed class GitDateProvider : IGitDateProvider
     internal int DiagMapCount => _lastCommitTimes?.Count ?? -1;
     internal string DiagStderr => _diagStderr.Length <= 300 ? _diagStderr : _diagStderr[..300];
     internal int DiagExitCode => _diagExitCode;
+    internal string DiagLogHead => _diagLogHead.Length <= 200 ? _diagLogHead : _diagLogHead[..200];
 
     private string _diagStderr = "";
     private int _diagExitCode = -1;
+    private string _diagLogHead = "";
 
     private string? GetRepoRoot()
     {
