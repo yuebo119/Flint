@@ -14,7 +14,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 被测工具（均为独立于产品解决方案的工程，见方案 D1/G16 免除清单） -->
+    <!-- 被测工具（均为独立于产品解决方案的工程，见方案 D1/G16 免除清单）。
+         注意：slnx 构建时 Configuration 注入不到 ProjectReference 的传递构建
+         （AiGate/DevTools 会被传到 bin/Debug），故 CI 侧显式补构建，勿依赖
+         slnx 传递；SetConfiguration 元数据实测对本场景无效，勿再加 -->
     <ProjectReference Include="..\..\src\Flint.DevTools\DevTools.csproj" />
     <ProjectReference Include="..\..\src\Flint.AiGate\AiGate.csproj" />
   </ItemGroup>
