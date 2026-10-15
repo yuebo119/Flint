@@ -1315,8 +1315,21 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                                     ctxObj.ContainsKey("title");
                 if (ctxIsPageLike)
                 {
-                    AddKeyCaseAliases(ctxObj);
-                    AddPageMethodFamily(ctxObj, pageObject);
+                    // LazyPageObject 自身成员解析已完备（T6.2 委托化：构造期
+                    // 大小写双拼写 + TryGetValue 惰性分发 C 组成员与页面方法族），
+                    // 且它是跨渲染共享实例（SharedPageObjects CWT：related/next 等
+                    // 集合派生出的同一 PageContext 在多页渲染中是同一对象）——对它的
+                    // 原地写在并行渲染下是同对象并发 Dictionary 写，实测偶发损坏
+                    // （stack 主题 related-content 链 "Destination array is not
+                    // long enough"，单跑不复现、矩阵全量负载下爆发）。对
+                    // LazyPageObject 跳过补齐（写均冗余）；普通 ScriptObject 的
+                    // page-like 形态来自 dict/对象字面量（每调用新建，无共享），
+                    // 保留补齐语义
+                    if (ctxObj is not LazyPageObject)
+                    {
+                        AddKeyCaseAliases(ctxObj);
+                        AddPageMethodFamily(ctxObj, pageObject);
+                    }
                     MergePageMembers(ctxObj, ctxObj);
                 }
                 else
