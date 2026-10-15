@@ -465,8 +465,9 @@ public sealed partial class MarkdownParser : IMarkdownParser
         links.AddRange(autoLinks);
         var plainText = plainSb.ToString().Trim();
 
-        var wordCount = CountWordsInText(plainText);
-        var readingTime = CalculateReadingTimeFromText(plainText, wordCount, DefaultWordsPerMinute);
+        var (wordCount, chineseChars, totalChars) = CountPlainStats(plainText.AsSpan());
+        var readingTime = CalculateReadingTimeFromStats(
+            wordCount, chineseChars, totalChars, DefaultWordsPerMinute);
 
         return new MarkdownAnalysis
         {
@@ -759,32 +760,22 @@ public sealed partial class MarkdownParser : IMarkdownParser
         }
 
         var plainText = ToPlainText(markdown);
-        return CountWordsInText(plainText);
+        return CountPlainStats(plainText.AsSpan()).WordCount;
     }
 
     /// <summary>
-    /// 统计文本中的字数
-    /// 支持中英文混合统计
-    /// P6 优化：使用 Span 避免字符串分配
+    /// 单遍统计纯文本：词数（英文成词计数 + 中文每字计一）+ 中文字符数 +
+    /// 字母数字与中文的合计字符数。原 <see cref="CountWordsInSpan"/> 与
+    /// <see cref="CalculateChineseRatioSpan"/> 各扫一遍全文且都调 IsChinese，
+    /// 合并为一次遍历（探针实测这两遍全文扫描与 Markdig 解析同占解析阶段大头，
+    /// Markdig 渲染本身只占 8%）
     /// </summary>
-    private static int CountWordsInText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return 0;
-        }
-
-        return CountWordsInSpan(text.AsSpan());
-    }
-
-    /// <summary>
-    /// P6 优化：使用 Span 统计字数
-    /// </summary>
-    private static int CountWordsInSpan(ReadOnlySpan<char> text)
+    private static (int WordCount, int ChineseChars, int TotalChars) CountPlainStats(ReadOnlySpan<char> text)
     {
         var wordCount = 0;
         var inWord = false;
         var chineseCount = 0;
+        var total = 0;
 
         for (var i = 0; i < text.Length; i++)
         {
@@ -794,11 +785,13 @@ public sealed partial class MarkdownParser : IMarkdownParser
             if (IsChinese(c))
             {
                 chineseCount++;
+                total++;
                 inWord = false;
             }
             // 检查是否为单词字符（字母、数字）
             else if (char.IsLetterOrDigit(c))
             {
+                total++;
                 if (!inWord)
                 {
                     wordCount++;
@@ -812,7 +805,7 @@ public sealed partial class MarkdownParser : IMarkdownParser
         }
 
         // 中文字符每个算一个字
-        return wordCount + chineseCount;
+        return (wordCount + chineseCount, chineseCount, total);
     }
 
     /// <summary>
@@ -837,16 +830,18 @@ public sealed partial class MarkdownParser : IMarkdownParser
         }
 
         var plainText = ToPlainText(markdown);
-        return CalculateReadingTimeFromText(plainText, CountWordsInText(plainText), wordsPerMinute);
+        var stats = CountPlainStats(plainText.AsSpan());
+        return CalculateReadingTimeFromStats(stats.WordCount, stats.ChineseChars, stats.TotalChars, wordsPerMinute);
     }
 
     /// <summary>
-    /// 基于已提取的纯文本和字数计算阅读时间
+    /// 基于已统计的词数与中文字符数计算阅读时间
     /// </summary>
-    private static TimeSpan CalculateReadingTimeFromText(string plainText, int wordCount, int wordsPerMinute)
+    private static TimeSpan CalculateReadingTimeFromStats(
+        int wordCount, int chineseChars, int totalChars, int wordsPerMinute)
     {
         // 检测是否主要为中文内容
-        var chineseRatio = CalculateChineseRatio(plainText);
+        var chineseRatio = totalChars > 0 ? (double)chineseChars / totalChars : 0;
         // 调用方可传任意 wordsPerMinute，≤0 会使除法得 ±Infinity，
         // TimeSpan.FromMinutes(Infinity) 抛 OverflowException——钳制到正值
         var effectiveWpm = Math.Max(1, chineseRatio > 0.5
@@ -855,44 +850,6 @@ public sealed partial class MarkdownParser : IMarkdownParser
 
         var minutes = (double)wordCount / effectiveWpm;
         return TimeSpan.FromMinutes(Math.Max(1, Math.Ceiling(minutes)));
-    }
-
-    /// <summary>
-    /// 计算中文字符比例
-    /// P6 优化：使用 Span 避免字符串分配
-    /// </summary>
-    private static double CalculateChineseRatio(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-        {
-            return 0;
-        }
-
-        return CalculateChineseRatioSpan(text.AsSpan());
-    }
-
-    /// <summary>
-    /// P6 优化：使用 Span 计算中文字符比例
-    /// </summary>
-    private static double CalculateChineseRatioSpan(ReadOnlySpan<char> text)
-    {
-        var totalChars = 0;
-        var chineseChars = 0;
-
-        for (var i = 0; i < text.Length; i++)
-        {
-            var c = text[i];
-            if (char.IsLetterOrDigit(c) || IsChinese(c))
-            {
-                totalChars++;
-                if (IsChinese(c))
-                {
-                    chineseChars++;
-                }
-            }
-        }
-
-        return totalChars > 0 ? (double)chineseChars / totalChars : 0;
     }
 
     /// <inheritdoc />
