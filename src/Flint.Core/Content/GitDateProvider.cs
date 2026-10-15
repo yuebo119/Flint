@@ -83,10 +83,13 @@ public sealed class GitDateProvider : IGitDateProvider
                 return FrozenDictionary<string, DateTimeOffset>.Empty;
             }
 
-            // 排空 stderr：Redirect 后不读取，git 输出大时管道缓冲区满会死锁子进程
-            process.BeginErrorReadLine();
-
+            // 排空 stderr：Redirect 后不读取，git 输出大时管道缓冲区满会死锁子进程。
+            // **不用 BeginErrorReadLine**：无 ErrorDataReceived 订阅者时，异步 stderr
+            // 读线程与下方同步 stdout 读在部分 runtime 上竞争，实测 stdout 被读成空
+            // （CI 两平台 mapCount=0、repoRoot 正常的根因）。git log 的 stderr 正常
+            // 仅数行 hint（远小于 4KB 管道缓冲），stdout 读完顺序排空无死锁风险
             var map = ParseGitLog(process.StandardOutput);
+            process.StandardError.ReadToEnd();
             process.WaitForExit();
             return map;
         }
@@ -162,10 +165,10 @@ public sealed class GitDateProvider : IGitDateProvider
                 return null;
             }
 
-            // 排空 stderr（同 LoadLastCommitTimes）
-            process.BeginErrorReadLine();
-
+            // 排空 stderr（同 LoadLastCommitTimes：不用 BeginErrorReadLine，
+            // 无订阅者的异步读与同步 stdout 读竞争会丢数据）
             var root = process.StandardOutput.ReadLine()?.Trim();
+            process.StandardError.ReadToEnd();
             process.WaitForExit();
             // git（部分版本，尤其旧版 git-for-windows）对非 ASCII 路径的 rev-parse
             // 输出加 C 风格双引号，直接 GetFullPath 会得到带引号的畸形根路径，
