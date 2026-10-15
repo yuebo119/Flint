@@ -22,7 +22,7 @@ Hugo themes.
 
 | 10k-page build | Incremental | Deliverable | Real-corpus memory |
 |:---:|:---:|:---:|:---:|
-| **3.5s** (0.81x Hugo) | **75ms** | **28MB** single file | on par with Hugo (-2%) |
+| **3.5s** (0.81x Hugo) | **75ms** | **40MB** single file | on par with Hugo (-2%) |
 
 ---
 
@@ -56,7 +56,7 @@ pages.
 app: no runtime, no node_modules, no JIT warmup. The deliverable is one exe.
 
 **The Hugo compatibility layer** — lookup order / render hooks / shortcode
-API / 25 namespace functions all aligned; ThemeMigrator converts Go
+API / 20 namespace functions all aligned; ThemeMigrator converts Go
 templates at the AST level, marking indeterminable semantics with
 `TODO-HUGO` instead of silently mistranslating — 21 real themes verified.
 Migration drops from "rewrite" to "one command plus a few adjudications".
@@ -69,8 +69,8 @@ dependencies.
 
 **Engineering-grade quality assurance** — the `perf gate` regression gate
 (three-run median ratchet, degradation intercepted before merge); FsCheck
-property testing, integration suite 1647/1647 green; output path-escape
-protection and atomic cache-entry writes.
+property testing, integration suite of 1649 tests (green on both CI
+platforms); output path-escape protection and atomic cache-entry writes.
 
 Under the hood: a three-phase parallel pipeline (parse/render/write +
 Server GC), content-signature transform caching (executed once, reused
@@ -94,7 +94,7 @@ real themes render unchanged).
 git clone https://github.com/yuebo119/Flint.git
 cd Flint
 
-# Windows (NativeAOT single file ~28MB; omitting -p:PublishAot=true yields ~89MB non-AOT)
+# Windows (NativeAOT single file ~40MB; omitting -p:PublishAot=true yields ~89MB non-AOT)
 dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish
 
 # Linux / macOS (Apple Silicon)
@@ -252,7 +252,7 @@ Template capability quick tour: `{{ render "view" }}` content views,
 `{{ partial "func/x" }}` return values, `{{ includeCached "x" }}` caching,
 `{{ page.file.path }}` / `{{ page.resources }}` / `{{ i18n "key" }}`,
 taxonomy pages' `page.data.*`. The full semantic surface — kind predicates,
-`.Scratch`/`.Store`, Pages methods (`ByDate`/`GroupBy`/`Related`…), 25
+`.Scratch`/`.Store`, Pages methods (`ByDate`/`GroupBy`/`Related`…), 20
 namespace objects (`strings.*`/`collections.*`/`resources.*`…), built-in
 fallback partials (`opengraph`…).
 
@@ -398,7 +398,17 @@ runs disperse within ±1% (3505–3540ms); quiet-to-loaded window drift is
 Markdown parsing 238k files/sec · template rendering 69k pages/sec ·
 incremental 75ms (full build 214ms, 2.82x speedup) · config load 0.20ms ·
 concurrency speedup 1.12x · pathological detection green with the
-integration suite (1647/1647).
+integration suite (1649 tests, green on both CI platforms).
+
+### 2026-10 performance round (same-engine version A/B, not vs Hugo)
+
+AOT publish form, same-round interleaved sampling medians: full build of the
+14,621-page real corpus (MDN) **-10.0%** (10,443ms → 9,399ms); 10k-page
+synthetic corpus -3.4% to -5.5%. Largest single item: the scan IO rework
+(directory enumeration takes mtime directly, removing one stat per file;
+syscall-level measurement shows stat and read cost the same and add up
+completely). Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md`
+and `.ai/perf-ledger.md`.
 
 ---
 

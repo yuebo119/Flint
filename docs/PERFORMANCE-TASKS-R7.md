@@ -122,7 +122,7 @@
   - 问题：`JavaScriptBundler.cs:171-220` 每个 JS 资产一次进程 spawn + 临时目录建/写/读/删（AssetPipeline.cs:231 逐资产调用）。
   - 做法：esbuild serve 常驻模式（T5.1 dart-sass 进程池同族）；验收：JS 密集主题构建时间与产物对称。
 
-- [x] **T1.11（G1）发布配置声明对齐**（实施修正：非"矛盾"而是**双形态**——csproj 默认 false = 无参 publish 的 R2R 快速迭代口径，README 正式发布 `-p:PublishAot=true` 覆盖为 28MB AOT；两个 csproj 的注释已按双形态事实重写）
+- [x] **T1.11（G1）发布配置声明对齐**（实施修正：非"矛盾"而是**双形态**——csproj 默认 false = 无参 publish 的 R2R 快速迭代口径，README 正式发布 `-p:PublishAot=true` 覆盖为约 40MB AOT（v0.2.0 起速度优先编译偏好，原 28MB 为体积优先口径）；两个 csproj 的注释已按双形态事实重写）
   - 问题：`Directory.Build.props` Release 段 `PublishAot=true`+`OptimizationPreference=Size`，但 `Flint.Cli.csproj` 实际 `PublishAot=false`（YamlDotNet/Scriban 反射），真实形态 = R2R + 单文件 + partial trim；`OptimizationPreference=Size` 对 CLI 无效，文档宣称 Native AOT 失实。
   - 做法：props 的 AOT 段迁移到明确启用 AOT 的项目（若有）或删除并注释实际发布形态；README/性能文档的 AOT 表述改锚定真实形态；核对 doc-consistency 门禁。
   - 验收：发布配置三处（props/csproj/README）口径一致；release 工具对拍不变。

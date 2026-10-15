@@ -21,7 +21,7 @@ AST 级自动迁移工具链。
 
 | 万页构建 | 增量构建 | 交付物 | 真实语料内存 |
 |:---:|:---:|:---:|:---:|
-| **3.5s**（Hugo 的 0.81x） | **75ms** | **28MB** 单文件 | 与 Hugo 持平（-2%） |
+| **3.5s**（Hugo 的 0.81x） | **75ms** | **40MB** 单文件 | 与 Hugo 持平（-2%） |
 
 ---
 
@@ -63,8 +63,8 @@ node_modules、无 JIT 预热，交付物是一个 exe。
 图片处理结果落盘缓存。带 TS/SCSS 的重度主题零 npm 依赖构建。
 
 **工程化质量保障** —— `perf gate` 回归门禁（三轮中位数棘轮，劣化在
-合并前拦截）；FsCheck 属性测试，集成套件 1647/1647 全绿；输出路径
-逃逸防护、缓存条目原子写。
+合并前拦截）；FsCheck 属性测试，集成套件 1649 项（CI 双平台全绿）；
+输出路径逃逸防护、缓存条目原子写。
 
 引擎侧：三相全并行管线（解析/渲染/写入 + Server GC）、内容签名变换
 缓存（一次执行全站复用）、Win32 单段写（写入中位 -42%）、Scriban
@@ -85,7 +85,7 @@ node_modules、无 JIT 预热，交付物是一个 exe。
 git clone https://github.com/yuebo119/Flint.git
 cd Flint
 
-# Windows（NativeAOT 单文件 ~28MB；缺 -p:PublishAot=true 会产出 ~89MB 非 AOT 单文件）
+# Windows（NativeAOT 单文件 ~40MB；缺 -p:PublishAot=true 会产出 ~89MB 非 AOT 单文件）
 dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish
 
 # Linux / macOS (Apple Silicon)
@@ -231,7 +231,7 @@ posts 生效，`layouts/blog/` 按 front matter `type` 路由：
 返回值、`{{ includeCached "x" }}` 缓存、`{{ page.file.path }}` /
 `{{ page.resources }}` / `{{ i18n "key" }}`、分类页 `page.data.*`。完整
 语义面——kind 谓词、`.Scratch`/`.Store`、Pages 方法族（`ByDate`/
-`GroupBy`/`Related`…）、25 个命名空间对象（`strings.*`/
+`GroupBy`/`Related`…）、20 个命名空间对象（`strings.*`/
 `collections.*`/`resources.*`…）、`opengraph` 等内置 partial 兜底。
 
 多主题叠加：`theme = "t1,t2"`（前面优先），全链路站点 > t1 > t2；
@@ -364,7 +364,15 @@ true）、`--livereload/-l`（默认 true）、`--drafts/-D`（默认 true）、
 
 Markdown 解析 238k 文件/秒 · 模板渲染 69k 页/秒 · 增量构建 75ms（完整
 构建 214ms，加速 2.82x）· 配置加载 0.20ms · 并发加速比 1.12x ·
-病态检测随集成套件 1647/1647 全绿。
+病态检测随集成套件 1649 项（CI 双平台全绿）。
+
+### 2026-10 性能轮（同引擎版本间 A/B，非 vs Hugo）
+
+AOT 发布形态、同轮交错采样中位数：万页真实语料（MDN 14,621 页）全量构建
+**-10.0%**（10,443ms → 9,399ms）；万页合成语料 -3.4% 至 -5.5%。最大单项为
+扫描 IO 重构（目录枚举直取 mtime，消除每文件一次 stat，系统调用级实测
+stat 与读盘成本相等且完全相加）。优化清单与量具见
+`docs/PERFORMANCE-OPTIMIZATION.md` 与 `.ai/perf-ledger.md`。
 
 ---
 
