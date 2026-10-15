@@ -1289,9 +1289,21 @@ src/
             Architecture = RuntimeInformation.OSArchitecture.ToString(),
             ProcessorCount = Environment.ProcessorCount,
             DotNetVersion = RuntimeInformation.FrameworkDescription,
-            MachineName = Environment.MachineName,
+            // 机器名脱敏：短哈希保留"同机对比"的区分能力（性能报告的基线对比
+            // 需要识别是否同一台机器），但机器名本身不写入报告/门禁记录
+            // （主机名属机器标识信息，公开仓库不留）
+            MachineName = AnonymizeMachineName(Environment.MachineName),
             AvailableMemoryMB = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1024 / 1024
         };
+    }
+
+    /// <summary>机器名 → 8 位短哈希（SHA256 前 8 hex）：同机恒等可对比，不可逆推机器名</summary>
+    private static string AnonymizeMachineName(string machineName)
+    {
+        Span<byte> hash = stackalloc byte[8];
+        System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(machineName), hash);
+        return System.Convert.ToHexString(hash)[..8];
     }
 
     private void Cleanup()
