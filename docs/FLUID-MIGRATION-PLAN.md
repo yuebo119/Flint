@@ -3,7 +3,7 @@
 | 项目 | 内容 |
 |---|---|
 | 日期 | 2026-10-19 |
-| 状态 | 提案 |
+| 状态 | **已实施**（Phase 0-6 完成，含递延项登记；实施状态见文末「实施状态」节） |
 | 相关提交 | `1a6e31f` 已接入 Fluid 作为 `.liquid` 备用分支 |
 | 目标 | Fluid 做新站点和内置模板主力，Scriban 长期只做 Hugo 兼容层 |
 
@@ -235,3 +235,30 @@ Phase 3 之后再把 Fluid 从“新站点主力”推向“内置模板全面�
 以现有代码结构，这个方案可行。`SiteBuilder` 已经只依赖 `ITemplateRenderer`，CLI 构造点集中，内置模板虽然目前硬编码在 Scriban 类里，但拆 `IBuiltinTemplateProvider` 的代价可控。真正的大头在函数平面和内容管线，不在路由层。
 
 当前提交 `1a6e31f` 里的 Fluid 只是 `.liquid` 备用分支，不能直接当主力。按上面 Phase 1 到 Phase 3 推进，才能得到平行的双引擎。
+
+## 实施状态（2026-10-19 收官）
+
+**已完成**：Phase 0 全部（策略枚举 + `engine` 配置键、隔离规则入
+CONVENTIONS §8.4、IL 扫描装配测试过 mutation probe）；Phase 1 全部
+（FluidTemplateRenderer、TemplateEngineRouter、CLI 接入、单测、
+NativeAOT 冒烟——DynamicDependency 保留清单 + ReadingTimeView +
+索引器访问器三轮迭代）；Phase 2 全部（IBuiltinTemplateProvider 拆分、
+Liquid 内置模板、SiteCreator 脚手架 + `--engine`、new site 端到端、
+站点级 A/B 0.821x、产物对称 343 文件）；Phase 3 全部（Liquid 内置
+partial、辅助模板双形态、8 项语义对拍过 mutation probe）；Phase 4 的
+P4-1/4-2/4-3/4-6（函数分级、Hugo 名过滤器族、resources 只读档、
+对拍测试）；Phase 5 的 P5-3/4/5（.liquid 短代码/render hook、
+Scriban 模式 gating、ExtraValues 通道）；Phase 6 全部（perf 套件双引擎
+对拍用例——模板级 0.296x、AOT 体积 +0.48%、engine-probe 运行期探针
+PASS、LIQUID-GUIDE 文档、README 双语更新）。
+
+**递延（有明确理由，差异清单登记于 docs/LIQUID-GUIDE.md §4）**：
+P4-4 `css.Sass`/`js.Build`（需资产管线服务化设计）；P4-3 的产物型变换
+`resources.Concat/Fingerprint/FromString/Minify`（需接入
+GeneratedResources 输出管道）；P5-1/P5-2 的接口抽象（以扩展名分发
+替代——更符合代码库现状，YAGNI）。
+
+**与方案原文的偏差**：P1-6「先只路由一个内置模板到 Fluid」实际一步到位
+按扩展名 + 站点 Fluid 原生性路由（规则表即方案 §一.3，风险被对拍测试
+与 A/B 覆盖）；P4-2 的 Liquid 版函数采用**过滤器形态**（Liquid 惯用法，
+如 `'css/x.css' | resource`）而非 Hugo 命名空间函数形态。

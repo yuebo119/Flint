@@ -135,8 +135,15 @@ public sealed partial class SiteBuilder
 
         // #10 零 IO 判定：依赖全部来自模板加载路径（构建内文件集不变，
         // TemplateLookup 描述符快照判定成立）；miss 时回退 File.Exists 兜住
-        // 构建开始后新增的模板（与原实现行为一致，仅罕见路径付 stat）
-        var scribanRenderer = _templateRenderer as ScribanTemplateRenderer;
+        // 构建开始后新增的模板（与原实现行为一致，仅罕见路径付 stat）。
+        // router 模式下经 ScribanRenderer 属性穿透（2026-10-19 回归修复：
+        // `as ScribanTemplateRenderer` 对 router 恒 null，零 IO 优化整体失效）
+        var scribanRenderer = _templateRenderer switch
+        {
+            ScribanTemplateRenderer direct => direct,
+            TemplateEngineRouter router => router.ScribanRenderer,
+            _ => null
+        };
         var physicalPaths = new List<string>();
         foreach (var dep in deps)
         {
@@ -343,10 +350,21 @@ public sealed partial class SiteBuilder
 
         // render hook 内的 i18n 需要翻译表，但 hook 渲染发生在内容解析期
         //（早于本方法），故把翻译表快照回填给渲染器——同一构建内后续的 hook
-        // 渲染（含增量重建）即可用上真实翻译（此前 hook 内 i18n 报函数未找到）
-        if (_templateRenderer is ScribanTemplateRenderer scribanRenderer)
+        // 渲染（含增量重建）即可用上真实翻译（此前 hook 内 i18n 报函数未找到）。
+        // router 模式穿透到 Scriban 渲染器（2026-10-19 回归修复：类型检查
+        // 漏 router 时翻译表不回填，主题 render hook 的 i18n 静默失效）
+        if (_templateRenderer is ScribanTemplateRenderer or TemplateEngineRouter)
         {
-            scribanRenderer.Translations = translations ?? new Dictionary<string, string>();
+            var translationsTarget = _templateRenderer switch
+            {
+                ScribanTemplateRenderer direct => direct,
+                TemplateEngineRouter router => router.ScribanRenderer,
+                _ => null
+            };
+            if (translationsTarget is not null)
+            {
+                translationsTarget.Translations = translations ?? new Dictionary<string, string>();
+            }
         }
 
         // 常规页 = Kind "page"（Hugo 语义：排除 home/section/taxonomy/term）。
@@ -392,8 +410,12 @@ public sealed partial class SiteBuilder
         var results = new System.Collections.Concurrent.ConcurrentDictionary<int, RenderedPage>();
         const int slotsPerTarget = 8;
 
-        // 分页标记按构建清空：跨构建残留会让"这轮没分页"的列表页被误判为分页
-        if (_templateRenderer is ScribanTemplateRenderer)
+        // 分页标记按构建清空：跨构建残留会让"这轮没分页"的列表页被误判为分页。
+        // **router 也要登记**（FLUID-MIGRATION-PLAN 回归修复 2026-10-19）：
+        // 渲染器换成 TemplateEngineRouter 后 `is ScribanTemplateRenderer` 恒 false，
+        // 静态表（CurrentSitePages/CurrentSite）不登记 → .GetPage 查不到 section 页
+        // （hugo-book 的 menu-section 报 "Section 'docs' not found" 实测）
+        if (_templateRenderer is ScribanTemplateRenderer or TemplateEngineRouter)
         {
             ScribanTemplateRenderer.ResetPaginateTracking();
             // 登记全量页面：.GetPage 需要 section 页，而页面对象的构造快照可能只有常规页

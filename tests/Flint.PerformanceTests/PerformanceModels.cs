@@ -55,7 +55,10 @@ public enum MetricCategory
     Time,
     Throughput,
     Memory,
-    Size
+    Size,
+    /// <summary>比值口径（双引擎对拍的 Fluid/Scriban 耗时比；无阈值基线，
+    /// 只作趋势呈现——比值不进棘轮门禁）</summary>
+    Ratio
 }
 
 /// <summary>

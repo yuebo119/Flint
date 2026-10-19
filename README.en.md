@@ -193,7 +193,28 @@ a same-named template into `layouts/_markup/` (`render-link.html` /
 `render-image.html` / `render-heading.html`; variables `destination`/`text`/
 `level`/`id` etc.); without one, default rendering applies at zero cost.
 
-### Writing Templates: Scriban
+### Writing Templates: Fluid (Liquid, default for new sites)
+
+`Flint new site` generates `.liquid` scaffolding by default. Liquid syntax,
+case-insensitive members with snake_case support, no output escaping by default:
+
+```html
+{{ page.title }}                                  <!-- page fields -->
+{{ site.params.author }}                          <!-- site config -->
+{% for post in site.regular_pages %}{% endfor %}  <!-- loops -->
+{% if page.draft %}{% endif %}                    <!-- conditionals -->
+{% include 'partials/header' %}                   <!-- include a partial (shared scope) -->
+{% render 'partials/card' %}                      <!-- isolated-scope render -->
+```
+
+Full reference (scaffolding inventory, function list, known differences):
+[`docs/LIQUID-GUIDE.md`](docs/LIQUID-GUIDE.md).
+
+### Writing Templates: Scriban (Hugo theme compatibility)
+
+Hugo themes (`.html`) and migrator output use Scriban. Both extensions can
+coexist in one site (`.liquid` wins within the same root); `engine: scriban`
+switches the whole site to Scriban.
 
 Templates decide what each page looks like; grab data inside double braces:
 
@@ -421,7 +442,7 @@ and `.ai/perf-ledger.md`.
 | Dimension | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
 | Runtime | **C# / .NET 11, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
-| Template system | **Scriban (full scripting language)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
+| Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
 | Build performance (10k pages) | **3.5s (same-machine measured)** | 4.3s (same-machine measured) | not measured | not measured | not measured | not measured |
 | Incremental builds | **75ms** | supported | supported | supported | limited | supported |
 | Asset pipeline | **in-process Sass + TS type stripping + minify + fingerprint** | Hugo Pipes (Extended) | Vite toolchain | plugins | plugins | plugins |
@@ -487,7 +508,7 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 | Technology | Role |
 |------|------|
 | **.NET 11 RC2** | Current RC line; NativeAOT compilation, single-file publish |
-| **Scriban 7.5 + Fluid 3.0 beta** | Template engine: Scriban default, Fluid as Liquid fallback |
+| **Scriban 7.5 + Fluid 3.0 beta** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
 | **Markdig 1.4** | CommonMark + GFM parsing |
 | **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |
 | **Lightning CSS** | CSS minification (external CLI, falls back to built-in simple minifier) |

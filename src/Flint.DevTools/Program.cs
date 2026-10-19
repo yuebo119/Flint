@@ -46,6 +46,7 @@ internal static class Program
         rootCommand.Subcommands.Add(ReleaseCommand.Build());
         rootCommand.Subcommands.Add(ThemeCommand.Build());
         rootCommand.Subcommands.Add(DemoCommand.Build());
+        rootCommand.Subcommands.Add(EngineProbeCommand.Build());
 
         var parseResult = rootCommand.Parse(args);
         return await parseResult.InvokeAsync().ConfigureAwait(false);

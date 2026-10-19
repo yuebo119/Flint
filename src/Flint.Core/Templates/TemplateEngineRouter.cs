@@ -58,6 +58,10 @@ public sealed class TemplateEngineRouter : ITemplateRenderer
     /// <summary>Fluid 渲染器（内容管线渲染 .liquid 短代码/hook 用；共享缓存）</summary>
     public FluidTemplateRenderer FluidRenderer => _fluid;
 
+    /// <summary>Scriban 渲染器（SiteBuilder 的静态登记/翻译表回填/零 IO 依赖
+    /// 判定经本属性穿透 router 拿到具体渲染器）</summary>
+    public ScribanTemplateRenderer ScribanRenderer => _scriban;
+
     /// <summary>从站点配置解析策略</summary>
     public static TemplateEnginePolicy ParsePolicy(SiteConfig config) =>
         ParsePolicy(config.Engine);

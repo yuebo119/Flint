@@ -54,6 +54,9 @@ public class PerformanceTestRunner
             await RunIncrementalBuildTestAsync();
             await RunMarkdownParsingTestAsync();
             await RunTemplateRenderingTestAsync();
+            // 双引擎对拍（FLUID-MIGRATION-PLAN P6-1）：同逻辑模板分别经
+            // Scriban（.html）与 Fluid（.liquid）渲染，比值进报告
+            await RunEngineRenderingComparisonAsync();
             await RunConfigLoadingTestAsync();
             await RunConcurrentBuildTestAsync();
         }
@@ -366,6 +369,82 @@ public class PerformanceTestRunner
             $"测试 {renderCount} 次模板渲染的性能", metrics, sw.Elapsed));
 
         Console.WriteLine($"   ✓ 渲染速度: {pagesPerSecond:F0} 页/秒\n");
+    }
+
+    /// <summary>
+    /// 双引擎渲染对拍（FLUID-MIGRATION-PLAN P6-1）：同逻辑模板（页面标题 +
+    /// 正文 + 成员访问）分别经 Scriban（.html）与 Fluid（.liquid）渲染，
+    /// 交错采集抵消机器漂移，比值即引擎收益判据。站点级端到端 A/B 见
+    /// scripts/engine-ab.sh（本用例是进程内模板级口径）
+    /// </summary>
+    private async Task RunEngineRenderingComparisonAsync()
+    {
+        Console.WriteLine("⚖️ 测试: 双引擎渲染对拍...");
+        const int renderCount = 1000;
+
+        var scribanDir = Path.Combine(_testDir, "layouts-engine-scriban");
+        var fluidDir = Path.Combine(_testDir, "layouts-engine-fluid");
+        Directory.CreateDirectory(scribanDir);
+        Directory.CreateDirectory(fluidDir);
+
+        await File.WriteAllTextAsync(Path.Combine(scribanDir, "test.html"),
+            "<h1>{{ page.title }}</h1><div>{{ page.content }}</div><span>{{ page.word_count }}</span>");
+        await File.WriteAllTextAsync(Path.Combine(fluidDir, "test.liquid"),
+            "<h1>{{ page.title }}</h1><div>{{ page.content }}</div><span>{{ page.word_count }}</span>");
+
+        var scribanRenderer = new ScribanTemplateRenderer(scribanDir);
+        var fluidRenderer = new FluidTemplateRenderer(fluidDir);
+        var context = CreateTestContext();
+
+        // 预热两引擎（JIT +  Fluid 访问器缓存）
+        for (var i = 0; i < 10; i++)
+        {
+            await scribanRenderer.RenderAsync("test", context);
+            await fluidRenderer.RenderAsync("test", context);
+        }
+
+        // 交错采集：每轮交替跑两个引擎，共 3 轮，取各自总耗时
+        var scribanTotal = 0.0;
+        var fluidTotal = 0.0;
+        const int rounds = 3;
+        for (var round = 0; round < rounds; round++)
+        {
+            GC.Collect();
+            var swS = Stopwatch.StartNew();
+            for (var i = 0; i < renderCount; i++)
+            {
+                await scribanRenderer.RenderAsync("test", context);
+            }
+            swS.Stop();
+            scribanTotal += swS.Elapsed.TotalMilliseconds;
+
+            GC.Collect();
+            var swF = Stopwatch.StartNew();
+            for (var i = 0; i < renderCount; i++)
+            {
+                await fluidRenderer.RenderAsync("test", context);
+            }
+            swF.Stop();
+            fluidTotal += swF.Elapsed.TotalMilliseconds;
+        }
+
+        var totalRenders = renderCount * rounds;
+        var scribanPagesPerSecond = totalRenders / (scribanTotal / 1000.0);
+        var fluidPagesPerSecond = totalRenders / (fluidTotal / 1000.0);
+        var ratio = scribanTotal > 0 ? fluidTotal / scribanTotal : 0;
+
+        var metrics = new List<PerformanceMetric>
+        {
+            CreateMetric("Scriban 速度", scribanPagesPerSecond, "页/秒", null, MetricCategory.Throughput, true),
+            CreateMetric("Fluid 速度", fluidPagesPerSecond, "页/秒", null, MetricCategory.Throughput, true),
+            CreateMetric("Fluid/Scriban 耗时比", ratio, "x", null, MetricCategory.Ratio, false)
+        };
+
+        _results.Add(CreateTestResult("双引擎渲染对拍",
+            $"同逻辑模板 {totalRenders} 次渲染交错 {rounds} 轮（Scriban vs Fluid）",
+            metrics, TimeSpan.FromMilliseconds(scribanTotal + fluidTotal)));
+
+        Console.WriteLine($"   ✓ Scriban {scribanPagesPerSecond:F0} 页/秒 · Fluid {fluidPagesPerSecond:F0} 页/秒 · 比值 {ratio:F3}x\n");
     }
 
     private async Task RunConfigLoadingTestAsync()
@@ -1297,10 +1376,13 @@ src/
         };
     }
 
-    /// <summary>机器名 → 8 位短哈希（SHA256 前 8 hex）：同机恒等可对比，不可逆推机器名</summary>
+    /// <summary>机器名 → 8 位短哈希（SHA256 前 8 hex）：同机恒等可对比，不可逆推机器名。
+    /// 目标 span 须为 SHA256 完整输出长度（32 字节）——曾写成 8 字节，
+    /// HashData 抛 "Destination is too short" 使整个性能套件起步即崩
+    /// （2026-10-19 修复）</summary>
     private static string AnonymizeMachineName(string machineName)
     {
-        Span<byte> hash = stackalloc byte[8];
+        Span<byte> hash = stackalloc byte[32];
         System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(machineName), hash);
         return System.Convert.ToHexString(hash)[..8];

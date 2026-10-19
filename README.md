@@ -177,7 +177,28 @@ draft: false
 同名模板（`render-link.html` / `render-image.html` / `render-heading.html`，
 变量 `destination`/`text`/`level`/`id` 等）；不放则走默认渲染，零开销。
 
-### 写模板：Scriban
+### 写模板：Fluid（Liquid，新站点默认）
+
+`Flint new site` 默认生成 `.liquid` 脚手架。Liquid 语法，成员大小写不敏感
+且支持 snake_case，默认不转义：
+
+```html
+{{ page.title }}                                <!-- 页面字段 -->
+{{ site.params.author }}                        <!-- 站点配置 -->
+{% for post in site.regular_pages %}{% endfor %} <!-- 循环 -->
+{% if page.draft %}{% endif %}                   <!-- 条件 -->
+{% include 'partials/header' %}                 <!-- 引入 partial（共享作用域）-->
+{% render 'partials/card' %}                    <!-- 隔离作用域渲染 -->
+```
+
+骨架复用经 include 组合（Liquid 无 extends/block 概念，partial 即积木）。
+完整写法（脚手架清单、函数清单、已知差异）见
+[`docs/LIQUID-GUIDE.md`](docs/LIQUID-GUIDE.md)。
+
+### 写模板：Scriban（Hugo 主题兼容）
+
+Hugo 主题（`.html`）与迁移产物走 Scriban。同一站点里 `.liquid` 与 `.html`
+可以并存（同根内 `.liquid` 优先）；配置 `engine: scriban` 切全站 Scriban。
 
 模板决定页面长什么样，花括号里取数据：
 
@@ -384,7 +405,7 @@ stat 与读盘成本相等且完全相加）。优化清单与量具见
 | 维度 | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
 | 实现与运行时 | **C# / .NET 11，AOT 单文件应用** | Go 单二进制 | Node + 依赖树 | Node + 依赖树 | Ruby + gems | Node + 依赖树 |
-| 模板系统 | **Scriban（完整脚本语言）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid | EJS / Pug 等 |
+| 模板系统 | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid | EJS / Pug 等 |
 | 构建性能（万页） | **3.5s（同机实测）** | 4.3s（同机实测） | 未实测 | 未实测 | 未实测 | 未实测 |
 | 增量构建 | **75ms** | 支持 | 支持 | 支持 | 有限 | 支持 |
 | 资产管线 | **进程内 Sass + TS 类型剥离 + minify + 指纹** | Hugo Pipes（Extended） | Vite 工具链 | 插件 | 插件 | 插件 |
@@ -443,7 +464,7 @@ Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 | 技术 | 说明 |
 |------|------|
 | **.NET 11 RC2** | 当前 RC 线，NativeAOT 原生编译，单文件发布 |
-| **Scriban 7.5 + Fluid 3.0 beta** | 模板引擎：Scriban 默认，Fluid 作 Liquid 备用 |
+| **Scriban 7.5 + Fluid 3.0 beta** | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
 | **Markdig 1.4** | CommonMark + GFM 解析 |
 | **Dart Sass CLI** | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`） |
 | **Lightning CSS** | CSS 压缩（外部 CLI，缺失回退内置简单压缩） |

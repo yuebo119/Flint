@@ -21,4 +21,11 @@
     <PackageReference Include="System.Diagnostics.PerformanceCounter" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- engine-probe（FLUID-MIGRATION-PLAN P6-3）需要进程内构造
+         FluidTemplateRenderer 做运行期装配探针——引 Flint.Core；
+         产品 Flint.Cli 的 AOT 发布面不含 DevTools，此引用不影响发布体积 -->
+    <ProjectReference Include="..\Flint.Core\Flint.Core.csproj" />
+  </ItemGroup>
+
 </Project>

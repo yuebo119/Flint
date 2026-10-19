@@ -1,0 +1,196 @@
+# Liquid 模板指南（Fluid 引擎）
+
+| 项目 | 内容 |
+|---|---|
+| 日期 | 2026-10-19 |
+| 状态 | 生效（FLUID-MIGRATION-PLAN Phase 0-6 实施后） |
+| 相关提交 | 见 `git log --oneline --grep=Fluid` 迁移系列 |
+| 目标读者 | 写 Flint 新站点模板的模板作者；维护双引擎的引擎开发者 |
+
+## 1. 双引擎与路由
+
+Flint 自 2026-10-19 起为双模板引擎：**Fluid（Liquid）主力 + Scriban 兼容层**。
+新站点默认生成 `.liquid` 脚手架；Hugo 主题（`.html`）与 ThemeMigrator 产物
+继续走 Scriban。两条引擎平行，不共享缓存/依赖表/资源追踪器
+（隔离硬规则见 `docs/CONVENTIONS.md` §8.4）。
+
+### 1.1 路由规则
+
+| 模板来源 | 引擎 |
+|---|---|
+| 站点 `layouts/**/*.liquid` | Fluid |
+| Fluid 原生站点（layouts 含任一 `.liquid`）的内置回退模板 | Fluid |
+| Hugo 主题 `layouts/**/*.html` | Scriban |
+| ThemeMigrator 输出 `.html` | Scriban |
+| 显式 `engine: scriban` 配置 | 全站 Scriban，兼容模式 |
+| 显式 `engine: fluid` 配置 | 全站 Fluid，实验模式 |
+
+默认（`engine: auto`）即上表前四行的双轨分发；同根内 `.liquid` 优先于
+`.html`（站点加 `.liquid` 覆盖既有 `.html` 是既定迁移路径）。
+配置写在 Flint.toml **任何段头之前**（追到 `[params]` 段后 TOML 会把它归进
+子表——2026-10-19 实测坑）。
+
+### 1.2 CLI
+
+```bash
+Flint new site mysite                # 默认生成 .liquid 脚手架
+Flint new site mysite --engine scriban   # 旧 .html 脚手架（Hugo 兼容模式）
+```
+
+## 2. .liquid 模板编写规范
+
+### 2.1 基本语法（Liquid 标准 + Fluid 扩展）
+
+```liquid
+{%- comment -%} 赋值、条件、循环 {%- endcomment -%}
+{% assign recent = site.regular_pages | slice: 0, 5 %}
+{% if page.title %}<h1>{{ page.title }}</h1>{% endif %}
+{% for post in recent %}
+  <a href="{{ post.permalink }}">{{ post.title }}</a>
+{% endfor %}
+{% include 'partials/head' %}          {# include 共享作用域 #}
+{% render 'partials/card' %}           {# render 隔离作用域 #}
+```
+
+- 成员访问**大小写不敏感**，且支持 snake_case：`page.word_count` 命中
+  `PageContext.WordCount`（`FlintMemberAccessStrategy` 映射）。
+- 默认**不转义**（与 Scriban 侧 HTML 契约一致）：`{{ page.content }}` 原样输出。
+- `params`/`data` 字典经 OrdinalIgnoreCase 副本绑定：`params.foo` 与
+  `params.Foo` 等价。
+- 空值语义：缺失成员取空（不抛异常），与 Hugo 宽容度对齐。
+
+### 2.2 脚手架文件清单（`Flint new site` 默认）
+
+```
+layouts/
+├── index.liquid                  # 首页
+├── _default/
+│   ├── baseof.liquid             # 基础布局（参考）
+│   ├── single.liquid             # 单页
+│   ├── list.liquid               # 列表页
+│   ├── taxonomy.liquid           # 分类法列表
+│   └── term.liquid               # 词条页
+└── partials/
+    ├── head.liquid               # <head>
+    ├── header.liquid             # 页头（site.menus.main 菜单）
+    └── footer.liquid             # 页脚（site.build_date 年份）
+```
+
+辅助模板（站点提供时覆盖内置生成器）：`404.liquid`、`robots.liquid`、
+`sitemap.liquid`、`rss.liquid`。404 是**模板门控**产物（无模板不产出，
+与 Hugo 一致）；sitemap/rss 无模板时走内置 C# 生成器。
+
+### 2.3 内置回退模板（Hugo embedded templates 的 Liquid 等价）
+
+站点缺布局时按 kind 回退：`list`（section）/ `term` / `taxonomy`，
+另有 `pagination` 与内置 partial `opengraph` / `schema` /
+`twitter_cards` / `google_analytics` / `disqus` /
+`_funcs/get-page-images`。与 Scriban 内置版**逐条同构**（空白归一化后
+输出一致，`EngineBuiltinParityTests` 8 项对拍锁定）。
+
+### 2.4 内容管线（.liquid 短代码与 render hooks）
+
+```
+layouts/shortcodes/notice.liquid       # {{< notice type="warning" >}}…{{< /notice >}}
+layouts/_markup/render-link.liquid     # Markdown 链接定制渲染
+```
+
+变量约定（与 Scriban 侧一致）：短代码有 `params`（命名+位置数字键）/
+`positional` / `inner` / `name` / `page` / `site` / `ordinal` / `parent`；
+render hook 有 `destination` / `text` / `plain_text` / `level` / `id` /
+`title` 等平铺变量。同根内 `.liquid` 覆盖 `.html`；`engine: scriban`
+模式下不注册 `.liquid` 内容（缺失短代码构建失败）。
+
+## 3. 函数清单
+
+### 3.1 Fluid 内置（72 个，节选高频）
+
+`default` `size` `first` `last` `join` `split` `replace` `truncate`
+`truncatewords` `strip_html` `where` `sort` `sort_natural` `map` `reject`
+`uniq` `compact` `concat` `slice` `reverse` `sum` `round` `ceil` `floor`
+`abs` `plus` `minus` `times` `divided_by` `modulo` `at_least` `at_most`
+`date` `format_date` `escape` `escape_once` `upcase` `downcase`
+`capitalize` `lstrip` `rstrip` `strip` `json` `base64_*` `md5` `sha1`
+`sha256` `url_encode` `url_decode` `handle` `handleize` `find`
+`find_index` `has` `prepend` `append` `remove` `remove_first`
+`remove_last` `newline_to_br` `strip_newlines` `time_zone`
+
+### 3.2 Flint 追加（Hugo 名，对齐 Scriban 侧语义）
+
+| 过滤器 | 语义 | 备注 |
+|---|---|---|
+| `abs_url` / `absURL` | baseURL origin + 子路径 + 路径 | 与 Scriban `absURL` 同语义 |
+| `rel_url` / `relURL` | 子路径 + 路径 | 同上 |
+| `titleize` / `title` | 逐词首字母大写 | 不过滤虚词 |
+| `humanize` | `-`/`_` 转空格 + 首字母大写 | 共享 `TemplateTextFunctions` |
+| `urlize` / `anchorize` | 小写 + 非字母数字转连字符 | 同上 |
+| `singularize` | ies→y、去尾 s | Flint 既有规则（双引擎一致） |
+| `pluralize` | `count \| pluralize: singular, plural` | 计数形态 |
+| `markdownify` | Markdown → HTML | 共享 `MarkdownParser`（无钩子管道） |
+| `plainify` | 剥 HTML 标签 | |
+| `jsonify` | 序列化为 JSON | AOT 下对任意图形有裁剪风险（pragma 抑制） |
+| `delimit` | `delimit SEP [LAST]` | 末分隔符可定制 |
+| `after` | `after N` 跳过前 N 个 | |
+| `union` / `intersect` / `complement` | 集合运算 | 字符串集合 |
+| `resource` / `resources_get` | `'css/x.css' \| resource` | Hugo `resources.Get` 的过滤器形态 |
+| `resources_match` | glob 匹配 | Hugo `resources.Match` |
+| `resources_by_type` | 按类型列出 | Hugo `resources.ByType` |
+| `i18n` / `T` | 翻译表查键，缺键空串 | 站点 i18n/ 经 AmbientValues 传入 |
+| `safe_html` 等 6 个 | 恒等透传 | Flint 默认不转义 |
+
+### 3.3 分级与递延（P4-1 台账）
+
+**T1 已实现**：上表两节。**T2 递延**（新站点低频或需更深设计）：
+`resources.Concat/Copy/Fingerprint/FromString/Minify`（产物型变换需接入
+GeneratedResources 输出管道）、`css.Sass/css.Build/js.Build`（P4-4，
+需资产管线服务化）、`group/apply/seq/shuffle`、`path.*` 命名空间形态、
+`findRE/replaceRE`（AOT 下需 source-gen 正则）、`strings.*` 命名空间形态。
+
+## 4. 已知差异清单（Liquid vs Scriban/Hugo）
+
+实施期实测并登记（对拍测试锁定一致性项，差异项逐条记录）：
+
+1. **空白形态**：Liquid `{% %}` 标签行与 Scriban `{{ }}` 行尾空白不同；
+   内置模板对拍经空白归一化。站点模板作者可用 `{%- -%}` 控制 trim。
+2. **日期默认串**：Fluid 的 `DateTimeValue` 输出 UTC（`…Z`），Scriban 输出
+   本地偏移。内置模板内日期显式经 `| date: '%Y-%m-%dT%H:%M:%S%:z'` 格式化
+   规避；站点模板建议同样显式格式化。
+3. **`reading_time` 阅读时长**：Fluid 的 `FluidValue.Create` 会把 `TimeSpan`
+   转成 `DateTimeOffset`（纪元+时长），故 `page.reading_time` 经注册访问器
+   返回 `ReadingTimeView`（`total_minutes`/`minutes` 双形态），字符串形态
+   与 Scriban 一致（`00:01:00`）。
+4. **`_funcs/get-page-images`**：Liquid 版经 include 共享作用域 assign
+   回写 `page_images`，赋**原始图片路径数组**（Liquid 无对象字面量）；
+   Scriban 版经 partialValue 返回 `{Permalink, RelPermalink}` 对象。
+   调用方须自行 `| abs_url`。
+5. **菜单/taxonomy 索引器**：`site.menus.main` / `site.taxonomies.categories`
+    经 `IndexerMemberAccessor` 路由到 C# 索引器（缺失键空集合）。
+6. **`site.language`**：Scriban 侧是 `LanguageObject`（`.locale`/`.lang` 等
+   成员），Fluid 侧是语言码字符串本身——内置模板的 locale 链已按此对齐。
+7. **复数规则**：`singularize` 是 Flint 既有简化规则（`boxes → boxe`，
+   不过滤 `-es`），非完整 Hugo 变形表。
+
+## 5. 性能与验证口径
+
+- 站点级 A/B（`scripts/engine-ab.sh`，300 篇同内容交错三轮中位数，
+  2026-10-19）：总计 Fluid 782.0ms vs Scriban 952.8ms（**0.821x**），
+  渲染段 270.5 vs 359.8（**0.752x**），模板预编译 59.8 vs 108.7；
+  产物文件集 343 个完全一致。
+- 模板级对拍（perf 套件 `双引擎渲染对拍`，同逻辑模板 3000 次交错三轮）：
+  Fluid 190,135 页/秒 vs Scriban 56,192 页/秒（**0.296x**）——模板级
+  收益远大于站点级（站点级被 IO/解析/写盘稀释；两个口径都进报告）。
+- NativeAOT 冒烟：AOT 二进制构建 .liquid 站点 10 页全正确；模型属性经
+  `DynamicDependency` 保留清单防裁剪（清单随模型类型演进而维护）。
+  AOT 体积对比（迁移前 1a6e31f vs 迁移后，win-x64 单文件）：
+  40.041 MB → 40.231 MB（**+0.48%**）。
+- 运行期装配探针：`dotnet run --project src/Flint.DevTools -- engine-probe`
+  （Fluid 渲染路径不加载 Scriban 程序集，P6-3）。
+- 静态隔离门禁：`EngineIsolationTests`（IL 扫描，mutation probe 验证灵敏度）。
+- 主题矩阵回归（29 个矩阵站点，迁移后二进制 vs 迁移前二进制同命令重建）：
+  **零回归**——24 个站点页数一致；6 个站点（archie/congo/hermit/hextra/
+  mainroad/relearn）在两个二进制上同样失败（预先存在的主题不兼容，
+  非迁移引入）。
+- 回归修复记录（2026-10-19）：`SiteBuilder.Render` 的三处
+  `is ScribanTemplateRenderer` 类型检查在 router 模式下恒 false，
+  曾导致 .GetPage 查不到 section 页（hugo-book 实测）、翻译表回填与
+  零 IO 依赖判定失效——已修为 router 穿透。
