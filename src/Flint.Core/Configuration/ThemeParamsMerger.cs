@@ -319,6 +319,7 @@ public static class ThemeParamsMerger
             Title = config.Title,
             LanguageCode = config.LanguageCode,
             Theme = config.Theme,
+            Engine = config.Engine,
             BuildDrafts = config.BuildDrafts,
             BuildFuture = config.BuildFuture,
             BuildExpired = config.BuildExpired,

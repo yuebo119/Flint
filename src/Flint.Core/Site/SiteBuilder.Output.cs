@@ -572,16 +572,31 @@ public sealed partial class SiteBuilder
     private static string? FindAuxTemplateFile(string sourcePath, SiteConfig config, string fileName)
     {
         var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
+        // FLUID-MIGRATION-PLAN P3-3：辅助模板双形态——字面名（robots.txt，
+        // Scriban 语法）与 .liquid 变体（robots.liquid，Fluid 语法）。
+        // 站点 .liquid 优先于主题字面名（站点覆盖语义），站点内 .liquid 与字面名
+        // 并存时取 .liquid（新站点主力形态）
+        var liquidVariant = Path.GetFileNameWithoutExtension(fileName) + ".liquid";
         foreach (var themeName in config.ThemeNames.Reverse())
         {
-            var candidate = Path.Combine(sourcePath, "themes", themeName, layoutDirName, fileName);
-            if (File.Exists(candidate))
+            foreach (var name in new[] { liquidVariant, fileName })
             {
-                return candidate;
+                var candidate = Path.Combine(sourcePath, "themes", themeName, layoutDirName, name);
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
             }
         }
-        var siteCandidate = Path.Combine(sourcePath, layoutDirName, fileName);
-        return File.Exists(siteCandidate) ? siteCandidate : null;
+        foreach (var name in new[] { liquidVariant, fileName })
+        {
+            var siteCandidate = Path.Combine(sourcePath, layoutDirName, name);
+            if (File.Exists(siteCandidate))
+            {
+                return siteCandidate;
+            }
+        }
+        return null;
     }
 
     /// <summary>**文件形态**辅助输出的落盘路径（robots.txt 这类非页面产物）：

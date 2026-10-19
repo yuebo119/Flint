@@ -54,8 +54,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     /// 创建 Fluid 模板渲染器
     /// </summary>
     /// <param name="templatesPath">模板目录路径（站点 layouts）</param>
-    /// <param name="baseUrl">站点基础 URL（资源函数预留，Phase 4 接入）</param>
+    /// <param name="baseUrl">站点基础 URL（abs_url/rel_url 过滤器用）</param>
     /// <param name="builtins">内置模板提供者（缺省回退模板的 Liquid 版）；null = 无内置兜底</param>
+    /// <param name="resources">模板资源提供者（Hugo Pipes，resources.Get/Match/ByType 过滤器）；
+    /// null = 资源过滤器返回空</param>
     /// <param name="themeTemplatePaths">主题布局回退目录（按序回退）</param>
     // NativeAOT 保留清单：Fluid 的 DefaultMemberAccessStrategy 经反射
     // （Type.GetProperty）解析模型成员，裁剪后属性元数据缺失时**静默失败**
@@ -83,8 +85,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         string templatesPath,
         string baseUrl = "",
         IBuiltinTemplateProvider? builtins = null,
+        ITemplateResourceProvider? resources = null,
         params string[] themeTemplatePaths)
-        : this(templatesPath, baseUrl, TimeProvider.System, builtins, themeTemplatePaths)
+        : this(templatesPath, baseUrl, TimeProvider.System, builtins, resources, themeTemplatePaths)
     {
     }
 
@@ -94,13 +97,14 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         string baseUrl,
         TimeProvider timeProvider,
         IBuiltinTemplateProvider? builtins = null,
+        ITemplateResourceProvider? resources = null,
         params string[] themeTemplatePaths)
     {
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _timeProvider = timeProvider;
         _builtins = builtins ?? new FluidBuiltinTemplateProvider();
-        _lookup = new TemplateLookup(templatesPath, "liquid", _themeTemplatePaths);
+        _lookup = TemplateLookup.Create(templatesPath, "liquid", _themeTemplatePaths);
         _parser = new FluidParser();
 
         // page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
@@ -117,6 +121,14 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             static (inst, name) => ((MenuCollection)inst)[name]));
         MemberAccessStrategyExtensions.Register<TaxonomyCollection>(memberStrategy, new IndexerMemberAccessor(
             static (inst, name) => ((TaxonomyCollection)inst)[name]));
+        // page.params / site.params：上游 Params 字典多为 Ordinal，模板写
+        // params.Foo / params.foo 两种形态都应命中——注册访问器返回
+        // OrdinalIgnoreCase 副本（Fluid 的字典成员访问走字典自身比较器，
+        // ModelNamesComparer 管不了 CLR 字典）
+        MemberAccessStrategyExtensions.Register<PageContext, object>(memberStrategy, "Params",
+            static (page, _) => CaseInsensitiveCopy(page.Params));
+        MemberAccessStrategyExtensions.Register<SiteContext, object>(memberStrategy, "Params",
+            static (site, _) => CaseInsensitiveCopy(site.Params));
 
         _options = new TemplateOptions
         {
@@ -131,6 +143,15 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             MaxRecursion = 0,
             MaxSteps = 0
         };
+
+        // URL 过滤器家族（abs_url/rel_url）：Hugo 内置 partial（twitter_cards）
+        // 与 Liquid 模板依赖；语义对齐 Scriban 侧 BuiltinTemplateFunctions
+        FluidTemplateFilters.Register(_options, baseUrl);
+        // Hugo 名过滤器族（P4-2）：titleize/humanize/markdownify/delimit/
+        // union/i18n 等 Fluid 内置 72 个之外的新站点高频名
+        FluidHugoFilters.Register(_options);
+        // resources.Get/Match/ByType 的过滤器形态（P4-3 只读档）
+        FluidResourceFilters.Register(_options, resources);
     }
 
     /// <summary>
@@ -253,6 +274,21 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
+    /// 直接渲染 Liquid 模板**内容**（无物理文件）：短代码/render hook 等
+    /// 内容内联场景（FLUID-MIGRATION-PLAN P5-4/P5-5）。缓存键为调用方给的
+    /// 逻辑名（短代码名等），无 mtime 失效语义——内容由调用方生命周期管理
+    /// </summary>
+    internal async ValueTask<string> RenderLiquidContentAsync(
+        string content,
+        string sourceName,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var template = ParseOrThrow(content, sourceName);
+        return await RenderLoadedAsync(template, sourceName, null, context, cancellationToken);
+    }
+
+    /// <summary>
     /// 共用渲染入口：每渲染独立 TemplateContext（方案 §二.3），依赖追踪
     /// （逻辑名 + 物理路径 + include 实际命中），运行时异常包装
     /// </summary>
@@ -310,10 +346,26 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             ["paginator"] = context.Page.Paginator
         };
 
+        // 附加模型值（短代码/render hook 的内联变量表，P5-4/P5-5）：
+        // 合并进顶层键；后写覆盖标准键（hook 的 text/level 等不与标准键冲突，
+        // 冲突时以内联表为意图方——调用方显式传入优先）
+        if (context.ExtraValues is { Count: > 0 } extra)
+        {
+            foreach (var (key, value) in extra)
+            {
+                model[key] = value;
+            }
+        }
+
         var fluidContext = new FluidTemplateContext(model, _options)
         {
             CancellationToken = cancellationToken
         };
+        // URL 过滤器的站点 baseURL（abs_url/rel_url 经 AmbientValues 取，
+        // 每渲染可覆盖；未经本路径的直调回落 FluidTemplateFilters.FallbackBaseUrl）
+        fluidContext.AmbientValues[FluidTemplateFilters.BaseUrlKey] = context.Site.BaseURL;
+        // i18n 过滤器的翻译表（缺键返回空串，对齐 Hugo）
+        fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] = context.Site.Translations;
         // 依赖收集容器：AmbientValues 随 TemplateContext 生命周期，include 解析
         // 回调经同一 context 写入，并行渲染互不干扰（每渲染独立实例）
         fluidContext.AmbientValues[DepsKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -321,7 +373,7 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>复制为 OrdinalIgnoreCase 字典（源已忽略大小写时原样返回，免复制）</summary>
-    private static object CaseInsensitiveCopy(IReadOnlyDictionary<string, object> source)
+    internal static object CaseInsensitiveCopy(IReadOnlyDictionary<string, object> source)
     {
         if (source is Dictionary<string, object> dict &&
             dict.Comparer == StringComparer.OrdinalIgnoreCase)

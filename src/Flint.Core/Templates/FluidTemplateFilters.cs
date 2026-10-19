@@ -19,12 +19,13 @@ internal static class FluidTemplateFilters
     /// <summary>注册全部 Liquid 过滤器（渲染器构造时调用一次）</summary>
     public static void Register(TemplateOptions options, string baseUrl)
     {
-        options.Filters.AddFilter("abs_url", (input, args, ctx) => AbsUrl(input, ctx, baseUrl));
-        options.Filters.AddFilter("absURL", (input, args, ctx) => AbsUrl(input, ctx, baseUrl));
-        options.Filters.AddFilter("absurl", (input, args, ctx) => AbsUrl(input, ctx, baseUrl));
-        options.Filters.AddFilter("rel_url", (input, args, ctx) => RelUrl(input, ctx, baseUrl));
-        options.Filters.AddFilter("relURL", (input, args, ctx) => RelUrl(input, ctx, baseUrl));
-        options.Filters.AddFilter("relurl", (input, args, ctx) => RelUrl(input, ctx, baseUrl));
+        FallbackBaseUrl = baseUrl;
+        options.Filters.AddFilter("abs_url", AbsUrl);
+        options.Filters.AddFilter("absURL", AbsUrl);
+        options.Filters.AddFilter("absurl", AbsUrl);
+        options.Filters.AddFilter("rel_url", RelUrl);
+        options.Filters.AddFilter("relURL", RelUrl);
+        options.Filters.AddFilter("relurl", RelUrl);
     }
 
     private static ValueTask<FluidValue> AbsUrl(FluidValue input, FilterArguments args, TemplateContext ctx) =>

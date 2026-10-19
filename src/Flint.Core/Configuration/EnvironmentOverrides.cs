@@ -94,6 +94,7 @@ public static class EnvironmentOverrides
             Title = title,
             LanguageCode = languageCode,
             Theme = theme,
+            Engine = config.Engine,
             BuildDrafts = buildDrafts,
             BuildFuture = buildFuture,
             BuildExpired = buildExpired,

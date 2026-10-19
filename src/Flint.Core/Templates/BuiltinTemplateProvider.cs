@@ -43,7 +43,9 @@ public sealed class ScribanBuiltinTemplateProvider : IBuiltinTemplateProvider
 /// list/term 遍历 pages（词条/列表页页面集合，未设置时回落全站
 /// regular_pages——绑定规则见 FluidTemplateRenderer 的 pages 全局变量），
 /// taxonomy 遍历 site.regular_pages，pagination 为 Hugo 内置分页导航的
-/// Liquid 等价（Pager 字段由 PaginatorView 对象提供）
+/// Liquid 等价（Pager 字段由 PaginatorView 对象提供）；
+/// opengraph/schema/twitter_cards/_funcs/get-page-images 为 Hugo 内置
+/// partial 的 Liquid 等价（P3-1/P3-2）
 /// </summary>
 public sealed class FluidBuiltinTemplateProvider : IBuiltinTemplateProvider
 {
@@ -57,7 +59,51 @@ public sealed class FluidBuiltinTemplateProvider : IBuiltinTemplateProvider
             // term 用 pages（词条页面集合，渲染期未设置时回落全站 regular_pages）
             ["term"] = "<ul>{% for p in pages %}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{% endfor %}</ul>",
             ["list"] = "<ul>{% for p in pages %}<li><a href=\"{{ p.permalink }}\">{{ p.title }}</a></li>{% endfor %}</ul>",
-            ["pagination"] = BuildPaginationTemplate()
+            ["pagination"] = BuildPaginationTemplate(),
+
+            // ---- Hugo embedded partials（P3-1：Liquid 等价）----
+            // opengraph：空值不输出标签（与 Scriban 内置版同口径）；
+            // locale 链 page.params.locale → site.language（Scriban 的
+            // site.language.locale 在 Fluid 侧即 site.language 语言码本身）；
+            // 日期经 %:z 保留 +08:00 形态（对齐 Scriban 的 zzz 格式）
+            ["opengraph"] = """
+                <meta property="og:url" content="{{ page.permalink }}">
+                {% if site.title %}<meta property="og:site_name" content="{{ site.title }}">{% endif %}
+                {% if page.title %}<meta property="og:title" content="{{ page.title }}">{% endif %}
+                {% assign __desc = page.description | default: page.summary | default: site.params.description %}{% if __desc %}<meta property="og:description" content="{{ __desc }}">{% endif %}
+                {% assign __locale = page.params.locale | default: site.language %}{% if __locale %}<meta property="og:locale" content="{{ __locale }}">{% endif %}
+                <meta property="og:type" content="{% if is_home %}website{% else %}article{% endif %}">
+                {% if is_single %}{% if page.date %}<meta property="article:published_time" content="{{ page.date | date: '%Y-%m-%dT%H:%M:%S%:z' }}">{% endif %}
+                {% if page.lastmod %}<meta property="article:modified_time" content="{{ page.lastmod | date: '%Y-%m-%dT%H:%M:%S%:z' }}">{% endif %}
+                {% if page.section %}<meta property="article:section" content="{{ page.section }}">{% endif %}
+                {% for __t in page.tags %}<meta property="article:tag" content="{{ __t }}">{% endfor %}{% endif %}
+                """,
+            // schema：Hugo v0.166 实测产物是 itemprop meta（非 JSON-LD）；
+            // description 无条件输出（空值也输出标签，与 Scriban 版同口径）
+            ["schema"] = """
+                <meta itemprop="name" content="{{ page.title }}">
+                <meta itemprop="description" content="{{ page.description | default: page.summary | default: site.params.description }}">
+                {% if page.publish_date %}<meta itemprop="datePublished" content="{{ page.publish_date | date: '%Y-%m-%dT%H:%M:%S%:z' }}">{% endif %}
+                {% if page.lastmod %}<meta itemprop="dateModified" content="{{ page.lastmod | date: '%Y-%m-%dT%H:%M:%S%:z' }}">{% endif %}
+                {% if page.word_count %}<meta itemprop="wordCount" content="{{ page.word_count }}">{% endif %}
+                """,
+            // twitter_cards：images 非空 → summary_large_image + 逐图 abs_url
+            ["twitter_cards"] = """
+                {% if page.params.images %}<meta name="twitter:card" content="summary_large_image">{% for __img in page.params.images %}<meta name="twitter:image" content="{{ __img | abs_url }}">{% endfor %}{% else %}<meta name="twitter:card" content="summary">{% endif %}
+                {% if page.title %}<meta name="twitter:title" content="{{ page.title }}">{% endif %}
+                {% assign __tdesc = page.description | default: page.summary %}{% if __tdesc %}<meta name="twitter:description" content="{{ __tdesc }}">{% endif %}
+                """,
+            ["google_analytics"] = "",
+            ["disqus"] = "",
+            // _funcs/get-page-images（P3-2）：include 共享作用域，经 assign 把
+            // 结果写回调用方变量 page_images（Liquid 的"返回值通道"）。
+            // **已知语义差异**（登记 FLINT-VS-HUGO/迁移差异清单）：Liquid 无
+            // 对象字面量，本版赋**原始图片路径数组**（front matter images），
+            // 调用方须自行 abs_url；Scriban 版经 partialValue 返回
+            // {Permalink, RelPermalink} 对象。 richer 对象通道归 Phase 4-5
+            ["_funcs/get-page-images"] = """
+                {% if page.params.images %}{% assign page_images = page.params.images %}{% endif %}
+                """
         };
     }
 

@@ -477,7 +477,7 @@ public sealed class TemplateEngineRouterTests : IDisposable
     private TemplateEngineRouter CreateRouter(TemplateEnginePolicy policy, string themeDir = "")
     {
         var scriban = new ScribanTemplateRenderer(_tempDir, "https://example.com", themeDir);
-        var fluid = new FluidTemplateRenderer(_tempDir, "https://example.com", null, themeDir);
+        var fluid = new FluidTemplateRenderer(_tempDir, "https://example.com", builtins: null, resources: null, themeDir);
         return new TemplateEngineRouter(fluid, scriban, policy);
     }
 

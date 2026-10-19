@@ -46,6 +46,18 @@ public sealed class TemplateEngineRouter : ITemplateRenderer
             _ => TemplateEnginePolicy.Auto
         };
 
+    /// <summary>当前策略（内容管线的短代码/render hook 扩展名分发据此判定）</summary>
+    public TemplateEnginePolicy Policy => _policy;
+
+    /// <summary>
+    /// Fluid 内容渲染是否启用（短代码/render hook 的 .liquid 分发开关）：
+    /// Scriban 兼容模式下内容管线整体走 Scriban，不认 .liquid 短代码
+    /// </summary>
+    public bool AllowsFluidContent => _policy != TemplateEnginePolicy.Scriban;
+
+    /// <summary>Fluid 渲染器（内容管线渲染 .liquid 短代码/hook 用；共享缓存）</summary>
+    public FluidTemplateRenderer FluidRenderer => _fluid;
+
     /// <summary>从站点配置解析策略</summary>
     public static TemplateEnginePolicy ParsePolicy(SiteConfig config) =>
         ParsePolicy(config.Engine);

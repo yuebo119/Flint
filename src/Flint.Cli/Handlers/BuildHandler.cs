@@ -114,13 +114,21 @@ internal static class BuildHandler
                     Path.Combine(sourcePath, "layouts"),
                     siteConfig.BaseURL,
                     builtins: null,
+                    resources: resourceProvider,
                     themeLayoutDirs),
                 scribanRenderer,
                 TemplateEngineRouter.ParsePolicy(siteConfig));
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。
-            // 钩子模板恒 .html（Hugo 主题形态），直连 Scriban 渲染器——不经 router
-            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), scribanRenderer, themeLayoutDirs);
+            // .liquid 钩子（P5-5）经 router 的 Fluid 渲染器；Scriban 兼容模式下
+            // 传 null（不认 .liquid 钩子，内容管线整体 Scriban）
+            var renderHooks = RenderHooks.Load(
+                Path.Combine(sourcePath, "layouts"),
+                scribanRenderer,
+                themeLayoutDirs,
+                templateRenderer is TemplateEngineRouter { AllowsFluidContent: true } hookRouter
+                    ? hookRouter.FluidRenderer
+                    : null);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,
                 new ShortcodeProcessor { EnableInlineShortcodes = siteConfig.EnableInlineShortcodes });

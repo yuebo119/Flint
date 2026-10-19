@@ -88,6 +88,32 @@ public sealed partial class SiteBuilder
                 throw new FormatException($"加载短代码失败（{origin}）: {file}", ex);
             }
         }
+
+        // Liquid 短代码（FLUID-MIGRATION-PLAN P5-4）：.liquid 经 Fluid 渲染。
+        // 注册序在 .html 之后（同根内 .liquid 覆盖 .html——新站点主力形态），
+        // 主题先站点后（站点覆盖主题）的整体优先序不变。
+        // Scriban 兼容模式（engine: scriban）不认 .liquid 短代码
+        if (_templateRenderer is not TemplateEngineRouter { AllowsFluidContent: true } router)
+        {
+            return;
+        }
+        foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.liquid"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file);
+            var content = File.ReadAllText(file);
+            try
+            {
+                registry.Register(new LiquidTemplateShortcode(name, content, router.FluidRenderer));
+            }
+            catch (FormatException ex) when (!isSite)
+            {
+                Console.Error.WriteLine($"[警告] 跳过无法解析的主题 Liquid 短代码（{origin}）: {file} — {ex.Message}");
+            }
+            catch (FormatException ex)
+            {
+                throw new FormatException($"加载 Liquid 短代码失败（{origin}）: {file}", ex);
+            }
+        }
     }
 
     /// <summary>

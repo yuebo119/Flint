@@ -1794,42 +1794,14 @@ public sealed partial class BuiltinTemplateFunctions
     [GeneratedRegex(@":([a-z0-9_+\-]+):")]
     private static partial Regex EmojiRegex();
 
-    /// <summary>urlize/anchorize：小写、非字母数字转连字符、去首尾连字符（保留非 ASCII）</summary>
-    private static string Urlize(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-        var lastDash = false;
-        foreach (var ch in text.ToLowerInvariant())
-        {
-            if (char.IsLetterOrDigit(ch) || ch > 127)
-            {
-                sb.Append(ch);
-                lastDash = false;
-            }
-            else if (!lastDash && sb.Length > 0)
-            {
-                sb.Append('-');
-                lastDash = true;
-            }
-        }
-        return sb.ToString().Trim('-');
-    }
+    /// <summary>urlize/anchorize：小写、非字母数字转连字符、去首尾连字符（保留非 ASCII）。
+    /// 实现抽至 <see cref="TemplateTextFunctions"/>（Fluid 过滤器共用单一事实源）</summary>
+    private static string Urlize(string text) => TemplateTextFunctions.Urlize(text);
 
     /// <summary>humanize：连字符/下划线转空格并首字母大写（Hugo 语义）</summary>
-    private static string Humanize(string text)
-    {
-        if (text.Length == 0)
-            return "";
-        var spaced = text.Replace('-', ' ').Replace('_', ' ');
-        return char.ToUpperInvariant(spaced[0]) + spaced[1..];
-    }
+    private static string Humanize(string text) => TemplateTextFunctions.Humanize(text);
 
-    private static string Singularize(string text) =>
-        text.EndsWith("ies", StringComparison.OrdinalIgnoreCase) && text.Length > 3
-            ? text[..^3] + "y"
-            : text.EndsWith('s') && !text.EndsWith("ss", StringComparison.OrdinalIgnoreCase)
-                ? text[..^1]
-                : text;
+    private static string Singularize(string text) => TemplateTextFunctions.Singularize(text);
 
     private static IReadOnlyList<object?> ToList(object? seq) => seq switch
     {

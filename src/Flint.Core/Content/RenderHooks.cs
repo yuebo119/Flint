@@ -1,6 +1,8 @@
 // Flint 静态站点生成器
 // RenderHooks——layouts/_markup/render-*.html 渲染钩子（对齐 Hugo render hooks 的最小集）
 
+using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
 using Flint.Core.Templates;
 
 namespace Flint.Core.Content;
@@ -37,10 +39,16 @@ public sealed class RenderHooks
     /// 从 layouts/_markup/ 探测钩子模板并构建钩子集合；
     /// 目录或模板不存在时返回 null（走 Markdig 默认渲染，零开销）
     /// </summary>
+    /// <param name="layoutsDirectory">站点 layouts 目录</param>
+    /// <param name="renderer">Scriban 渲染器（.html 钩子）</param>
+    /// <param name="themeLayoutDirectories">主题 layouts 回退目录</param>
+    /// <param name="fluidRenderer">Fluid 渲染器（.liquid 钩子，FLUID-MIGRATION-PLAN
+    /// P5-5）；null = 不探测 .liquid 钩子</param>
     public static RenderHooks? Load(
         string layoutsDirectory,
         ScribanTemplateRenderer renderer,
-        IEnumerable<string>? themeLayoutDirectories = null)
+        IEnumerable<string>? themeLayoutDirectories = null,
+        FluidTemplateRenderer? fluidRenderer = null)
     {
         // 站点 _markup 优先，主题 _markup 回退（同名钩子站点覆盖主题）——
         // 对齐 Hugo 主题语义；无任何钩子目录时返回 null（默认渲染零开销）
@@ -58,12 +66,20 @@ public sealed class RenderHooks
             return null;
         }
 
-        var link = TryLoadMulti(markupDirs, "render-link", renderer);
-        var image = TryLoadMulti(markupDirs, "render-image", renderer);
-        var heading = TryLoadMulti(markupDirs, "render-heading", renderer);
-        var codeBlock = TryLoadMulti(markupDirs, "render-codeblock", renderer);
+        // 每个钩子位：.liquid（Fluid）优先于 .html（Scriban）——新站点主力
+        // 形态覆盖 Hugo 主题形态；Scriban 兼容模式下 fluidRenderer 为 null，
+        // 只认 .html
+        var link = TryLoadLiquidMulti(markupDirs, "render-link", fluidRenderer)
+            ?? TryLoadMulti(markupDirs, "render-link", renderer);
+        var image = TryLoadLiquidMulti(markupDirs, "render-image", fluidRenderer)
+            ?? TryLoadMulti(markupDirs, "render-image", renderer);
+        var heading = TryLoadLiquidMulti(markupDirs, "render-heading", fluidRenderer)
+            ?? TryLoadMulti(markupDirs, "render-heading", renderer);
+        var codeBlock = TryLoadLiquidMulti(markupDirs, "render-codeblock", fluidRenderer)
+            ?? TryLoadMulti(markupDirs, "render-codeblock", renderer);
 
-        // 语言专属变体：render-codeblock-<lang>.html（优先于通用 codeblock 钩子）
+        // 语言专属变体：render-codeblock-<lang>（优先于通用 codeblock 钩子）。
+        // .liquid 与 .html 双形态，同名时 .liquid 优先
         var byLang = new Dictionary<string, Func<IReadOnlyDictionary<string, object>, string>>(StringComparer.OrdinalIgnoreCase);
         foreach (var markupDir in markupDirs)
         {
@@ -71,11 +87,20 @@ public sealed class RenderHooks
             {
                 continue;
             }
-            foreach (var file in Directory.EnumerateFiles(markupDir, "render-codeblock-*.html"))
+            foreach (var file in Directory.EnumerateFiles(markupDir, "render-codeblock-*"))
             {
                 var name = Path.GetFileNameWithoutExtension(file);
-                var lang = name["render-codeblock-".Length..];
-                if (lang.Length > 0)
+                var lang = name["render-codeblock".Length..].TrimStart('.', '-');
+                if (lang.Length == 0 || byLang.ContainsKey(lang))
+                {
+                    continue;
+                }
+                if (file.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase) && fluidRenderer is not null)
+                {
+                    var liquidContent = File.ReadAllText(file);
+                    byLang[lang] = vars => RenderLiquidHook(fluidRenderer, liquidContent, "_markup/" + name, vars);
+                }
+                else if (file.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
                 {
                     byLang[lang] = vars => renderer.RenderHookTemplate("_markup/" + name, vars)
                         ?? throw new InvalidOperationException($"渲染钩子模板 {name} 未产出内容");
@@ -106,6 +131,70 @@ public sealed class RenderHooks
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Liquid 版钩子探测（FLUID-MIGRATION-PLAN P5-5）：同目录内
+    /// <c>&lt;hookName&gt;.liquid</c> 优先于 <c>&lt;hookName&gt;.html</c>
+    /// （新站点主力形态覆盖 Hugo 主题形态）
+    /// </summary>
+    private static Func<IReadOnlyDictionary<string, object>, string>? TryLoadLiquidMulti(
+        IEnumerable<string> markupDirs, string name, FluidTemplateRenderer? renderer)
+    {
+        if (renderer is null)
+        {
+            return null;
+        }
+        foreach (var dir in markupDirs)
+        {
+            var file = Path.Combine(dir, name + ".liquid");
+            if (File.Exists(file))
+            {
+                var content = File.ReadAllText(file);
+                return vars => RenderLiquidHook(renderer, content, name, vars);
+            }
+        }
+        return null;
+    }
+
+    private static string RenderLiquidHook(
+        FluidTemplateRenderer renderer,
+        string content,
+        string hookName,
+        IReadOnlyDictionary<string, object> vars)
+    {
+        // 钩子变量经 ExtraValues 通道合并进 Fluid 模型顶层键
+        // （Liquid 无 page 包装，.Text/.Level 等直取）；page/site 用最小
+        // 上下文（hook 渲染期无真实页面上下文，与 Scriban 侧同口径）
+        var extra = new Dictionary<string, object?>(vars.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in vars)
+        {
+            extra[key] = value;
+        }
+        var context = new TemplateContext
+        {
+            ExtraValues = extra,
+            Page = new PageContext
+            {
+                Title = hookName, Content = "", Permalink = "", RelPermalink = "",
+                Date = DateTimeOffset.MinValue, Tags = [], Categories = [],
+                WordCount = 0, ReadingTime = TimeSpan.Zero
+            },
+            Site = new SiteContext
+            {
+                Title = "", BaseURL = "", Language = "",
+                Pages = [], RegularPages = [],
+                Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+                Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+                Config = new SiteConfig { BaseURL = "", Title = "" }
+            }
+        };
+
+        var output = renderer.RenderLiquidContentAsync(content, "hook:" + hookName, context)
+            .AsTask().GetAwaiter().GetResult();
+        return string.IsNullOrEmpty(output)
+            ? throw new InvalidOperationException($"Liquid 渲染钩子模板 {hookName} 未产出内容")
+            : output;
     }
 
     private static Func<IReadOnlyDictionary<string, object>, string>? TryLoad(

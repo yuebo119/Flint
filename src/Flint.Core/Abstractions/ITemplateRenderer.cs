@@ -155,6 +155,15 @@ public sealed class TemplateContext
     /// 实际 include 的模板物理路径与 <c>data:site.*</c> 数据访问键
     /// </summary>
     public IReadOnlySet<string>? RenderedDependencies { get; set; }
+
+    /// <summary>
+    /// 附加模型值（短代码/render hook 的**内联变量表**，FLUID-MIGRATION-PLAN
+    /// P5-4/P5-5）：渲染器把它们合并进模板模型的顶层键——Fluid 路径合并进
+    /// Fluid 上下文模型（短代码的 params/inner/name、render hook 的
+    /// destination/text/level 等），Scriban 路径的等价物是 PushGlobal。
+    /// 页面渲染不使用（标准 page/site/params 模型足够）
+    /// </summary>
+    public IReadOnlyDictionary<string, object?>? ExtraValues { get; init; }
 }
 
 /// <summary>

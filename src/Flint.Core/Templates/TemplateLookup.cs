@@ -47,13 +47,24 @@ public sealed class TemplateLookup
     {
     }
 
-    public TemplateLookup(string siteTemplatesPath, string templateExtension, params string[] themeTemplatePaths)
+    private TemplateLookup(string siteTemplatesPath, string templateExtension, string[] themeTemplatePaths)
     {
         _extension = string.IsNullOrEmpty(templateExtension) ? "html" : templateExtension;
         _roots = new[] { siteTemplatesPath }
             .Concat(themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)))
             .ToArray();
     }
+
+    /// <summary>
+    /// 自定义扩展名的查找器（Fluid 路径用 <c>liquid</c>）。**静态工厂而非构造函数
+    /// 重载**——曾用 (string, string, params string[]) 重载，与既有
+    /// (string, params string[]) 构成重载冲突：单主题路径的调用点
+    /// <c>new TemplateLookup(site, theme)</c> 被绑到新重载，theme 路径被
+    /// 当成扩展名（2026-10-19 全量单测 16 红实证）
+    /// </summary>
+    public static TemplateLookup Create(
+        string siteTemplatesPath, string templateExtension, string[] themeTemplatePaths) =>
+        new(siteTemplatesPath, templateExtension, themeTemplatePaths);
 
     // 描述符集缓存：渲染热路径每页 Resolve 都进来，全树枚举必须复用。
     // 作用域为单次构建（构建入口经渲染器 Invalidate 同步失效），构建内

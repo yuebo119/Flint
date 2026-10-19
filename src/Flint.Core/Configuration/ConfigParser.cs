@@ -223,8 +223,13 @@ public static partial class ConfigParser
             Theme = GetDictString(dict, "theme") ?? "",
             // 模板引擎策略（FLUID-MIGRATION-PLAN P0-3）：auto / fluid / scriban，
             // 未配置按 auto（双轨路由）。无法识别的值同样回落 auto——
-            // 策略解析集中在 TemplateEngineRouter，配置层只透传字符串
-            Engine = GetDictString(dict, "engine") ?? GetDictString(dict, "templateengine") ?? "auto",
+            // 策略解析集中在 TemplateEngineRouter，配置层只透传字符串。
+            // 两种拼写（engine / templateEngine）都查——字典是 Ordinal，
+            // 大小写变体逐个点名（与 Theme/LanguageCode 等同族键一致）
+            Engine = GetDictString(dict, "engine")
+                ?? GetDictString(dict, "templateEngine")
+                ?? GetDictString(dict, "templateengine")
+                ?? "auto",
             BuildDrafts = GetDictBool(dict, "buildDrafts") ?? GetDictBool(dict, "builddrafts") ?? false,
             BuildFuture = GetDictBool(dict, "buildFuture") ?? GetDictBool(dict, "buildfuture") ?? false,
             BuildExpired = GetDictBool(dict, "buildExpired") ?? GetDictBool(dict, "buildexpired") ?? false,
