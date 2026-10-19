@@ -100,7 +100,7 @@ public sealed class DevServer : IDevServer, IDisposable
         if (options.OpenBrowser)
             OpenBrowser(ServerUrl);
         if (options.Verbose)
-            await Console.Out.WriteLineAsync($"开发服务器已启动: {ServerUrl}\n支持 HTTP/2\n按 Ctrl+C 停止服务器");
+            await Console.Out.WriteLineAsync($"开发服务器已启动: {ServerUrl}\n支持 HTTP/2\n按 Ctrl+C 停止服务器", cancellationToken);
     }
 
     /// <inheritdoc />
@@ -166,11 +166,11 @@ public sealed class DevServer : IDevServer, IDisposable
         if (!result.Success)
         {
             var errors = string.Join("\n", result.Errors.Select(e => e.Message));
-            await Console.Error.WriteLineAsync($"初始构建失败:\n{errors}");
+            await Console.Error.WriteLineAsync($"初始构建失败:\n{errors}", cancellationToken);
         }
         else if (options.Verbose)
         {
-            await Console.Out.WriteLineAsync($"初始构建完成: {result.PagesBuilt} 页面, {result.AssetsProcessed} 资源, 耗时 {result.Duration.TotalMilliseconds:F0}ms");
+            await Console.Out.WriteLineAsync($"初始构建完成: {result.PagesBuilt} 页面, {result.AssetsProcessed} 资源, 耗时 {result.Duration.TotalMilliseconds:F0}ms", cancellationToken);
         }
     }
 

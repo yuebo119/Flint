@@ -1,7 +1,6 @@
 // Flint 静态站点生成器
 // 配置树归一化 - 三种格式统一为字典树中间表示
 
-using Tomlyn.Model;
 
 namespace Flint.Core.Configuration;
 
@@ -15,7 +14,7 @@ namespace Flint.Core.Configuration;
 public static class ConfigNormalizer
 {
     /// <summary>
-    /// 将 Tomlyn 解析模型归一化为字典树
+    /// 将 Tommy 解析模型归一化为字典树
     /// </summary>
     public static Dictionary<string, object> NormalizeToml(TomlTable table)
     {
@@ -32,7 +31,7 @@ public static class ConfigNormalizer
         return dict;
     }
 
-    private static object NormalizeTomlValue(object value)
+    private static object NormalizeTomlValue(object? value)
     {
         if (value is null)
         {
@@ -46,9 +45,6 @@ public static class ConfigNormalizer
             TomlTableArray ta => ta.Select(t => (object)NormalizeToml(t)).ToList(),
             TomlTable t => NormalizeToml(t),
             TomlArray a => NormalizeTomlArray(a),
-            // Tomlyn 的 TomlDateTime 类型携带 DateTimeOffset（公共属性 DateTime），
-            // 以动态探测避免对特定 Tomlyn 内部形态的编译期耦合
-            _ when value.GetType().Name == "TomlDateTime" => NormalizeTomlDateTime(value),
             _ => value
         };
     }
@@ -66,20 +62,6 @@ public static class ConfigNormalizer
             list.Add(item is TomlTable t ? NormalizeToml(t) : item);
         }
         return list;
-    }
-
-    private static object NormalizeTomlDateTime(object value)
-    {
-        // IL2075 局部容忍：动态探测 TomlDateTime.DateTime（见 NormalizeTomlValue 注释），
-        // 反射目标类型不在编译期可见，AOT 裁剪下该路径回退原值
-#pragma warning disable IL2075
-        var dtProp = value.GetType().GetProperty("DateTime");
-#pragma warning restore IL2075
-        if (dtProp?.GetValue(value) is DateTimeOffset dto)
-        {
-            return dto;
-        }
-        return value;
     }
 
     /// <summary>

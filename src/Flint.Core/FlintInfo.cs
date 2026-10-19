@@ -28,7 +28,7 @@ public static class FlintInfo
     /// <summary>
     /// 目标运行时
     /// </summary>
-    public const string Runtime = ".NET 10";
+    public const string Runtime = ".NET 11";
 
     /// <summary>
     /// 获取完整的版本信息字符串

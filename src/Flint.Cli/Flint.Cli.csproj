@@ -18,7 +18,7 @@
          产出 R2R 单文件（快速迭代口径，~89MB）；**正式发布是 NativeAOT 单文件**，
          由命令行覆盖：dotnet publish -c Release -r win-x64 -p:PublishAot=true
          （~28MB，README「构建」节的官方口径，bench 基线也用该形态）。
-         YamlDotNet/Scriban 的反射路径在 AOT 下以裁剪根 + 运行时探针覆盖（见
+         VYaml/Scriban 的解析路径在 AOT 下以裁剪根 + 运行时探针覆盖（见
          TrimmerRootAssembly 与 AiGate 的 AOT 门禁），并非"禁用 AOT"的理由 -->
     <PublishAot>false</PublishAot>
     <SelfContained>true</SelfContained>
@@ -54,8 +54,6 @@
   <!-- 裁剪时保留的程序集（需要反射的库） -->
   <ItemGroup>
     <TrimmerRootAssembly Include="Scriban" />
-    <TrimmerRootAssembly Include="YamlDotNet" />
-    <TrimmerRootAssembly Include="Tomlyn" />
   </ItemGroup>
 
   <ItemGroup>

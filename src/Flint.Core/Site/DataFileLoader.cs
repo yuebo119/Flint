@@ -3,9 +3,6 @@
 
 using System.Text.Json;
 using Flint.Core.Configuration;
-using Tomlyn;
-using Tomlyn.Model;
-using YamlDotNet.Serialization;
 
 namespace Flint.Core.Site;
 
@@ -13,16 +10,10 @@ namespace Flint.Core.Site;
 /// 数据文件加载器
 /// 加载 data/ 目录下的 YAML/TOML/JSON 文件
 /// </summary>
-#pragma warning disable IL2026, IL3050 // YAML 反序列化需要反射
 public sealed class DataFileLoader
 {
-    private readonly IDeserializer _yamlDeserializer;
-
     public DataFileLoader()
     {
-        _yamlDeserializer = new DeserializerBuilder()
-            .WithAttemptingUnquotedStringTypeDeserialization()
-            .Build();
     }
 
     /// <summary>
@@ -91,7 +82,7 @@ public sealed class DataFileLoader
     private async Task<object?> LoadYamlAsync(string path, CancellationToken cancellationToken)
     {
         var content = await File.ReadAllTextAsync(path, cancellationToken);
-        return _yamlDeserializer.Deserialize<object>(content);
+        return SharedYaml.DeserializeObject(content);
     }
 
     private static async Task<object?> LoadTomlAsync(string path, CancellationToken cancellationToken)

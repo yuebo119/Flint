@@ -7,8 +7,6 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
-using Tomlyn;
-using Tomlyn.Model;
 
 namespace Flint.Core.Modules;
 
@@ -239,7 +237,7 @@ public sealed partial class ModuleManager : IDisposable
             // 损坏的模块目录（缺 theme.toml）跳过但保留其他条目，不让整个列表失败
             try
             { modules.Add(await ReadModuleDescriptorAsync(dir, cancellationToken)); }
-            catch (Exception ex) when (ex is IOException or Tomlyn.TomlException) { }
+            catch (Exception ex) when (ex is IOException or TomlException) { }
         }
         return modules;
     }

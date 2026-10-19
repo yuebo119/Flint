@@ -862,7 +862,7 @@ public sealed partial class BuiltinTemplateFunctions
         }
 
         var launcherNames = OperatingSystem.IsWindows()
-            ? new[] { "sass.bat", "sass.exe", "sass" }
+            ? new[] { "sass.bat", "sass.cmd", "sass.exe", "sass" }
             : new[] { "sass", "sass.bat" };
 
         // **进程目录同级的 dart-sass* 启动器**：CLI 自包含发布把 Dart Sass
@@ -909,7 +909,7 @@ public sealed partial class BuiltinTemplateFunctions
         var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
         foreach (var pd in pathDirs)
         {
-            foreach (var exe in new[] { "sass.bat", "sass.exe", "sass" })
+            foreach (var exe in new[] { "sass.bat", "sass.cmd", "sass.exe", "sass" })
             {
                 var full = Path.Combine(pd.Trim(), exe);
                 if (File.Exists(full))

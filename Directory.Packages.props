@@ -5,11 +5,11 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <!-- CLI 框架 -->
-    <PackageVersion Include="System.CommandLine" Version="2.0.13" />
-    <!-- 模板引擎（7.0.0+ 修复 object.to_json 无深度递归 DoS 等
-         GHSA-xcx6-vp38-8hr5/高 7.5 系列漏洞） -->
+    <!-- CLI 框架（3.0 RC：减少反射、支持裁剪/AOT，API 有破坏性变化） -->
+    <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.2.26504.105" />
+    <!-- 模板引擎：Scriban 仍为默认引擎；Fluid 作为 Liquid 备用引擎接入 -->
     <PackageVersion Include="Scriban" Version="7.5.1" />
+    <PackageVersion Include="Fluid.Core" Version="3.0.0-beta.8" />
     <!-- Markdown 解析 -->
     <PackageVersion Include="Markdig" Version="1.4.1" />
     <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线——
@@ -17,29 +17,21 @@
          商业用途需付费授权；3.1.12 为 Apache 2.0 的 3.x 线最新维护版，
          4.1.2 复核仍为 Split License。升级前须重新评估授权，不得直接升 4.x） -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
-    <!-- 配置解析 -->
-    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="10.0.13" />
-    <PackageVersion Include="Tomlyn" Version="2.10.1" />
-    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
-    <!-- Sass/SCSS 编译（统一走外部 Dart Sass CLI） -->
-    <PackageVersion Include="DartSass.Native.win-x64" Version="1.105.2" />
-    <PackageVersion Include="DartSass.Native.linux-x64" Version="1.105.2" />
-    <!-- osx-x64 包已更名 macos-x64（旧名 1.81.0 后停更）；
-         注意 Flint.Core.csproj 曾引用旧名 osx-x64，macOS 构建 CPM 解析失败，
-         2026-09-24 已同步改为 macos-x64 -->
-    <PackageVersion Include="DartSass.Native.macos-x64" Version="1.105.2" />
-    <!-- HTML/CSS/JS 压缩 -->
-    <PackageVersion Include="NUglify" Version="1.23.4" />
+    <!-- 配置解析：YAML 换 VYaml，TOML 换 Tommy -->
+    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="11.0.0-rc.2.26504.105" />
+    <PackageVersion Include="Tommy" Version="3.1.2" />
+    <PackageVersion Include="VYaml" Version="1.4.1" />
+    <!-- Sass/SCSS：统一外部原生 Dart Sass CLI，不再引用 DartSass.Native -->
+    <!-- HTML/CSS/JS 压缩：CSS 走外部 Lightning CSS，移除 NUglify -->
     <!-- 测试框架 -->
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
-    <!-- 未引用的 xunit v2 / FsCheck.Xunit 中央条目已移除（全仓 csproj 零引用） -->
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="FsCheck" Version="3.5.0" />
     <PackageVersion Include="FsCheck.Xunit.v3" Version="3.5.0" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
-    <!-- 性能测试框架（0.16 仅有预览，稳定线保持 0.15.8） -->
-    <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
+    <!-- 性能测试框架 -->
+    <PackageVersion Include="BenchmarkDotNet" Version="0.16.0-preview.2" />
   </ItemGroup>
 </Project>

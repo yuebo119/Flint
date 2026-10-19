@@ -255,7 +255,7 @@ public sealed class ConfigLoader : IConfigLoader
             var theme = value?.ToString();
             return string.IsNullOrWhiteSpace(theme) ? null : theme;
         }
-        catch (Exception ex) when (ex is IOException or Tomlyn.TomlException)
+        catch (Exception ex) when (ex is IOException or TomlException)
         {
             return null;
         }

@@ -8,7 +8,6 @@ using System.Threading.Channels;
 using Flint.Core.Abstractions;
 using Flint.Core.Content;
 using Flint.Core.Models;
-using NUglify;
 
 namespace Flint.Core.Assets;
 
@@ -222,23 +221,27 @@ public sealed class AssetPipeline : IAssetPipeline
             }
         }
 
-        // CSS 文件：启用 MinifyCss 时真实压缩
+        // CSS 文件：启用 MinifyCss 时真实压缩（Lightning CSS 优先，缺失回退简单压缩）
         if (_options.MinifyCss)
         {
             var css = Encoding.UTF8.GetString(asset.Content.Span);
-            var result = Uglify.Css(css);
-            if (result.HasErrors)
+            string minifiedCss;
+            try
+            {
+                minifiedCss = CssMinifier.Minify(css);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // 压缩失败按 FailOnProcessingError 策略处理，不静默标记为已压缩
                 if (_options.FailOnProcessingError)
                 {
                     throw new InvalidOperationException(
-                        $"CSS 压缩失败 ({asset.SourcePath}): {string.Join("; ", result.Errors.Select(e => e.Message))}");
+                        $"CSS 压缩失败 ({asset.SourcePath}): {ex.Message}", ex);
                 }
                 return (CreatePassthroughAsset(asset), true);
             }
 
-            var minified = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(result.Code));
+            var minified = new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(minifiedCss));
             return (CreateProcessedAssetFromContent(asset, minified, isMinified: true), false);
         }
 

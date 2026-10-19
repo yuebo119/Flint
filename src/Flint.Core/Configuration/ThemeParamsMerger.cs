@@ -5,8 +5,6 @@
 // 两者作为默认值层，站点配置深覆盖——主题"开箱默认 + 站点定制"语义。
 // 合并语义：站点键保留站点值；仅主题有的键采用主题值；双方均为嵌套表时递归合并
 
-using Tomlyn;
-using Tomlyn.Model;
 
 namespace Flint.Core.Configuration;
 
@@ -139,7 +137,7 @@ public static class ThemeParamsMerger
                     return ToPlainDictionary(sectionTable);
                 }
             }
-            catch (Exception ex) when (ex is IOException or Tomlyn.TomlException
+            catch (Exception ex) when (ex is IOException or TomlException
                 or InvalidOperationException)
             {
                 // 主题配置解析失败不阻断构建（与 theme.toml 合并一致）
@@ -184,7 +182,7 @@ public static class ThemeParamsMerger
                     return dict;
                 }
             }
-            catch (Exception ex) when (ex is IOException or Tomlyn.TomlException
+            catch (Exception ex) when (ex is IOException or TomlException
                 or System.Text.Json.JsonException or InvalidOperationException)
             {
                 // 主题配置解析失败不阻断构建（尽力而为语义，与 theme.toml 合并一致）
@@ -233,13 +231,12 @@ public static class ThemeParamsMerger
 
     private static Dictionary<string, object>? ReadYamlDict(string file)
     {
-        var dict = SharedYaml.Deserializer
-            .Deserialize<Dictionary<string, object>>(File.ReadAllText(file));
+        var dict = SharedYaml.DeserializeDictionary(File.ReadAllText(file));
         return dict is null ? null : NormalizeYamlValue(dict) as Dictionary<string, object>;
     }
 
     /// <summary>
-    /// YamlDotNet 产出非泛型 Dictionary&lt;object,object&gt; 嵌套（运行时类型），
+    /// VYaml 产出非泛型 Dictionary&lt;object,object?&gt; 嵌套（运行时类型），
     /// 编译期只见 object —— 归一为字符串键字典（值类型不匹配时原样返回）
     /// </summary>
     private static object NormalizeYamlValue(object value)
@@ -302,11 +299,11 @@ public static class ThemeParamsMerger
         return dict;
     }
 
-    private static object ConvertTomlValue(object value) => value switch
+    private static object ConvertTomlValue(object? value) => value switch
     {
         TomlTable table => ToPlainDictionary(table),
         TomlArray array => array.Select(item => ConvertTomlValue(item!)).ToArray(),
-        _ => value
+        _ => value!
     };
 
     /// <summary>

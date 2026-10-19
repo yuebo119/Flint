@@ -4,7 +4,38 @@
 // </copyright>
 // -----------------------------------------------------------------------
 
+using System.Runtime.CompilerServices;
+
 namespace Flint.IntegrationTests;
+
+/// <summary>
+/// 测试进程环境初始化。产品已改为外部 Dart Sass CLI，Windows 本地测试
+/// 复用仓库内置的 benchmark dart-sass，避免强依赖全局 sass。
+/// </summary>
+public static class TestEnvironment
+{
+    [ModuleInitializer]
+    public static void Initialize()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("FLINT_SASS")))
+        {
+            return;
+        }
+
+        var repoRoot = Path.GetFullPath(
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+        var sass = Path.Combine(repoRoot, "benchmarks", "tools", "flint-aot", "dart-sass.win-x64", "sass.bat");
+        if (File.Exists(sass))
+        {
+            Environment.SetEnvironmentVariable("FLINT_SASS", sass);
+        }
+    }
+}
 
 /// <summary>
 /// xUnit 测试集合定义 - 资源管道测试

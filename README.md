@@ -1,7 +1,7 @@
 # Flint
 
 <p align="center">
-  <strong>🔥 高性能静态站点生成器 · C# / .NET 10 · NativeAOT 单文件</strong>
+  <strong>🔥 高性能静态站点生成器 · C# / .NET 11 · NativeAOT 单文件</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
   <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
 </p>
 
-Flint 是一个用 C# / .NET 10 实现的静态站点生成器：万页站点 3.5 秒构建，
+Flint 是一个用 C# / .NET 11 实现的静态站点生成器：万页站点 3.5 秒构建，
 增量构建 75ms，交付物是一个原生单文件——并内置 Hugo 主题的
 AST 级自动迁移工具链。
 
@@ -50,7 +50,7 @@ AST 级自动迁移工具链。
 三次冷构建离散 ±1%，负载漂移敏感度低于对照（×1.4 vs ×1.6）。增量由
 依赖图驱动：改一篇文章只重建受影响的页面。
 
-**零依赖原生部署** —— .NET 10 NativeAOT 单文件应用：无运行时、无
+**零依赖原生部署** —— .NET 11 NativeAOT 单文件应用：无运行时、无
 node_modules、无 JIT 预热，交付物是一个 exe。
 
 **Hugo 兼容层** —— lookup order / 渲染钩子 / 短码 API / 25 命名空间
@@ -58,10 +58,11 @@ node_modules、无 JIT 预热，交付物是一个 exe。
 亮 `TODO-HUGO` 不静默错译，21 个真实主题已验证——迁移从"重写"降为
 "一条命令 + 少量人工裁决"。
 
-**本地资产管线** —— Sass 由外部 Dart Sass CLI 编译（DartSass.Native
-随发布包，无 npm 依赖）；TS 类型剥离自研（无法识别的语法原样保留，
+**本地资产管线** —— Sass 由外部 Dart Sass CLI 编译（经 `FLINT_SASS` 或
+PATH 提供 `sass`；CI 会安装 dart-sass）；CSS 压缩优先 Lightning CSS，
+缺失回退内置简单压缩；TS 类型剥离自研（无法识别的语法原样保留，
 浏览器报错优于静默错位）；图片处理结果落盘缓存。带 TS/SCSS 的重度
-主题零 npm 依赖构建。
+主题需外部 Sass 可执行文件。
 
 **工程化质量保障** —— `perf gate` 回归门禁（三轮中位数棘轮，劣化在
 合并前拦截）；FsCheck 属性测试，单元套件 1131 项与集成套件 1649 项
@@ -382,7 +383,7 @@ stat 与读盘成本相等且完全相加）。优化清单与量具见
 
 | 维度 | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
-| 实现与运行时 | **C# / .NET 10，AOT 单文件应用** | Go 单二进制 | Node + 依赖树 | Node + 依赖树 | Ruby + gems | Node + 依赖树 |
+| 实现与运行时 | **C# / .NET 11，AOT 单文件应用** | Go 单二进制 | Node + 依赖树 | Node + 依赖树 | Ruby + gems | Node + 依赖树 |
 | 模板系统 | **Scriban（完整脚本语言）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid | EJS / Pug 等 |
 | 构建性能（万页） | **3.5s（同机实测）** | 4.3s（同机实测） | 未实测 | 未实测 | 未实测 | 未实测 |
 | 增量构建 | **75ms** | 支持 | 支持 | 支持 | 有限 | 支持 |
@@ -416,8 +417,8 @@ Flint 全链路强制 UTF-8 输出；Windows 控制台默认 GBK 代码页，执
 
 **SCSS 主题构建后样式没编译？**
 模板里的 `toCSS` 路径调用外部 Dart Sass CLI，按 `FLINT_SASS` 环境变量 →
-Flint.exe 旁的 `dart-sass*/` → PATH 上的 `sass` → 仓库 `tools/dart-sass/`
-顺序定位；装好 sass 或设 `FLINT_SASS` 指向可执行文件。
+PATH 上的 `sass` → 仓库 `tools/dart-sass/` 顺序定位；产品不再内置
+Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 **fixit 主题构建很慢是正常的吗？**
 正常——它在 100 篇统一语料 + 全分类/标签分页下约 5.5 分钟（631 页），
@@ -441,14 +442,14 @@ Flint.exe 旁的 `dart-sass*/` → PATH 上的 `sass` → 仓库 `tools/dart-sas
 
 | 技术 | 说明 |
 |------|------|
-| **.NET 10** | 最新 LTS，NativeAOT 原生编译，单文件发布 |
-| **Scriban 7.5** | 模板引擎（大列表无迭代上限） |
+| **.NET 11 RC2** | 当前 RC 线，NativeAOT 原生编译，单文件发布 |
+| **Scriban 7.5 + Fluid 3.0 beta** | 模板引擎：Scriban 默认，Fluid 作 Liquid 备用 |
 | **Markdig 1.4** | CommonMark + GFM 解析 |
-| **Dart Sass CLI** | 外部 Sass 编译（DartSass.Native 随发布包，无 npm 依赖） |
-| **NUglify** | HTML/CSS/JS 压缩（`--minify`） |
+| **Dart Sass CLI** | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`） |
+| **Lightning CSS** | CSS 压缩（外部 CLI，缺失回退内置简单压缩） |
 | **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |
-| **Tomlyn / YamlDotNet** | TOML 配置与 YAML Front Matter 解析 |
-| **System.CommandLine** | CLI 命令行框架 |
+| **Tommy / VYaml** | TOML 配置与 YAML Front Matter 解析 |
+| **System.CommandLine 3.0 RC** | CLI 命令行框架 |
 | **Kestrel** | 开发服务器（热重载） |
 | **Server GC** | 多核并行回收（批处理吞吐） |
 | **xunit.v3 / FsCheck / BenchmarkDotNet** | 测试与基准（测试侧依赖，不入产品） |

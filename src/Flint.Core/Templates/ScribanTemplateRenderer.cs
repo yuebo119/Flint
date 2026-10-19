@@ -485,6 +485,12 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         CancellationToken cancellationToken = default)
     {
         var content = await File.ReadAllTextAsync(filePath, cancellationToken);
+
+        if (filePath.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase))
+        {
+            return await FluidLiquidRenderer.RenderAsync(content, context, cancellationToken);
+        }
+
         var template = Template.Parse(content, filePath);
         if (template.HasErrors)
         {

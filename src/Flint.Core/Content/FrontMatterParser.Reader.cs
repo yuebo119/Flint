@@ -7,7 +7,6 @@ using System.Text.Json;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
 using Flint.Core.Models;
-using Tomlyn;
 
 namespace Flint.Core.Content;
 
@@ -257,7 +256,7 @@ public sealed partial class FrontMatterParser
     /// </summary>
     internal static FrontMatter ParseViaYamlEngineForTest(string yaml)
     {
-        var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(yaml)
+        var dict = SharedYaml.DeserializeDictionary(yaml)
             ?? new Dictionary<string, object>();
         return ConvertDictToFrontMatter(dict, FrontMatterFormat.Yaml, null);
     }
@@ -358,45 +357,39 @@ public sealed partial class FrontMatterParser
         // 解析 YAML
         try
         {
-            var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(yamlContent)
+            var dict = SharedYaml.DeserializeDictionary(yamlContent)
                 ?? new Dictionary<string, object>();
             frontMatter = ConvertDictToFrontMatter(dict, FrontMatterFormat.Yaml, siteTimeZone);
             return true;
         }
-        catch (Exception ex) when (ex is YamlDotNet.Core.YamlException or InvalidOperationException)
+        catch (Exception ex) when (ex is VYaml.YamlException or InvalidOperationException)
         {
             // 分隔符完整但内容格式错误：必须让构建失败，否则草稿/日期等元数据会被静默丢弃。
-            // YamlException 自带流内位置（文档级行号 = FM 起始行 + 流内行号）
-            if (ex is YamlDotNet.Core.YamlException ye)
+            // VYaml 的 YamlException 消息自带解析位置信息
+            if (ex is VYaml.YamlException ye)
             {
-                // NativeAOT 发布形态：YamlDotNet 依赖运行时代码生成，反序列化必然失败
-                //（内层反射异常被包装为带位置的 YamlException）——给可行动指引
+                // NativeAOT 发布形态：解析路径失败——给可行动指引
                 if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
                 {
                     throw new FrontMatterParseException(
                         "Yaml",
-                        "YAML 解析在 NativeAOT 发布形态不受支持（YamlDotNet 依赖运行时代码生成）。" +
+                        "YAML 解析在 NativeAOT 发布形态不受支持（VYaml 解析路径失败）。" +
                         "请改用 TOML（+++）或 JSON（{}）Front Matter，或使用 Trim+R2R 发布形态",
-                        ye,
-                        line: (int)Math.Min(ye.Start.Line, int.MaxValue),
-                        column: (int)Math.Min(ye.Start.Column, int.MaxValue));
+                        ye);
                 }
 
                 throw new FrontMatterParseException(
                     "Yaml",
-                    $"YAML Front Matter 格式错误（第 {ye.Start.Line} 行, 第 {ye.Start.Column} 列）: {ye.Message}",
-                    ye,
-                    line: (int)Math.Min(ye.Start.Line, int.MaxValue),
-                    column: (int)Math.Min(ye.Start.Column, int.MaxValue));
+                    $"YAML Front Matter 格式错误: {ye.Message}",
+                    ye);
             }
 
-            // NativeAOT 发布形态：YamlDotNet 依赖运行时代码生成，反序列化必然失败——
-            // 给出可行动指引而非裸的 "Exception during deserialization"
+            // NativeAOT 发布形态：解析路径失败——给出可行动指引而非裸异常
             if (ex is InvalidOperationException && !System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
             {
                 throw new FrontMatterParseException(
                     "Yaml",
-                    "YAML 解析在 NativeAOT 发布形态不受支持（YamlDotNet 依赖运行时代码生成）。" +
+                    "YAML 解析在 NativeAOT 发布形态不受支持（VYaml 解析路径失败）。" +
                     "请改用 TOML（+++）或 JSON（{}）Front Matter，或使用 Trim+R2R 发布形态",
                     ex);
             }
@@ -452,7 +445,7 @@ public sealed partial class FrontMatterParser
             frontMatter = ConvertDictToFrontMatter(ConfigNormalizer.NormalizeToml(model), FrontMatterFormat.Toml, siteTimeZone);
             return true;
         }
-        catch (Exception ex) when (ex is Tomlyn.TomlException or InvalidOperationException)
+        catch (Exception ex) when (ex is TomlException or InvalidOperationException)
         {
             throw new FrontMatterParseException(
                 "Toml",

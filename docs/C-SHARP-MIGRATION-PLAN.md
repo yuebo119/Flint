@@ -12,8 +12,8 @@
 2,402 行 bash 质量门禁（位于 git 仓库外，属 AI 工作流基础设施）。
 
 **核查后的事实修正**：产品 `Flint.exe` 的主构建路径已经是纯 C#。模板（Scriban）、内容解析、
-JS 模块打包（EsmBundler）、TypeScriptStripper、MinifyJs、YAML（YamlDotNet）、SCSS（外部
-Dart Sass CLI，DartSass.Native 资产随发布输出）全部由 C# 代码或 C# 库驱动。`tools/dart-sass/`
+JS 模块打包（EsmBundler）、TypeScriptStripper、MinifyJs、YAML（VYaml）、TOML（Tommy）、
+SCSS（外部 Dart Sass CLI）全部由 C# 代码或 C# 库驱动。`tools/dart-sass/`
 是 Hugo 侧基准对比用的外部 dart-sass（Hugo v0.153+ 起 LibSass 弃用，需外部 sass），不是产品依赖。
 
 整改判断：**剩下 5,327 行全部可以 C# 化，建议分 7 个阶段推进，预计 [推断] 4 到 6 周单人工作量**。

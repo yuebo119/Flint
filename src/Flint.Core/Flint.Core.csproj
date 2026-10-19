@@ -15,7 +15,7 @@
     
     <!-- 禁用不适用的代码分析规则 -->
     <!-- 注意：IL2026/IL3050（AOT 兼容性警告）已从全局 NoWarn 移除——
-         已知的 AOT 风险点（YamlDotNet 反射路径）在 ConfigParser/FrontMatterParser/DataFileLoader
+         已知的 AOT 风险点（VYaml 解析路径）在 ConfigParser/FrontMatterParser/DataFileLoader
          内以文件级 #pragma 局部压制并注释说明；新增代码引入 AOT 不兼容时将产生全局警告 -->
     <NoWarn>$(NoWarn);CA1056;CA1055;CA1711;CA1716;CA1308;CA1000;CA1054;CA1032;CA1062;CA2007;CA1031;CA5350;CA5351;CA5394;CA1307;CA1867;CA1869;CA1822;CA1024;CA1305;CA1310;CA1859</NoWarn>
   </PropertyGroup>
@@ -31,27 +31,21 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 模板引擎 -->
+    <!-- 模板引擎：Scriban 默认 + Fluid 备用 -->
     <PackageReference Include="Scriban" />
-    
+    <PackageReference Include="Fluid.Core" />
+
     <!-- Markdown 解析 -->
     <PackageReference Include="Markdig" />
-    
+
     <!-- 图像处理 -->
     <PackageReference Include="SixLabors.ImageSharp" />
-    
-    <!-- 配置解析 -->
-    <PackageReference Include="Tomlyn" />
-    <PackageReference Include="YamlDotNet" />
-    
-    <!-- Sass/SCSS 编译（统一走外部 Dart Sass CLI） -->
-    <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
-    <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
-    <!-- 包名 macos-x64（旧名 osx-x64 已停更；CPM 下旧名无版本定义，macOS 构建失败） -->
-    <PackageReference Include="DartSass.Native.macos-x64" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
 
-    <!-- HTML/CSS/JS 压缩 -->
-    <PackageReference Include="NUglify" />
+    <!-- 配置解析：VYaml / Tommy -->
+    <PackageReference Include="VYaml" />
+    <PackageReference Include="Tommy" />
+
+    <!-- Sass/SCSS 与 CSS 压缩统一走外部 CLI：Dart Sass / Lightning CSS -->
   </ItemGroup>
 
 </Project>

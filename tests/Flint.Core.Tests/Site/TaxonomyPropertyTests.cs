@@ -374,7 +374,7 @@ public static class TaxonomyArbitrary
             "Machine Learning", "Data Science", "Cloud Computing",
             "前端开发", "后端开发", "全栈工程师",
             "Test & Debug", "CI/CD", "DevOps",
-            "C# 13", ".NET 10", "ASP.NET Core"
+            "C# 15", ".NET 11", "ASP.NET Core"
         ).Select(name => new ValidTermName(name));
 
         return gen.ToArbitrary();

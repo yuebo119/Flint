@@ -36,7 +36,7 @@ public sealed partial class FrontMatterParser
     private static string SerializeYaml(FrontMatter frontMatter)
     {
         var dict = ConvertFrontMatterToDict(frontMatter);
-        var yaml = SharedYaml.Serializer.Serialize(dict);
+        var yaml = SharedYaml.Serialize(dict);
         return $"{YamlDelimiter}\n{yaml}{YamlDelimiter}\n";
     }
 

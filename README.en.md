@@ -1,7 +1,7 @@
 # Flint
 
 <p align="center">
-  <strong>🔥 High-performance static site generator · C# / .NET 10 · NativeAOT single file</strong>
+  <strong>🔥 High-performance static site generator · C# / .NET 11 · NativeAOT single file</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
   <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
 </p>
 
-Flint is a static site generator built in C# / .NET 10: 10k-page sites build
+Flint is a static site generator built in C# / .NET 11: 10k-page sites build
 in 3.5 seconds, incrementals take 75ms, the deliverable is a native single
 file — and it ships an AST-level automated migration toolchain for
 Hugo themes.
@@ -52,7 +52,7 @@ sensitivity than the reference (×1.4 vs ×1.6). Incrementals are
 dependency-graph driven: editing one article rebuilds only the affected
 pages.
 
-**Zero-dependency native deployment** — a .NET 10 NativeAOT single-file
+**Zero-dependency native deployment** — a .NET 11 NativeAOT single-file
 app: no runtime, no node_modules, no JIT warmup. The deliverable is one exe.
 
 **The Hugo compatibility layer** — lookup order / render hooks / shortcode
@@ -62,10 +62,12 @@ templates at the AST level, marking indeterminable semantics with
 Migration drops from "rewrite" to "one command plus a few adjudications".
 
 **Local asset pipeline** — Sass is compiled by the external Dart Sass CLI
-(DartSass.Native ships with the release, no npm dependency); TypeScript type
-stripping is homegrown (unrecognized syntax passes through untouched — a
-browser error beats silent corruption); image processing results cached on
-disk. Heavy TS/SCSS themes build with zero npm dependencies.
+(`FLINT_SASS` or `sass` on PATH; CI installs dart-sass); CSS minification
+prefers Lightning CSS and falls back to a built-in simple minifier;
+TypeScript type stripping is homegrown (unrecognized syntax passes
+through untouched — a browser error beats silent corruption); image
+processing results cached on disk. Heavy TS/SCSS themes need an external
+Sass executable.
 
 **Engineering-grade quality assurance** — the `perf gate` regression gate
 (three-run median ratchet, degradation intercepted before merge); FsCheck
@@ -418,7 +420,7 @@ and `.ai/perf-ledger.md`.
 
 | Dimension | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
-| Runtime | **C# / .NET 10, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
+| Runtime | **C# / .NET 11, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Scriban (full scripting language)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
 | Build performance (10k pages) | **3.5s (same-machine measured)** | 4.3s (same-machine measured) | not measured | not measured | not measured | not measured |
 | Incremental builds | **75ms** | supported | supported | supported | limited | supported |
@@ -455,9 +457,9 @@ before rebuilding).
 
 **SCSS theme built without compiled styles?**
 The template-side `toCSS` path invokes the external Dart Sass CLI, located
-in this order: `FLINT_SASS` env var → `dart-sass*/` next to Flint.exe →
-`sass` on PATH → repo `tools/dart-sass/`. Install sass or point `FLINT_SASS`
-at the executable.
+in this order: `FLINT_SASS` env var → `sass` on PATH → repo
+`tools/dart-sass/`. The product no longer bundles Dart Sass; install sass
+or point `FLINT_SASS` at the executable.
 
 **Is the fixit theme supposed to build slowly?**
 Yes — under the 100-article shared corpus with full taxonomy/tag pagination
@@ -484,14 +486,14 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 
 | Technology | Role |
 |------|------|
-| **.NET 10** | Latest LTS; NativeAOT compilation, single-file publish |
-| **Scriban 7.5** | Template engine (no iteration cap on large lists) |
+| **.NET 11 RC2** | Current RC line; NativeAOT compilation, single-file publish |
+| **Scriban 7.5 + Fluid 3.0 beta** | Template engine: Scriban default, Fluid as Liquid fallback |
 | **Markdig 1.4** | CommonMark + GFM parsing |
-| **Dart Sass CLI** | External Sass compilation (DartSass.Native ships with the release; no npm dependency) |
-| **NUglify** | HTML/CSS/JS minification (`--minify`) |
+| **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |
+| **Lightning CSS** | CSS minification (external CLI, falls back to built-in simple minifier) |
 | **ImageSharp 3.1** | Image processing (resize/format conversion/responsive) |
-| **Tomlyn / YamlDotNet** | TOML config and YAML Front Matter parsing |
-| **System.CommandLine** | CLI framework |
+| **Tommy / VYaml** | TOML config and YAML Front Matter parsing |
+| **System.CommandLine 3.0 RC** | CLI framework |
 | **Kestrel** | Dev server (hot reload) |
 | **Server GC** | Multi-core parallel collection (batch throughput) |
 | **xunit.v3 / FsCheck / BenchmarkDotNet** | Testing and benchmarking (test-side only; not in the product) |

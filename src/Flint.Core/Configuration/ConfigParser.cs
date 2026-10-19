@@ -5,7 +5,6 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Flint.Core.Abstractions;
-using Tomlyn;
 
 namespace Flint.Core.Configuration;
 
@@ -115,7 +114,7 @@ public static partial class ConfigParser
         ArgumentNullException.ThrowIfNull(content);
         try
         {
-            return SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(content)
+            return SharedYaml.DeserializeDictionary(content)
                    ?? new Dictionary<string, object>();
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -148,18 +147,17 @@ public static partial class ConfigParser
         ArgumentNullException.ThrowIfNull(content);
         try
         {
-            var dict = SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(content)
+            var dict = SharedYaml.DeserializeDictionary(content)
                 ?? new Dictionary<string, object>();
             return ConvertDictToConfig(dict);
         }
-        catch (Exception ex) when (ex is InvalidOperationException or YamlDotNet.Core.YamlException)
+        catch (Exception ex) when (ex is InvalidOperationException or VYaml.YamlException)
         {
-            // NativeAOT 发布形态：YamlDotNet 依赖运行时代码生成（内层反射异常
-            // 可能被包装为 YamlException）——给可行动指引而非裸异常
+            // VYaml 解析器事件流失败（含 AOT 下的解析异常）——给可行动指引而非裸异常
             if (!System.Runtime.CompilerServices.RuntimeFeature.IsDynamicCodeSupported)
             {
                 throw new InvalidDataException(
-                    "YAML 配置解析在 NativeAOT 发布形态不受支持（YamlDotNet 依赖运行时代码生成）。" +
+                    "YAML 配置解析在 NativeAOT 发布形态不受支持（VYaml 解析路径失败）。" +
                     "请改用 TOML 或 JSON 配置格式，或使用 Trim+R2R 发布形态", ex);
             }
             throw;
@@ -175,7 +173,7 @@ public static partial class ConfigParser
     {
         ArgumentNullException.ThrowIfNull(config);
         var dict = ConvertConfigToDict(config);
-        return SharedYaml.Serializer.Serialize(dict);
+        return SharedYaml.Serialize(dict);
     }
 
     #endregion

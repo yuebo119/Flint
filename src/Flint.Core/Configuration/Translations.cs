@@ -3,8 +3,6 @@
 // 文件形态三类——扁平键值（hello = "你好"）、Hugo 形态（[hello] other = "你好"）、
 // 以及 Hugo 支持的三种文件格式（.toml/.yaml/.json，blowfish 等主题用 YAML）
 
-using Tomlyn;
-using Tomlyn.Model;
 
 namespace Flint.Core.Configuration;
 
@@ -106,9 +104,9 @@ public static class Translations
     {
         try
         {
-            return Normalize(SharedYaml.Deserializer.Deserialize<Dictionary<string, object>>(text));
+            return Normalize(SharedYaml.DeserializeDictionary(text));
         }
-        catch (YamlDotNet.Core.YamlException)
+        catch (VYaml.YamlException)
         {
             return null;
         }
@@ -143,7 +141,7 @@ public static class Translations
     };
 
     /// <summary>
-    /// 统一成 <c>Dictionary&lt;string, object?&gt;</c>：TOML 的 <c>TomlTable</c> 与 YamlDotNet
+    /// 统一成 <c>Dictionary&lt;string, object?&gt;</c>：TOML 的 <c>TomlTable</c> 与 VYaml
     /// 的 <c>Dictionary&lt;object, object&gt;</c> 都归一，使摊平逻辑只面对一种形态
     /// </summary>
     private static Dictionary<string, object?>? Normalize(object? value)
