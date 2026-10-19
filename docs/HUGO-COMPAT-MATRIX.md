@@ -205,7 +205,7 @@ tags/term → tags/list → term/term → term/list → taxonomy/term
 | `.Ancestors`（祖先链） | **已对齐** | 真实容器页构成、最近祖先在前 home 在末位、term 页的祖先是 taxonomy 列表页；探针值与实现要点见 §Q「残留清零」 |
 | `.Parent`/`.CurrentSection`/`.FirstSection` | **已对齐** | 三者与 `.Ancestors` 同源（同一条容器链）：`Parent` = 链首（home 页为 nil）；容器页（section/taxonomy/term/home）的 `CurrentSection` 是自己，内容页取最近的 section，根级页落到 home；`FirstSection` 是最外层 section（term 页为分类列表页）。此前 `.CurrentSection` 是**按段名拼的假对象**（取不到 `.RegularPages`/`.GetPage`，嵌套段的 URL 也错），ananke 的 `section-link.html`/`summary.html` 正依赖它 |
 | `i18n` 的复数子表与插值 | **已对齐** | 嵌套子表摊平为点分键 + 按计数选形（`one`/`other`）+ `{{ .Count }}`/dict 插值；探针值与实现见 §Q「十六」 |
-| 模板级 `toCSS` 的 SCSS 编译 | **有意差异** | DartSassHost 在 Flint 的运行时配置下（全局关闭反射 JSON）无法初始化，模板级 `toCSS` 按 Hugo 的 OPTIONS 语义改写目标路径后**内容直通**（SCSS 原文）；主题自带编译产物的样式不受影响，依赖模板级编译的主题（loveit）样式表为 SCSS 原文，需构建期管线或预编译产物 |
+| 模板级 `toCSS` 的 SCSS 编译 | **已对齐（外部 CLI）** | 模板级 `toCSS` 统一调用外部 Dart Sass CLI；DartSassHost 无法初始化的分裂已随 2026-10-19 依赖移除消除。CLI 不可用时仍回退内容直通（与构建期管线同策略）；主题自带编译产物的样式不受影响 |
 
 ## 四、探针方法（复现指南）
 

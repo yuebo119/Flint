@@ -58,14 +58,14 @@ node_modules、无 JIT 预热，交付物是一个 exe。
 亮 `TODO-HUGO` 不静默错译，21 个真实主题已验证——迁移从"重写"降为
 "一条命令 + 少量人工裁决"。
 
-**进程内资产管线** —— Sass 进程内编译（DartSassHost 原生库）；TS
-类型剥离自研（无法识别的语法原样保留，浏览器报错优于静默错位）；
-图片处理结果落盘缓存。带 TS/SCSS 的重度主题零 npm 依赖构建。
+**本地资产管线** —— Sass 由外部 Dart Sass CLI 编译（DartSass.Native
+随发布包，无 npm 依赖）；TS 类型剥离自研（无法识别的语法原样保留，
+浏览器报错优于静默错位）；图片处理结果落盘缓存。带 TS/SCSS 的重度
+主题零 npm 依赖构建。
 
 **工程化质量保障** —— `perf gate` 回归门禁（三轮中位数棘轮，劣化在
 合并前拦截）；FsCheck 属性测试，单元套件 1131 项与集成套件 1649 项
-（快检双平台覆盖构建 + 单测 + 门禁，nightly 全量含集成；本地 2 项
-空 SCSS 压缩断言为 DartSassHost 环境既有失败，基线同样存在）；
+（快检双平台覆盖构建 + 单测 + 门禁，nightly 全量含集成）；
 输出路径逃逸防护、缓存条目原子写。
 
 引擎侧：三相全并行管线（解析/渲染/写入 + Server GC）、内容签名变换
@@ -444,7 +444,7 @@ Flint.exe 旁的 `dart-sass*/` → PATH 上的 `sass` → 仓库 `tools/dart-sas
 | **.NET 10** | 最新 LTS，NativeAOT 原生编译，单文件发布 |
 | **Scriban 7.5** | 模板引擎（大列表无迭代上限） |
 | **Markdig 1.4** | CommonMark + GFM 解析 |
-| **DartSassHost** | 进程内 Sass 编译（三平台原生库，无需外部 CLI） |
+| **Dart Sass CLI** | 外部 Sass 编译（DartSass.Native 随发布包，无 npm 依赖） |
 | **NUglify** | HTML/CSS/JS 压缩（`--minify`） |
 | **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |
 | **Tomlyn / YamlDotNet** | TOML 配置与 YAML Front Matter 解析 |

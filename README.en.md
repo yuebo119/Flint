@@ -61,19 +61,18 @@ templates at the AST level, marking indeterminable semantics with
 `TODO-HUGO` instead of silently mistranslating — 21 real themes verified.
 Migration drops from "rewrite" to "one command plus a few adjudications".
 
-**In-process asset pipeline** — Sass compiles in-process (DartSassHost
-native libs); TypeScript type stripping is homegrown (unrecognized syntax
-passes through untouched — a browser error beats silent corruption); image
-processing results cached on disk. Heavy TS/SCSS themes build with zero npm
-dependencies.
+**Local asset pipeline** — Sass is compiled by the external Dart Sass CLI
+(DartSass.Native ships with the release, no npm dependency); TypeScript type
+stripping is homegrown (unrecognized syntax passes through untouched — a
+browser error beats silent corruption); image processing results cached on
+disk. Heavy TS/SCSS themes build with zero npm dependencies.
 
 **Engineering-grade quality assurance** — the `perf gate` regression gate
 (three-run median ratchet, degradation intercepted before merge); FsCheck
 property testing, 1131 unit tests and 1649 integration tests (fast checks
 cover build + unit tests + gates on both platforms; nightly runs the full
-suite including integration; 2 empty-SCSS compression assertions are
-pre-existing local DartSassHost environment failures, present on the
-baseline too); output path-escape protection and atomic cache-entry writes.
+suite including integration); output path-escape protection and atomic
+cache-entry writes.
 
 Under the hood: a three-phase parallel pipeline (parse/render/write +
 Server GC), content-signature transform caching (executed once, reused
@@ -488,7 +487,7 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 | **.NET 10** | Latest LTS; NativeAOT compilation, single-file publish |
 | **Scriban 7.5** | Template engine (no iteration cap on large lists) |
 | **Markdig 1.4** | CommonMark + GFM parsing |
-| **DartSassHost** | In-process Sass compilation (native libs for three platforms; no external CLI) |
+| **Dart Sass CLI** | External Sass compilation (DartSass.Native ships with the release; no npm dependency) |
 | **NUglify** | HTML/CSS/JS minification (`--minify`) |
 | **ImageSharp 3.1** | Image processing (resize/format conversion/responsive) |
 | **Tomlyn / YamlDotNet** | TOML config and YAML Front Matter parsing |

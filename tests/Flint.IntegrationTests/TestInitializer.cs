@@ -4,63 +4,13 @@
 // </copyright>
 // -----------------------------------------------------------------------
 
-using System.Runtime.CompilerServices;
-using JavaScriptEngineSwitcher.Core;
-using JavaScriptEngineSwitcher.V8;
-
 namespace Flint.IntegrationTests;
 
 /// <summary>
-/// 测试初始化器
-/// 用于在测试运行前进行全局初始化
-/// </summary>
-public static class TestInitializer
-{
-    private static bool _initialized;
-    private static readonly object _lock = new();
-
-    /// <summary>
-    /// 模块初始化方法
-    /// 在测试程序集加载时自动执行
-    /// </summary>
-    [ModuleInitializer]
-    public static void Initialize()
-    {
-        InitializeJavaScriptEngine();
-    }
-
-    /// <summary>
-    /// 初始化 JavaScript 引擎
-    /// DartSassHost 需要一个 JavaScript 引擎来运行 Dart Sass
-    /// </summary>
-    public static void InitializeJavaScriptEngine()
-    {
-        if (_initialized)
-            return;
-
-        lock (_lock)
-        {
-            if (_initialized)
-                return;
-
-            var engineSwitcher = JsEngineSwitcher.Current;
-            if (!engineSwitcher.EngineFactories.Any(f => f.EngineName == V8JsEngine.EngineName))
-            {
-                engineSwitcher.EngineFactories.Add(new V8JsEngineFactory());
-            }
-            engineSwitcher.DefaultEngineName = V8JsEngine.EngineName;
-
-            _initialized = true;
-        }
-    }
-}
-
-/// <summary>
 /// xUnit 测试集合定义 - 资源管道测试
-/// 确保 JavaScript 引擎已初始化
 /// </summary>
 [Xunit.CollectionDefinition("AssetPipeline")]
-public class AssetPipelineTestGroup : Xunit.ICollectionFixture<AssetPipelineFixture>
+public class AssetPipelineTestGroup
 {
 }
 
@@ -84,21 +34,4 @@ public sealed class DevServerTestGroup
 [Xunit.CollectionDefinition("Performance", DisableParallelization = true)]
 public sealed class PerformanceTestGroup
 {
-}
-
-/// <summary>
-/// 资源管道测试夹具
-/// 在测试集合开始时初始化 JavaScript 引擎
-/// </summary>
-public class AssetPipelineFixture : IDisposable
-{
-    public AssetPipelineFixture()
-    {
-        TestInitializer.InitializeJavaScriptEngine();
-    }
-
-    public void Dispose()
-    {
-        GC.SuppressFinalize(this);
-    }
 }

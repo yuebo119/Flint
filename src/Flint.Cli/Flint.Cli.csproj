@@ -56,7 +56,6 @@
     <TrimmerRootAssembly Include="Scriban" />
     <TrimmerRootAssembly Include="YamlDotNet" />
     <TrimmerRootAssembly Include="Tomlyn" />
-    <TrimmerRootAssembly Include="JavaScriptEngineSwitcher.Core" />
   </ItemGroup>
 
   <ItemGroup>

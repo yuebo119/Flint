@@ -137,7 +137,7 @@
 - [x] **T5.5** AOT 终验 ✅（2026-09-03，部分修正评审判断）：
   - win-x64 `dotnet publish -r win-x64` AOT 冒烟**通过**：84.9MB 单文件 exe；`version`/`build` 正常；**YAML Front Matter 在 AOT 下解析成功**（title/tags 读出并渲染）——评审 5.1"YAML 路径大概率运行时失败"的判断被证伪（YamlDotNet 16.3 该反序列化路径在 AOT 可用）；shortcode 展开正常；atom.xml 正常产出
   - taxonomy 模板缺失按预期报 TAXONOMY001 不致命
-  - **arm64 RID 补充不可实施**：经 nuget.org 查证，`DartSass.Native.osx-arm64` 与 `JavaScriptEngineSwitcher.V8.Native.osx-arm64` 上游不存在（osx 仅有 x64）——生态限制而非配置遗漏；arm64 支持需上游出包或换用 managed 实现
+  - **arm64 RID 补充不可实施**：经 nuget.org 查证，`DartSass.Native.osx-arm64` 与 `JavaScriptEngineSwitcher.V8.Native.osx-arm64` 上游不存在（osx 仅有 x64）——生态限制而非配置遗漏；arm64 支持需上游出包或换用 managed 实现。2026-10-19 已移除 JavaScriptEngineSwitcher/V8 死依赖，arm64 限制现仅剩 DartSass.Native；本条保留为历史验证记录
 - [x] **T5.6** CLI `-o` 语义统一 ✅（serve --open 移除 -o 短选项，`-o` 统一保留给 build --output；README 同步）
 
 ---

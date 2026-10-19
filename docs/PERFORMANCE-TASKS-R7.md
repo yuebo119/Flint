@@ -210,9 +210,9 @@
 
 ## T5 · 资产统一（规模 M-L，2-3 天）
 
-- [x] **T5.1（A1）Sass 机制统一为 dart-sass CLI 常驻进程池**（**缩减实施**：实质问题 = DartSassHost 在裁剪发布下初始化即抛 → assets/ 目录 SCSS 全部直通不编译的正确性分裂；已给 SassCompiler 加 CLI 回退链补齐。进程池本体判定跳过——缓存已把单构建多次调用压成单次，触发器 = 单构建 sass CLI 调用 >8 次或 serve 模式 sass 重编译成为瓶颈，同 T1.16 逻辑）
-  - 问题：两套并行机制——AssetPipeline 持 DartSassHost + 全局 `SemaphoreSlim(1,1)` 串行（`SassCompiler.cs:20-53`）；渲染期 css.Sass 走外部 dart-sass CLI 子进程，单次 1-2s（`TemplateResourceFunctions.cs:692-736`，已有 CachedText 缓存）。DartSassHost 在裁剪发布下初始化即抛（代码注释自证），实际发布形态下该路径不可用。
-  - 做法：统一走 CLI：N 个常驻 dart-sass 进程（N = min(ProcessorCount, 4)）+ 定位链沿用（FLINT_SASS→PATH→tools/）；失败回退内容直通语义保留；CachedText 缓存键不变。AssetPipeline 的 SassCompiler 类退役或降级为非裁剪调试构建专用。
+- [x] **T5.1（A1）Sass 机制统一为 dart-sass CLI**（**2026-10-19 完整落地**：删除 DartSassHost、JavaScriptEngineSwitcher.V8 及 native 包与 TrimmerRoot；SassCompiler 改为 CLI 薄封装，移除全局 `SemaphoreSlim`；内容改 UTF-8 临时文件输入，修复 Windows stdin 中文乱码。进程池未启用，触发器 = 单构建 sass CLI 调用 >8 次或 serve 模式 sass 重编译成为瓶颈，同 T1.16 逻辑）
+  - 问题（历史）：两套并行机制——AssetPipeline 持 DartSassHost + 全局 `SemaphoreSlim(1,1)` 串行；渲染期 css.Sass 走外部 dart-sass CLI 子进程，单次约 0.1-0.2s（2026-10-19 本机实测；大主题更高；`TemplateResourceFunctions.cs` 已有 CachedText 缓存）。DartSassHost 在裁剪发布下初始化即抛，实际发布形态下该路径不可用。
+  - 做法（已实施）：统一走 CLI：N 个常驻 dart-sass 进程（N = min(ProcessorCount, 4)）仍为可选优化；定位链沿用（FLINT_SASS→PATH→tools/）；失败回退内容直通语义保留；CachedText 缓存键不变。AssetPipeline 的 SassCompiler 保留为 CLI 薄封装。
   - 验收：含 SCSS 主题（loveit/fixit）构建时间与产物对称；多 SCSS 入口语料对比；Windows/macOS 双平台 CLI 定位冒烟。
   - 关联：net11 升级后可用 `Process.RunAndCaptureText` 简化进程交互（T8.2 产出后可选重构，非本任务依赖）。
 

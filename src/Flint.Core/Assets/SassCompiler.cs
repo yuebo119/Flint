@@ -1,10 +1,9 @@
 // Flint 静态站点生成器
-// Sass/SCSS 编译器实现 - 基于 DartSassHost 库
+// Sass/SCSS 编译器实现 - 调用外部 Dart Sass CLI
 
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
-using DartSassHost;
 using Flint.Core.Abstractions;
 using Flint.Core.Models;
 
@@ -12,21 +11,12 @@ namespace Flint.Core.Assets;
 
 /// <summary>
 /// Sass/SCSS 编译器实现
-/// 支持 .sass 和 .scss 两种语法，支持 source map 生成和压缩输出
+/// 统一调用外部 Dart Sass CLI（FLINT_SASS / PATH / 发布目录），
+/// 支持 .sass 与 .scss、压缩输出与内联 source map。
 /// </summary>
 public sealed class SassCompiler : ISassCompiler, IDisposable
 {
-    private readonly Lazy<SassCompilerWrapper> _compiler;
-    // DartSassHost 编译器实例非线程安全，AssetPipeline 并行调用时必须串行化
-    private readonly SemaphoreSlim _compileLock = new(1, 1);
     private bool _disposed;
-
-    public SassCompiler()
-    {
-        _compiler = new Lazy<SassCompilerWrapper>(
-            () => new SassCompilerWrapper(),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-    }
 
     public async ValueTask<ProcessedAsset> CompileAsync(
         AssetFile sassFile,
@@ -38,58 +28,20 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
 
         var stopwatch = Stopwatch.StartNew();
         var sourceContent = Encoding.UTF8.GetString(sassFile.Content.Span);
-        var compileOptions = CreateCompileOptions(sassFile, options);
+        var compressed = options.Minify || options.OutputStyle == SassOutputStyle.Compressed;
 
-        string cssContent;
-        try
-        {
-            CompilationResult result;
-            await _compileLock.WaitAsync(cancellationToken);
-            try
-            {
-                result = await Task.Run(() =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    return _compiler.Value.Compile(sourceContent, sassFile.SourcePath, compileOptions);
-                }, cancellationToken);
-            }
-            finally
-            {
-                _compileLock.Release();
-            }
-
-            cssContent = result.CompiledContent;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // T5.1：裁剪发布下 DartSassHost 反射初始化即抛（"Reflection-based
-            // serialization has been disabled"）——assets/ 目录的 SCSS 此前全部退化为
-            // 直通不编译，而渲染期 css.Sass 走外部 dart-sass CLI 正常。回退同一 CLI
-            // 定位链（FLINT_SASS → PATH → 进程目录 dart-sass*/）补齐分裂；
-            // CLI 也不可用时重抛，交由 AssetPipeline 的 IsFallback 直通语义处理
-            var cliCss = TryCompileViaCli(
-                sourceContent, sassFile.SourcePath,
-                indented: sassFile.Extension == ".sass",
-                compressed: options.OutputStyle == SassOutputStyle.Compressed,
-                cancellationToken);
-            if (cliCss is null)
-            {
-                throw;
-            }
-
-            cssContent = cliCss;
-        }
+        var cssContent = await CompileViaCliAsync(
+            sourceContent,
+            sassFile.SourcePath,
+            indented: sassFile.Extension == ".sass",
+            compressed: compressed,
+            generateSourceMap: options.GenerateSourceMap,
+            includePaths: options.IncludePaths,
+            cancellationToken).ConfigureAwait(false);
 
         stopwatch.Stop();
 
-        if (options.Minify && options.OutputStyle != SassOutputStyle.Compressed)
-            cssContent = MinifyCss(cssContent);
-
         var outputPath = GenerateOutputPath(sassFile.SourcePath);
-        // source map 局限：ProcessedAsset 是单文件产物模型，map 内容无法随产物落地；
-        // 此前写 sourceMappingURL 注释但 map 文件不存在，浏览器端表现为 404——
-        // 在管线支持多文件产物之前省略引用注释（T5.1 CLI 回退路径不产 source map）
-
         var contentBytes = Encoding.UTF8.GetBytes(cssContent);
         var content = new ReadOnlyMemory<byte>(contentBytes);
         var contentHash = ComputeHash(content.Span);
@@ -107,96 +59,210 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
             SourcePath = sassFile.SourcePath,
             ProcessingTime = stopwatch.Elapsed,
             OriginalSize = sassFile.Content.Length,
-            IsMinified = options.Minify || options.OutputStyle == SassOutputStyle.Compressed
+            IsMinified = compressed
         };
     }
 
-    private static CompilationOptions CreateCompileOptions(AssetFile sassFile, SassOptions options)
+    /// <summary>
+    /// 调用外部 Dart Sass 编译内存中的 SCSS/Sass 内容。
+    /// 内容先写入 UTF-8 临时文件再按文件编译：Windows 下 Dart Sass 的 stdin
+    /// 按系统代码页解释，中文内容会变乱码；文件输入同时保留正确的 import 基准。
+    /// source map 使用 <c>--embed-source-map</c> 内联为 data URI，保持单文件产物模型。
+    /// </summary>
+    private static async ValueTask<string> CompileViaCliAsync(
+        string content,
+        string sourcePath,
+        bool indented,
+        bool compressed,
+        bool generateSourceMap,
+        IReadOnlyList<string> includePaths,
+        CancellationToken cancellationToken)
     {
-        var outputStyle = options.OutputStyle switch
+        var sass = Flint.Core.Templates.BuiltinTemplateFunctions.LocateSassExecutable()
+            ?? throw new InvalidOperationException(
+                "找不到 Dart Sass 可执行文件。请设置 FLINT_SASS、把 sass 加入 PATH，" +
+                "或确保发布目录包含 dart-sass*/sass.bat。");
+
+        var tempDirectory = Path.Combine(
+            Path.GetTempPath(), "Flint_sass_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDirectory);
+        var inputFile = Path.Combine(tempDirectory, indented ? "input.sass" : "input.scss");
+
+        try
         {
-            SassOutputStyle.Compressed => DartSassHost.OutputStyle.Compressed,
-            SassOutputStyle.Expanded => DartSassHost.OutputStyle.Expanded,
-            _ => DartSassHost.OutputStyle.Expanded
-        };
+            await File.WriteAllTextAsync(
+                inputFile,
+                content,
+                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                cancellationToken).ConfigureAwait(false);
 
-        if (options.Minify)
-            outputStyle = DartSassHost.OutputStyle.Compressed;
+            var args = CreateArguments(sourcePath, inputFile, compressed, generateSourceMap, includePaths);
+            using var process = StartProcess(sass, args);
 
-        var includePaths = new List<string>(options.IncludePaths);
-        var sourceDirectory = Path.GetDirectoryName(sassFile.SourcePath);
-        if (!string.IsNullOrEmpty(sourceDirectory) && !includePaths.Contains(sourceDirectory))
-            includePaths.Insert(0, sourceDirectory);
+            var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
-        return new CompilationOptions
-        {
-            OutputStyle = outputStyle,
-            SourceMap = options.GenerateSourceMap,
-            IncludePaths = includePaths
-        };
-    }
-
-    private static string MinifyCss(string css)
-    {
-        if (string.IsNullOrWhiteSpace(css))
-            return string.Empty;
-        var sb = new StringBuilder(css.Length);
-        var inComment = false;
-        var inString = false;
-        var stringChar = '\0';
-        var lastChar = '\0';
-        var lastNonWhitespace = '\0';
-
-        for (var i = 0; i < css.Length; i++)
-        {
-            var c = css[i];
-            var nextChar = i + 1 < css.Length ? css[i + 1] : '\0';
-
-            if (!inComment && (c == '"' || c == '\''))
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
+            try
             {
-                if (!inString)
-                { inString = true; stringChar = c; }
-                else if (c == stringChar)
-                {
-                    // 引号前奇数个连续反斜杠 = 被转义的引号（同 JS 端 SimpleMinify 修复）：
-                    // 仅看前一字符会把 content: "\\" 的真正结束引号误判为转义
-                    var backslashes = 0;
-                    for (var j = i - 1; j >= 0 && css[j] == '\\'; j--)
-                    {
-                        backslashes++;
-                    }
-                    if (backslashes % 2 == 0)
-                        inString = false;
-                }
-                sb.Append(c);
-                lastNonWhitespace = c;
+                await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
             }
-            else if (!inString && c == '/' && nextChar == '*')
-            { inComment = true; i++; }
-            else if (inComment && c == '*' && nextChar == '/')
-            { inComment = false; i++; }
-            else if (inComment)
-            { }
-            else if (inString)
-                sb.Append(c);
-            else if (char.IsWhiteSpace(c))
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                if (lastNonWhitespace != '\0' && !IsNoSpaceNeededAfter(lastNonWhitespace) &&
-                    nextChar != '\0' && !char.IsWhiteSpace(nextChar) && !IsNoSpaceNeededBefore(nextChar))
-                    sb.Append(' ');
+                TryKill(process);
+                throw new TimeoutException($"Dart Sass 编译超时（{sourcePath}）");
             }
-            else
-            { sb.Append(c); lastNonWhitespace = c; }
-            lastChar = c;
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                throw;
+            }
+
+            var output = await outputTask.ConfigureAwait(false);
+            var error = await errorTask.ConfigureAwait(false);
+            if (process.ExitCode != 0)
+            {
+                var details = string.IsNullOrWhiteSpace(error) ? "未知错误" : error.Trim();
+                throw new SassCompilationException(
+                    $"Dart Sass 编译失败（{sourcePath}）：{details}",
+                    sourcePath,
+                    error);
+            }
+
+            return output;
         }
-        return sb.ToString().Trim();
+        finally
+        {
+            TryDeleteDirectory(tempDirectory);
+        }
     }
 
-    private static bool IsNoSpaceNeededAfter(char c) =>
-        c is '{' or '}' or ';' or ':' or ',' or '(' or '[' or '>' or '+' or '~' or '*' or '/' or '!' or '@';
+    private static List<string> CreateArguments(
+        string sourcePath,
+        string inputFile,
+        bool compressed,
+        bool generateSourceMap,
+        IReadOnlyList<string> includePaths)
+    {
+        var args = new List<string>
+        {
+            compressed ? "--style=compressed" : "--style=expanded"
+        };
 
-    private static bool IsNoSpaceNeededBefore(char c) =>
-        c is '{' or '}' or ';' or ':' or ',' or ')' or ']' or '>' or '+' or '~' or '*' or '/' or '!';
+        if (generateSourceMap)
+        {
+            args.Add("--source-map");
+            args.Add("--embed-source-map");
+        }
+        else
+        {
+            args.Add("--no-source-map");
+        }
+
+        args.Add("--quiet");
+
+        var comparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+        var loadPaths = new List<string>();
+
+        void AddLoadPath(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            var fullPath = Path.GetFullPath(path);
+            if (!loadPaths.Contains(fullPath, comparer))
+            {
+                loadPaths.Add(fullPath);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(sourcePath))
+        {
+            AddLoadPath(Path.GetDirectoryName(Path.GetFullPath(sourcePath)));
+        }
+
+        foreach (var includePath in includePaths)
+        {
+            AddLoadPath(includePath);
+        }
+
+        foreach (var loadPath in loadPaths)
+        {
+            args.Add("--load-path=" + loadPath);
+        }
+
+        args.Add(inputFile);
+        return args;
+    }
+
+    private static Process StartProcess(string sass, List<string> args)
+    {
+        var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
+                        sass.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = isCmdShim ? "cmd.exe" : sass,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+            CreateNoWindow = true
+        };
+
+        if (isCmdShim)
+        {
+            var quotedArgs = string.Join(' ', args.Select(QuoteArgument));
+            psi.Arguments = "/c \"\"" + sass + "\" " + quotedArgs + "\"";
+        }
+        else
+        {
+            foreach (var arg in args)
+            {
+                psi.ArgumentList.Add(arg);
+            }
+        }
+
+        var process = new Process { StartInfo = psi };
+        process.Start();
+        return process;
+    }
+
+    private static string QuoteArgument(string arg) =>
+        arg.Contains(' ') ? "\"" + arg + "\"" : arg;
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // 进程已退出或句柄已释放，无需处理
+        }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            Directory.Delete(path, recursive: true);
+        }
+        catch
+        {
+            // 临时目录清理失败不影响编译结果
+        }
+    }
 
     private static string ComputeHash(ReadOnlySpan<byte> content)
     {
@@ -229,92 +295,6 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
 
     public void Dispose()
     {
-        if (_disposed)
-            return;
-        if (_compiler.IsValueCreated)
-            _compiler.Value.Dispose();
-        _compileLock.Dispose();
-        _disposed = true;
-    }
-
-    /// <summary>
-    /// 经外部 dart-sass CLI 以 stdin 模式编译（T5.1 回退路径）。
-    /// 返回 null = CLI 不可用或编译失败（调用方重抛宿主异常走直通）
-    /// </summary>
-    private static string? TryCompileViaCli(
-        string content, string sourcePath, bool indented, bool compressed, CancellationToken ct)
-    {
-        var sass = Flint.Core.Templates.BuiltinTemplateFunctions.LocateSassExecutable();
-        if (sass is null)
-        {
-            return null;
-        }
-
-        var args = (compressed ? "--style=compressed " : "") + "--no-source-map --quiet "
-                   + (indented ? "--indented " : "") + "--stdin";
-        if (!string.IsNullOrEmpty(sourcePath))
-        {
-            var loadPath = Path.GetDirectoryName(Path.GetFullPath(sourcePath));
-            if (!string.IsNullOrEmpty(loadPath))
-            {
-                args += " --load-path=\"" + loadPath + "\"";
-            }
-        }
-
-        try
-        {
-            using var process = new System.Diagnostics.Process
-            {
-                StartInfo = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ? "cmd.exe" : sass,
-                    Arguments = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase)
-                        ? "/c \"\"" + sass + "\" " + args + "\""
-                        : args,
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true,
-                },
-                EnableRaisingEvents = false,
-            };
-
-            process.Start();
-            var inputTask = process.StandardInput.WriteAsync(content);
-            var outputTask = process.StandardOutput.ReadToEndAsync(ct);
-            var errorTask = process.StandardError.ReadToEndAsync(ct);
-            inputTask.Wait(ct);
-            process.StandardInput.Close();
-            process.WaitForExit(120_000);
-
-            return process.ExitCode == 0 ? outputTask.Result : null;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            return null;
-        }
-    }
-}
-
-internal sealed class SassCompilerWrapper : IDisposable
-{
-    private readonly DartSassHost.SassCompiler _compiler;
-    private bool _disposed;
-
-    public SassCompilerWrapper() => _compiler = new DartSassHost.SassCompiler();
-
-    public CompilationResult Compile(string content, string inputPath, CompilationOptions options)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return _compiler.Compile(content, inputPath, options: options);
-    }
-
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
-        _compiler.Dispose();
         _disposed = true;
     }
 }

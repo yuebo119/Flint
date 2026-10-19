@@ -4,7 +4,6 @@
 // _Requirements: 6.1, 6.7_
 
 using System.Text;
-using DartSassHost;
 using Flint.Core.Abstractions;
 using Flint.Core.Assets;
 using Flint.Core.Models;
@@ -54,18 +53,22 @@ public class AssetPipelineBoundaryTests : IDisposable
 
     /// <summary>
     /// 测试空 SCSS 文件
-    /// 验证空 SCSS 文件能正确处理（DartSassHost 不接受空内容，应该抛出异常）
+    /// 生产路径是外部 Dart Sass CLI，空输入编译为空 CSS（不抛异常）
     /// </summary>
     [Fact]
-    public async Task CompileScss_WithEmptyFile_ShouldThrowArgumentException()
+    public async Task CompileScss_WithEmptyFile_ShouldProduceEmptyCss()
     {
         // Arrange
         var emptyScss = "";
         var asset = CreateScssAsset("empty.scss", emptyScss);
 
-        // Act & Assert - DartSassHost 不接受空内容
-        var act = async () => await _sassCompiler.CompileAsync(asset, new SassOptions());
-        await act.Should().ThrowAsync<ArgumentException>();
+        // Act
+        var result = await _sassCompiler.CompileAsync(asset, new SassOptions());
+
+        // Assert
+        result.Should().NotBeNull();
+        var css = Encoding.UTF8.GetString(result.Content.Span);
+        string.IsNullOrWhiteSpace(css).Should().BeTrue();
     }
 
     /// <summary>
@@ -97,18 +100,22 @@ public class AssetPipelineBoundaryTests : IDisposable
 
     /// <summary>
     /// 测试只有空白的 SCSS 文件
-    /// 验证只有空白字符的 SCSS 文件会抛出异常（DartSassHost 不接受空内容）
+    /// 生产路径是外部 Dart Sass CLI，空白输入编译为空 CSS（不抛异常）
     /// </summary>
     [Fact]
-    public async Task CompileScss_WithOnlyWhitespace_ShouldThrowArgumentException()
+    public async Task CompileScss_WithOnlyWhitespace_ShouldProduceEmptyCss()
     {
         // Arrange
         var whitespaceScss = "   \n\t\n   \r\n   ";
         var asset = CreateScssAsset("whitespace.scss", whitespaceScss);
 
-        // Act & Assert - DartSassHost 将空白视为空内容
-        var act = async () => await _sassCompiler.CompileAsync(asset, new SassOptions());
-        await act.Should().ThrowAsync<ArgumentException>();
+        // Act
+        var result = await _sassCompiler.CompileAsync(asset, new SassOptions());
+
+        // Assert
+        result.Should().NotBeNull();
+        var css = Encoding.UTF8.GetString(result.Content.Span);
+        string.IsNullOrWhiteSpace(css).Should().BeTrue();
     }
 
     /// <summary>

@@ -744,11 +744,10 @@ public sealed partial class BuiltinTemplateFunctions
 
         css.Import("Sass", (params object?[] args) =>
         {
-            // Hugo 的 toCSS 会真正编译 SCSS。Flint 的 DartSassHost 在 **裁剪发布**下
-            // 初始化即抛"Reflection-based serialization has been disabled"，故改为
-            // 调用**外部 Dart Sass 可执行文件**（定位顺序：环境变量 FLINT_SASS →
-            // PATH 上的 sass → 进程目录向上找 tools/dart-sass/sass.bat）。
-            // 编译必须**按磁盘文件**进行（@import 相对解析依赖文件位置）；
+            // Hugo 的 toCSS 会真正编译 SCSS。Flint 统一调用**外部 Dart Sass CLI**
+            // （定位顺序：环境变量 FLINT_SASS → PATH 上的 sass → 进程目录向上找
+            // tools/dart-sass/sass.bat）。DartSassHost 与 V8 死路径已于 2026-10-19
+            // 移除。编译必须**按磁盘文件**进行（@import 相对解析依赖文件位置）；
             // 找不到 sass 或编译失败时回退为内容直通（差异登记 §三）。
             var r = FindResourceArg(args);
             if (r is null)

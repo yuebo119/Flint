@@ -14,7 +14,6 @@ namespace Flint.Core.Tests.Assets;
 /// 注意：这些测试需要 DartSass.Native 包正确安装
 /// 在某些 CI 环境中可能需要跳过
 /// </summary>
-[Collection("SassCompiler")]
 public class SassCompilerTests : IDisposable
 {
     private readonly SassCompiler _compiler;
@@ -276,8 +275,7 @@ body {
 
         // Assert
         var css = GetCssContent(result);
-        Assert.Contains("sourceMappingURL=", css);
-        Assert.Contains("main.css.map", css);
+        Assert.Contains("sourceMappingURL=data:application/json", css);
     }
 
     [Fact]

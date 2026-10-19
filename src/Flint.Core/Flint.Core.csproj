@@ -44,8 +44,7 @@
     <PackageReference Include="Tomlyn" />
     <PackageReference Include="YamlDotNet" />
     
-    <!-- Sass/SCSS 编译 -->
-    <PackageReference Include="DartSassHost" />
+    <!-- Sass/SCSS 编译（统一走外部 Dart Sass CLI） -->
     <PackageReference Include="DartSass.Native.win-x64" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
     <PackageReference Include="DartSass.Native.linux-x64" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
     <!-- 包名 macos-x64（旧名 osx-x64 已停更；CPM 下旧名无版本定义，macOS 构建失败） -->
