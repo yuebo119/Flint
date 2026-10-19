@@ -844,9 +844,9 @@ public sealed partial class BuiltinTemplateFunctions
     private static string? _sassExePath;
 
     /// <summary>
-    /// 定位 Dart Sass：环境变量 FLINT_SASS → 进程目录旁的 dart-sass*/sass.bat
-    /// （CLI 发布布局：Flint.exe 与 dart-sass.win-x64/ 同级）→ PATH 上的 sass →
-    /// 进程目录向上找 tools/dart-sass/sass.bat（仓库工具布局）
+    /// 定位 Dart Sass：环境变量 FLINT_SASS → 进程目录旁的 dart-sass* 启动器
+    /// （Windows 为 sass.bat，Linux/macOS 为 sass 脚本）→ PATH 上的 sass →
+    /// 进程目录向上找 tools/dart-sass 或 dart-sass.&lt;rid&gt; 启动器（仓库/发布布局）
     /// </summary>
     internal static string? LocateSassExecutable()
     {
@@ -861,25 +861,38 @@ public sealed partial class BuiltinTemplateFunctions
             candidates.Add(env);
         }
 
-        // **进程目录同级的 dart-sass*/sass.bat**：CLI 自包含发布把 Dart Sass
-        // 运行时放在 Flint.exe 旁边（…/win-x64/dart-sass.win-x64/sass.bat）。
-        // 此前只找 tools/dart-sass，发布布局下永远找不到 → toCSS 全部退化为
-        // 内容直通（main.css 里剩 `@use "core"` 原样 SCSS，全站无样式——
-        // fixit/loveit 实测）
+        var launcherNames = OperatingSystem.IsWindows()
+            ? new[] { "sass.bat", "sass.exe", "sass" }
+            : new[] { "sass", "sass.bat" };
+
+        // **进程目录同级的 dart-sass* 启动器**：CLI 自包含发布把 Dart Sass
+        // 运行时放在 Flint.exe 旁边（Windows: dart-sass.win-x64/sass.bat；
+        // Linux/macOS: dart-sass.&lt;rid&gt;/sass 脚本）。
+        // 此前只找 sass.bat，Linux/macOS 的 native 包产出 sass 脚本，发布与
+        // 测试布局下永远找不到 → 全部退化为内容直通或编译失败（CI ubuntu 实测）
         var procDir = AppContext.BaseDirectory;
         foreach (var sassDir in Directory.Exists(procDir)
                      ? Directory.EnumerateDirectories(procDir, "dart-sass*")
                      : Array.Empty<string>())
         {
-            candidates.Add(Path.Combine(sassDir, "sass.bat"));
+            foreach (var name in launcherNames)
+            {
+                candidates.Add(Path.Combine(sassDir, name));
+            }
         }
 
-        // 进程目录向上找仓库工具目录（Flint/src/Flint.Cli/bin/…/win-x64 → 上溯 8 层）
+        // 进程目录向上找仓库工具目录（Flint/src/Flint.Cli/bin/…/&lt;rid&gt; → 上溯 8 层）
         var dir = new DirectoryInfo(procDir);
         for (var i = 0; i < 8 && dir is not null; i++)
         {
-            candidates.Add(Path.Combine(dir.FullName, "tools", "dart-sass", "sass.bat"));
+            foreach (var name in launcherNames)
+            {
+                candidates.Add(Path.Combine(dir.FullName, "tools", "dart-sass", name));
+            }
+
             candidates.Add(Path.Combine(dir.FullName, "dart-sass.win-x64", "sass.bat"));
+            candidates.Add(Path.Combine(dir.FullName, "dart-sass.linux-x64", "sass"));
+            candidates.Add(Path.Combine(dir.FullName, "dart-sass.macos-x64", "sass"));
             dir = dir.Parent;
         }
 
@@ -909,6 +922,42 @@ public sealed partial class BuiltinTemplateFunctions
 
         _sassExePath = "";
         return null;
+    }
+
+    /// <summary>
+    /// Dart Sass 的 Linux/macOS native 包用 sass 脚本驱动 src/dart。NuGet 拷贝到
+    /// 输出目录后不保证保留可执行位，脚本 exec dart 会失败；这里尽力补可执行位。
+    /// </summary>
+    internal static void EnsureDartExecutable(string sassScriptPath)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(sassScriptPath);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return;
+            }
+
+            var dart = Path.Combine(directory, "src", "dart");
+            if (!File.Exists(dart))
+            {
+                return;
+            }
+
+            var mode = File.GetUnixFileMode(dart);
+            File.SetUnixFileMode(
+                dart,
+                mode | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+        }
+        catch
+        {
+            // 权限/平台不支持时尽力而为：失败会在进程启动阶段暴露为具体错误
+        }
     }
 
     /// <summary>
@@ -987,9 +1036,19 @@ public sealed partial class BuiltinTemplateFunctions
                 args += " --load-path=\"" + loadPath + "\"";
             }
 
+            var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
+                            sass.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
+            var isShellScript = !isCmdShim &&
+                                !OperatingSystem.IsWindows() &&
+                                Path.GetFileName(sass) == "sass";
+            if (isShellScript)
+            {
+                EnsureDartExecutable(sass);
+            }
+
             var psi = new ProcessStartInfo
             {
-                FileName = sass,
+                FileName = isCmdShim ? "cmd.exe" : isShellScript ? "/bin/sh" : sass,
                 Arguments = args,
                 UseShellExecute = false,
                 RedirectStandardInput = true,
@@ -999,10 +1058,13 @@ public sealed partial class BuiltinTemplateFunctions
                 WorkingDirectory = loadPath ?? ""
             };
             // .bat 必须经 cmd 解析（直接 spawn .bat 在部分 .NET 版本被禁）
-            if (sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
+            if (isCmdShim)
             {
-                psi.FileName = "cmd.exe";
                 psi.Arguments = "/c \"\"" + sass + "\" " + args + "\"";
+            }
+            else if (isShellScript)
+            {
+                psi.Arguments = "\"" + sass + "\" " + args;
             }
 
             string stdout, stderr;

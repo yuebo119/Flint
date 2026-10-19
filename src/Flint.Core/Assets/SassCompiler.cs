@@ -81,7 +81,8 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
         var sass = Flint.Core.Templates.BuiltinTemplateFunctions.LocateSassExecutable()
             ?? throw new InvalidOperationException(
                 "找不到 Dart Sass 可执行文件。请设置 FLINT_SASS、把 sass 加入 PATH，" +
-                "或确保发布目录包含 dart-sass*/sass.bat。");
+                "或确保发布目录包含 dart-sass.win-x64/sass.bat、dart-sass.linux-x64/sass " +
+                "或 dart-sass.macos-x64/sass。");
 
         var tempDirectory = Path.Combine(
             Path.GetTempPath(), "Flint_sass_" + Guid.NewGuid().ToString("N"));
@@ -204,10 +205,18 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
     {
         var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
                         sass.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
+        var isShellScript = !isCmdShim &&
+                            !OperatingSystem.IsWindows() &&
+                            Path.GetFileName(sass) == "sass";
+
+        if (isShellScript)
+        {
+            Flint.Core.Templates.BuiltinTemplateFunctions.EnsureDartExecutable(sass);
+        }
 
         var psi = new ProcessStartInfo
         {
-            FileName = isCmdShim ? "cmd.exe" : sass,
+            FileName = isCmdShim ? "cmd.exe" : isShellScript ? "/bin/sh" : sass,
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -223,6 +232,11 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
         }
         else
         {
+            if (isShellScript)
+            {
+                psi.ArgumentList.Add(sass);
+            }
+
             foreach (var arg in args)
             {
                 psi.ArgumentList.Add(arg);
