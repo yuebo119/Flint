@@ -58,6 +58,13 @@ public sealed class SiteConfig
         .ToArray();
 
     /// <summary>
+    /// 模板引擎策略（FLUID-MIGRATION-PLAN P0-3）：配置键 <c>engine</c>，
+    /// 取值 auto（默认，双轨路由）/ fluid（全站 Fluid）/ scriban（全站 Scriban）。
+    /// 未配置或无法识别时按 auto 处理——现有 Hugo 主题站点行为不变
+    /// </summary>
+    public string Engine { get; init; } = "auto";
+
+    /// <summary>
     /// 是否构建草稿
     /// </summary>
     public bool BuildDrafts { get; init; }

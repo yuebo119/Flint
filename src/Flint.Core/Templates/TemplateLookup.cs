@@ -36,10 +36,20 @@ public sealed record TemplateDescriptor(
 /// </summary>
 public sealed class TemplateLookup
 {
+    /// <summary>模板物理扩展名（不含点）：Scriban 路径为 html，Fluid 路径为 liquid。
+    /// 两个引擎各持一个 lookup 实例，互不共享缓存（FLUID-MIGRATION-PLAN 隔离硬规则）</summary>
+    private readonly string _extension;
+
     private readonly string[] _roots;
 
     public TemplateLookup(string siteTemplatesPath, params string[] themeTemplatePaths)
+        : this(siteTemplatesPath, "html", themeTemplatePaths)
     {
+    }
+
+    public TemplateLookup(string siteTemplatesPath, string templateExtension, params string[] themeTemplatePaths)
+    {
+        _extension = string.IsNullOrEmpty(templateExtension) ? "html" : templateExtension;
         _roots = new[] { siteTemplatesPath }
             .Concat(themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)))
             .ToArray();
@@ -93,7 +103,7 @@ public sealed class TemplateLookup
             // `_default/single.html`、`_partials/x.html` 都是**合法模板**
             //（渲染为空/无输出；主题普遍用空 hook 文件）。唯一的例外是 404：
             // 空 404 模板 Hugo 不产出 404.html，那一步在输出阶段单独判定
-            foreach (var file in Directory.EnumerateFiles(_roots[i], "*.html", SearchOption.AllDirectories))
+            foreach (var file in Directory.EnumerateFiles(_roots[i], "*." + _extension, SearchOption.AllDirectories))
             {
                 list.Add(Describe(
                     Path.GetRelativePath(_roots[i], file).Replace('\\', '/'),
@@ -137,13 +147,13 @@ public sealed class TemplateLookup
                 // 同一候选级内：直接形态优先于 `_default/` 兜底形态。
                 // 裸名的两级顺序（`_default/{name}` 在 `{name}` 之前）由
                 // PageTemplateCandidates.Build 的候选表给出，这里只管级内形态顺序
-                if (index.TryGetValue(PathKey(rootOrder, relative + ".html"), out var direct))
+                if (index.TryGetValue(PathKey(rootOrder, relative + "." + _extension), out var direct))
                 {
                     return direct;
                 }
 
                 if (level.AllowDefaultForm &&
-                    index.TryGetValue(PathKey(rootOrder, "_default/" + relative + ".html"), out var fallback))
+                    index.TryGetValue(PathKey(rootOrder, "_default/" + relative + "." + _extension), out var fallback))
                 {
                     return fallback;
                 }
@@ -195,9 +205,9 @@ public sealed class TemplateLookup
     public string? ResolveExact(string relativeName)
     {
         var normalized = relativeName.Replace('\\', '/');
-        if (normalized.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        if (normalized.EndsWith("." + _extension, StringComparison.OrdinalIgnoreCase))
         {
-            normalized = normalized[..^5];
+            normalized = normalized[..^(_extension.Length + 1)];
         }
 
         var descriptors = _descriptorCache ??= ScanAll();
@@ -229,7 +239,7 @@ public sealed class TemplateLookup
 
         // 直查兜底：描述符缓存快照之后新增的模板文件
         var directRoot = _roots.Length > 0 ? _roots[0] : string.Empty;
-        var direct = Path.Combine(directRoot, normalized + ".html");
+        var direct = Path.Combine(directRoot, normalized + "." + _extension);
         return File.Exists(direct) ? direct : null;
     }
 
@@ -269,7 +279,7 @@ public sealed class TemplateLookup
             {
                 return direct;
             }
-            var directHtml = Path.ChangeExtension(direct, ".html");
+            var directHtml = Path.ChangeExtension(direct, "." + _extension);
             if (File.Exists(directHtml))
             {
                 return directHtml;
@@ -290,7 +300,7 @@ public sealed class TemplateLookup
             {
                 continue;
             }
-            foreach (var file in Directory.EnumerateFiles(root, "*.html", SearchOption.AllDirectories))
+            foreach (var file in Directory.EnumerateFiles(root, "*." + _extension, SearchOption.AllDirectories))
             {
                 list.Add(Describe(Path.GetRelativePath(root, file).Replace('\\', '/'), file, i));
             }
@@ -302,13 +312,13 @@ public sealed class TemplateLookup
     /// "{name}.{format}.html" → (baseName="name", format)；"name.html"/"name" → (name, null)。
     /// 只切最后一个双段（a/b/single.json.html → base=a/b/single、format=json）
     /// </summary>
-    internal static (string BaseName, string? OutputFormat) SplitRequest(string requestName)
+    internal (string BaseName, string? OutputFormat) SplitRequest(string requestName)
     {
         var normalized = requestName.Replace('\\', '/');
-        // 剥 .html 扩展名
-        if (normalized.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+        // 剥模板扩展名（html / liquid）
+        if (normalized.EndsWith("." + _extension, StringComparison.OrdinalIgnoreCase))
         {
-            normalized = normalized[..^5];
+            normalized = normalized[..^(_extension.Length + 1)];
         }
         var lastDot = normalized.LastIndexOf('.');
         return lastDot > 0
@@ -316,7 +326,7 @@ public sealed class TemplateLookup
             : (normalized, null);
     }
 
-    private static TemplateDescriptor Describe(string relative, string physicalPath, int rootOrder)
+    private TemplateDescriptor Describe(string relative, string physicalPath, int rootOrder)
     {
         // 相对路径段：layouts/_default/single.html → _default/single.html（Flint 约定中
         // 构造参数即 layouts 目录，故段 0 就是 kind/输出格式载体）
@@ -333,10 +343,10 @@ public sealed class TemplateLookup
     /// 与请求侧 SplitRequest 产出的 baseName 同构（LogicalName 恒带 .html，
     /// 直接比较恒 false，会使精确分永不触发）
     /// </summary>
-    private static string BuildMatchName(string normalized)
+    private string BuildMatchName(string normalized)
     {
-        var noHtml = normalized.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
-            ? normalized[..^5]
+        var noHtml = normalized.EndsWith("." + _extension, StringComparison.OrdinalIgnoreCase)
+            ? normalized[..^(_extension.Length + 1)]
             : normalized;
         var fileName = Path.GetFileName(noHtml);
         var dot = fileName.IndexOf('.', StringComparison.Ordinal);

@@ -53,7 +53,10 @@ internal static class ServeHandler
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Select(t => Path.Combine(sourcePath, "themes", t, "layouts"))
                 .ToArray();
-            var templateRenderer = new ScribanTemplateRenderer(
+            // 双引擎（FLUID-MIGRATION-PLAN，与 BuildHandler 同构）：Fluid 渲染
+            // .liquid 与 Fluid 原生站点内置回退，Scriban 渲染 Hugo 主题 .html；
+            // router 按配置 engine 策略（默认 auto 双轨）分派
+            var scribanRenderer = new ScribanTemplateRenderer(
                 Path.Combine(sourcePath, "layouts"),
                 config.BaseURL,
                 new TemplateEnvironmentInfo
@@ -73,9 +76,18 @@ internal static class ServeHandler
                         .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
                 ]),
                 themeLayoutDirs);
+            var templateRenderer = new TemplateEngineRouter(
+                new FluidTemplateRenderer(
+                    Path.Combine(sourcePath, "layouts"),
+                    config.BaseURL,
+                    builtins: null,
+                    themeLayoutDirs),
+                scribanRenderer,
+                TemplateEngineRouter.ParsePolicy(config));
 
-            // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染
-            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), templateRenderer, themeLayoutDirs);
+            // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。
+            // 钩子模板恒 .html（Hugo 主题形态），直连 Scriban 渲染器——不经 router
+            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), scribanRenderer, themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,
                 new ShortcodeProcessor { EnableInlineShortcodes = config.EnableInlineShortcodes });

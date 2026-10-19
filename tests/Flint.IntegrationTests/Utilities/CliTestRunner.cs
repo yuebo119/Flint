@@ -300,13 +300,22 @@ public sealed class CliTestRunner : IDisposable
     /// <param name="siteName">站点名称</param>
     /// <param name="workingDirectory">工作目录</param>
     /// <param name="cancellationToken">取消令牌</param>
+    /// <param name="engine">模板引擎（FLUID-MIGRATION-PLAN P2-3）：null = CLI 默认（fluid）；
+    /// "scriban" 走 --engine scriban 生成旧 .html 脚手架</param>
     /// <returns>命令执行结果</returns>
     public ValueTask<CliResult> NewSiteAsync(
         string siteName,
         string? workingDirectory = null,
+        string? engine = null,
         CancellationToken cancellationToken = default)
     {
-        return RunAsync(new[] { "new", "site", siteName }, workingDirectory, cancellationToken: cancellationToken);
+        var args = new List<string> { "new", "site", siteName };
+        if (!string.IsNullOrWhiteSpace(engine))
+        {
+            args.Add("--engine");
+            args.Add(engine);
+        }
+        return RunAsync([.. args], workingDirectory, cancellationToken: cancellationToken);
     }
 
     /// <summary>
@@ -544,6 +553,17 @@ public sealed class CliTestRunner : IDisposable
             // 从 tests/Flint.IntegrationTests/bin/Debug/net10.0 到 src/publish 需要向上 5 级
             Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "publish", "Flint.exe"),
             Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "publish", "Flint"),
+            // 当前 TFM（net11.0，见 Directory.Build.props）优先——net10.0 旧二进制
+            // 在本机无对应运行时，进程启动失败会让全部 E2E 测试静默变红
+            //（exit!=0 且无 stderr，2026-10-19 双引擎迁移实测）
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "win-x64", "Flint.exe"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "win-x64", "Flint"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "win-x64", "Flint.exe"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "win-x64", "Flint"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "Flint.exe"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "Flint"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "Flint.exe"),
+            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "Flint"),
             
             // 在解决方案目录结构中查找（非 AOT 版本，带 RID 子目录）
             // 从 tests/Flint.IntegrationTests/bin/Debug/net10.0 到 src/Flint.Cli/bin/Debug/net10.0/win-x64 需要向上 5 级

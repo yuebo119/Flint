@@ -307,6 +307,41 @@ bash demo-sites/demo-stop.sh             # 停止所有服务
 新引擎改动**必须**至少跑 `blast radius` 内的主题（改动涉及的模板函数被哪些
 主题使用）；宣称"全矩阵通过"必须附 21 主题的通过数。
 
+### 8.4 模板引擎双轨隔离规范（2026-10-19 起，FLUID-MIGRATION-PLAN）
+
+Flint 自 2026-10-19 起为双模板引擎：Fluid（Liquid）主力 + Scriban 兼容层
+（路由规则见 `docs/FLUID-MIGRATION-PLAN.md` §一.3）。本章是两条引擎热路径的
+隔离硬规则，违反即架构回退。
+
+#### 8.4.1 路由规则 `[机械]`
+
+路由唯一入口是 `TemplateEngineRouter : ITemplateRenderer`（构造点仅
+`BuildHandler`/`ServeHandler`，`SiteBuilder` 只依赖接口）：
+
+| 模板来源 | 引擎 |
+|---|---|
+| 站点 `layouts/**/*.liquid` | Fluid |
+| Fluid 原生站点（layouts 含任一 `.liquid`）的内置回退模板 | Fluid |
+| Hugo 主题 `layouts/**/*.html` | Scriban |
+| ThemeMigrator 输出 `.html` | Scriban |
+| 显式 `engine: scriban` | 全站 Scriban |
+| 显式 `engine: fluid` | 全站 Fluid |
+
+#### 8.4.2 隔离硬规则 `[机械]`
+
+Fluid 热路径（`FluidTemplateRenderer`、`FluidBuiltinTemplateProvider`、
+Liquid 版函数/短代码/render hooks）禁止出现：
+
+- `Scriban.Template` / `ScriptObject` / `BuiltinTemplateFunctions` 静态调用
+- Scriban 模板缓存、依赖缓存、资源追踪器（`FileTemplateLoader` 等）
+
+允许共享（输入模型与输出侧）：`PageContext` / `SiteContext` / `Params`、
+模板查找顺序与主题叠加语义、输出写盘/指纹/SRI、短代码与 render hooks 的
+服务接口（默认实现可仍为 Scriban）。
+
+承载物：装配验证测试（Fluid 渲染路径不得引用 Scriban 程序集）+
+运行期装配探针（P6-3）。新增 Fluid 侧代码先对照本表再动手。
+
 ---
 
 ## 9. 文档规范

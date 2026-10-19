@@ -8,11 +8,17 @@ namespace Flint.Cli;
 /// </summary>
 internal static class SiteCreator
 {
+    /// <summary>引擎选项：fluid（默认，FLUID-MIGRATION-PLAN P2-3 起新站点默认 Liquid）/ scriban（兼容模式）</summary>
+    internal const string EngineFluid = "fluid";
+    internal const string EngineScriban = "scriban";
+
     /// <summary>
     /// 创建新站点目录结构和默认文件
     /// </summary>
+    /// <param name="name">站点名称</param>
+    /// <param name="engine">模板引擎：fluid（默认，生成 .liquid 脚手架）/ scriban（生成 .html 脚手架）</param>
     /// <returns>0 表示成功，1 表示失败</returns>
-    public static int CreateNewSite(string name)
+    public static int CreateNewSite(string name, string engine = EngineFluid)
     {
         // 验证站点名称
         if (string.IsNullOrWhiteSpace(name))
@@ -31,6 +37,9 @@ internal static class SiteCreator
             Console.ResetColor();
             return 1;
         }
+
+        // 引擎参数归一：无法识别按 fluid（新站点默认主力引擎）
+        var useFluid = !string.Equals(engine, EngineScriban, StringComparison.OrdinalIgnoreCase);
 
         var sitePath = Path.Combine(Directory.GetCurrentDirectory(), name);
 
@@ -77,7 +86,9 @@ internal static class SiteCreator
             CreateDefaultArchetype(sitePath);
 
             // 创建默认布局模板
-            CreateDefaultLayouts(sitePath);
+            // 创建默认布局模板（FLUID-MIGRATION-PLAN P2-3：默认 Liquid 脚手架，
+            // --engine scriban 生成旧 .html 形态）
+            CreateDefaultLayouts(sitePath, useFluid);
 
             // 创建示例内容
             CreateWelcomeContent(sitePath);
@@ -86,6 +97,7 @@ internal static class SiteCreator
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"站点 '{name}' 创建成功！");
             Console.ResetColor();
+            Console.WriteLine($"  模板引擎: {(useFluid ? "Fluid (Liquid)" : "Scriban")}");
             Console.WriteLine();
             Console.WriteLine("下一步:");
             Console.WriteLine($"  cd {name}");
@@ -190,7 +202,280 @@ internal static class SiteCreator
         Console.WriteLine("  创建模板: archetypes/default.md");
     }
 
-    private static void CreateDefaultLayouts(string sitePath)
+    private static void CreateDefaultLayouts(string sitePath, bool useFluid)
+    {
+        if (useFluid)
+        {
+            CreateLiquidLayouts(sitePath);
+            return;
+        }
+        CreateScribanLayouts(sitePath);
+    }
+
+    /// <summary>
+    /// Liquid 版脚手架（FLUID-MIGRATION-PLAN P2-3）：新站点默认形态。
+    /// 与 Scriban 版同构（同目录同职责），语法差异仅限：
+    /// include 无扩展名、循环/条件用 Liquid 标签、下划线标签 trim 空白
+    /// </summary>
+    private static void CreateLiquidLayouts(string sitePath)
+    {
+        // head.liquid - 头部 partial
+        var headContent = """
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{% if page.title %}{{ page.title }} | {% endif %}{{ site.title }}</title>
+            <meta name="description" content="{% if page.description %}{{ page.description }}{% else %}{{ site.params.description }}{% endif %}">
+            <style>
+                * { box-sizing: border-box; margin: 0; padding: 0; }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }
+                header { border-bottom: 1px solid #eee; padding-bottom: 20px; margin-bottom: 30px; }
+                header h1 { font-size: 1.5rem; }
+                nav { margin-top: 10px; }
+                nav a { margin-right: 15px; color: #0066cc; text-decoration: none; }
+                nav a:hover { text-decoration: underline; }
+                main { min-height: 60vh; }
+                article { margin-bottom: 40px; }
+                article h1 { font-size: 2rem; margin-bottom: 10px; }
+                article .meta { color: #666; font-size: 0.9rem; margin-bottom: 20px; }
+                article .content { line-height: 1.8; }
+                article .content h2 { margin-top: 30px; margin-bottom: 15px; }
+                article .content p { margin-bottom: 15px; }
+                article .content code { background: #f5f5f5; padding: 2px 6px; border-radius: 3px; }
+                article .content pre { background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; margin-bottom: 15px; }
+                footer { border-top: 1px solid #eee; padding-top: 20px; margin-top: 40px; color: #666; font-size: 0.9rem; }
+                .post-list { list-style: none; }
+                .post-list li { margin-bottom: 20px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+                .post-list h2 { font-size: 1.3rem; margin-bottom: 5px; }
+                .post-list h2 a { color: #333; text-decoration: none; }
+                .post-list h2 a:hover { color: #0066cc; }
+                .post-list .meta { color: #666; font-size: 0.85rem; }
+            </style>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "partials", "head.liquid"), headContent);
+        Console.WriteLine("  创建布局: layouts/partials/head.liquid");
+
+        // header.liquid - 页头 partial
+        var headerContent = """
+            <header>
+                <h1><a href="/" style="color: inherit; text-decoration: none;">{{ site.title }}</a></h1>
+                <nav>
+                    {% for item in site.menus.main %}
+                    <a href="{{ item.url }}">{{ item.name }}</a>
+                    {% endfor %}
+                </nav>
+            </header>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "partials", "header.liquid"), headerContent);
+        Console.WriteLine("  创建布局: layouts/partials/header.liquid");
+
+        // footer.liquid - 页脚 partial（年份经 date filter 的 %Y 取构建年）
+        var footerContent = """
+            <footer>
+                <p>&copy; {{ site.build_date | date: '%Y' }} {{ site.title }}. Powered by <a href="https://github.com/yuebo119/Flint">Flint</a>.</p>
+            </footer>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "partials", "footer.liquid"), footerContent);
+        Console.WriteLine("  创建布局: layouts/partials/footer.liquid");
+
+        // baseof.liquid - 基础布局（不再使用，但保留作为参考）
+        var baseofContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            {{ page.content }}
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "_default", "baseof.liquid"), baseofContent);
+        Console.WriteLine("  创建布局: layouts/_default/baseof.liquid");
+
+        // single.liquid - 单页布局（完整独立模板）
+        var singleContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            <article>
+                <h1>{{ page.title }}</h1>
+                <div class="meta">
+                    {% if page.date %}
+                    <time>{{ page.date }}</time>
+                    {% endif %}
+                    {% if page.reading_time.total_minutes %}
+                    · {{ page.reading_time.total_minutes | round }} 分钟阅读
+                    {% endif %}
+                </div>
+                <div class="content">
+                    {{ page.content }}
+                </div>
+                {% if page.tags.size > 0 %}
+                <div class="tags" style="margin-top: 30px;">
+                    标签:
+                    {% for tag in page.tags %}
+                    <a href="/tags/{{ tag | downcase }}/">{{ tag }}</a>{% unless forloop.last %}, {% endunless %}
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </article>
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "_default", "single.liquid"), singleContent);
+        Console.WriteLine("  创建布局: layouts/_default/single.liquid");
+
+        // list.liquid - 列表布局
+        var listContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            <h1>{{ page.title | default: "文章列表" }}</h1>
+            <ul class="post-list">
+                {% for post in site.regular_pages %}
+                <li>
+                    <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+                    <div class="meta">
+                        {% if post.date %}
+                        <time>{{ post.date }}</time>
+                        {% endif %}
+                    </div>
+                    {% if post.summary %}
+                    <p>{{ post.summary }}</p>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "_default", "list.liquid"), listContent);
+        Console.WriteLine("  创建布局: layouts/_default/list.liquid");
+
+        // taxonomy.liquid - 分类法列表布局
+        var taxonomyContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            <h1>{{ page.title | default: "分类" }}</h1>
+            <ul class="post-list">
+                {% for term in page.terms %}
+                <li>
+                    <h2><a href="{{ term.permalink }}">{{ term.name }}</a> ({{ term.count }})</h2>
+                </li>
+                {% endfor %}
+            </ul>
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "_default", "taxonomy.liquid"), taxonomyContent);
+        Console.WriteLine("  创建布局: layouts/_default/taxonomy.liquid");
+
+        // term.liquid - 分类法术语页面布局
+        var termContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            <h1>{{ page.title }}</h1>
+            <ul class="post-list">
+                {% for post in page.pages %}
+                <li>
+                    <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+                    <div class="meta">
+                        {% if post.date %}
+                        <time>{{ post.date }}</time>
+                        {% endif %}
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "_default", "term.liquid"), termContent);
+        Console.WriteLine("  创建布局: layouts/_default/term.liquid");
+
+        // index.liquid - 首页布局（最新 5 篇经 slice filter 截取）
+        var indexContent = """
+            <!DOCTYPE html>
+            <html lang="{{ site.language }}">
+            <head>
+            {% include 'partials/head' %}
+            </head>
+            <body>
+            {% include 'partials/header' %}
+            <main>
+            <h1>欢迎来到 {{ site.title }}</h1>
+            <p>{{ site.params.description }}</p>
+
+            <h2 style="margin-top: 40px;">最新文章</h2>
+            <ul class="post-list">
+                {% assign recent = site.regular_pages | slice: 0, 5 %}
+                {% for post in recent %}
+                <li>
+                    <h2><a href="{{ post.permalink }}">{{ post.title }}</a></h2>
+                    <div class="meta">
+                        {% if post.date %}
+                        <time>{{ post.date }}</time>
+                        {% endif %}
+                    </div>
+                    {% if post.summary %}
+                    <p>{{ post.summary }}</p>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            </main>
+            {% include 'partials/footer' %}
+            </body>
+            </html>
+            """;
+
+        File.WriteAllText(Path.Combine(sitePath, "layouts", "index.liquid"), indexContent);
+        Console.WriteLine("  创建布局: layouts/index.liquid");
+    }
+
+    private static void CreateScribanLayouts(string sitePath)
     {
         // head.html - 头部 partial
         var headContent = """

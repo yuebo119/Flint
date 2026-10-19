@@ -100,15 +100,27 @@ internal static class BuildHandler
                 IsMultilingual = siteConfig.Languages.Count > 0,
                 WorkingDir = sourcePath
             };
-            var templateRenderer = new ScribanTemplateRenderer(
+            // 双引擎（FLUID-MIGRATION-PLAN）：Fluid 渲染 .liquid 与 Fluid 原生
+            // 站点内置回退，Scriban 渲染 Hugo 主题 .html 与兼容内置；router 按
+            // 配置 engine 策略（默认 auto 双轨）分派，SiteBuilder 只依赖接口
+            var scribanRenderer = new ScribanTemplateRenderer(
                 Path.Combine(sourcePath, "layouts"),
                 siteConfig.BaseURL,
                 environment,
                 resourceProvider,
                 themeLayoutDirs);
+            var templateRenderer = new TemplateEngineRouter(
+                new FluidTemplateRenderer(
+                    Path.Combine(sourcePath, "layouts"),
+                    siteConfig.BaseURL,
+                    builtins: null,
+                    themeLayoutDirs),
+                scribanRenderer,
+                TemplateEngineRouter.ParsePolicy(siteConfig));
 
-            // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染
-            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), templateRenderer, themeLayoutDirs);
+            // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。
+            // 钩子模板恒 .html（Hugo 主题形态），直连 Scriban 渲染器——不经 router
+            var renderHooks = RenderHooks.Load(Path.Combine(sourcePath, "layouts"), scribanRenderer, themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,
                 new ShortcodeProcessor { EnableInlineShortcodes = siteConfig.EnableInlineShortcodes });

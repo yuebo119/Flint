@@ -16,6 +16,8 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     private readonly string _basePath;
     // include 的主题回退目录（与页面模板查找同序：站点优先，主题按序回退）
     private readonly string[] _themeBasePaths;
+    // 内置模板提供者（P2-1）：不再直接依赖 ScribanTemplateRenderer 的静态字典
+    private readonly IBuiltinTemplateProvider _builtins;
 
     /// <summary>根目录缓存（Roots 每次访问都新建 List——partial 高频调用下是纯浪费）</summary>
     private string[]? _rootsCache;
@@ -37,10 +39,14 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc, long Length)> _textCache =
         new(StringComparer.OrdinalIgnoreCase);
 
-    public FileTemplateLoader(string basePath, params string[] themeBasePaths)
+    public FileTemplateLoader(
+        string basePath,
+        IBuiltinTemplateProvider? builtins = null,
+        params string[] themeBasePaths)
     {
         _basePath = basePath;
         _themeBasePaths = themeBasePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
+        _builtins = builtins ?? ScribanBuiltinTemplateProvider.Default;
     }
 
     private string[] Roots
@@ -204,7 +210,7 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         // pagination / google_analytics 这类内置模板会解析失败——ananke/papermod/
         // loveit 实测 14 处）
         builtinKey = StripPartialsPrefix(builtinKey);
-        if (ScribanTemplateRenderer.BuiltinTemplates.ContainsKey(builtinKey))
+        if (_builtins.TryGetTemplate(builtinKey, out _))
         {
             return BuiltinPrefix + builtinKey;
         }
@@ -267,7 +273,7 @@ internal sealed class FileTemplateLoader : ITemplateLoader
         if (templatePath.StartsWith(BuiltinPrefix, StringComparison.Ordinal))
         {
             var name = templatePath[BuiltinPrefix.Length..];
-            if (ScribanTemplateRenderer.BuiltinTemplates.TryGetValue(name, out var builtinContent))
+            if (_builtins.TryGetTemplate(name, out var builtinContent))
             {
                 return builtinContent;
             }

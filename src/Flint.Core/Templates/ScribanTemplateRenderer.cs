@@ -28,6 +28,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
     private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _dependencyCache = new();
     private readonly BuiltinTemplateFunctions _builtinFunctions;
     private readonly ITemplateLoader _templateLoader;
+    // 内置模板提供者（P2-1）：BuiltinTemplates 静态字典经本字段消费，
+    // FileTemplateLoader 持同一实例——两条取内置模板的路径同源
+    private readonly IBuiltinTemplateProvider _builtins;
     private volatile bool _precompiled;
 
     /// <summary>
@@ -42,7 +45,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
-        _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _builtins = ScribanBuiltinTemplateProvider.Default;
+        _templateLoader = new FileTemplateLoader(templatesPath, _builtins, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
         _builtinFunctions.ErrorReporter = _templateErrors.Enqueue;
@@ -102,7 +106,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl, resources, environment);
-        _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _builtins = ScribanBuiltinTemplateProvider.Default;
+        _templateLoader = new FileTemplateLoader(templatesPath, _builtins, themeTemplatePaths);
         _timeProvider = TimeProvider.System;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
         _builtinFunctions.ErrorReporter = _templateErrors.Enqueue;
@@ -141,7 +146,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
-        _templateLoader = new FileTemplateLoader(templatesPath, themeTemplatePaths);
+        _builtins = ScribanBuiltinTemplateProvider.Default;
+        _templateLoader = new FileTemplateLoader(templatesPath, _builtins, themeTemplatePaths);
         _timeProvider = timeProvider;
         _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
         InstallShortcodeContext();
@@ -410,7 +416,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         var cacheKey = "builtin:" + builtinName;
         if (!_templateCache.TryGetValue(cacheKey, out var cached))
         {
-            if (!BuiltinTemplates.TryGetValue(builtinName, out var builtinContent))
+            if (!_builtins.TryGetTemplate(builtinName, out var builtinContent))
             {
                 throw new TemplateNotFoundException(builtinName, []);
             }
@@ -484,12 +490,10 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
         FlintTemplateContext context,
         CancellationToken cancellationToken = default)
     {
+        // .liquid 文件由 FluidTemplateRenderer 渲染（TemplateEngineRouter 路由），
+        // Scriban 路径不再持有 Fluid 分支（FLUID-MIGRATION-PLAN 隔离硬规则：
+        // 两条引擎热路径互不引用）
         var content = await File.ReadAllTextAsync(filePath, cancellationToken);
-
-        if (filePath.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase))
-        {
-            return await FluidLiquidRenderer.RenderAsync(content, context, cancellationToken);
-        }
 
         var template = Template.Parse(content, filePath);
         if (template.HasErrors)
@@ -2088,11 +2092,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 }
             }
         }
-        catch (TemplateNotFoundException) when (BuiltinTemplates.ContainsKey(templateName))
+        catch (TemplateNotFoundException) when (_builtins.TryGetTemplate(templateName, out _))
         {
             // 内置回退模板（对齐 Hugo embedded templates）：最小站点缺 taxonomy/term/list
             // 等布局时以极简内置模板兜底，而非构建报错
-            content = BuiltinTemplates[templateName];
+            content = _builtins.TryGetTemplate(templateName, out var builtin) ? builtin : "";
             var template = Template.Parse(content, $"builtin:{templateName}");
             _templateCache[templateName] = new CachedTemplate(template, null, DateTime.MinValue);
             return template;
@@ -2139,9 +2143,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
                 }
             }
         }
-        catch (TemplateNotFoundException) when (BuiltinTemplates.ContainsKey(templateName))
+        catch (TemplateNotFoundException) when (_builtins.TryGetTemplate(templateName, out _))
         {
-            content = BuiltinTemplates[templateName];
+            content = _builtins.TryGetTemplate(templateName, out var builtin) ? builtin : "";
             var template = Template.Parse(content, $"builtin:{templateName}");
             _templateCache[templateName] = new CachedTemplate(template, null, DateTime.MinValue);
             return template;

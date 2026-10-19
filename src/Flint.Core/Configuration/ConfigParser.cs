@@ -221,6 +221,10 @@ public static partial class ConfigParser
             Title = GetDictString(dict, "title") ?? "Untitled Site",
             LanguageCode = GetDictString(dict, "languageCode") ?? GetDictString(dict, "languagecode") ?? "en",
             Theme = GetDictString(dict, "theme") ?? "",
+            // 模板引擎策略（FLUID-MIGRATION-PLAN P0-3）：auto / fluid / scriban，
+            // 未配置按 auto（双轨路由）。无法识别的值同样回落 auto——
+            // 策略解析集中在 TemplateEngineRouter，配置层只透传字符串
+            Engine = GetDictString(dict, "engine") ?? GetDictString(dict, "templateengine") ?? "auto",
             BuildDrafts = GetDictBool(dict, "buildDrafts") ?? GetDictBool(dict, "builddrafts") ?? false,
             BuildFuture = GetDictBool(dict, "buildFuture") ?? GetDictBool(dict, "buildfuture") ?? false,
             BuildExpired = GetDictBool(dict, "buildExpired") ?? GetDictBool(dict, "buildexpired") ?? false,
@@ -693,6 +697,12 @@ public static partial class ConfigParser
 
         if (!string.IsNullOrEmpty(config.Copyright))
             dict["copyright"] = config.Copyright;
+
+        // engine 仅写回非默认值：默认 auto 不出现在序列化产物里，
+        // 既有"加载→保存"基线不受新增键影响
+        if (!string.IsNullOrEmpty(config.Engine) &&
+            !string.Equals(config.Engine, "auto", StringComparison.OrdinalIgnoreCase))
+            dict["engine"] = config.Engine;
 
         if (config.DisableKinds.Count > 0)
             dict["disableKinds"] = config.DisableKinds.ToList();

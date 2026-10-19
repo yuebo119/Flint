@@ -1,0 +1,826 @@
+// Flint 静态站点生成器
+// Fluid（Liquid）模板渲染器（FLUID-MIGRATION-PLAN P1-1~P1-5）：新站点主力引擎，
+// 与 ScribanTemplateRenderer 平行实现 ITemplateRenderer，不共享缓存/依赖表/
+// 资源追踪器（隔离硬规则见 docs/CONVENTIONS.md §8.4.2）。
+//
+// 第一版能力边界（方案 §二.3）：
+// - 模板加载/查找/缓存/mtime 失效（.liquid 扩展名，主题回退同序）
+// - 渲染期依赖追踪（顶层模板 + include 实际命中的物理路径）
+// - 模型直绑 PageContext/SiteContext/Params（snake_case 成员映射 +
+//   Params 用 OrdinalIgnoreCase 字典）
+// - partial/include 的 Liquid 版（Fluid include/render 标签 → Flint 模板加载器）
+// - GeneratedResources 返回空（资源函数 Phase 4 再接）
+
+using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Text;
+using Flint.Core.Abstractions;
+using Flint.Core.Configuration;
+using Fluid;
+using FlintTemplateContext = Flint.Core.Abstractions.TemplateContext;
+using FluidTemplateContext = Fluid.TemplateContext;
+
+namespace Flint.Core.Templates;
+
+/// <summary>
+/// 基于 Fluid 的 Liquid 模板渲染器：只认 <c>.liquid</c> 物理模板，
+/// Hugo 主题 <c>.html</c> 模板由 Scriban 渲染器负责（路由见 TemplateEngineRouter）
+/// </summary>
+public sealed partial class FluidTemplateRenderer : ITemplateRenderer
+{
+    /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）</summary>
+    private sealed record CachedTemplate(IFluidTemplate Template, string? SourcePath, DateTime ModifiedTimeUtc);
+
+    private readonly string _templatesPath;
+    // 主题布局回退目录（与 Scriban 侧同序：站点优先、主题按序回退）
+    private readonly string[] _themeTemplatePaths;
+    private readonly TemplateLookup _lookup;
+    private readonly FluidParser _parser;
+    private readonly TemplateOptions _options;
+    private readonly IBuiltinTemplateProvider? _builtins;
+    private readonly ConcurrentDictionary<string, CachedTemplate> _templateCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _dependencyCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TimeProvider _timeProvider;
+
+    /// <summary>AmbientValues 键：本次渲染收集的依赖物理路径集合（随 TemplateContext 生命周期）</summary>
+    private const string DepsKey = "__flint_fluid_deps";
+
+    /// <summary>mtime 短窗缓存（与 Scriban 渲染器同口径：NTFS 元数据查询每次 20-50μs）</summary>
+    private readonly ConcurrentDictionary<string, (DateTime CachedAtUtc, DateTime MtimeUtc)> _mtimeCache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MtimeCacheTtl = TimeSpan.FromMilliseconds(50);
+
+    /// <summary>
+    /// 创建 Fluid 模板渲染器
+    /// </summary>
+    /// <param name="templatesPath">模板目录路径（站点 layouts）</param>
+    /// <param name="baseUrl">站点基础 URL（资源函数预留，Phase 4 接入）</param>
+    /// <param name="builtins">内置模板提供者（缺省回退模板的 Liquid 版）；null = 无内置兜底</param>
+    /// <param name="themeTemplatePaths">主题布局回退目录（按序回退）</param>
+    // NativeAOT 保留清单：Fluid 的 DefaultMemberAccessStrategy 经反射
+    // （Type.GetProperty）解析模型成员，裁剪后属性元数据缺失时**静默失败**
+    // （模板成员全部取空、结构正常——AOT 冒烟实证，2026-10-19）。对模型类型
+    // 逐一保留 PublicProperties 是精准解；整程序集 TrimmerRootAssembly 是
+    // 粗放解（体积极小化优先，本清单随模型类型演进而维护）
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PageContext))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(SiteContext))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PaginatorView))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PaginatorPageGroup))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TaxonomyTerm))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TaxonomyCollection))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(MenuItem))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(MenuCollection))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(MarkdownHeading))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(MenuItemConfig))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(SiteConfig))]
+    // TimeSpan/DateTimeOffset：page.reading_time / page.date 等 corelib 成员的
+    // 属性元数据同样会被裁剪（AOT 冒烟实证 TotalMinutes 取空）；
+    // ReadingTimeView 是 reading_time 的注册访问器返回类型
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TimeSpan))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(DateTimeOffset))]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(ReadingTimeView))]
+    public FluidTemplateRenderer(
+        string templatesPath,
+        string baseUrl = "",
+        IBuiltinTemplateProvider? builtins = null,
+        params string[] themeTemplatePaths)
+        : this(templatesPath, baseUrl, TimeProvider.System, builtins, themeTemplatePaths)
+    {
+    }
+
+    /// <summary>测试专用构造：时间源可注入</summary>
+    public FluidTemplateRenderer(
+        string templatesPath,
+        string baseUrl,
+        TimeProvider timeProvider,
+        IBuiltinTemplateProvider? builtins = null,
+        params string[] themeTemplatePaths)
+    {
+        _templatesPath = templatesPath;
+        _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
+        _timeProvider = timeProvider;
+        _builtins = builtins ?? new FluidBuiltinTemplateProvider();
+        _lookup = new TemplateLookup(templatesPath, "liquid", _themeTemplatePaths);
+        _parser = new FluidParser();
+
+        // page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
+        // FluidValue.Create 会把 TimeSpan 转成 DateTimeValue（纪元+时长），
+        // 使 reading_time.total_minutes 取空（探针 + AOT 冒烟实证）——
+        // 注册访问器优先于反射，返回保真视图
+        var memberStrategy = new FlintMemberAccessStrategy();
+        MemberAccessStrategyExtensions.Register<PageContext, ReadingTimeView>(
+            memberStrategy, "ReadingTime", static (page, _) => new ReadingTimeView(page.ReadingTime));
+        // site.menus.main / site.taxonomies.categories：C# 索引器不能经 Fluid
+        // 成员语法访问，注册类型级访问器把成员名路由到索引器（缺失键空集合，
+        // 与 Scriban 的 ScriptObject 键查找同语义）
+        MemberAccessStrategyExtensions.Register<MenuCollection>(memberStrategy, new IndexerMemberAccessor(
+            static (inst, name) => ((MenuCollection)inst)[name]));
+        MemberAccessStrategyExtensions.Register<TaxonomyCollection>(memberStrategy, new IndexerMemberAccessor(
+            static (inst, name) => ((TaxonomyCollection)inst)[name]));
+
+        _options = new TemplateOptions
+        {
+            // snake_case 成员映射（page.word_count → WordCount）+ 默认大小写不敏感
+            MemberAccessStrategy = memberStrategy,
+            // 模型名比较器：OrdinalIgnoreCase（Fluid 默认值，显式声明契约）
+            ModelNamesComparer = StringComparer.OrdinalIgnoreCase,
+            // include/render 的模板解析委派 Flint 模板加载器（根序 + partials 形态 +
+            // 内置回退），不用 Fluid 的文件系统提供者
+            FileProvider = new DelegateTemplateFileProvider(ResolveIncludeAsync),
+            // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开引擎侧限制）
+            MaxRecursion = 0,
+            MaxSteps = 0
+        };
+    }
+
+    /// <summary>
+    /// 页面感知渲染（A 组查找链）：候选链解析 → 物理 <c>.liquid</c> 模板 /
+    /// 内置兜底 → 渲染。候选链全部未命中且无内置兜底时抛
+    /// <see cref="TemplateNotFoundException"/>（SiteBuilder 据此 Skip/Error）
+    /// </summary>
+    public async ValueTask<string> RenderPageAsync(
+        PageTemplateQuery query,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var path = ResolvePageTemplatePath(query);
+        if (path is null)
+        {
+            // 内置兜底（对齐 Hugo embedded templates）：kind → 内置模板名。
+            // 仅 html 格式——内置模板是 HTML 形态，格式变体不适用
+            var builtinName = BuiltinNameForKind(query.Kind);
+            if (builtinName is not null && IsHtmlOutputFormat(query.OutputFormat) &&
+                _builtins is not null && _builtins.TryGetTemplate(builtinName, out var builtinContent))
+            {
+                return await RenderBuiltinAsync(builtinName, builtinContent, context, cancellationToken);
+            }
+
+            throw new TemplateNotFoundException(
+                DescribePageQuery(query),
+                PageTemplateCandidates.Build(query)
+                    .SelectMany(level => new[]
+                    {
+                        level.Name + ".liquid",
+                        "_default/" + level.Name + ".liquid"
+                    })
+                    .ToList());
+        }
+
+        var template = await GetOrLoadTemplateAtPathAsync(path, cancellationToken);
+        return await RenderLoadedAsync(template, path, path, context, cancellationToken);
+    }
+
+    /// <summary>页面感知的物理模板存在性（不含内置兜底）</summary>
+    public bool PageTemplateExists(PageTemplateQuery query) => ResolvePageTemplatePath(query) is not null;
+
+    /// <summary>
+    /// 站点是否持有任一 <c>.liquid</c> 物理模板（Fluid 原生站点判定）。
+    /// 只扫站点 layouts 根（不含主题根——Hugo 主题恒 Scriban）；
+    /// 路由层的 auto 内置回退归属用
+    /// </summary>
+    internal bool HasLiquidTemplates() =>
+        Directory.Exists(_templatesPath) &&
+        Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories).Any();
+
+    /// <summary>
+    /// 页面查询能否由本渲染器的**内置兜底**渲染（无物理 .liquid 时的 fallback 判定）：
+    /// kind 有对应内置模板且为 html 输出格式。路由层据此决定 auto 模式下
+    /// 无物理模板时的归属（Fluid 原生站点走 Fluid 内置，Hugo 主题站点走 Scriban 内置）
+    /// </summary>
+    internal bool CanRenderPageFallback(PageTemplateQuery query) =>
+        BuiltinNameForKind(query.Kind) is { } builtinName &&
+        IsHtmlOutputFormat(query.OutputFormat) &&
+        _builtins is not null &&
+        _builtins.TryGetTemplate(builtinName, out _);
+
+    private string? ResolvePageTemplatePath(PageTemplateQuery query) =>
+        _lookup.ResolveLayered(PageTemplateCandidates.Build(query));
+
+    /// <summary>kind → 内置兜底模板名（仅 section/taxonomy/term 有内置；page/home 无）</summary>
+    private static string? BuiltinNameForKind(string kind) => kind.ToLowerInvariant() switch
+    {
+        "section" => "list",
+        "taxonomy" => "taxonomy",
+        "term" => "term",
+        _ => null
+    };
+
+    private static bool IsHtmlOutputFormat(string? format) =>
+        string.IsNullOrEmpty(format) || format.Equals("html", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>渲染内置模板（无物理文件路径，缓存键加 builtin: 前缀避免与同名物理模板冲突）</summary>
+    private async ValueTask<string> RenderBuiltinAsync(
+        string builtinName,
+        string builtinContent,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var cacheKey = "builtin:" + builtinName;
+        if (!_templateCache.TryGetValue(cacheKey, out var cached))
+        {
+            cached = new CachedTemplate(ParseOrThrow(builtinContent, cacheKey), null, DateTime.MinValue);
+            _templateCache[cacheKey] = cached;
+        }
+
+        return await RenderLoadedAsync(cached.Template, cacheKey, null, context, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask<string> RenderAsync(
+        string templateName,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var template = await GetOrLoadTemplateAsync(templateName, cancellationToken);
+        var physicalPath = TryResolveTemplatePath(templateName);
+        return await RenderLoadedAsync(template, templateName, physicalPath, context, cancellationToken);
+    }
+
+    /// <summary>
+    /// 渲染指定模板文件（不走模板名查找链，用于 robots.txt 等非 .html 形态辅助模板）。
+    /// <c>.liquid</c> 文件由本渲染器渲染；其余扩展名（.html/.txt 等）不在 Fluid
+    /// 职责内——路由层保证只把 .liquid 路径发到这里
+    /// </summary>
+    public async ValueTask<string> RenderTemplateFileAsync(
+        string filePath,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken = default)
+    {
+        var content = await File.ReadAllTextAsync(filePath, cancellationToken);
+        var template = ParseOrThrow(content, filePath);
+        return await RenderLoadedAsync(template, filePath, filePath, context, cancellationToken);
+    }
+
+    /// <summary>
+    /// 共用渲染入口：每渲染独立 TemplateContext（方案 §二.3），依赖追踪
+    /// （逻辑名 + 物理路径 + include 实际命中），运行时异常包装
+    /// </summary>
+    private async ValueTask<string> RenderLoadedAsync(
+        IFluidTemplate template,
+        string templateName,
+        string? physicalPath,
+        FlintTemplateContext context,
+        CancellationToken cancellationToken)
+    {
+        var fluidContext = CreateFluidContext(context, cancellationToken);
+        var deps = (HashSet<string>)fluidContext.AmbientValues[DepsKey];
+        deps.Add(templateName);
+        if (physicalPath is not null)
+        {
+            deps.Add(Path.GetFullPath(physicalPath));
+        }
+
+        try
+        {
+            var result = await template.RenderAsync(fluidContext);
+            context.RenderedDependencies = deps;
+            return result;
+        }
+        catch (Exception ex) when (ex is FluidException or ParseException or IOException)
+        {
+            // 携带模板名，避免裸的 Fluid 内部堆栈直达用户；
+            // OperationCanceledException 不在捕获列表——取消必须逃逸
+            throw new TemplateRenderException(templateName, ex.Message, innerException: ex);
+        }
+    }
+
+    /// <summary>
+    /// 构造每渲染独立的 Fluid 上下文：模型直绑 PageContext/SiteContext/Params。
+    /// Params/Data 复制为 OrdinalIgnoreCase 字典——探针实测 Fluid 的字典成员
+    /// 访问走**字典自身比较器**（ModelNamesComparer 只作用于 CLR 对象成员），
+    /// 上游 Params 多为 Ordinal 字典，不复制则 params.foo 与 params.Foo 行为不一致
+    /// </summary>
+    private FluidTemplateContext CreateFluidContext(FlintTemplateContext context, CancellationToken cancellationToken)
+    {
+        var model = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["page"] = context.Page,
+            ["site"] = context.Site,
+            ["params"] = CaseInsensitiveCopy(context.Params),
+            ["data"] = CaseInsensitiveCopy(context.Data),
+            // Hugo .Pages 语义：term 页为词条页面列表；未设置时回落全站 regular_pages
+            ["pages"] = context.Pages is not null ? context.Pages : context.Site.RegularPages,
+            ["language"] = context.Language,
+            ["output_format"] = context.Page.OutputFormat,
+            ["is_home"] = context.IsHome,
+            ["is_list"] = context.IsList,
+            ["is_single"] = context.IsSingle,
+            // 分页器（C1）：逐页绑定的 pager；非分页渲染为 null（模板取空）
+            ["paginator"] = context.Page.Paginator
+        };
+
+        var fluidContext = new FluidTemplateContext(model, _options)
+        {
+            CancellationToken = cancellationToken
+        };
+        // 依赖收集容器：AmbientValues 随 TemplateContext 生命周期，include 解析
+        // 回调经同一 context 写入，并行渲染互不干扰（每渲染独立实例）
+        fluidContext.AmbientValues[DepsKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        return fluidContext;
+    }
+
+    /// <summary>复制为 OrdinalIgnoreCase 字典（源已忽略大小写时原样返回，免复制）</summary>
+    private static object CaseInsensitiveCopy(IReadOnlyDictionary<string, object> source)
+    {
+        if (source is Dictionary<string, object> dict &&
+            dict.Comparer == StringComparer.OrdinalIgnoreCase)
+        {
+            return dict;
+        }
+        var copy = new Dictionary<string, object>(source.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var kv in source)
+        {
+            copy[kv.Key] = kv.Value;
+        }
+        return copy;
+    }
+
+    /// <summary>
+    /// include/render 的模板解析（Fluid FileProvider 回调）：按根序解析
+    /// <c>.liquid</c> 物理模板，未命中回退 Fluid 内置模板；解析到的物理路径
+    /// 记入本次渲染依赖（增量构建漏重渲防护）
+    /// </summary>
+    private ValueTask<TemplateSourceInfo> ResolveIncludeAsync(
+        string path,
+        FluidTemplateContext context,
+        CancellationToken cancellationToken)
+    {
+        var resolved = ResolveIncludePath(path);
+        if (resolved is null)
+        {
+            throw new FileNotFoundException($"Liquid 模板 include 未找到: {path}");
+        }
+
+        // 内置模板哨兵无物理文件：不进依赖集合（增量反查只认物理路径），
+        // 内容由流解析回调经内置提供者再取
+        var isBuiltin = resolved.StartsWith(BuiltinPrefix, StringComparison.Ordinal);
+        if (!isBuiltin &&
+            context.AmbientValues.TryGetValue(DepsKey, out var value) && value is HashSet<string> deps)
+        {
+            deps.Add(resolved);
+        }
+
+        var mtimeUtc = isBuiltin
+            ? DateTimeOffset.MinValue
+            : new DateTimeOffset(File.GetLastWriteTimeUtc(resolved), TimeSpan.Zero);
+        return ValueTask.FromResult(new TemplateSourceInfo(
+            mtimeUtc,
+            token => ReadTemplateStreamAsync(resolved, token),
+            resolved));
+    }
+
+    private ValueTask<Stream> ReadTemplateStreamAsync(string resolvedPath, CancellationToken cancellationToken)
+    {
+        if (resolvedPath.StartsWith(BuiltinPrefix, StringComparison.Ordinal))
+        {
+            var builtinKey = resolvedPath[BuiltinPrefix.Length..];
+            if (_builtins is null || !_builtins.TryGetTemplate(builtinKey, out var builtinContent))
+            {
+                throw new FileNotFoundException($"Fluid 内置模板未找到: {builtinKey}");
+            }
+            return ValueTask.FromResult<Stream>(EncodeUtf8NoBom(builtinContent));
+        }
+
+        return ReadFileStreamAsync(resolvedPath, cancellationToken);
+    }
+
+    private static async ValueTask<Stream> ReadFileStreamAsync(string path, CancellationToken cancellationToken)
+    {
+        // 内存流：模板文本短（KB 级），FileStream 直传会让 Fluid 的缓存持有文件句柄，
+        // dev server 热重载改写时撞文件锁（Windows）。剥 BOM：Fluid 对带头 BOM 的
+        // 模板文本直接在行首留下不可见字符（首行输出多一个 \uFEFF）
+        var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
+        return EncodeUtf8NoBom(bytes);
+    }
+
+    /// <summary>UTF-8 无 BOM 内存流：带头 BOM 的字节剥掉 3 字节前缀，其余原样</summary>
+    private static Stream EncodeUtf8NoBom(ReadOnlySpan<byte> bytes) =>
+        new MemoryStream(
+            bytes is [0xEF, 0xBB, 0xBF, ..] ? bytes[3..].ToArray() : bytes.ToArray(),
+            writable: false);
+
+    private static Stream EncodeUtf8NoBom(string text) =>
+        new MemoryStream(Encoding.UTF8.GetBytes(text), writable: false);
+
+    /// <summary>
+    /// include 名 → 物理路径（根序：站点 → 主题按序）。候选形态对齐 Scriban 侧
+    /// <see cref="FileTemplateLoader.ResolvePath"/> 的文件名约定：
+    /// 带 partials 前缀的名字只探两个目录形态（partials/ 与 _partials/， Hugo
+    /// v0.146+ 新旧约定并存）；裸名探根形态、_default 兜底与两个 partials 目录。
+    /// 未命中回退 Fluid 内置模板（哨兵路径形态，内容由解析回调再取一次）
+    /// </summary>
+    private string? ResolveIncludePath(string templateName)
+    {
+        foreach (var root in new[] { _templatesPath }.Concat(_themeTemplatePaths))
+        {
+            if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+            {
+                continue;
+            }
+
+            foreach (var form in IncludeCandidateForms(templateName))
+            {
+                // GetFullPath 归一化分隔符（候选形态用 / 拼接，Windows 上
+                // Path.Combine 产出混合分隔符——依赖键必须与物理路径同形态）
+                var candidate = Path.GetFullPath(Path.Combine(root, form));
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+        }
+
+        // 内置模板回退：Hugo embedded partials（include "pagination" 这类）
+        var builtinKey = NormalizeBuiltinKey(templateName);
+        if (_builtins is not null && builtinKey.Length > 0 &&
+            _builtins.TryGetTemplate(builtinKey, out _))
+        {
+            return BuiltinPrefix + builtinKey;
+        }
+
+        return null;
+    }
+
+    /// <summary>include 名的候选文件形态（有序，对齐 FileTemplateLoader 的搜索序）</summary>
+    private static IEnumerable<string> IncludeCandidateForms(string templateName)
+    {
+        var name = templateName.Replace('\\', '/').Trim('/');
+        var hasPartialsPrefix = name.StartsWith("partials/", StringComparison.OrdinalIgnoreCase) ||
+                                name.StartsWith("_partials/", StringComparison.OrdinalIgnoreCase);
+        var withExt = name.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase) ? name : name + ".liquid";
+
+        if (hasPartialsPrefix)
+        {
+            // 名字已带前缀：只探两个目录形态（不再试裸名——那会让 include
+            // "partials/x" 命中 layouts/x.liquid 这类非 partial 文件）
+            var rest = StripPartialsPrefix(name);
+            var restWithExt = rest.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase) ? rest : rest + ".liquid";
+            yield return withExt;
+            yield return "_partials/" + restWithExt;
+        }
+        else
+        {
+            yield return withExt;
+            yield return "_default/" + withExt;
+            yield return "partials/" + withExt;
+            yield return "_partials/" + withExt;
+        }
+    }
+
+    private static string StripPartialsPrefix(string name)
+    {
+        if (name.StartsWith("_partials/", StringComparison.OrdinalIgnoreCase))
+        {
+            return name["_partials/".Length..];
+        }
+        if (name.StartsWith("partials/", StringComparison.OrdinalIgnoreCase))
+        {
+            return name["partials/".Length..];
+        }
+        return name;
+    }
+
+    /// <summary>内置模板的 include 哨兵前缀（无物理文件，内容由内置提供者再取）</summary>
+    internal const string BuiltinPrefix = "\u0001fluid-builtin:";
+
+    /// <summary>include 名 → 内置模板键：剥 .liquid 扩展名与 partials/_internal 前缀</summary>
+    private static string NormalizeBuiltinKey(string templateName)
+    {
+        var key = templateName.Replace('\\', '/');
+        if (key.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase))
+        {
+            key = key[..^".liquid".Length];
+        }
+        if (key.StartsWith("_internal/", StringComparison.OrdinalIgnoreCase))
+        {
+            key = key["_internal/".Length..];
+        }
+        return StripPartialsPrefix(key);
+    }
+
+    /// <inheritdoc />
+    public bool TemplateExists(string templateName) => TryResolveTemplatePath(templateName) is not null;
+
+    /// <summary>
+    /// 模板文件是否为**空文件**（0 字节）。与 Scriban 侧同口径：404 这类
+    /// "空模板视为缺失"的判定用它
+    /// </summary>
+    public bool TemplateFileIsEmpty(string templateName)
+    {
+        var path = TryResolveTemplatePath(templateName);
+        return path is not null && new FileInfo(path) is { Exists: true, Length: 0 };
+    }
+
+    /// <summary>
+    /// 逻辑名 → 物理路径（加权查找：根形态 / _default 兜底 / 输出格式变体）；
+    /// 未命中返回 null（内置模板无物理路径，由 <see cref="RenderAsync"/> 的
+    /// 缓存键 builtin: 前缀处理）
+    /// </summary>
+    private string? TryResolveTemplatePath(string templateName)
+    {
+        try
+        {
+            return _lookup.Resolve(templateName, _templatesPath);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 模板依赖闭包（增量构建注册用）：include/render 的静态引用递归收集。
+    /// 与 Scriban 侧同口径的正则近似——精确依赖以渲染期
+    /// <see cref="FlintTemplateContext.RenderedDependencies"/> 为准
+    /// </summary>
+    /// <inheritdoc />
+    public IReadOnlyList<string> GetDependencies(string templateName)
+    {
+        if (_dependencyCache.TryGetValue(templateName, out var cached))
+        {
+            return cached;
+        }
+
+        var dependencies = new List<string>();
+        CollectDependencies(templateName, dependencies, new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        var result = dependencies.AsReadOnly();
+        _dependencyCache.TryAdd(templateName, result);
+        return result;
+    }
+
+    /// <summary>
+    /// 静态依赖闭包（增量构建注册用）：解析 include/render 引用递归收集。
+    /// 与 Scriban 侧同口径的正则近似——精确依赖以渲染期
+    /// <see cref="FlintTemplateContext.RenderedDependencies"/> 为准
+    /// </summary>
+    private void CollectDependencies(
+        string templateName,
+        List<string> dependencies,
+        HashSet<string> visited)
+    {
+        if (!visited.Add(templateName))
+        {
+            return;
+        }
+
+        string content;
+        try
+        {
+            var path = TryResolveTemplatePath(templateName);
+            if (path is null)
+            {
+                // 内置模板：无物理文件，无 further 依赖
+                return;
+            }
+            content = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        foreach (System.Text.RegularExpressions.Match reference in System.Text.RegularExpressions.Regex.Matches(
+                     content, @"\{%-?\s*(?:include|render)\s+[""']([^""']+)[""']"))
+        {
+            var depName = reference.Groups[1].Value;
+            if (!dependencies.Contains(depName))
+            {
+                dependencies.Add(depName);
+                CollectDependencies(depName, dependencies, visited);
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<int> PrecompileTemplatesAsync(CancellationToken cancellationToken = default)
+    {
+        // 缓存键是逻辑名（相对路径去 .liquid）：站点与主题同名模板必须站点优先。
+        // 站点文件全量扫描，主题文件剔除与站点同名的逻辑名后追加
+        var siteRelativeNames = Directory.Exists(_templatesPath)
+            ? Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories)
+                .Select(f => Path.GetRelativePath(_templatesPath, f).Replace('\\', '/'))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var templateFiles = new List<(string Path, string Root)>(
+            Directory.Exists(_templatesPath)
+                ? Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories)
+                    .Select(f => (f, _templatesPath))
+                : []);
+        foreach (var themePath in _themeTemplatePaths)
+        {
+            if (!Directory.Exists(themePath))
+            {
+                continue;
+            }
+            templateFiles.AddRange(Directory.EnumerateFiles(themePath, "*.liquid", SearchOption.AllDirectories)
+                .Where(f => !siteRelativeNames.Contains(
+                    Path.GetRelativePath(themePath, f).Replace('\\', '/'),
+                    StringComparer.OrdinalIgnoreCase))
+                .Select(f => (f, themePath)));
+        }
+
+        await Parallel.ForEachAsync(
+            templateFiles,
+            new ParallelOptions
+            {
+                MaxDegreeOfParallelism = Environment.ProcessorCount,
+                CancellationToken = cancellationToken
+            },
+            async (entry, ct) =>
+            {
+                var (file, root) = entry;
+                try
+                {
+                    var relativePath = Path.GetRelativePath(root, file);
+                    var templateName = relativePath.Replace('\\', '/');
+                    if (templateName.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase))
+                    {
+                        templateName = templateName[..^".liquid".Length];
+                    }
+
+                    var content = await File.ReadAllTextAsync(file, ct);
+                    if (_parser.TryParse(content, out var template, out _))
+                    {
+                        _templateCache[templateName] = new CachedTemplate(
+                            template, file, File.GetLastWriteTimeUtc(file));
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception)
+                {
+                    // 解析失败的模板静默缺席缓存；渲染期按需加载仍会暴露真实错误
+                }
+            });
+
+        return _templateCache.Count;
+    }
+
+    /// <inheritdoc />
+    public void InvalidateMtimeCache()
+    {
+        _mtimeCache.Clear();
+        _lookup.Invalidate();
+    }
+
+    /// <summary>
+    /// 按已知物理路径加载模板（页面感知查找链命中后的加载）：
+    /// 缓存键为逻辑名（相对站点根），与 <see cref="GetOrLoadTemplateAsync"/>
+    /// 的 mtime 失效语义一致。读前取 mtime、读后复核（有界重读）
+    /// </summary>
+    private async ValueTask<IFluidTemplate> GetOrLoadTemplateAtPathAsync(
+        string templatePath,
+        CancellationToken cancellationToken)
+    {
+        var logicalName = ToLogicalName(templatePath);
+        if (_templateCache.TryGetValue(logicalName, out var cached) && !IsStale(cached))
+        {
+            return cached.Template;
+        }
+
+        string content;
+        DateTime mtimeUtc;
+        for (var attempt = 0; ; attempt++)
+        {
+            var mtimeBefore = File.GetLastWriteTimeUtc(templatePath);
+            content = await File.ReadAllTextAsync(templatePath, cancellationToken);
+            mtimeUtc = File.GetLastWriteTimeUtc(templatePath);
+            if (mtimeUtc == mtimeBefore || attempt >= 2)
+            {
+                break;
+            }
+        }
+
+        var template = ParseOrThrow(content, templatePath);
+        _templateCache[logicalName] = new CachedTemplate(template, templatePath, mtimeUtc);
+        return template;
+    }
+
+    /// <summary>按逻辑名加载（RenderAsync 用）：物理文件优先，内置兜底</summary>
+    private async ValueTask<IFluidTemplate> GetOrLoadTemplateAsync(
+        string templateName,
+        CancellationToken cancellationToken)
+    {
+        if (_templateCache.TryGetValue(templateName, out var cached) && !IsStale(cached))
+        {
+            return cached.Template;
+        }
+
+        var path = TryResolveTemplatePath(templateName);
+        if (path is not null)
+        {
+            return await GetOrLoadTemplateAtPathAsync(path, cancellationToken);
+        }
+
+        // 内置兜底模板
+        if (_builtins is not null && _builtins.TryGetTemplate(templateName, out var builtinContent))
+        {
+            var builtinTemplate = ParseOrThrow(builtinContent, "builtin:" + templateName);
+            _templateCache[templateName] = new CachedTemplate(builtinTemplate, null, DateTime.MinValue);
+            return builtinTemplate;
+        }
+
+        throw new TemplateNotFoundException(templateName,
+            [Path.Combine(_templatesPath, templateName + ".liquid")]);
+    }
+
+    private IFluidTemplate ParseOrThrow(string content, string sourcePath)
+    {
+        if (_parser.TryParse(content, out var template, out var error))
+        {
+            return template;
+        }
+        throw new TemplateParseException(sourcePath, [error ?? "Liquid 模板解析失败"]);
+    }
+
+    /// <summary>物理路径 → 逻辑名（相对站点根，统一 / 分隔；跨根时取相对该根的路径）</summary>
+    private string ToLogicalName(string physicalPath)
+    {
+        var full = Path.GetFullPath(physicalPath);
+        foreach (var root in new[] { _templatesPath }.Concat(_themeTemplatePaths))
+        {
+            if (string.IsNullOrEmpty(root))
+            {
+                continue;
+            }
+
+            var rootFull = Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+            {
+                var rel = full[rootFull.Length..].Replace('\\', '/');
+                return rel.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase)
+                    ? rel[..^".liquid".Length]
+                    : rel;
+            }
+        }
+
+        return Path.GetFileName(full);
+    }
+
+    private static string DescribePageQuery(PageTemplateQuery query)
+    {
+        var parts = new List<string> { "kind=" + query.Kind };
+        if (!string.IsNullOrEmpty(query.Layout))
+        {
+            parts.Add("layout=" + query.Layout);
+        }
+        if (!string.IsNullOrEmpty(query.DeclaredType))
+        {
+            parts.Add("type=" + query.DeclaredType);
+        }
+        if (!string.IsNullOrEmpty(query.Section))
+        {
+            parts.Add("section=" + query.Section);
+        }
+        if (!string.IsNullOrEmpty(query.Taxonomy))
+        {
+            parts.Add("taxonomy=" + query.Taxonomy);
+        }
+        if (!IsHtmlOutputFormat(query.OutputFormat))
+        {
+            parts.Add("format=" + query.OutputFormat);
+        }
+        return string.Join(", ", parts);
+    }
+
+    /// <summary>
+    /// 缓存条目是否过期：源文件 mtime 与编译时不一致说明模板已被修改。
+    /// 内置模板 SourcePath 为 null → 恒不过期
+    /// </summary>
+    private bool IsStale(CachedTemplate cached)
+    {
+        return cached.SourcePath is not null &&
+               GetMtimeUtc(cached.SourcePath) != cached.ModifiedTimeUtc;
+    }
+
+    /// <summary>mtime 查询的短窗缓存（与 Scriban 渲染器同口径）</summary>
+    private DateTime GetMtimeUtc(string path)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        if (_mtimeCache.TryGetValue(path, out var entry) && now - entry.CachedAtUtc < MtimeCacheTtl)
+        {
+            return entry.MtimeUtc;
+        }
+        var mtime = File.GetLastWriteTimeUtc(path);
+        _mtimeCache[path] = (now, mtime);
+        return mtime;
+    }
+
+    /// <summary>
+    /// 本构建内模板函数产生的资源产物：Fluid 侧资源函数 Phase 4 才接入，
+    /// 当前恒空（接口默认实现语义，显式声明避免调用方歧义）
+    /// </summary>
+    public IReadOnlyList<TemplateResource> GeneratedResources => [];
+
+    /// <summary>
+    /// 模板 errorf 记录的错误：Fluid 侧无 errorf 函数（Phase 4 函数平面），恒空
+    /// </summary>
+    public IReadOnlyList<string> DrainTemplateErrors() => [];
+}

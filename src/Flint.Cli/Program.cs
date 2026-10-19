@@ -63,11 +63,20 @@ internal static class Program
         // new site
         var newSiteCmd = new Command("site", "创建新的站点");
         var siteNameArg = new Argument<string>("name") { Description = "站点名称" };
+        // FLUID-MIGRATION-PLAN P2-3：新站点默认 Fluid（Liquid）脚手架；
+        // --engine scriban 生成旧 .html 形态（Hugo 兼容模式）
+        var siteEngineOpt = new Option<string>("--engine", "-e")
+        {
+            Description = "模板引擎: fluid（默认，Liquid 脚手架）或 scriban（.html 脚手架）",
+            DefaultValueFactory = _ => "fluid"
+        };
         newSiteCmd.Arguments.Add(siteNameArg);
+        newSiteCmd.Options.Add(siteEngineOpt);
         newSiteCmd.SetAction(ctx =>
         {
             var name = ctx.GetValue(siteNameArg);
-            return SiteCreator.CreateNewSite(name!);
+            var engine = ctx.GetValue(siteEngineOpt);
+            return SiteCreator.CreateNewSite(name!, engine!);
         });
         newCommand.Subcommands.Add(newSiteCmd);
 
