@@ -20,10 +20,24 @@ public sealed partial class SiteBuilder
 
     /// <summary>
     /// 注册短代码：主题 layouts/shortcodes 先注册（低优先），站点后注册覆盖同名——
-    /// 对齐 Hugo 主题语义（站点覆盖主题）。模板语法错误 fail-fast
+    /// 对齐 Hugo 主题语义（站点覆盖主题）。模板语法错误 fail-fast。
+    /// 分发经 IShortcodeRenderer 接口（FLUID-MIGRATION-PLAN P5-1：SiteBuilder
+    /// 不认识具体引擎，.html/.liquid 分发收敛在 router）
     /// </summary>
     private void RegisterSiteShortcodes(string sourcePath, SiteConfig config)
     {
+        // P5-3：站点级关闭短代码（disableShortcodes = true 时连内置 C# 短代码
+        // 也不注册——内容管线完全不经短代码，Fluid 主力站点的零 Scriban 形态）
+        if (config.DisableShortcodes)
+        {
+            return;
+        }
+
+        if (_templateRenderer is not IShortcodeRenderer shortcodeRenderer)
+        {
+            return;
+        }
+
         var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
 
         // 主题列表前面的优先：反序注册，前面的主题后注册覆盖后面的
@@ -31,13 +45,21 @@ public sealed partial class SiteBuilder
         {
             var themeLayout = Path.Combine(sourcePath, "themes", themeName, layoutDirName);
             // shortcodes/ 与 _shortcodes/ 双形态（后者为 Hugo v0.146+ 新目录约定）
-            RegisterShortcodesFrom(Path.Combine(themeLayout, "_shortcodes"), themeName);
-            RegisterShortcodesFrom(Path.Combine(themeLayout, "shortcodes"), themeName);
+            shortcodeRenderer.RegisterShortcodesFrom(
+                _contentParser.ShortcodeProcessor.Registry,
+                Path.Combine(themeLayout, "_shortcodes"), themeName, isSite: false);
+            shortcodeRenderer.RegisterShortcodesFrom(
+                _contentParser.ShortcodeProcessor.Registry,
+                Path.Combine(themeLayout, "shortcodes"), themeName, isSite: false);
         }
 
         var siteLayout = Path.Combine(sourcePath, layoutDirName);
-        RegisterShortcodesFrom(Path.Combine(siteLayout, "_shortcodes"), "站点");
-        RegisterShortcodesFrom(Path.Combine(siteLayout, "shortcodes"), "站点");
+        shortcodeRenderer.RegisterShortcodesFrom(
+            _contentParser.ShortcodeProcessor.Registry,
+            Path.Combine(siteLayout, "_shortcodes"), "站点", isSite: true);
+        shortcodeRenderer.RegisterShortcodesFrom(
+            _contentParser.ShortcodeProcessor.Registry,
+            Path.Combine(siteLayout, "shortcodes"), "站点", isSite: true);
     }
 
     /// <summary>
@@ -59,62 +81,6 @@ public sealed partial class SiteBuilder
     private static bool IsHtmlFormat(string? formatName) =>
         string.IsNullOrEmpty(formatName) ||
         formatName.Equals("html", StringComparison.OrdinalIgnoreCase);
-
-    private void RegisterShortcodesFrom(string shortcodesDir, string origin)
-    {
-        if (!Directory.Exists(shortcodesDir))
-        {
-            return;
-        }
-
-        var isSite = string.Equals(origin, "站点", StringComparison.Ordinal);
-        var registry = _contentParser.ShortcodeProcessor.Registry;
-        foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.html"))
-        {
-            var name = Path.GetFileNameWithoutExtension(file);
-            var content = File.ReadAllText(file);
-            try
-            {
-                registry.Register(new TemplateShortcode(name, content));
-            }
-            catch (FormatException ex) when (!isSite)
-            {
-                // 主题短码为第三方内容：单个短码语法错误不应阻断整个构建
-                // （Hugo 对主题短码同样容忍；站点短码保持 fail-fast）
-                Console.Error.WriteLine($"[警告] 跳过无法解析的主题短代码（{origin}）: {file} — {ex.Message}");
-            }
-            catch (FormatException ex)
-            {
-                throw new FormatException($"加载短代码失败（{origin}）: {file}", ex);
-            }
-        }
-
-        // Liquid 短代码（FLUID-MIGRATION-PLAN P5-4）：.liquid 经 Fluid 渲染。
-        // 注册序在 .html 之后（同根内 .liquid 覆盖 .html——新站点主力形态），
-        // 主题先站点后（站点覆盖主题）的整体优先序不变。
-        // Scriban 兼容模式（engine: scriban）不认 .liquid 短代码
-        if (_templateRenderer is not TemplateEngineRouter { AllowsFluidContent: true } router)
-        {
-            return;
-        }
-        foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.liquid"))
-        {
-            var name = Path.GetFileNameWithoutExtension(file);
-            var content = File.ReadAllText(file);
-            try
-            {
-                registry.Register(new LiquidTemplateShortcode(name, content, router.FluidRenderer));
-            }
-            catch (FormatException ex) when (!isSite)
-            {
-                Console.Error.WriteLine($"[警告] 跳过无法解析的主题 Liquid 短代码（{origin}）: {file} — {ex.Message}");
-            }
-            catch (FormatException ex)
-            {
-                throw new FormatException($"加载 Liquid 短代码失败（{origin}）: {file}", ex);
-            }
-        }
-    }
 
     /// <summary>
     /// 渲染期依赖注册（T4.1）：用本次渲染实际 include 的模板物理路径

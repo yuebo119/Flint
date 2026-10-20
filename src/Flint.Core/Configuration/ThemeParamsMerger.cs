@@ -320,6 +320,7 @@ public static class ThemeParamsMerger
             LanguageCode = config.LanguageCode,
             Theme = config.Theme,
             Engine = config.Engine,
+            DisableShortcodes = config.DisableShortcodes,
             BuildDrafts = config.BuildDrafts,
             BuildFuture = config.BuildFuture,
             BuildExpired = config.BuildExpired,

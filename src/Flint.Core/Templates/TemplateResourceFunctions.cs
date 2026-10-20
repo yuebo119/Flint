@@ -970,7 +970,9 @@ public sealed partial class BuiltinTemplateFunctions
     /// sass 没有 importer，且 `hugo:` 前缀含冒号不是合法 Windows 文件名，只能在
     /// 源码镜像上做替换（fixit 的 _variables.scss 实测）
     /// </summary>
-    private static string? TryCompileWithSassCli(
+    // internal（原 private）：Liquid 侧 css.Sass 过滤器经 TemplateAssetTransforms
+    // 服务化复用（FLUID-MIGRATION-PLAN P4-4），vars 形态 Liquid 不可表达故传 null
+    internal static string? TryCompileWithSassCli(
         string content, string? loadPath, bool indented = false,
         ScriptObject? vars = null, object? varsInternal = null)
     {
@@ -1538,7 +1540,8 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>入口/产物名是否为 TypeScript 源（决定是否剥类型 + 改扩展名）</summary>
-    private static bool TypeScriptEntry(string? nameOrPath)
+    // internal（原 private）：Liquid 侧 js.Build 过滤器经 TemplateAssetTransforms 复用
+    internal static bool TypeScriptEntry(string? nameOrPath)
     {
         if (string.IsNullOrEmpty(nameOrPath))
         {

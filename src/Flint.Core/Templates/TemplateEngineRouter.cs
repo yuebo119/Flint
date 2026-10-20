@@ -6,6 +6,8 @@
 
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
+using Flint.Core.Content;
+using Flint.Core.Content.Shortcodes;
 // Flint 的 TemplateContext 与 Fluid.TemplateContext 同名：本文件统一指 Flint 侧
 using TemplateContext = Flint.Core.Abstractions.TemplateContext;
 
@@ -14,9 +16,11 @@ namespace Flint.Core.Templates;
 /// <summary>
 /// 双引擎路由器：auto 模式按"模板物理扩展名 + 内置模板提供者"双轨路由
 /// （<c>.liquid</c> 与 Fluid 原生站点的内置回退 → Fluid；Hugo 主题
-/// <c>.html</c> 与 Scriban 内置 → Scriban）；fluid/scriban 模式全站单引擎
+/// <c>.html</c> 与 Scriban 内置 → Scriban）；fluid/scriban 模式全站单引擎。
+/// 同时承担内容管线的两个渲染器接口（P5-1/P5-2）：短代码注册与
+/// render hook 装配按扩展名分发
 /// </summary>
-public sealed class TemplateEngineRouter : ITemplateRenderer
+public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcodeRenderer, IRenderHookRenderer
 {
     private readonly FluidTemplateRenderer _fluid;
     private readonly ScribanTemplateRenderer _scriban;
@@ -225,11 +229,12 @@ public sealed class TemplateEngineRouter : ITemplateRenderer
 
     /// <inheritdoc />
     public IReadOnlyList<TemplateResource> GeneratedResources =>
-        _policy == TemplateEnginePolicy.Fluid
-            ? []
-            : _policy == TemplateEnginePolicy.Scriban
-                ? _scriban.GeneratedResources
-                : [.. _fluid.GeneratedResources, .. _scriban.GeneratedResources];
+        _policy switch
+        {
+            TemplateEnginePolicy.Fluid => _fluid.GeneratedResources,
+            TemplateEnginePolicy.Scriban => _scriban.GeneratedResources,
+            _ => [.. _fluid.GeneratedResources, .. _scriban.GeneratedResources]
+        };
 
     /// <inheritdoc />
     public IReadOnlyList<string> DrainTemplateErrors()

@@ -230,6 +230,10 @@ public static partial class ConfigParser
                 ?? GetDictString(dict, "templateEngine")
                 ?? GetDictString(dict, "templateengine")
                 ?? "auto",
+            // P5-3：disableShortcodes 两种拼写（snake/camel）
+            DisableShortcodes = GetDictBool(dict, "disableShortcodes")
+                ?? GetDictBool(dict, "disableshortcodes")
+                ?? false,
             BuildDrafts = GetDictBool(dict, "buildDrafts") ?? GetDictBool(dict, "builddrafts") ?? false,
             BuildFuture = GetDictBool(dict, "buildFuture") ?? GetDictBool(dict, "buildfuture") ?? false,
             BuildExpired = GetDictBool(dict, "buildExpired") ?? GetDictBool(dict, "buildexpired") ?? false,

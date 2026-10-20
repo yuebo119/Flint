@@ -93,18 +93,16 @@ internal static class ServeHandler
                 TemplateEngineRouter.ParsePolicy(config));
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。
-            // .liquid 钩子（P5-5）经 router 的 Fluid 渲染器；Scriban 兼容模式下
-            // 传 null（不认 .liquid 钩子，内容管线整体 Scriban）
-            var renderHooks = RenderHooks.Load(
-                Path.Combine(sourcePath, "layouts"),
-                scribanRenderer,
-                themeLayoutDirs,
-                templateRenderer is TemplateEngineRouter { AllowsFluidContent: true } hookRouter
-                    ? hookRouter.FluidRenderer
-                    : null);
+            // router 实现 IRenderHookRenderer（P5-2）：.liquid 钩子分发给 Fluid；
+            // Scriban 兼容模式下只认 .html
+            var renderHooks = templateRenderer.LoadRenderHooks(
+                Path.Combine(sourcePath, "layouts"), themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
+            // P5-3：disableShortcodes 时内置 C# 短代码也不注册（同 BuildHandler）
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,
-                new ShortcodeProcessor { EnableInlineShortcodes = config.EnableInlineShortcodes });
+                new ShortcodeProcessor(
+                    new ShortcodeRegistry(registerBuiltins: !config.DisableShortcodes))
+                { EnableInlineShortcodes = config.EnableInlineShortcodes });
             ContentParserDateSetup.Apply(contentParser, config,
                 Path.Combine(sourcePath, config.ContentDir));
             // CA2000 抑制：管线所有权转移至长驻 SiteBuilder，生命周期与 serve

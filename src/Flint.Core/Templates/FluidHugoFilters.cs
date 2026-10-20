@@ -55,6 +55,17 @@ internal static class FluidHugoFilters
         f.AddFilter("union", Union);
         f.AddFilter("intersect", Intersect);
         f.AddFilter("complement", Complement);
+        // ---- path 族（Hugo path.* 的过滤器形态；P4-2 补齐）----
+        f.AddFilter("path_base", PathBase);
+        f.AddFilter("path_dir", PathDir);
+        f.AddFilter("path_ext", PathExt);
+        f.AddFilter("path_join", PathJoin);
+        f.AddFilter("path_split", PathSplit);
+        // ---- 正则族（Hugo findRE/replaceRE；[GeneratedRegex] source-gen，AOT 安全）----
+        f.AddFilter("find_re", FindRe);
+        f.AddFilter("findre", FindRe);
+        f.AddFilter("replace_re", ReplaceRe);
+        f.AddFilter("replacere", ReplaceRe);
         // ---- i18n ----
         f.AddFilter("i18n", I18n);
         f.AddFilter("T", I18n);
@@ -191,6 +202,100 @@ internal static class FluidHugoFilters
             }
         }
         return FluidValue.Create(result, ctx.Options);
+    }
+
+    // ---- path 族 ----
+
+    /// <summary>path.Base：末段（含扩展名）</summary>
+    private static ValueTask<FluidValue> PathBase(FluidValue input, FilterArguments args, TemplateContext ctx) =>
+        new(FluidValue.Create(Path.GetFileName(ToString(input, ctx).Replace('\\', '/')), ctx.Options));
+
+    /// <summary>path.Dir：目录部分（不含末段；根级返回 "."）</summary>
+    private static ValueTask<FluidValue> PathDir(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var path = ToString(input, ctx).Replace('\\', '/').TrimEnd('/');
+        var slash = path.LastIndexOf('/');
+        return new(FluidValue.Create(slash < 0 ? "." : slash == 0 ? "/" : path[..slash], ctx.Options));
+    }
+
+    /// <summary>path.Ext：扩展名（含点；无扩展名为空串）</summary>
+    private static ValueTask<FluidValue> PathExt(FluidValue input, FilterArguments args, TemplateContext ctx) =>
+        new(FluidValue.Create(Path.GetExtension(ToString(input, ctx).Replace('\\', '/')), ctx.Options));
+
+    /// <summary>path.Join：多段拼接（实参为段；空段跳过）</summary>
+    private static ValueTask<FluidValue> PathJoin(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var parts = new List<string> { ToString(input, ctx) };
+        for (var i = 0; i < args.Count; i++)
+        {
+            var part = ToString(args.At(i), ctx);
+            if (part.Length > 0)
+            {
+                parts.Add(part);
+            }
+        }
+        // 手工拼接（Path.Combine 在 Windows 上产反斜杠，与模板的可预期形态不符）
+        var joined = string.Join('/', parts.Select(p => p.Trim('/', '\\')));
+        return new(FluidValue.Create(joined.Length == 0 ? "/" : "/" + joined, ctx.Options));
+    }
+
+    /// <summary>path.Split：返回 (dir, file) 二元组（Liquid 经二元索引消费）</summary>
+    private static ValueTask<FluidValue> PathSplit(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var path = ToString(input, ctx).Replace('\\', '/');
+        var slash = path.LastIndexOf('/');
+        var dir = slash < 0 ? "" : slash == 0 ? "/" : path[..slash];
+        var file = slash < 0 ? path : path[(slash + 1)..];
+        return new(FluidValue.Create(new List<string> { dir, file }, ctx.Options));
+    }
+
+    // ---- 正则族（Hugo findRE/replaceRE；用户 pattern 运行期构造，
+    //      [GeneratedRegex] 只覆盖固定 pattern 故此处用 Regex 非 source-gen，
+    //      NativeAOT 下对不可静态分析的 pattern 有裁剪风险——与 VYaml 配置
+    //      解析路径同口径文件级 pragma 抑制，pattern 来自模板作者（可信源））----
+
+    /// <summary>findRE：返回输入中匹配给定 pattern 的全部子串（Hugo 语义：
+    /// 无匹配返回空数组——模板经 size/for 消费）</summary>
+    private static ValueTask<FluidValue> FindRe(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var pattern = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        var text = ToString(input, ctx);
+        if (pattern.Length == 0 || text.Length == 0)
+        {
+            return new(FluidValue.Create(new List<string>(), ctx.Options));
+        }
+        try
+        {
+            var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern)
+                .Select(m => m.Value).ToList();
+            return new(FluidValue.Create(matches, ctx.Options));
+        }
+        catch (System.Text.RegularExpressions.RegexParseException)
+        {
+            // 坏 pattern 返回空（与 Hugo 的宽容度对齐；不中断渲染）
+            return new(FluidValue.Create(new List<string>(), ctx.Options));
+        }
+    }
+
+    /// <summary>replaceRE：把匹配 pattern 的子串替换为 replacement（$1 分组引用）</summary>
+    private static ValueTask<FluidValue> ReplaceRe(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var pattern = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        var replacement = args.Count > 1 ? ToString(args.At(1), ctx) : "";
+        var text = ToString(input, ctx);
+        if (pattern.Length == 0)
+        {
+            return new(FluidValue.Create(text, ctx.Options));
+        }
+        try
+        {
+            return new(FluidValue.Create(
+                System.Text.RegularExpressions.Regex.Replace(text, pattern, replacement), ctx.Options));
+        }
+        catch (System.Text.RegularExpressions.RegexParseException)
+        {
+            return new(FluidValue.Create(text, ctx.Options));
+        }
     }
 
     // ---- i18n ----

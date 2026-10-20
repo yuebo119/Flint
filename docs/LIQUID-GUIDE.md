@@ -101,6 +101,13 @@ render hook 有 `destination` / `text` / `plain_text` / `level` / `id` /
 `title` 等平铺变量。同根内 `.liquid` 覆盖 `.html`；`engine: scriban`
 模式下不注册 `.liquid` 内容（缺失短代码构建失败）。
 
+内置短代码（figure/details/qr/highlight/ref/relref/gist/youtube/tweet/
+vimeo/instagram 等）是 **C# 实现**，与引擎无关，两种站点都可用。
+`disableShortcodes = true` 时连内置短代码也不注册（内容管线完全不经
+短代码，P5-3）。短代码注册与 render hook 装配经 `IShortcodeRenderer` /
+`IRenderHookRenderer` 接口（P5-1/P5-2，TemplateEngineRouter 实现），
+SiteBuilder 不认识具体引擎。
+
 ## 3. 函数清单
 
 ### 3.1 Fluid 内置（72 个，节选高频）
@@ -135,16 +142,32 @@ render hook 有 `destination` / `text` / `plain_text` / `level` / `id` /
 | `resource` / `resources_get` | `'css/x.css' \| resource` | Hugo `resources.Get` 的过滤器形态 |
 | `resources_match` | glob 匹配 | Hugo `resources.Match` |
 | `resources_by_type` | 按类型列出 | Hugo `resources.ByType` |
+| `resource_concat` | `$a \| resource_concat: $b, target: 'x.css'` | 产物型，结果落盘（P4-3） |
+| `resource_copy` | `$r \| resource_copy: 'other.css'` | 产物型 |
+| `resource_fingerprint` | `$r \| resource_fingerprint` | 内容哈希进文件名，产物落盘 |
+| `resource_from_string` | `'name' \| resource_from_string: '内容'` | 虚拟资源构造 |
+| `resource_minify` | `$r \| resource_minify` | 按类型压缩（css/js） |
+| `css_sass` / `sass` / `to_css` | `$r \| css_sass` | 外部 Dart Sass CLI 编译，产物 .css |
+| `css_build` | `$r \| css_build` | 内容可选压缩（minify 缺省 true） |
+| `js_build` | `$r \| js_build` | ES 打包 + TS 扩展名改写 + 可选压缩 |
+| `path_base` / `path_dir` / `path_ext` / `path_join` / `path_split` | Hugo `path.*` 的过滤器形态 | |
+| `find_re` / `replace_re` | 正则查找/替换 | **pattern 的反斜杠须双写**（见 §4） |
 | `i18n` / `T` | 翻译表查键，缺键空串 | 站点 i18n/ 经 AmbientValues 传入 |
 | `safe_html` 等 6 个 | 恒等透传 | Flint 默认不转义 |
 
+产物型变换（concat/copy/fingerprint/from_string/minify/sass/build）的结果经
+渲染器 `GeneratedResources` 收集，由 SiteBuilder 输出阶段写盘——模板引用的
+`RelPermalink` 因此真实存在。css/js 变换核心走 `TemplateAssetTransforms`
+服务（与 Scriban 侧命名空间函数同一组原语：MinifyCss/MinifyJs/Sass CLI/EsmBundler）。
+
 ### 3.3 分级与递延（P4-1 台账）
 
-**T1 已实现**：上表两节。**T2 递延**（新站点低频或需更深设计）：
-`resources.Concat/Copy/Fingerprint/FromString/Minify`（产物型变换需接入
-GeneratedResources 输出管道）、`css.Sass/css.Build/js.Build`（P4-4，
-需资产管线服务化）、`group/apply/seq/shuffle`、`path.*` 命名空间形态、
-`findRE/replaceRE`（AOT 下需 source-gen 正则）、`strings.*` 命名空间形态。
+**T1 已实现**：上表两节全部（P4-2 的 strings/math/collections/date/path/
+urls/compare 全覆盖——math/compare/date 由 Fluid 内置 72 个过滤器与操作符
+提供，urls/path/strings 的 Hugo 名见上表）。**T2 递延**：`css_sass` 的
+vars 选项与 `js_build` 的 params/esm 选项（Liquid 无对象字面量，选项不可
+表达——Scriban 侧完整支持）；`group/apply/seq/shuffle`（新站点低频）；
+`strings.*`/`math.*` 命名空间**函数**形态（Liquid 惯用过滤器形态，见上表）。
 
 ## 4. 已知差异清单（Liquid vs Scriban/Hugo）
 
@@ -169,6 +192,12 @@ GeneratedResources 输出管道）、`css.Sass/css.Build/js.Build`（P4-4，
    成员），Fluid 侧是语言码字符串本身——内置模板的 locale 链已按此对齐。
 7. **复数规则**：`singularize` 是 Flint 既有简化规则（`boxes → boxe`，
    不过滤 `-es`），非完整 Hugo 变形表。
+8. **正则 pattern 的反斜杠**：Liquid 单引号串把 `\` 当转义符，`'\w'` 直接
+   解析失败（"End of tag '}}' was expected"）——pattern 里的反斜杠须
+   **双写**（`'(\\w+)'` 才是一个 `\w`；`find_re`/`replace_re` 实测陷阱）。
+9. **`css_sass`/`js_build` 的选项**：Liquid 无对象字面量，Scriban 侧支持的
+   vars/params/esm 选项在 Liquid 形态不可表达（基础编译打包可用；
+   `target` 命名实参可指定产物名）。
 
 ## 5. 性能与验证口径
 

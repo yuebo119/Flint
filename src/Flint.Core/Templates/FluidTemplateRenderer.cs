@@ -39,6 +39,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     private readonly FluidParser _parser;
     private readonly TemplateOptions _options;
     private readonly IBuiltinTemplateProvider? _builtins;
+    // 模板资源提供者（Hugo Pipes）：路径形态的资源过滤器经 AmbientValues 传给
+    // 每渲染上下文（实例字段是来源，见 CreateFluidContext）
+    private readonly ITemplateResourceProvider? _resources;
     private readonly ConcurrentDictionary<string, CachedTemplate> _templateCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _dependencyCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeProvider _timeProvider;
@@ -104,6 +107,7 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
         _timeProvider = timeProvider;
         _builtins = builtins ?? new FluidBuiltinTemplateProvider();
+        _resources = resources;
         _lookup = TemplateLookup.Create(templatesPath, "liquid", _themeTemplatePaths);
         _parser = new FluidParser();
 
@@ -364,6 +368,14 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         // URL 过滤器的站点 baseURL（abs_url/rel_url 经 AmbientValues 取，
         // 每渲染可覆盖；未经本路径的直调回落 FluidTemplateFilters.FallbackBaseUrl）
         fluidContext.AmbientValues[FluidTemplateFilters.BaseUrlKey] = context.Site.BaseURL;
+        // 资源/资产变换过滤器（P4-3/P4-4）：baseURL（产物 RelPermalink）、
+        // 产物收集队列（GeneratedResources 通道）、资源提供者（路径形态解析）
+        fluidContext.AmbientValues[FluidResourceFilters.BaseUrlKey] = context.Site.BaseURL;
+        fluidContext.AmbientValues[FluidResourceFilters.GeneratedKey] = _generatedResources;
+        if (_resources is not null)
+        {
+            fluidContext.AmbientValues[FluidResourceFilters.ProviderKey] = _resources;
+        }
         // i18n 过滤器的翻译表（缺键返回空串，对齐 Hugo）
         fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] = context.Site.Translations;
         // 依赖收集容器：AmbientValues 随 TemplateContext 生命周期，include 解析
@@ -718,6 +730,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     {
         _mtimeCache.Clear();
         _lookup.Invalidate();
+        // 产物收集队列按构建清空（SiteBuilder 在渲染前调用本方法；渲染期产物
+        // 在渲染后经 GeneratedResources 取走——跨构建不累积）
+        _generatedResources.Clear();
     }
 
     /// <summary>
@@ -866,10 +881,15 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     }
 
     /// <summary>
-    /// 本构建内模板函数产生的资源产物：Fluid 侧资源函数 Phase 4 才接入，
-    /// 当前恒空（接口默认实现语义，显式声明避免调用方歧义）
+    /// 本构建内模板函数产生的资源产物（resources.Concat/Fingerprint/Sass/Build
+    /// 等 P4-3/P4-4 变换结果），由 SiteBuilder 输出阶段写盘——否则模板引用的
+    /// RelPermalink 会 404。渲染期经 AmbientValues 的收集队列登记，
+    /// InvalidateMtimeCache（构建入口）清空
     /// </summary>
-    public IReadOnlyList<TemplateResource> GeneratedResources => [];
+    public IReadOnlyList<TemplateResource> GeneratedResources =>
+        _generatedResources.IsEmpty ? [] : _generatedResources.ToArray();
+
+    private readonly System.Collections.Concurrent.ConcurrentQueue<TemplateResource> _generatedResources = new();
 
     /// <summary>
     /// 模板 errorf 记录的错误：Fluid 侧无 errorf 函数（Phase 4 函数平面），恒空

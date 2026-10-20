@@ -16,7 +16,7 @@ namespace Flint.Core.Templates;
 /// 基于 Scriban 的模板渲染器实现
 /// 支持模板继承、partial 引用和自定义函数
 /// </summary>
-public sealed partial class ScribanTemplateRenderer : ITemplateRenderer
+public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortcodeRenderer, IRenderHookRenderer
 {
     /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）</summary>
     private sealed record CachedTemplate(Template Template, string? SourcePath, DateTime ModifiedTimeUtc);

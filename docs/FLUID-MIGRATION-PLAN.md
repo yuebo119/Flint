@@ -236,7 +236,7 @@ Phase 3 之后再把 Fluid 从“新站点主力”推向“内置模板全面�
 
 当前提交 `1a6e31f` 里的 Fluid 只是 `.liquid` 备用分支，不能直接当主力。按上面 Phase 1 到 Phase 3 推进，才能得到平行的双引擎。
 
-## 实施状态（2026-10-19 收官）
+## 实施状态（2026-10-19 收官；P4-3/P4-4/P5 补齐轮更新）
 
 **已完成**：Phase 0 全部（策略枚举 + `engine` 配置键、隔离规则入
 CONVENTIONS §8.4、IL 扫描装配测试过 mutation probe）；Phase 1 全部
@@ -245,20 +245,25 @@ NativeAOT 冒烟——DynamicDependency 保留清单 + ReadingTimeView +
 索引器访问器三轮迭代）；Phase 2 全部（IBuiltinTemplateProvider 拆分、
 Liquid 内置模板、SiteCreator 脚手架 + `--engine`、new site 端到端、
 站点级 A/B 0.821x、产物对称 343 文件）；Phase 3 全部（Liquid 内置
-partial、辅助模板双形态、8 项语义对拍过 mutation probe）；Phase 4 的
-P4-1/4-2/4-3/4-6（函数分级、Hugo 名过滤器族、resources 只读档、
-对拍测试）；Phase 5 的 P5-3/4/5（.liquid 短代码/render hook、
-Scriban 模式 gating、ExtraValues 通道）；Phase 6 全部（perf 套件双引擎
-对拍用例——模板级 0.296x、AOT 体积 +0.48%、engine-probe 运行期探针
-PASS、LIQUID-GUIDE 文档、README 双语更新）。
+partial、辅助模板双形态、8 项语义对拍过 mutation probe）；Phase 4 全部
+（P4-1 分级台账、P4-2 Hugo 名过滤器族含 path/regex、P4-3 resources
+全量含产物型变换 + GeneratedResources 接线、P4-4 css.Sass/css.Build/
+js.Build 服务化、P4-6 对拍测试）；Phase 5 全部（P5-1/P5-2
+IShortcodeRenderer/IRenderHookRenderer 接口由 router 实现、P5-3
+disableShortcodes 配置、P5-4 内置短代码本就 C# 实现引擎无关、
+P5-5 Liquid render hooks）；Phase 6 全部（perf 套件双引擎对拍
+0.296x、AOT 体积 +0.48%、engine-probe PASS、LIQUID-GUIDE 文档、
+README 双语更新）。
 
 **递延（有明确理由，差异清单登记于 docs/LIQUID-GUIDE.md §4）**：
-P4-4 `css.Sass`/`js.Build`（需资产管线服务化设计）；P4-3 的产物型变换
-`resources.Concat/Fingerprint/FromString/Minify`（需接入
-GeneratedResources 输出管道）；P5-1/P5-2 的接口抽象（以扩展名分发
-替代——更符合代码库现状，YAGNI）。
+`css_sass` 的 vars 选项与 `js_build` 的 params/esm 选项（Liquid 无
+对象字面量，选项不可表达；Scriban 侧完整支持）；`group/apply/seq/
+shuffle`（新站点低频）；`strings.*`/`math.*` 命名空间**函数**形态
+（Liquid 惯用过滤器形态替代）。
 
 **与方案原文的偏差**：P1-6「先只路由一个内置模板到 Fluid」实际一步到位
 按扩展名 + 站点 Fluid 原生性路由（规则表即方案 §一.3，风险被对拍测试
 与 A/B 覆盖）；P4-2 的 Liquid 版函数采用**过滤器形态**（Liquid 惯用法，
-如 `'css/x.css' | resource`）而非 Hugo 命名空间函数形态。
+如 `'css/x.css' | resource`）而非 Hugo 命名空间函数形态；P4-4 按方案
+预留的「服务化 tag 提供」路径实施（TemplateAssetTransforms 服务，
+与 Scriban 侧共用原语）。

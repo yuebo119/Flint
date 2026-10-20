@@ -95,6 +95,7 @@ public static class EnvironmentOverrides
             LanguageCode = languageCode,
             Theme = theme,
             Engine = config.Engine,
+            DisableShortcodes = config.DisableShortcodes,
             BuildDrafts = buildDrafts,
             BuildFuture = buildFuture,
             BuildExpired = buildExpired,

@@ -65,6 +65,13 @@ public sealed class SiteConfig
     public string Engine { get; init; } = "auto";
 
     /// <summary>
+    /// 关闭短代码（FLUID-MIGRATION-PLAN P5-3）：true 时连内置 C# 短代码
+    /// （figure/highlight/ref 等）也不注册，内容管线完全不经短代码——
+    /// Fluid 主力站点的零短代码形态。缺省 false
+    /// </summary>
+    public bool DisableShortcodes { get; init; }
+
+    /// <summary>
     /// 是否构建草稿
     /// </summary>
     public bool BuildDrafts { get; init; }

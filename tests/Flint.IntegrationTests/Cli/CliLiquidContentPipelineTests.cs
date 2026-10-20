@@ -105,8 +105,7 @@ public sealed class CliLiquidContentPipelineTests : IAsyncLifetime
 
     /// <summary>engine: scriban 兼容模式下不认 .liquid 短代码（保持 Hugo 主题行为）</summary>
     [Fact]
-    public async Task Scriban_模式_不认_liquid_短代码()
-    {
+    public async Task Scriban_模式_不认_liquid_短代码()    {
         var siteName = $"nosc-{Guid.NewGuid():N}"[..13];
         var sitePath = Path.Combine(_testDir, siteName);
 
@@ -146,5 +145,48 @@ public sealed class CliLiquidContentPipelineTests : IAsyncLifetime
         var output = buildResult.ErrorOutput + buildResult.StandardOutput;
         output.Should().Contain("notice", "失败原因应指向缺失的短代码");
         output.Should().NotContain("liquid-marker", "不应把 .liquid 短代码内容渲染出来");
+    }
+
+    /// <summary>disableShortcodes = true 时连内置 C# 短代码也不注册（P5-3）</summary>
+    [Fact]
+    public async Task DisableShortcodes_关闭全部短代码()
+    {
+        var siteName = $"nosc2-{Guid.NewGuid():N}"[..13];
+        var sitePath = Path.Combine(_testDir, siteName);
+
+        var createResult = await _cli.NewSiteAsync(siteName, _testDir);
+        createResult.IsSuccess.Should().BeTrue($"创建站点应该成功，错误: {createResult.ErrorOutput}");
+
+        var shortcodesDir = Path.Combine(sitePath, "layouts", "shortcodes");
+        Directory.CreateDirectory(shortcodesDir);
+        await File.WriteAllTextAsync(Path.Combine(shortcodesDir, "notice.liquid"), "<div>liquid</div>");
+
+        // disableShortcodes 须插在**任何段头之前**（TOML 段归属，同 engine 键）
+        var configPath = Path.Combine(sitePath, "Flint.toml");
+        var config = await File.ReadAllTextAsync(configPath);
+        var patched = config.Replace(
+            "baseURL = \"http://localhost:1313/\"",
+            "baseURL = \"http://localhost:1313/\"\ndisableShortcodes = true",
+            StringComparison.Ordinal);
+        await File.WriteAllTextAsync(configPath, patched);
+
+        // 只引用内置 C# 短代码（figure）——证明 disableShortcodes 把引擎无关的
+        // 内置短代码也关掉了（内容管线完全不经短代码）
+        await File.WriteAllTextAsync(Path.Combine(sitePath, "content", "posts", "welcome.md"), """
+            +++
+            title = "关闭短代码页"
+            date = 2026-03-01T10:00:00+08:00
+            draft = false
+            +++
+
+            {{< figure src="/x.png" >}}
+            """);
+
+        var buildResult = await _cli.BuildAsync(workingDirectory: sitePath);
+
+        // 内置短代码未注册 → 引用缺失，构建失败（fail-fast）
+        buildResult.IsSuccess.Should().BeFalse("disableShortcodes 后引用内置短代码应使构建失败");
+        var output = buildResult.ErrorOutput + buildResult.StandardOutput;
+        output.Should().Contain("figure", "失败应指向未注册的内置短代码");
     }
 }
