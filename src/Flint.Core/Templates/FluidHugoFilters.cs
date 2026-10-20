@@ -10,6 +10,7 @@
 // path.*/strings.* 命名空间形态、resources.*/css.*/js.*（P4-3/P4-4）。
 
 using System.Globalization;
+using System.Runtime.InteropServices;
 using Flint.Core.Content;
 using Fluid;
 using Fluid.Values;
@@ -55,6 +56,11 @@ internal static class FluidHugoFilters
         f.AddFilter("union", Union);
         f.AddFilter("intersect", Intersect);
         f.AddFilter("complement", Complement);
+        // ---- 序列/分组族（Hugo group/apply/seq/shuffle；P4-2 补齐）----
+        f.AddFilter("group", Group);
+        f.AddFilter("apply", Apply);
+        f.AddFilter("seq", Seq);
+        f.AddFilter("shuffle", Shuffle);
         // ---- path 族（Hugo path.* 的过滤器形态；P4-2 补齐）----
         f.AddFilter("path_base", PathBase);
         f.AddFilter("path_dir", PathDir);
@@ -202,6 +208,130 @@ internal static class FluidHugoFilters
             }
         }
         return FluidValue.Create(result, ctx.Options);
+    }
+
+    // ---- 序列/分组族 ----
+
+    /// <summary>
+    /// group KEY：按成员值分组（Hugo .GroupBy 语义）。Liquid 无对象字面量，
+    /// 返回**二元组列表** [key, items]（每项两个元素），组序 = 首现顺序。
+    /// 例：{{ pages | group: 'section' }} → [['posts', [...]], ['about', [...]]]
+    /// </summary>
+    private static async ValueTask<FluidValue> Group(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var key = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        var items = await ToObjectListAsync(input, ctx);
+        var groups = new List<(string Key, List<object?> Items)>();
+        var index = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            var member = MemberOf(ctx, item, key);
+            var k = member?.ToString() ?? "";
+            if (!index.TryGetValue(k, out var slot))
+            {
+                slot = groups.Count;
+                index[k] = slot;
+                groups.Add((k, []));
+            }
+            groups[slot].Items.Add(item);
+        }
+        // 二元组形态：List<List<object?>>，每组 [key, items]
+        var result = groups.Select(g => (object?)new List<object?> { g.Key, g.Items }).ToList();
+        return FluidValue.Create(result, ctx.Options);
+    }
+
+    /// <summary>
+    /// apply 'filter'：对集合每个元素应用指定名的过滤器（Hugo apply 语义）。
+    /// 过滤器名经 TemplateOptions.Filters 解析——已注册的任意过滤器可用
+    /// </summary>
+    private static async ValueTask<FluidValue> Apply(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var filterName = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        if (filterName.Length == 0 || !ctx.Options.Filters.TryGetValue(filterName, out var filter))
+        {
+            return input;
+        }
+        var items = await ToObjectListAsync(input, ctx);
+        var result = new List<object?>(items.Count);
+        foreach (var item in items)
+        {
+            var value = FluidValue.Create(item, ctx.Options);
+            var transformed = await filter(value, FilterArguments.Empty, ctx);
+            result.Add(transformed.ToObjectValue(ctx));
+        }
+        return FluidValue.Create(result, ctx.Options);
+    }
+
+    /// <summary>
+    /// seq：整数序列（Hugo seq 语义）。输入 = 末值；first 命名实参 = 首值
+    /// （缺省 1）；step 命名实参 = 步长（缺省 1，负值倒序）
+    /// </summary>
+    private static ValueTask<FluidValue> Seq(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var last = (int)ToNumber(input, ctx);
+        var first = args.HasNamed("first") ? (int)ToNumber(args["first"], ctx) : 1;
+        var step = args.HasNamed("step") ? (int)ToNumber(args["step"], ctx) : 1;
+        if (step == 0)
+        {
+            step = 1;
+        }
+        var result = new List<object?>();
+        if (step > 0)
+        {
+            for (var v = first; v <= last; v += step)
+            {
+                result.Add(v);
+            }
+        }
+        else
+        {
+            for (var v = first; v >= last; v += step)
+            {
+                result.Add(v);
+            }
+        }
+        return new(FluidValue.Create(result, ctx.Options));
+    }
+
+    /// <summary>shuffle：随机乱序（Random.Shared，AOT 安全；测试经种子不可复现，属预期）</summary>
+    private static async ValueTask<FluidValue> Shuffle(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var items = await ToObjectListAsync(input, ctx);
+        Random.Shared.Shuffle(CollectionsMarshal.AsSpan(items));
+        return FluidValue.Create(items, ctx.Options);
+    }
+
+    /// <summary>对象列表化（字符串 → 单元素；集合 → 元素表；标量 → 单元素）</summary>
+    private static async ValueTask<List<object?>> ToObjectListAsync(FluidValue value, TemplateContext ctx)
+    {
+        if (value.IsNil())
+        {
+            return [];
+        }
+        var list = new List<object?>();
+        await foreach (var item in value.EnumerateAsync(ctx))
+        {
+            list.Add(item.IsNil() ? null : item.ToObjectValue(ctx));
+        }
+        return list;
+    }
+
+    /// <summary>取对象的成员值：经**当前上下文**的成员访问策略（Flint 策略，
+    /// snake_case 可命中；不用 TemplateOptions.Default——丢了 snake 映射）</summary>
+    private static object? MemberOf(TemplateContext ctx, object? item, string memberName)
+    {
+        if (item is null || memberName.Length == 0)
+        {
+            return null;
+        }
+        var accessor = ctx.Options.MemberAccessStrategy.GetAccessor(
+            item.GetType(), memberName, ctx.ModelNamesComparer);
+        if (accessor is null)
+        {
+            return null;
+        }
+        var value = accessor.GetAsync(item, memberName, ctx).AsTask().GetAwaiter().GetResult();
+        return value.IsNil() ? null : value.ToObjectValue(ctx);
     }
 
     // ---- path 族 ----

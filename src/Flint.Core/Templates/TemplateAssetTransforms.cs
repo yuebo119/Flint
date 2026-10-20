@@ -37,14 +37,18 @@ public static class TemplateAssetTransforms
     /// <summary>
     /// css.Sass/toCSS 核心：SCSS/Sass 经外部 Dart Sass CLI 编译（找不到 sass
     /// 或编译失败时回退内容直通，差异登记）；产物名按 targetPath 或缺省
-    /// 同目录 .css。vars 仅 Scriban 侧可表达（ScriptObject），Liquid 路径传 null
+    /// 同目录 .css。vars 仅 Scriban 侧可表达（ScriptObject 键值映射）；
+    /// Liquid 侧的最优形态是 <paramref name="varsPrelude"/>——SCSS 变量定义
+    /// 前导文本（如 <c>"$primary: #333;"</c>），编译前拼接到源前，
+    /// 覆盖同一用例且 Liquid 原生可表达
     /// </summary>
     public static TemplateResource CompileSass(
         TemplateResource resource,
         string baseUrl,
         string? targetPath = null,
         ScriptObject? vars = null,
-        object? varsInternal = null)
+        object? varsInternal = null,
+        string? varsPrelude = null)
     {
         var css = resource.Content;
         var ext = resource.SourcePath is { } sp ? Path.GetExtension(sp) : null;
@@ -52,6 +56,12 @@ public static class TemplateAssetTransforms
                          (ext == ".scss" || ext == ".sass" || ext == ".css");
         if (compilable)
         {
+            // vars 前导文本拼到源前（Hugo 的 hugo:vars 虚拟导入的 Flint 等价；
+            // 只在编译路径生效——回退直通时不改变原内容）
+            if (!string.IsNullOrEmpty(varsPrelude))
+            {
+                css = varsPrelude!.TrimEnd() + "\n" + css;
+            }
             var loadPath = Path.GetDirectoryName(resource.SourcePath!);
             var indented = ext == ".sass";
             css = BuiltinTemplateFunctions.TryCompileWithSassCli(

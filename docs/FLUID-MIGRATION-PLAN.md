@@ -133,77 +133,77 @@ interface IBuiltinTemplateProvider
 
 ### Phase 0：基线与契约
 
-- [ ] **P0-1** 抓当前 Scriban 站点级性能基线：新站点、21 主题代表、万页语料各一组。
-- [ ] **P0-2** 固化渲染段、解析段、扫描段、写盘段占比，作为后续收益判据。
-- [ ] **P0-3** 定义 `TemplateEnginePolicy`：`auto` / `fluid` / `scriban`。
-- [ ] **P0-4** 定义引擎隔离规则，写入 `docs/CONVENTIONS.md`。
-- [ ] **P0-5** 增加装配验证测试：Fluid 渲染路径不得引用 Scriban 程序集。
+- [x] **P0-1** 抓当前 Scriban 站点级性能基线：新站点、21 主题代表、万页语料各一组。
+- [x] **P0-2** 固化渲染段、解析段、扫描段、写盘段占比，作为后续收益判据。
+- [x] **P0-3** 定义 `TemplateEnginePolicy`：`auto` / `fluid` / `scriban`。
+- [x] **P0-4** 定义引擎隔离规则，写入 `docs/CONVENTIONS.md`。
+- [x] **P0-5** 增加装配验证测试：Fluid 渲染路径不得引用 Scriban 程序集。
 
 验收：基线数字可复现；策略枚举和隔离规则入库。
 
 ### Phase 1：Fluid 渲染器垂直切片
 
-- [ ] **P1-1** 新增 `FluidTemplateRenderer : ITemplateRenderer`。
-- [ ] **P1-2** 实现 Liquid 模板加载、查找、缓存、mtime 失效。
-- [ ] **P1-3** 实现依赖追踪，保证增量构建不漏重渲。
-- [ ] **P1-4** 实现模型绑定：`page` / `site` / `params` 直接进 `TemplateContext`。
-- [ ] **P1-5** 实现 `partial` / `include` 的 Liquid 版，映射到 Flint 模板加载器。
-- [ ] **P1-6** 新增 `TemplateEngineRouter`，先只路由一个内置模板到 Fluid。
-- [ ] **P1-7** 补 Fluid 单元测试：缓存、依赖、partial、大小写不敏感成员、空值语义。
-- [ ] **P1-8** NativeAOT 冒烟：Fluid 路径在 AOT 下可渲染。
+- [x] **P1-1** 新增 `FluidTemplateRenderer : ITemplateRenderer`。
+- [x] **P1-2** 实现 Liquid 模板加载、查找、缓存、mtime 失效。
+- [x] **P1-3** 实现依赖追踪，保证增量构建不漏重渲。
+- [x] **P1-4** 实现模型绑定：`page` / `site` / `params` 直接进 `TemplateContext`。
+- [x] **P1-5** 实现 `partial` / `include` 的 Liquid 版，映射到 Flint 模板加载器。
+- [x] **P1-6** 新增 `TemplateEngineRouter`，先只路由一个内置模板到 Fluid。
+- [x] **P1-7** 补 Fluid 单元测试：缓存、依赖、partial、大小写不敏感成员、空值语义。
+- [x] **P1-8** NativeAOT 冒烟：Fluid 路径在 AOT 下可渲染。
 
 验收：一个内置模板由 Fluid 渲染，其余不变；单测、集成、AOT 冒烟全绿。
 
 ### Phase 2：新站点默认 Fluid
 
-- [ ] **P2-1** 抽象 `IBuiltinTemplateProvider`，拆分 Scriban/Fluid 两套内置模板。
-- [ ] **P2-2** 用 Liquid 重写最小内置模板：`list` / `term` / `taxonomy` / `pagination`。
-- [ ] **P2-3** `SiteCreator` 增加 Liquid 脚手架，新站点默认生成 `.liquid`。
-- [ ] **P2-4** `Flint new site` 端到端测试：默认新站点不加载 Scriban 引擎。
-- [ ] **P2-5** 新站点构建冒烟：首页、单页、列表、分类、RSS。
-- [ ] **P2-6** 性能 A/B：同内容新站点，Scriban 版 vs Liquid 版，同机三轮中位数。
-- [ ] **P2-7** 产物对称性审计：两种引擎产出文件数量与关键内容一致。
+- [x] **P2-1** 抽象 `IBuiltinTemplateProvider`，拆分 Scriban/Fluid 两套内置模板。
+- [x] **P2-2** 用 Liquid 重写最小内置模板：`list` / `term` / `taxonomy` / `pagination`。
+- [x] **P2-3** `SiteCreator` 增加 Liquid 脚手架，新站点默认生成 `.liquid`。
+- [x] **P2-4** `Flint new site` 端到端测试：默认新站点不加载 Scriban 引擎。
+- [x] **P2-5** 新站点构建冒烟：首页、单页、列表、分类、RSS。
+- [x] **P2-6** 性能 A/B：同内容新站点，Scriban 版 vs Liquid 版，同机三轮中位数。
+- [x] **P2-7** 产物对称性审计：两种引擎产出文件数量与关键内容一致。
 
 验收：`Flint new site` 默认走 Fluid；A/B 显示渲染段收益；现有 Hugo 主题矩阵不回归。
 
 ### Phase 3：内置模板全面 Liquid 化
 
-- [ ] **P3-1** Liquid 化 Hugo 常用内置 partial：`opengraph`、`schema`、`twitter_cards`、`google_analytics`、`disqus`。
-- [ ] **P3-2** Liquid 化 `_funcs/get-page-images`。
-- [ ] **P3-3** Liquid 化 `rss.xml`、`sitemap.xml`、`robots.txt`、`404.html`。
-- [ ] **P3-4** 统一内置模板查找：Fluid 站点只拿 Fluid builtin，Scriban 主题只拿 Scriban builtin。
-- [ ] **P3-5** 补内置模板逐字节对比测试或语义对比测试。
+- [x] **P3-1** Liquid 化 Hugo 常用内置 partial：`opengraph`、`schema`、`twitter_cards`、`google_analytics`、`disqus`。
+- [x] **P3-2** Liquid 化 `_funcs/get-page-images`。
+- [x] **P3-3** Liquid 化 `rss.xml`、`sitemap.xml`、`robots.txt`、`404.html`。
+- [x] **P3-4** 统一内置模板查找：Fluid 站点只拿 Fluid builtin，Scriban 主题只拿 Scriban builtin。
+- [x] **P3-5** 补内置模板逐字节对比测试或语义对比测试。
 
 验收：新站点零 Scriban 内置模板依赖；Hugo 主题仍用 Scriban builtin。
 
 ### Phase 4：函数与资源平面扩展
 
-- [ ] **P4-1** 梳理 Scriban 侧 25 个命名空间函数，按新站点使用频率分级。
-- [ ] **P4-2** 实现 Liquid 版核心 filters：`strings` / `math` / `collections` / `date` / `path` / `urls` / `compare`。
-- [ ] **P4-3** 实现 Liquid 版 `resources.Get/Match/ByType/Concat/Copy/Fingerprint`。
-- [ ] **P4-4** 实现 Liquid 版 `css.Sass` / `css.Build` / `js.Build` 或先以服务化 tag 提供。
-- [ ] **P4-5** 实现 Liquid 版 `partial` 高级语义：dict 上下文、页面成员访问。
-- [ ] **P4-6** 补函数对拍测试：同名函数 Scriban 与 Fluid 输出一致或有明确差异文档。
+- [x] **P4-1** 梳理 Scriban 侧 25 个命名空间函数，按新站点使用频率分级。
+- [x] **P4-2** 实现 Liquid 版核心 filters：`strings` / `math` / `collections` / `date` / `path` / `urls` / `compare`。
+- [x] **P4-3** 实现 Liquid 版 `resources.Get/Match/ByType/Concat/Copy/Fingerprint`。
+- [x] **P4-4** 实现 Liquid 版 `css.Sass` / `css.Build` / `js.Build` 或先以服务化 tag 提供。
+- [x] **P4-5** 实现 Liquid 版 `partial` 高级语义：dict 上下文、页面成员访问。
+- [x] **P4-6** 补函数对拍测试：同名函数 Scriban 与 Fluid 输出一致或有明确差异文档。
 
 验收：新站点常用模板能力不弱于 Scriban；差异清单入库。
 
 ### Phase 5：内容管线解耦
 
-- [ ] **P5-1** 短代码处理器抽象为 `IShortcodeRenderer`，默认仍 Scriban。
-- [ ] **P5-2** render hooks 抽象为 `IRenderHookRenderer`，默认仍 Scriban。
-- [ ] **P5-3** 新站点配置可关闭短代码或选择 Fluid 短代码渲染器。
-- [ ] **P5-4** 实现 Liquid 版内置短代码：figure、ref、relref、highlight 等。
-- [ ] **P5-5** 实现 Liquid 版 render hooks：link、image、heading。
+- [x] **P5-1** 短代码处理器抽象为 `IShortcodeRenderer`，默认仍 Scriban。
+- [x] **P5-2** render hooks 抽象为 `IRenderHookRenderer`，默认仍 Scriban。
+- [x] **P5-3** 新站点配置可关闭短代码或选择 Fluid 短代码渲染器。
+- [x] **P5-4** 实现 Liquid 版内置短代码：figure、ref、relref、highlight 等。
+- [x] **P5-5** 实现 Liquid 版 render hooks：link、image、heading。
 
 验收：Fluid 主力站点可不经 Scriban 完成内容渲染；Hugo 主题行为不变。
 
 ### Phase 6：性能门禁与发布
 
-- [ ] **P6-1** 增加站点级 BenchmarkDotNet 用例：Liquid 新站点 vs Scriban 新站点。
-- [ ] **P6-2** 增加 AOT 体积对比：双引擎二进制 vs 纯 Scriban 二进制。
-- [ ] **P6-3** 增加装配探针：Fluid 路径运行时不得加载 Scriban 程序集。
-- [ ] **P6-4** 补文档：新站点模板规范、Liquid 函数清单、Scriban 兼容层边界。
-- [ ] **P6-5** 发布说明明确：Fluid 主力，Scriban 仅 Hugo 兼容。
+- [x] **P6-1** 增加站点级 BenchmarkDotNet 用例：Liquid 新站点 vs Scriban 新站点。
+- [x] **P6-2** 增加 AOT 体积对比：双引擎二进制 vs 纯 Scriban 二进制。
+- [x] **P6-3** 增加装配探针：Fluid 路径运行时不得加载 Scriban 程序集。
+- [x] **P6-4** 补文档：新站点模板规范、Liquid 函数清单、Scriban 兼容层边界。
+- [x] **P6-5** 发布说明明确：Fluid 主力，Scriban 仅 Hugo 兼容。
 
 验收：性能门禁可复现；文档和发布说明无旧口径。
 
@@ -236,7 +236,7 @@ Phase 3 之后再把 Fluid 从“新站点主力”推向“内置模板全面�
 
 当前提交 `1a6e31f` 里的 Fluid 只是 `.liquid` 备用分支，不能直接当主力。按上面 Phase 1 到 Phase 3 推进，才能得到平行的双引擎。
 
-## 实施状态（2026-10-19 收官；P4-3/P4-4/P5 补齐轮更新）
+## 实施状态（2026-10-19 收官；P4-3/P4-4/P5 补齐轮 + 递延收敛轮更新）
 
 **已完成**：Phase 0 全部（策略枚举 + `engine` 配置键、隔离规则入
 CONVENTIONS §8.4、IL 扫描装配测试过 mutation probe）；Phase 1 全部
@@ -246,20 +246,20 @@ NativeAOT 冒烟——DynamicDependency 保留清单 + ReadingTimeView +
 Liquid 内置模板、SiteCreator 脚手架 + `--engine`、new site 端到端、
 站点级 A/B 0.821x、产物对称 343 文件）；Phase 3 全部（Liquid 内置
 partial、辅助模板双形态、8 项语义对拍过 mutation probe）；Phase 4 全部
-（P4-1 分级台账、P4-2 Hugo 名过滤器族含 path/regex、P4-3 resources
-全量含产物型变换 + GeneratedResources 接线、P4-4 css.Sass/css.Build/
-js.Build 服务化、P4-6 对拍测试）；Phase 5 全部（P5-1/P5-2
-IShortcodeRenderer/IRenderHookRenderer 接口由 router 实现、P5-3
-disableShortcodes 配置、P5-4 内置短代码本就 C# 实现引擎无关、
-P5-5 Liquid render hooks）；Phase 6 全部（perf 套件双引擎对拍
-0.296x、AOT 体积 +0.48%、engine-probe PASS、LIQUID-GUIDE 文档、
-README 双语更新）。
+（P4-1 分级台账、P4-2 Hugo 名过滤器族含 path/regex/group/apply/seq/
+shuffle、P4-3 resources 全量含产物型变换 + GeneratedResources 接线、
+P4-4 css.Sass/css.Build/js.Build 服务化含 vars/format/params 的
+Liquid 命名实参形态、P4-6 对拍测试）；Phase 5 全部（P5-1/P5-2
+IShortcodeRenderer/IRenderHookRenderer 接口由 router 与 Scriban
+渲染器双实现、P5-3 disableShortcodes 配置、P5-4 内置短代码本就 C#
+实现引擎无关、P5-5 Liquid render hooks）；Phase 6 全部（perf 套件
+双引擎对拍 0.296x、AOT 体积 +0.48%、engine-probe PASS、
+LIQUID-GUIDE 文档、README 双语更新）。
 
 **递延（有明确理由，差异清单登记于 docs/LIQUID-GUIDE.md §4）**：
-`css_sass` 的 vars 选项与 `js_build` 的 params/esm 选项（Liquid 无
-对象字面量，选项不可表达；Scriban 侧完整支持）；`group/apply/seq/
-shuffle`（新站点低频）；`strings.*`/`math.*` 命名空间**函数**形态
-（Liquid 惯用过滤器形态替代）。
+`strings.*`/`math.*` 命名空间**函数**形态（Liquid 语法无方法调用，
+过滤器形态是唯一自然表达）；`group` 的 dict 返回形态（Liquid 无对象
+字面量，二元组列表是唯一可消费形态）。
 
 **与方案原文的偏差**：P1-6「先只路由一个内置模板到 Fluid」实际一步到位
 按扩展名 + 站点 Fluid 原生性路由（规则表即方案 §一.3，风险被对拍测试

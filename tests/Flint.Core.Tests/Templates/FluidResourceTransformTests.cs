@@ -201,6 +201,138 @@ public sealed class FluidResourceTransformTests : IDisposable
         _renderer.InvalidateMtimeCache();
         Assert.Empty(_renderer.GeneratedResources);
     }
+
+    [Fact]
+    public async Task js_build_esm_与_params_命名实参()
+    {
+        // format: 'esm' 与 params 命名实参（Liquid 标量选项形态）——
+        // from_string 资源无 SourcePath，打包路径跳过，但实参解析不报错
+        var result = await RenderAsync("""
+            {% assign r = 'app.js' | resource_from_string: 'export const x = 1;' %}
+            {{ r | js_build: format: 'esm', minify: true | jsonify }}
+            """);
+
+        Assert.Contains("app.js", result);
+    }
+
+    [Fact]
+    public async Task css_sass_vars_前导文本不破坏直通路径()
+    {
+        // vars 前导文本只在"按磁盘文件编译"路径拼接；from_string 资源直通，
+        // 前导文本不污染内容
+        var result = await RenderAsync("""
+            {% assign r = 'a.css' | resource_from_string: 'body{color:red}' %}
+            {{ r | css_sass: vars: '$primary: #333;' | jsonify }}
+            """);
+
+        Assert.Contains("a.css", result);
+    }
+}
+
+/// <summary>序列/分组过滤器测试（group/apply/seq/shuffle）</summary>
+public sealed class FluidSequenceFilterTests : IDisposable
+{
+    private readonly string _tempDir;
+    private readonly FluidTemplateRenderer _renderer;
+
+    public FluidSequenceFilterTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"Flint_seq_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+        _renderer = new FluidTemplateRenderer(_tempDir, "https://example.com");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, true);
+        }
+        GC.SuppressFinalize(this);
+    }
+
+    private static TemplateContext CreateContext() =>
+        new()
+        {
+            Page = new PageContext
+            {
+                Title = "T", Content = "", Permalink = "https://example.com/t/",
+                RelPermalink = "/t/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [],
+                WordCount = 1, ReadingTime = TimeSpan.Zero,
+                Pages =
+                [
+                    new PageContext
+                    {
+                        Title = "P1", Content = "", Permalink = "https://example.com/p1/",
+                        RelPermalink = "/p1/", Date = DateTimeOffset.UnixEpoch, Tags = [],
+                        Categories = [], WordCount = 1, ReadingTime = TimeSpan.Zero, Section = "posts"
+                    },
+                    new PageContext
+                    {
+                        Title = "P2", Content = "", Permalink = "https://example.com/p2/",
+                        RelPermalink = "/p2/", Date = DateTimeOffset.UnixEpoch, Tags = [],
+                        Categories = [], WordCount = 1, ReadingTime = TimeSpan.Zero, Section = "posts"
+                    },
+                    new PageContext
+                    {
+                        Title = "A1", Content = "", Permalink = "https://example.com/a1/",
+                        RelPermalink = "/a1/", Date = DateTimeOffset.UnixEpoch, Tags = [],
+                        Categories = [], WordCount = 1, ReadingTime = TimeSpan.Zero, Section = "about"
+                    }
+                ]
+            },
+            Site = new SiteContext
+            {
+                Title = "S", BaseURL = "https://example.com", Language = "zh-cn",
+                Pages = [], RegularPages = [],
+                Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+                Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+                Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" }
+            }
+        };
+
+    private async Task<string> RenderAsync(string template)
+    {
+        var file = Path.Combine(_tempDir, "t.liquid");
+        await File.WriteAllTextAsync(file, template).ConfigureAwait(false);
+        return await _renderer.RenderTemplateFileAsync(file, CreateContext()).ConfigureAwait(false);
+    }
+
+    [Fact]
+    public async Task seq_序列生成()
+    {
+        Assert.Equal("1,2,3,4,5", await RenderAsync("{{ 5 | seq | join: ',' }}"));
+        Assert.Equal("2,4", await RenderAsync("{{ 4 | seq: first: 2, step: 2 | join: ',' }}"));
+        Assert.Equal("3,2,1", await RenderAsync("{{ 1 | seq: first: 3, step: -1 | join: ',' }}"));
+    }
+
+    [Fact]
+    public async Task group_按成员分组返回二元组()
+    {
+        var result = await RenderAsync("""
+            {%- assign grouped = page.pages | group: 'section' -%}
+            {%- for g in grouped -%}[{{ g[0] }}:{{ g[1] | size }}]{%- endfor -%}
+            """);
+
+        // 组序 = 首现顺序：posts(2) → about(1)
+        Assert.Equal("[posts:2][about:1]", result);
+    }
+
+    [Fact]
+    public async Task apply_逐元素应用过滤器()
+    {
+        var result = await RenderAsync("{{ 'a,b,c' | split: ',' | apply: 'upcase' | join: '|' }}");
+
+        Assert.Equal("A|B|C", result);
+    }
+
+    [Fact]
+    public async Task shuffle_长度不变()
+    {
+        var result = await RenderAsync("{{ 'a,b,c,d,e' | split: ',' | shuffle | size }}");
+
+        Assert.Equal("5", result);
+    }
 }
 
 /// <summary>disableShortcodes 配置测试（P5-3）</summary>

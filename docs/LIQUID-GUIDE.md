@@ -151,6 +151,10 @@ SiteBuilder 不认识具体引擎。
 | `css_build` | `$r \| css_build` | 内容可选压缩（minify 缺省 true） |
 | `js_build` | `$r \| js_build` | ES 打包 + TS 扩展名改写 + 可选压缩 |
 | `path_base` / `path_dir` / `path_ext` / `path_join` / `path_split` | Hugo `path.*` 的过滤器形态 | |
+| `group` | `$pages \| group: 'section'` | 二元组列表 `[key, items]`（Liquid 无对象字面量） |
+| `apply` | `$seq \| apply: 'upcase'` | 逐元素应用指定名过滤器 |
+| `seq` | `5 \| seq: first: 2, step: 2` | 整数序列（Hugo seq 语义） |
+| `shuffle` | `$items \| shuffle` | 随机乱序（Random.Shared） |
 | `find_re` / `replace_re` | 正则查找/替换 | **pattern 的反斜杠须双写**（见 §4） |
 | `i18n` / `T` | 翻译表查键，缺键空串 | 站点 i18n/ 经 AmbientValues 传入 |
 | `safe_html` 等 6 个 | 恒等透传 | Flint 默认不转义 |
@@ -162,12 +166,13 @@ SiteBuilder 不认识具体引擎。
 
 ### 3.3 分级与递延（P4-1 台账）
 
-**T1 已实现**：上表两节全部（P4-2 的 strings/math/collections/date/path/
+**T1 已实现**：上表全部（P4-2 的 strings/math/collections/date/path/
 urls/compare 全覆盖——math/compare/date 由 Fluid 内置 72 个过滤器与操作符
-提供，urls/path/strings 的 Hugo 名见上表）。**T2 递延**：`css_sass` 的
-vars 选项与 `js_build` 的 params/esm 选项（Liquid 无对象字面量，选项不可
-表达——Scriban 侧完整支持）；`group/apply/seq/shuffle`（新站点低频）；
-`strings.*`/`math.*` 命名空间**函数**形态（Liquid 惯用过滤器形态，见上表）。
+提供，urls/path/strings/collections 的 Hugo 名见上表；P4-3 产物型与
+P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延**：
+`strings.*`/`math.*` 命名空间**函数**形态（Liquid 语法无方法调用，
+过滤器形态是唯一自然表达——映射表见 §3.2）；`group` 的 dict 返回形态
+（Liquid 无对象字面量，二元组列表是唯一可消费形态）。
 
 ## 4. 已知差异清单（Liquid vs Scriban/Hugo）
 
@@ -195,9 +200,12 @@ vars 选项与 `js_build` 的 params/esm 选项（Liquid 无对象字面量，�
 8. **正则 pattern 的反斜杠**：Liquid 单引号串把 `\` 当转义符，`'\w'` 直接
    解析失败（"End of tag '}}' was expected"）——pattern 里的反斜杠须
    **双写**（`'(\\w+)'` 才是一个 `\w`；`find_re`/`replace_re` 实测陷阱）。
-9. **`css_sass`/`js_build` 的选项**：Liquid 无对象字面量，Scriban 侧支持的
-   vars/params/esm 选项在 Liquid 形态不可表达（基础编译打包可用；
-   `target` 命名实参可指定产物名）。
+9. **`css_sass`/`js_build` 的选项形态**：Liquid 无对象字面量，Scriban 侧的
+   dict 选项在 Liquid 用**命名实参**表达（`css_sass: vars: '$primary: #333;'`
+   的 vars 是 SCSS 变量前导文本而非键值映射——同一用例的 Liquid 原生形态；
+   `js_build: format: 'esm', params: '<json>'` 与 Scriban 同义）。
+   `group` 返回二元组列表 `[key, items]`（Liquid 无对象字面量，
+   Scriban 侧返回 dict）。
 
 ## 5. 性能与验证口径
 

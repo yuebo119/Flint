@@ -190,8 +190,8 @@ internal static class FluidResourceFilters
     // ---- 资产变换 ----
 
     /// <summary>{{ $r | css_sass }}：SCSS 经外部 Dart Sass CLI 编译，产物 .css。
-    /// Liquid 无对象字面量，vars/targetPath 选项不可表达（Scriban 侧支持）；
-    /// target 命名实参可指定产物名</summary>
+    /// vars 命名实参接受 SCSS 变量前导文本（如 '$primary: #333;'，Liquid 原生
+    /// 形态——Hugo 的 dict vars 在 Liquid 不可表达）；target 命名实参指定产物名</summary>
     private static ValueTask<FluidValue> CssSass(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var resource = ToResource(input, ctx) ?? FromPath(input, ctx);
@@ -200,7 +200,9 @@ internal static class FluidResourceFilters
             return new(FluidValue.Create(null, ctx.Options));
         }
         var target = args.HasNamed("target") ? ToString(args["target"], ctx) : null;
-        var result = TemplateAssetTransforms.CompileSass(resource, BaseUrlOf(ctx), target);
+        var varsPrelude = args.HasNamed("vars") ? ToString(args["vars"], ctx) : null;
+        var result = TemplateAssetTransforms.CompileSass(
+            resource, BaseUrlOf(ctx), target, varsPrelude: varsPrelude);
         Register(ctx, result);
         return new(FluidValue.Create(result, ctx.Options));
     }
@@ -221,7 +223,8 @@ internal static class FluidResourceFilters
 
     /// <summary>
     /// {{ $r | js_build }}：ES 打包 + TS 扩展名改写 + 可选压缩。
-    /// minify 缺省 false（与 Scriban 侧同口径）；target 命名实参指定产物名
+    /// minify 缺省 false（与 Scriban 侧同口径）；target 命名实参指定产物名；
+    /// format: 'esm' 保持 ES 模块形态；params: '<json>' 提供 @params 虚拟模块
     /// </summary>
     private static ValueTask<FluidValue> JsBuild(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
@@ -232,9 +235,13 @@ internal static class FluidResourceFilters
         }
         var minify = args.HasNamed("minify") && ToBool(args["minify"], ctx);
         var target = args.HasNamed("target") ? ToString(args["target"], ctx) : null;
+        var esm = string.Equals(
+            args.HasNamed("format") ? ToString(args["format"], ctx) : null,
+            "esm", StringComparison.OrdinalIgnoreCase);
+        var paramsJson = args.HasNamed("params") ? ToString(args["params"], ctx) : null;
         var result = TemplateAssetTransforms.BuildJs(
             resource.Name, resource.Content, BaseUrlOf(ctx),
-            resource.SourcePath, target, minify);
+            resource.SourcePath, target, minify, esm, paramsJson);
         Register(ctx, result);
         return new(FluidValue.Create(result, ctx.Options));
     }
