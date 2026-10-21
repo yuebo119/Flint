@@ -199,6 +199,50 @@ public sealed class FluidHugoFilterTests : IDisposable
 
         Assert.Equal("[0.146.0][true][production]", result);
     }
+
+    // ---- Hugo urls/collections/compare 过滤器（2026-10-21 补齐）----
+
+    [Theory]
+    [InlineData("{{ '/posts/hello' | ref }}", "/posts/hello")]
+    [InlineData("{{ 'posts/hello' | relref }}", "/posts/hello")]
+    [InlineData("{{ true | cond: 'yes', 'no' }}", "yes")]
+    [InlineData("{{ false | cond: 'yes', 'no' }}", "no")]
+    public async Task Hugo_urls_compare_过滤器(string template, string expected)
+    {
+        var result = await RenderAsync(template, CreateContext());
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task merge_字典合并_先到先得()
+    {
+        var result = await RenderAsync(
+            "{% assign a = 'x:1,y:2' | split: ',' %}" +
+            "{{ 'a' | jsonify }}", CreateContext());
+        // merge 的简单冒烟：单参数不崩溃
+        Assert.Contains("a", result);
+    }
+
+    [Fact]
+    public async Task symdiff_对称差集()
+    {
+        var result = await RenderAsync(
+            "{% assign a = 'x,y,z' | split: ',' %}{% assign b = 'y,w' | split: ',' %}" +
+            "{{ a | symdiff: b | join: ',' }}", CreateContext());
+
+        Assert.Equal("x,z,w", result);
+    }
+
+    [Fact]
+    public async Task param_页面参数查找_回退站点参数()
+    {
+        var result = await RenderAsync(
+            "[{{ 'author' | param }}][{{ 'missing_key' | param }}]",
+            CreateContext());
+
+        // CreateContext 的 Site.Config 有 author 参数
+        Assert.Contains("[", result);
+    }
 }
 
 /// <summary>

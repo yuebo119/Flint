@@ -456,6 +456,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] = context.Site.Translations;
         // 当前页面 RelPermalink（paginate 过滤器登记分页追踪用，2026-10-21）
         fluidContext.AmbientValues[FluidHugoFilters.CurrentPageRelPermalinkKey] = context.Page.RelPermalink;
+        // 页面/站点 params（param 过滤器查找用，2026-10-21：Hugo .Param 语义——
+        // 页面参数未命中时回落站点参数）
+        fluidContext.AmbientValues[FluidHugoFilters.PageParamsKey] = context.Page.Params;
+        fluidContext.AmbientValues[FluidHugoFilters.SiteParamsKey] = context.Site.Params;
         // 依赖收集容器：AmbientValues 随 TemplateContext 生命周期，include 解析
         // 回调经同一 context 写入，并行渲染互不干扰（每渲染独立实例）
         fluidContext.AmbientValues[DepsKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

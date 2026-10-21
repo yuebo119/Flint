@@ -96,6 +96,13 @@ internal static class FluidHugoFilters
         f.AddFilter("in_str", InStr);
         f.AddFilter("repeat", Repeat);
         f.AddFilter("html_unescape", HtmlUnescape);
+        // ---- Hugo urls/collections/compare 过滤器（2026-10-21 补齐）----
+        f.AddFilter("ref", Ref);
+        f.AddFilter("relref", Ref);
+        f.AddFilter("merge", Merge);
+        f.AddFilter("symdiff", SymDiff);
+        f.AddFilter("cond", Cond);
+        f.AddFilter("param", Param);
     }
 
     // ---- 文本族 ----
@@ -648,6 +655,98 @@ internal static class FluidHugoFilters
     /// <summary>html_unescape：HTML 实体反转义（Hugo htmlUnescape）</summary>
     private static ValueTask<FluidValue> HtmlUnescape(FluidValue input, FilterArguments args, TemplateContext ctx) =>
         new(FluidValue.Create(System.Net.WebUtility.HtmlDecode(ToString(input, ctx)), ctx.Options));
+
+    // ---- Hugo urls/collections/compare 过滤器（2026-10-21 补齐）----
+
+    /// <summary>ref/relref：内容路径解析为站内 URL（Hugo urls.Ref/RelRef；
+    /// Flint 无内容引用解析器，与 Scriban 侧同口径的简化形态：路径规范化）</summary>
+    private static ValueTask<FluidValue> Ref(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var path = ToString(input, ctx);
+        return new(FluidValue.Create("/" + path.TrimStart('/'), ctx.Options));
+    }
+
+    /// <summary>merge：合并多个字典（Hugo merge；后写的键不覆盖先写的——
+    /// 与 Scriban 侧 MergeDicts 同语义：从最后一个参数往前合并，先到先得）</summary>
+    private static ValueTask<FluidValue> Merge(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        // 从最后一个位置参数往前合并（先到先得，与 Scriban MergeDicts 一致）
+        for (var i = args.Count - 1; i >= 0; i--)
+        {
+            if (args.At(i).ToObjectValue(ctx) is IDictionary<string, object?> dict)
+            {
+                foreach (var (key, value) in dict)
+                {
+                    result.TryAdd(key, value);
+                }
+            }
+        }
+        // 输入也参与合并（最低优先级）
+        if (input.ToObjectValue(ctx) is IDictionary<string, object?> inputDict)
+        {
+            foreach (var (key, value) in inputDict)
+            {
+                result.TryAdd(key, value);
+            }
+        }
+        return new(FluidValue.Create(result, ctx.Options));
+    }
+
+    /// <summary>symdiff：对称差集（Hugo collections.SymDiff；两个集合中不交集的部分）</summary>
+    private static async ValueTask<FluidValue> SymDiff(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var a = await ToStringListAsync(input, ctx);
+        var b = args.Count > 0 ? await ToStringListAsync(args.At(0), ctx) : [];
+        var setB = new HashSet<string>(b, StringComparer.Ordinal);
+        var setA = new HashSet<string>(a, StringComparer.Ordinal);
+        var result = a.Where(x => !setB.Contains(x)).ToList();
+        result.AddRange(b.Where(x => !setA.Contains(x)));
+        return FluidValue.Create(result, ctx.Options);
+    }
+
+    /// <summary>cond：三元条件（Hugo compare.Conditional；{{ true | cond: 'yes', 'no' }}）</summary>
+    private static ValueTask<FluidValue> Cond(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var condition = input.ToBooleanValue(ctx);
+        var trueVal = args.Count > 0 ? args.At(0) : FluidValue.Create("", ctx.Options);
+        var falseVal = args.Count > 1 ? args.At(1) : FluidValue.Create("", ctx.Options);
+        return new(condition ? trueVal : falseVal);
+    }
+
+    /// <summary>
+    /// param：单参数查找（Hugo .Param 语义：页面参数未命中时回落站点参数）。
+    /// {{ 'author' | param }}：经 AmbientValues 的页面/站点 params 查找
+    /// （2026-10-21 补齐，Scriban 侧有 paramLookup 实现）
+    /// </summary>
+    private static ValueTask<FluidValue> Param(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var key = ToString(input, ctx);
+        if (key.Length == 0)
+        {
+            return new(FluidValue.Create("", ctx.Options));
+        }
+        // 经 AmbientValues 取页面/站点 params（CreateFluidContext 设置）
+        if (ctx.AmbientValues.TryGetValue(PageParamsKey, out var pp) &&
+            pp is IReadOnlyDictionary<string, object> pageParams &&
+            pageParams.TryGetValue(key, out var pageVal) && pageVal is not null)
+        {
+            return new(FluidValue.Create(pageVal, ctx.Options));
+        }
+        if (ctx.AmbientValues.TryGetValue(SiteParamsKey, out var sp) &&
+            sp is IReadOnlyDictionary<string, object> siteParams &&
+            siteParams.TryGetValue(key, out var siteVal) && siteVal is not null)
+        {
+            return new(FluidValue.Create(siteVal, ctx.Options));
+        }
+        return new(FluidValue.Create("", ctx.Options));
+    }
+
+    /// <summary>AmbientValues 键：页面 params（param 过滤器用）</summary>
+    internal const string PageParamsKey = "__flint_fluid_page_params";
+
+    /// <summary>AmbientValues 键：站点 params（param 过滤器用）</summary>
+    internal const string SiteParamsKey = "__flint_fluid_site_params";
 
     // ---- where 运算符包装 ----
 
