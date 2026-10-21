@@ -248,7 +248,8 @@ internal static class FluidResourceFilters
 
     // ---- 辅助 ----
 
-    /// <summary>实参 → 资源列表元素：资源对象直用；字符串路径经提供者解析（无提供者跳过）</summary>
+    /// <summary>实参 → 资源列表元素：资源对象直用；字符串路径经提供者解析
+    /// （对齐 Scriban 侧 Concat 的路径实参语义，2026-10-21 审计修复）</summary>
     private static void AddResource(List<TemplateResource> items, FluidValue value, TemplateContext ctx)
     {
         if (value.IsNil())
@@ -263,6 +264,18 @@ internal static class FluidResourceFilters
         if (value.ToObjectValue(ctx) is IEnumerable<TemplateResource> many)
         {
             items.AddRange(many);
+            return;
+        }
+        // 字符串路径：经 AmbientValues 的提供者解析（无提供者则跳过）
+        var path = value.ToStringValue(ctx);
+        if (path.Length == 0)
+        {
+            return;
+        }
+        if (ctx.AmbientValues.TryGetValue(ProviderKey, out var p) && p is ITemplateResourceProvider provider &&
+            provider.Get(path) is { } resolved)
+        {
+            items.Add(resolved);
         }
     }
 

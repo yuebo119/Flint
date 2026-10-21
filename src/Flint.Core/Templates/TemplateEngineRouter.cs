@@ -29,11 +29,12 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
     /// 无 _markup 钩子）的构建全程不构造 Scriban 渲染器——Scriban 程序集
     /// 因此不被加载（engine-probe 实证）。Hugo 主题站点首次触碰 Scriban 路径
     /// （.html 渲染/hook 装配/依赖判定）时经工厂构造。翻译表经
-    /// <see cref="SetTranslations"/> 预存，构造时应用
+    /// <see cref="SetTranslations"/> 预存，构造时应用。
+    /// **Lazy 而非 `??=`**：并行渲染（Parallel.ForEachAsync）下 `??=` 非原子，
+    /// 多线程可能各自构造一个实例（2026-10-21 审计修复）
     /// </summary>
-    private ScribanTemplateRenderer? _scriban;
-    private readonly Func<ScribanTemplateRenderer> _scribanFactory;
-    private IReadOnlyDictionary<string, string>? _translations;
+    private readonly Lazy<ScribanTemplateRenderer> _scribanLazy;
+    private volatile IReadOnlyDictionary<string, string>? _translations;
     private readonly TemplateEnginePolicy _policy;
 
     /// <summary>Fluid 原生站点判定缓存（layouts 根存在任一 .liquid 文件）；
@@ -59,8 +60,16 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
         TemplateEnginePolicy policy)
     {
         _fluid = fluidRenderer;
-        _scribanFactory = scribanRendererFactory;
         _policy = policy;
+        // Lazy 线程安全模式：并行渲染下首次触碰 Scriban 路径时只构造一个实例
+        _scribanLazy = new Lazy<ScribanTemplateRenderer>(
+            () =>
+            {
+                var renderer = scribanRendererFactory();
+                renderer.Translations = _translations;
+                return renderer;
+            },
+            LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     /// <summary>从配置字符串解析策略（无法识别按 auto——现有站点行为不变）</summary>
@@ -88,10 +97,10 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
     /// Scriban 渲染器（懒构造；P2-4）。纯 Fluid 站点不触碰本属性即不构造。
     /// 翻译表回填经 <see cref="SetTranslations"/>（不触发构造）
     /// </summary>
-    public ScribanTemplateRenderer ScribanRenderer => _scriban ??= ConstructScriban();
+    public ScribanTemplateRenderer ScribanRenderer => _scribanLazy.Value;
 
     /// <summary>Scriban 渲染器是否已构造（依赖判定的零 IO 优化据此决定是否可用）</summary>
-    public bool IsScribanConstructed => _scriban is not null;
+    public bool IsScribanConstructed => _scribanLazy.IsValueCreated;
 
     /// <summary>
     /// **按需构造中枢**（P2-4）：auto 模式下仅当"站点可能需要 Scriban"时
@@ -104,7 +113,7 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
     {
         TemplateEnginePolicy.Scriban => ScribanRenderer,
         TemplateEnginePolicy.Fluid => null,
-        _ => _scriban is not null || !IsFluidNativeSite || SiteHasHtmlTemplates
+        _ => _scribanLazy.IsValueCreated || !IsFluidNativeSite || SiteHasHtmlTemplates
             ? ScribanRenderer
             : null
     };
@@ -134,17 +143,10 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
     public void SetTranslations(IReadOnlyDictionary<string, string>? translations)
     {
         _translations = translations;
-        if (_scriban is not null)
+        if (_scribanLazy.IsValueCreated)
         {
-            _scriban.Translations = translations;
+            _scribanLazy.Value.Translations = translations;
         }
-    }
-
-    private ScribanTemplateRenderer ConstructScriban()
-    {
-        var renderer = _scribanFactory();
-        renderer.Translations = _translations;
-        return renderer;
     }
 
     /// <summary>从站点配置解析策略</summary>
@@ -321,9 +323,9 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
         _fluid.InvalidateMtimeCache();
         // 仅已构造的 Scriban 渲染器需要失效（P2-4：未构造即无状态可失效，
         // 不因构建入口的失效调用触发懒构造）
-        if (_scriban is not null)
+        if (_scribanLazy.IsValueCreated)
         {
-            _scriban.InvalidateMtimeCache();
+            _scribanLazy.Value.InvalidateMtimeCache();
         }
         // Fluid 原生判定随模板文件集刷新（构建边界可能新增/删除 .liquid）
         _fluidNative = null;
@@ -337,18 +339,18 @@ public sealed partial class TemplateEngineRouter : ITemplateRenderer, IShortcode
             TemplateEnginePolicy.Fluid => _fluid.GeneratedResources,
             TemplateEnginePolicy.Scriban => ScribanRenderer.GeneratedResources,
             // auto：未构造 Scriban 时其产物集为空（纯 Fluid 站点无 Scriban 产物）
-            _ => _scriban is null
-                ? _fluid.GeneratedResources
-                : [.. _fluid.GeneratedResources, .. _scriban.GeneratedResources]
+            _ => _scribanLazy.IsValueCreated
+                ? [.. _fluid.GeneratedResources, .. _scribanLazy.Value.GeneratedResources]
+                : _fluid.GeneratedResources
         };
 
     /// <inheritdoc />
     public IReadOnlyList<string> DrainTemplateErrors()
     {
         var fluidErrors = _policy == TemplateEnginePolicy.Scriban ? [] : _fluid.DrainTemplateErrors();
-        var scribanErrors = _policy == TemplateEnginePolicy.Fluid || _scriban is null
+        var scribanErrors = _policy == TemplateEnginePolicy.Fluid || !_scribanLazy.IsValueCreated
             ? []
-            : _scriban.DrainTemplateErrors();
+            : _scribanLazy.Value.DrainTemplateErrors();
         return fluidErrors.Count == 0 ? scribanErrors : [.. fluidErrors, .. scribanErrors];
     }
 }

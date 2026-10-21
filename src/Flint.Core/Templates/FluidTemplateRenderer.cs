@@ -14,6 +14,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
@@ -45,6 +46,23 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     private readonly ConcurrentDictionary<string, CachedTemplate> _templateCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, IReadOnlyList<string>> _dependencyCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly TimeProvider _timeProvider;
+
+    /// <summary>
+    /// include 路径解析缓存（对齐 Scriban 侧 FileTemplateLoader._pathCache）：
+    /// 键 = include 名（解析结果对名字与模板文件集确定，构建内不变）。
+    /// 此前每次 include 渲染都跑 roots × forms 的 File.Exists 循环——
+    /// 1000 页 × 5 include × 8 候选 = 4 万次 stat（2026-10-21 审计修复）
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string?> _includePathCache = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// include 模板文本缓存（对齐 FileTemplateLoader._textCache）：
+    /// 键 = 物理路径，值 = (文本, mtime, length)。mtime+length 双字段验效
+    /// （同时间粒度改写时 mtime 可能不前进，length 作第二判据）；
+    /// 保留 serve 模式热更新语义。此前每次 include 渲染都全量读盘
+    /// </summary>
+    private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc, long Length)> _includeTextCache =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>AmbientValues 键：本次渲染收集的依赖物理路径集合（随 TemplateContext 生命周期）</summary>
     private const string DepsKey = "__flint_fluid_deps";
@@ -398,13 +416,24 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         {
             return dict;
         }
-        var copy = new Dictionary<string, object>(source.Count, StringComparer.OrdinalIgnoreCase);
-        foreach (var kv in source)
+
+        // 按源字典身份缓存副本（ConditionalWeakTable：源被回收时条目自动清除，
+        // 不泄漏）。同一构建内全部页面共享 SiteContext.Params/Data 同一实例，
+        // 缓存后每页零复制（此前每渲染复制一次——1000 页 = 1000 次冗余复制，
+        // 2026-10-21 审计修复）
+        return CiCopyCache.GetValue(source, static s =>
         {
-            copy[kv.Key] = kv.Value;
-        }
-        return copy;
+            var copy = new Dictionary<string, object>(s.Count, StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in s)
+            {
+                copy[kv.Key] = kv.Value;
+            }
+            return copy;
+        });
     }
+
+    /// <summary>CI 副本缓存（键 = 源字典引用，值 = OrdinalIgnoreCase 副本）</summary>
+    private static readonly ConditionalWeakTable<IReadOnlyDictionary<string, object>, object> CiCopyCache = new();
 
     /// <summary>
     /// include/render 的模板解析（Fluid FileProvider 回调）：按根序解析
@@ -455,13 +484,25 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         return ReadFileStreamAsync(resolvedPath, cancellationToken);
     }
 
-    private static async ValueTask<Stream> ReadFileStreamAsync(string path, CancellationToken cancellationToken)
+    private async ValueTask<Stream> ReadFileStreamAsync(string path, CancellationToken cancellationToken)
     {
-        // 内存流：模板文本短（KB 级），FileStream 直传会让 Fluid 的缓存持有文件句柄，
-        // dev server 热重载改写时撞文件锁（Windows）。剥 BOM：Fluid 对带头 BOM 的
-        // 模板文本直接在行首留下不可见字符（首行输出多一个 \uFEFF）
+        // 文本缓存：mtime+length 双字段验效（同 Scriban 侧口径）——
+        // 命中即免全量读盘（1000 页 × 5 include 的全量读盘是纯浪费）；
+        // 未命中或验效失败才读盘并更新缓存。保留 serve 热更新语义
+        var info = new FileInfo(path);
+        if (_includeTextCache.TryGetValue(path, out var tc) &&
+            tc.MtimeUtc == info.LastWriteTimeUtc && tc.Length == info.Length)
+        {
+            return EncodeUtf8NoBom(tc.Text);
+        }
+
         var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-        return EncodeUtf8NoBom(bytes);
+        // 剥 BOM：Fluid 对带头 BOM 的模板文本直接在行首留下不可见字符
+        var text = bytes is [0xEF, 0xBB, 0xBF, ..]
+            ? Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3)
+            : Encoding.UTF8.GetString(bytes);
+        _includeTextCache[path] = (text, info.LastWriteTimeUtc, info.Length);
+        return EncodeUtf8NoBom(text);
     }
 
     /// <summary>UTF-8 无 BOM 内存流：带头 BOM 的字节剥掉 3 字节前缀，其余原样</summary>
@@ -481,6 +522,20 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     /// 未命中回退 Fluid 内置模板（哨兵路径形态，内容由解析回调再取一次）
     /// </summary>
     private string? ResolveIncludePath(string templateName)
+    {
+        // 路径缓存：解析结果对 include 名确定（构建内模板文件集不变，
+        // 与 Scriban 侧同口径）；null 也缓存（未命中不重复探测）
+        if (_includePathCache.TryGetValue(templateName, out var cached))
+        {
+            return cached;
+        }
+
+        var resolved = ResolveIncludePathUncached(templateName);
+        _includePathCache[templateName] = resolved;
+        return resolved;
+    }
+
+    private string? ResolveIncludePathUncached(string templateName)
     {
         foreach (var root in new[] { _templatesPath }.Concat(_themeTemplatePaths))
         {
@@ -736,6 +791,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     {
         _mtimeCache.Clear();
         _lookup.Invalidate();
+        // include 路径/文本缓存随构建边界失效（构建内模板文件集不变是缓存
+        // 的安全假设；构建间可能增删改——与 Scriban 侧 ClearTextCache 同口径）
+        _includePathCache.Clear();
+        _includeTextCache.Clear();
         // 产物收集队列按构建清空（SiteBuilder 在渲染前调用本方法；渲染期产物
         // 在渲染后经 GeneratedResources 取走——跨构建不累积）
         _generatedResources.Clear();
