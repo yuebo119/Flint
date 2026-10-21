@@ -55,27 +55,8 @@ internal static class ServeHandler
                 .ToArray();
             // 双引擎（FLUID-MIGRATION-PLAN，与 BuildHandler 同构）：Fluid 渲染
             // .liquid 与 Fluid 原生站点内置回退，Scriban 渲染 Hugo 主题 .html；
-            // router 按配置 engine 策略（默认 auto 双轨）分派
-            var scribanRenderer = new ScribanTemplateRenderer(
-                Path.Combine(sourcePath, "layouts"),
-                config.BaseURL,
-                new TemplateEnvironmentInfo
-                {
-                    Environment = "production",
-                    IsMultilingual = config.Languages.Count > 0,
-                    WorkingDir = sourcePath
-                },
-                // 模板资源提供者（Hugo Pipes）：与 BuildHandler 同构——否则
-                // `| minify` 等资源函数未注册，serve 的动态渲染全页失败
-                //（yinyang 的 head.html 实测）
-                new FileSystemResourceProvider(config.BaseURL,
-                [
-                    Path.Combine(sourcePath, "assets"),
-                    .. config.Theme
-                        .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                        .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
-                ]),
-                themeLayoutDirs);
+            // router 按配置 engine 策略（默认 auto 双轨）分派。
+            // **Scriban 经工厂懒构造**（P2-4）：纯 Fluid 站点的 serve 不预构 Scriban
             var templateRenderer = new TemplateEngineRouter(
                 new FluidTemplateRenderer(
                     Path.Combine(sourcePath, "layouts"),
@@ -89,7 +70,26 @@ internal static class ServeHandler
                             .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
                     ]),
                     themeLayoutDirs),
-                scribanRenderer,
+                () => new ScribanTemplateRenderer(
+                    Path.Combine(sourcePath, "layouts"),
+                    config.BaseURL,
+                    new TemplateEnvironmentInfo
+                    {
+                        Environment = "production",
+                        IsMultilingual = config.Languages.Count > 0,
+                        WorkingDir = sourcePath
+                    },
+                    // 模板资源提供者（Hugo Pipes）：与 BuildHandler 同构——否则
+                    // `| minify` 等资源函数未注册，serve 的动态渲染全页失败
+                    //（yinyang 的 head.html 实测）
+                    new FileSystemResourceProvider(config.BaseURL,
+                    [
+                        Path.Combine(sourcePath, "assets"),
+                        .. config.Theme
+                            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                            .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
+                    ]),
+                    themeLayoutDirs),
                 TemplateEngineRouter.ParsePolicy(config));
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。

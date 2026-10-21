@@ -103,11 +103,13 @@ public sealed partial class SiteBuilder
         // TemplateLookup 描述符快照判定成立）；miss 时回退 File.Exists 兜住
         // 构建开始后新增的模板（与原实现行为一致，仅罕见路径付 stat）。
         // router 模式下经 ScribanRenderer 属性穿透（2026-10-19 回归修复：
-        // `as ScribanTemplateRenderer` 对 router 恒 null，零 IO 优化整体失效）
+        // `as ScribanTemplateRenderer` 对 router 恒 null，零 IO 优化整体失效）。
+        // **仅已构造时用**（P2-4）：纯 Fluid 站点不因依赖判定触发 Scriban
+        // 懒构造——未构造时走 File.Exists 回退（正确，仅罕见路径付 stat）
         var scribanRenderer = _templateRenderer switch
         {
             ScribanTemplateRenderer direct => direct,
-            TemplateEngineRouter router => router.ScribanRenderer,
+            TemplateEngineRouter { IsScribanConstructed: true } router => router.ScribanRenderer,
             _ => null
         };
         var physicalPaths = new List<string>();
@@ -317,20 +319,16 @@ public sealed partial class SiteBuilder
         // render hook 内的 i18n 需要翻译表，但 hook 渲染发生在内容解析期
         //（早于本方法），故把翻译表快照回填给渲染器——同一构建内后续的 hook
         // 渲染（含增量重建）即可用上真实翻译（此前 hook 内 i18n 报函数未找到）。
-        // router 模式穿透到 Scriban 渲染器（2026-10-19 回归修复：类型检查
-        // 漏 router 时翻译表不回填，主题 render hook 的 i18n 静默失效）
-        if (_templateRenderer is ScribanTemplateRenderer or TemplateEngineRouter)
+        // router 模式经 SetTranslations 预存（P2-4：不触发 Scriban 懒构造——
+        // 纯 Fluid 站点无 .html hook，翻译表用不上；Scriban 路径首次构造时应用）
+        switch (_templateRenderer)
         {
-            var translationsTarget = _templateRenderer switch
-            {
-                ScribanTemplateRenderer direct => direct,
-                TemplateEngineRouter router => router.ScribanRenderer,
-                _ => null
-            };
-            if (translationsTarget is not null)
-            {
-                translationsTarget.Translations = translations ?? new Dictionary<string, string>();
-            }
+            case ScribanTemplateRenderer direct:
+                direct.Translations = translations ?? new Dictionary<string, string>();
+                break;
+            case TemplateEngineRouter router:
+                router.SetTranslations(translations);
+                break;
         }
 
         // 常规页 = Kind "page"（Hugo 语义：排除 home/section/taxonomy/term）。

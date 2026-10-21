@@ -207,6 +207,12 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         Directory.Exists(_templatesPath) &&
         Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories).Any();
 
+    /// <summary>站点模板根（router 的 .html 存在性判定用，P2-4 懒构造决策）</summary>
+    internal string TemplatesPath => _templatesPath;
+
+    /// <summary>主题模板回退根（同上）</summary>
+    internal IReadOnlyList<string> ThemeTemplatePaths => _themeTemplatePaths;
+
     /// <summary>
     /// 页面查询能否由本渲染器的**内置兜底**渲染（无物理 .liquid 时的 fallback 判定）：
     /// kind 有对应内置模板且为 html 输出格式。路由层据此决定 auto 模式下

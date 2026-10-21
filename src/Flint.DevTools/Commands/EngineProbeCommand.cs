@@ -10,7 +10,12 @@
 using System.CommandLine;
 using System.Reflection;
 using Flint.Core.Abstractions;
+using Flint.Core.Assets;
 using Flint.Core.Configuration;
+using Flint.Core.Content;
+using Flint.Core.Content.Shortcodes;
+using Flint.Core.Models;
+using Flint.Core.Site;
 using Flint.Core.Templates;
 
 namespace Flint.DevTools.Commands;
@@ -97,12 +102,19 @@ internal static class EngineProbeCommand
             };
             var missing = expected.Where(e => !output.Contains(e, StringComparison.Ordinal)).ToList();
 
+            // 5. **router 级全链路探针**（P2-4 实质化）：经 TemplateEngineRouter
+            //    （Scriban 工厂懒构造）+ SiteBuilder 完整构建纯 Fluid 站点，
+            //    验证 Scriban 渲染器全程未构造（IsScribanConstructed=false）
+            //    且程序集未加载——"新站点不加载 Scriban 引擎"的实证
+            var routerConstructed = await ProbeRouterBuildAsync(sitePath, cancellationToken);
+
             Console.WriteLine("== Fluid 渲染路径运行期装配探针 ==");
             Console.WriteLine($"  渲染输出长度: {output.Length} 字符");
             Console.WriteLine($"  成员解析缺失: {(missing.Count == 0 ? "无" : string.Join(", ", missing))}");
             Console.WriteLine($"  Scriban 程序集已加载: {(scribanLoaded ? "是（违反隔离）" : "否")}");
+            Console.WriteLine($"  router 全链路构建: {(routerConstructed ? "Scriban 被构造（违反 P2-4）" : "Scriban 未构造（P2-4 成立）")}");
 
-            var pass = !scribanLoaded && missing.Count == 0;
+            var pass = !scribanLoaded && !routerConstructed && missing.Count == 0;
             Console.WriteLine(pass ? "探针通过（PASS）" : "探针失败（FAIL）");
             return pass ? 0 : 1;
         }
@@ -122,16 +134,118 @@ internal static class EngineProbeCommand
         }
     }
 
-    /// <summary>生成最小 .liquid 站点（index + partial include + 成员访问全覆盖）</summary>
-    private static void CreateMinimalSite(string sitePath)
+    /// <summary>
+    /// router 级全链路探针（P2-4）：SiteBuilder + TemplateEngineRouter（Scriban
+    /// 工厂懒构造）构建纯 Fluid 站点，返回 Scriban 渲染器是否被构造过。
+    /// 站点须含 Flint.toml 与 content/（外部 --source 站点或最小生成站点）
+    /// </summary>
+    private static async Task<bool> ProbeRouterBuildAsync(string sitePath, CancellationToken cancellationToken)
     {
         var layouts = Path.Combine(sitePath, "layouts");
+        var router = new TemplateEngineRouter(
+            new FluidTemplateRenderer(layouts, "https://example.com"),
+            () => new ScribanTemplateRenderer(layouts, "https://example.com"),
+            TemplateEnginePolicy.Auto);
+
+        // 与 BuildHandler 同构的装配：hook 探测（无 _markup 目录 → 不构造）、
+        // 短代码注册（TemplateShortcode 独立，不触碰渲染器）、翻译表预存
+        router.LoadRenderHooks(layouts);
+        router.SetTranslations(new Dictionary<string, string>());
+
+        var contentParser = new ContentParser(
+            new FrontMatterParser(),
+            new MarkdownParser(),
+            new ShortcodeProcessor(new ShortcodeRegistry(registerBuiltins: false)));
+        var siteBuilder = new SiteBuilder(
+            contentParser,
+            router,
+            new NoOpAssetPipeline(),
+            new ConfigLoader());
+
+        var result = await siteBuilder.BuildAsync(new BuildOptions
+        {
+            SourcePath = sitePath,
+            OutputPath = Path.Combine(sitePath, "public-probe"),
+            Parallelism = 1
+        }, cancellationToken);
+
+        if (!result.Success)
+        {
+            Console.WriteLine($"  [警告] router 全链路构建失败: {string.Join(" | ", result.Errors.Select(e => e.Message))}");
+        }
+
+        try
+        {
+            if (Directory.Exists(Path.Combine(sitePath, "public-probe")))
+            {
+                Directory.Delete(Path.Combine(sitePath, "public-probe"), recursive: true);
+            }
+        }
+        catch
+        {
+            // 清理失败不影响结论
+        }
+
+        return router.IsScribanConstructed;
+    }
+
+    /// <summary>探针用无操作资产管线（站点构建的资产路不参与本探针）</summary>
+    private sealed class NoOpAssetPipeline : IAssetPipeline
+    {
+        public ValueTask<ProcessedAsset> ProcessAsync(AssetFile asset, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(new ProcessedAsset
+            {
+                OutputPath = asset.SourcePath,
+                SourcePath = asset.SourcePath,
+                Content = asset.Content,
+                MediaType = "application/octet-stream",
+                ContentHash = ""
+            });
+
+        public ValueTask<IReadOnlyList<ProcessedAsset>> ProcessBatchAsync(
+            IReadOnlyList<AssetFile> assets, CancellationToken cancellationToken) =>
+            ValueTask.FromResult<IReadOnlyList<ProcessedAsset>>([]);
+
+        public async IAsyncEnumerable<ProcessedAsset> ProcessStreamAsync(
+            IAsyncEnumerable<AssetFile> assets,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            await foreach (var _ in assets.WithCancellation(cancellationToken))
+            {
+                // 无操作：不产出任何资产
+            }
+            yield break;
+        }
+    }
+
+    /// <summary>生成最小 .liquid 站点（配置 + 内容 + index + partial include + 成员访问全覆盖）</summary>
+    private static void CreateMinimalSite(string sitePath)
+    {
+        Directory.CreateDirectory(Path.Combine(sitePath, "content", "posts"));
+        File.WriteAllText(Path.Combine(sitePath, "Flint.toml"), """
+            baseURL = "https://example.com/"
+            title = "探针站点"
+            """);
+        File.WriteAllText(Path.Combine(sitePath, "content", "posts", "probe.md"), """
+            +++
+            title = "探针文章"
+            date = 2026-01-01T00:00:00Z
+            draft = false
+            +++
+
+            探针正文。
+            """);
+
+        var layouts = Path.Combine(sitePath, "layouts");
         Directory.CreateDirectory(Path.Combine(layouts, "partials"));
+        Directory.CreateDirectory(Path.Combine(layouts, "_default"));
         File.WriteAllText(Path.Combine(layouts, "partials", "head.liquid"),
             "<title>{{ site.title }}</title>");
         File.WriteAllText(Path.Combine(layouts, "index.liquid"),
             "{% include 'partials/head' %}<h1>{{ page.title }}</h1>{{ page.content }}" +
             "<span>{{ page.word_count }}</span><span>{{ page.reading_time.total_minutes }}</span>" +
             "<span>{{ page.params.description }}</span>");
+        File.WriteAllText(Path.Combine(layouts, "_default", "single.liquid"),
+            "<article><h1>{{ page.title }}</h1>{{ page.content }}</article>");
     }
 }

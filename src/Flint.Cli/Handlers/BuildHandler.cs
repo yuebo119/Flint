@@ -102,13 +102,9 @@ internal static class BuildHandler
             };
             // 双引擎（FLUID-MIGRATION-PLAN）：Fluid 渲染 .liquid 与 Fluid 原生
             // 站点内置回退，Scriban 渲染 Hugo 主题 .html 与兼容内置；router 按
-            // 配置 engine 策略（默认 auto 双轨）分派，SiteBuilder 只依赖接口
-            var scribanRenderer = new ScribanTemplateRenderer(
-                Path.Combine(sourcePath, "layouts"),
-                siteConfig.BaseURL,
-                environment,
-                resourceProvider,
-                themeLayoutDirs);
+            // 配置 engine 策略（默认 auto 双轨）分派，SiteBuilder 只依赖接口。
+            // **Scriban 经工厂懒构造**（P2-4）：纯 Fluid 站点（新站点默认形态）
+            // 的构建全程不构造 Scriban 渲染器，Scriban 程序集不被加载
             var templateRenderer = new TemplateEngineRouter(
                 new FluidTemplateRenderer(
                     Path.Combine(sourcePath, "layouts"),
@@ -116,7 +112,12 @@ internal static class BuildHandler
                     builtins: null,
                     resources: resourceProvider,
                     themeLayoutDirs),
-                scribanRenderer,
+                () => new ScribanTemplateRenderer(
+                    Path.Combine(sourcePath, "layouts"),
+                    siteConfig.BaseURL,
+                    environment,
+                    resourceProvider,
+                    themeLayoutDirs),
                 TemplateEngineRouter.ParsePolicy(siteConfig));
 
             // render hooks（T5.1）：layouts/_markup/render-*.html 存在时定制链接/图片/标题渲染。

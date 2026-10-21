@@ -72,12 +72,16 @@ public sealed partial class SiteBuilder
                 .Where(f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-            // 模板变化（T4.2）：layouts 下的文件从"资源"中分流，走受影响页重渲染而非全量重建
+            // 模板变化（T4.2）：layouts 下的文件从"资源"中分流，走受影响页重渲染而非全量重建。
+            // **.html 与 .liquid 双形态**（FLUID-MIGRATION-PLAN P1-3 修复 2026-10-21）：
+            // 此前只认 .html——改 .liquid partial 落入 assetChanges，依赖它的页面
+            // 不重渲（增量构建漏重渲，Fluid 依赖追踪白做）
             var layoutsRoot = Path.GetFullPath(Path.Combine(
                 options.SourcePath,
                 string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir)) + Path.DirectorySeparatorChar;
             var templateChanges = affectedFiles
-                .Where(f => f.EndsWith(".html", StringComparison.OrdinalIgnoreCase) &&
+                .Where(f => (f.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+                             f.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase)) &&
                             f.StartsWith(layoutsRoot, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
@@ -263,6 +267,23 @@ public sealed partial class SiteBuilder
 
                 var renderedPages = await RenderPagesAsync(
                     renderSet, siteContext, config, options, errors, cancellationToken);
+
+                // home 页兜底重渲（FLUID-MIGRATION-PLAN P1-3 补缺 2026-10-21）：
+                // 合成 home 节点的键含 '/' 被树 walk 跳过（不在 allPageContexts），
+                // 全量构建经 8.5 阶段 GenerateHomePageAsync 兜底产出；增量路径
+                // 此前不调它——改模板后首页永不更新（与引擎无关的既有缺口）。
+                // 模板变化时首页外观由模板决定，必须重产；树版 home（有 _index.md
+                // 的站点）已在 renderSet 渲染过，此处互斥
+                if (templateChanges.Count > 0 &&
+                    !allPageContexts.Any(p => p.Kind == "home"))
+                {
+                    var homePage = await GenerateHomePageAsync(
+                        siteContext, config, options, errors, cancellationToken);
+                    if (homePage is not null)
+                    {
+                        renderedPages.Add(homePage);
+                    }
+                }
 
                 // 分类/词条页聚合全部内容的 tags/categories——tags/categories 增删改
                 // 使其陈旧必须重产；纯正文编辑（taxonomy 签名一致）跳过重产。

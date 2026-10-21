@@ -80,10 +80,22 @@ public sealed partial class TemplateEngineRouter
         string layoutsDirectory,
         IEnumerable<string>? themeLayoutDirectories = null)
     {
+        // 先探 _markup 目录（P2-4）：纯 Fluid 站点无钩子目录时直接返回 null，
+        // 不触碰 ScribanRenderer 懒构造——Scriban 程序集不被加载
+        var markupDirs = new List<string> { Path.Combine(layoutsDirectory, "_markup") };
+        if (themeLayoutDirectories is not null)
+        {
+            markupDirs.AddRange(themeLayoutDirectories.Select(d => Path.Combine(d, "_markup")));
+        }
+        if (markupDirs.All(d => !Directory.Exists(d)))
+        {
+            return null;
+        }
+
         // Scriban 兼容模式下只认 .html 钩子（传 null = 不探测 .liquid）
         return RenderHooks.Load(
             layoutsDirectory,
-            _scriban,
+            ScribanRenderer,
             themeLayoutDirectories,
             AllowsFluidContent ? _fluid : null);
     }
