@@ -5,6 +5,7 @@
 // 下划线形态——探针实测 page.word_count 取空。本策略在委派默认反射查找前把
 // snake_case 名归一为 PascalCase，保持默认比较器的大小写不敏感语义。
 
+using System.Collections.Concurrent;
 using Fluid;
 using Fluid.Values;
 
@@ -23,9 +24,26 @@ public sealed class FlintMemberAccessStrategy : DefaultMemberAccessStrategy
     /// </summary>
     public override MemberAccessor GetAccessor(Type type, string name, StringComparer stringComparer)
     {
-        var normalized = ToPascalCase(name);
+        var normalized = ToPascalCaseCached(name);
         return base.GetAccessor(type, normalized, stringComparer);
     }
+
+    /// <summary>
+    /// snake_case → PascalCase 的缓存版（2026-10-21 性能优化：成员名在模板中
+    /// 有限，ToPascalCase 的 stackalloc + new string 每次调用重复计算——
+    /// 缓存后热路径零分配）
+    /// </summary>
+    private static string ToPascalCaseCached(string name)
+    {
+        if (string.IsNullOrEmpty(name) || !name.Contains('_'))
+        {
+            return name;
+        }
+        return PascalCaseCache.GetOrAdd(name, static n => ToPascalCase(n));
+    }
+
+    /// <summary>PascalCase 转换缓存（成员名有限，缓存不膨胀）</summary>
+    private static readonly ConcurrentDictionary<string, string> PascalCaseCache = new(StringComparer.Ordinal);
 
     /// <summary>
     /// snake_case → PascalCase：<c>word_count</c> → <c>WordCount</c>，
