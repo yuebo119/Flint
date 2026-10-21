@@ -354,6 +354,8 @@ Liquid 版函数/短代码/render hooks）禁止出现：
 | `docs/USAGE.md` | 用户使用手册（CLI/模板函数/配置） |
 | `docs/API.md` | 引擎 API 参考 |
 | `docs/CONVENTIONS.md`（本文） | 工程规范唯一入口 |
+| `docs/TEMPLATE-STANDARD.md` | 模板制作规范（Fluid 引擎，作者+开发者双视角） |
+| `docs/LIQUID-GUIDE.md` | Liquid 引擎技术指南（路由/函数/差异/性能口径） |
 | `docs/HUGO-COMPAT-MATRIX.md` | Hugo 兼容矩阵（逐主题逐功能状态） |
 | `docs/FLINT-VS-HUGO.md` | 已知差异登记册 |
 | `docs/HUGO-GAP-TASKS.md` | 差距任务清单 |
