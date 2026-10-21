@@ -23,7 +23,7 @@ public sealed class DataFileLoader
         string dataPath,
         CancellationToken cancellationToken = default)
     {
-        var result = new Dictionary<string, object>();
+        var result = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
         if (!Directory.Exists(dataPath))
         {
@@ -103,7 +103,10 @@ public sealed class DataFileLoader
     // AOT 兼容的 TOML 转换
     private static Dictionary<string, object> ConvertTomlTableToDict(TomlTable table)
     {
-        var dict = new Dictionary<string, object>();
+        // OrdinalIgnoreCase（2026-10-21：嵌套表也用 CI 比较器，使
+        // site.data.file.MixedKey 与 site.data.file.mixedkey 等价——
+        // Fluid 的 CaseInsensitiveCopy 只做顶层浅拷贝，嵌套表保持源比较器）
+        var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
         foreach (var kvp in table)
         {
             dict[kvp.Key] = ConvertTomlValue(kvp.Value);
@@ -132,7 +135,8 @@ public sealed class DataFileLoader
         return element.ValueKind switch
         {
             JsonValueKind.Object => element.EnumerateObject()
-                .ToDictionary(p => p.Name, p => ConvertJsonElementToObject(p.Value)),
+                .ToDictionary(p => p.Name, p => ConvertJsonElementToObject(p.Value),
+                    StringComparer.OrdinalIgnoreCase),
             JsonValueKind.Array => element.EnumerateArray()
                 .Select(ConvertJsonElementToObject)
                 .ToList(),

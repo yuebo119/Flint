@@ -158,6 +158,13 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         // 注册别名访问器让 Hugo 模板的两种写法都命中）
         MemberAccessStrategyExtensions.Register<PaginatorView, int>(
             memberStrategy, "TotalNumberOfElements", static (p, _) => p.TotalItems);
+        // page.next / page.prev 别名（2026-10-21：Hugo 模板用 .Next/.Prev，
+        // Flint 暴露 next_page/prev_page——ToPascalCase 不会把 next 映射到
+        // NextPage，注册别名让 Hugo 惯用名命中）
+        MemberAccessStrategyExtensions.Register<PageContext, object>(
+            memberStrategy, "Next", static (page, _) => page.NextPage ?? (object)"");
+        MemberAccessStrategyExtensions.Register<PageContext, object>(
+            memberStrategy, "Prev", static (page, _) => page.PrevPage ?? (object)"");
         // site.menus.main / site.taxonomies.categories：C# 索引器不能经 Fluid
         // 成员语法访问，注册类型级访问器把成员名路由到索引器（缺失键空集合，
         // 与 Scriban 的 ScriptObject 键查找同语义）
@@ -411,7 +418,11 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             ["is_list"] = context.IsList,
             ["is_single"] = context.IsSingle,
             // 分页器（C1）：逐页绑定的 pager；非分页渲染为 null（模板取空）
-            ["paginator"] = context.Page.Paginator
+            ["paginator"] = context.Page.Paginator,
+            // hugo 常量对象（2026-10-21：Scriban 侧有 hugo.Version/IsProduction/
+            // IsServer/Environment，Fluid 侧缺失——主题模板写 hugo.IsProduction
+            // 得空。经 AmbientValues 注入，值由渲染器构造期给定）
+            ["hugo"] = HugoInfoView.Instance
         };
 
         // 附加模型值（短代码/render hook 的内联变量表，P5-4/P5-5）：

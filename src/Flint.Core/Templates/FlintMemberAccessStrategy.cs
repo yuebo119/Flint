@@ -101,3 +101,26 @@ public sealed class IndexerMemberAccessor : MemberAccessor
         return new ValueTask<FluidValue>(FluidValue.Create(value, context.Options));
     }
 }
+
+/// <summary>
+/// Hugo 常量信息视图（<c>hugo.Version</c> / <c>hugo.IsProduction</c> 等）：
+/// Scriban 侧有完整的 hugo 对象（EngineCapabilityTests 门禁），Fluid 侧
+/// 2026-10-21 补入——主题模板写 hugo.IsProduction 得空是静默失败
+/// </summary>
+public sealed class HugoInfoView
+{
+    /// <summary>共享单例（值全部编译期常量）</summary>
+    public static HugoInfoView Instance { get; } = new();
+
+    /// <summary>Hugo 兼容版本号（Flint 声明兼容的 Hugo 版本）</summary>
+    public string Version => "0.146.0";
+
+    /// <summary>是否生产环境（Flint build 命令恒 true；serve 为 false）</summary>
+    public bool IsProduction => true;
+
+    /// <summary>是否开发服务器（Flint build 命令恒 false；serve 为 true）</summary>
+    public bool IsServer => false;
+
+    /// <summary>环境名称</summary>
+    public string Environment => "production";
+}

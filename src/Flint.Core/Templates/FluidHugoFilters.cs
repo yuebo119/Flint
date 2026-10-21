@@ -83,6 +83,19 @@ internal static class FluidHugoFilters
         // {{ pages | paginate: 10 }}：标记当前列表页被模板分页，登记显式集合与页大小。
         // 返回输入不变（分页器已由 PageContext.Paginator 预绑，过滤器只做追踪登记）
         f.AddFilter("paginate", Paginate);
+        // ---- Hugo 高频文本/集合过滤器补齐（2026-10-21：Scriban 侧全有对应函数，
+        //      Fluid 侧缺失——Liquid 的 in 是 for 关键字不是过滤器，用 contains/in_str
+        //      表达 Hugo 的 in 语义）----
+        f.AddFilter("trim_prefix", TrimPrefix);
+        f.AddFilter("trim_suffix", TrimSuffix);
+        f.AddFilter("count_words", CountWords);
+        f.AddFilter("count_runes", CountRunes);
+        f.AddFilter("chomp", Chomp);
+        f.AddFilter("first_upper", FirstUpper);
+        f.AddFilter("contains", Contains);
+        f.AddFilter("in_str", InStr);
+        f.AddFilter("repeat", Repeat);
+        f.AddFilter("html_unescape", HtmlUnescape);
     }
 
     // ---- 文本族 ----
@@ -546,6 +559,95 @@ internal static class FluidHugoFilters
         }
         return result;
     }
+
+    // ---- Hugo 高频文本/集合过滤器（2026-10-21 补齐）----
+
+    /// <summary>trim_prefix：去掉前缀（Hugo strings.TrimPrefix）</summary>
+    private static ValueTask<FluidValue> TrimPrefix(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        var prefix = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        return new(FluidValue.Create(
+            prefix.Length > 0 && s.StartsWith(prefix, StringComparison.Ordinal) ? s[prefix.Length..] : s,
+            ctx.Options));
+    }
+
+    /// <summary>trim_suffix：去掉后缀（Hugo strings.TrimSuffix）</summary>
+    private static ValueTask<FluidValue> TrimSuffix(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        var suffix = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        return new(FluidValue.Create(
+            suffix.Length > 0 && s.EndsWith(suffix, StringComparison.Ordinal) ? s[..^suffix.Length] : s,
+            ctx.Options));
+    }
+
+    /// <summary>count_words：单词计数（Hugo strings.CountWords）</summary>
+    private static ValueTask<FluidValue> CountWords(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx).AsSpan();
+        var count = 0;
+        var inWord = false;
+        foreach (var c in s)
+        {
+            if (char.IsWhiteSpace(c))
+            {
+                inWord = false;
+            }
+            else if (!inWord)
+            {
+                inWord = true;
+                count++;
+            }
+        }
+        return new(FluidValue.Create(count, ctx.Options));
+    }
+
+    /// <summary>count_runes：字符计数（Hugo strings.CountRunes）</summary>
+    private static ValueTask<FluidValue> CountRunes(FluidValue input, FilterArguments args, TemplateContext ctx) =>
+        new(FluidValue.Create(ToString(input, ctx).Length, ctx.Options));
+
+    /// <summary>chomp：去掉末尾换行（Hugo strings.Chomp）</summary>
+    private static ValueTask<FluidValue> Chomp(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        return new(FluidValue.Create(s.TrimEnd('\r', '\n'), ctx.Options));
+    }
+
+    /// <summary>first_upper：首字母大写（Hugo strings.FirstUpper）</summary>
+    private static ValueTask<FluidValue> FirstUpper(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        return new(FluidValue.Create(s.Length > 0 ? char.ToUpperInvariant(s[0]) + s[1..] : s, ctx.Options));
+    }
+
+    /// <summary>contains：字符串包含判定（Hugo strings.Contains；Liquid 的 in 是 for 关键字）</summary>
+    private static ValueTask<FluidValue> Contains(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        var sub = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        return new(FluidValue.Create(sub.Length > 0 && s.Contains(sub, StringComparison.Ordinal), ctx.Options));
+    }
+
+    /// <summary>in_str：Hugo in 语义（substring in string；Liquid 的 in 是 for 关键字不可用作过滤器）</summary>
+    private static ValueTask<FluidValue> InStr(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var sub = ToString(input, ctx);
+        var s = args.Count > 0 ? ToString(args.At(0), ctx) : "";
+        return new(FluidValue.Create(sub.Length > 0 && s.Contains(sub, StringComparison.Ordinal), ctx.Options));
+    }
+
+    /// <summary>repeat：重复字符串 N 次（Hugo strings.Repeat）</summary>
+    private static ValueTask<FluidValue> Repeat(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var s = ToString(input, ctx);
+        var n = args.Count > 0 ? (int)ToNumber(args.At(0), ctx) : 0;
+        return new(FluidValue.Create(n > 0 && s.Length > 0 ? string.Concat(System.Linq.Enumerable.Repeat(s, n)) : "", ctx.Options));
+    }
+
+    /// <summary>html_unescape：HTML 实体反转义（Hugo htmlUnescape）</summary>
+    private static ValueTask<FluidValue> HtmlUnescape(FluidValue input, FilterArguments args, TemplateContext ctx) =>
+        new(FluidValue.Create(System.Net.WebUtility.HtmlDecode(ToString(input, ctx)), ctx.Options));
 
     // ---- where 运算符包装 ----
 

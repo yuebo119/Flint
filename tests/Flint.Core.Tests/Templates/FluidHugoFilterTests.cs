@@ -169,6 +169,36 @@ public sealed class FluidHugoFilterTests : IDisposable
 
         Assert.Equal("<b>x</b>", result);
     }
+
+    // ---- Hugo 高频文本/集合过滤器（2026-10-21 补齐）----
+
+    [Theory]
+    [InlineData("{{ '/posts/hello' | trim_prefix: '/posts/' }}", "hello")]
+    [InlineData("{{ 'hello.md' | trim_suffix: '.md' }}", "hello")]
+    [InlineData("{{ 'hello world foo' | count_words }}", "3")]
+    [InlineData("{{ 'hello world' | count_runes }}", "11")]
+    [InlineData("{{ 'line\n' | chomp }}", "line")]
+    [InlineData("{{ 'hello' | first_upper }}", "Hello")]
+    [InlineData("{{ 'hello world' | contains: 'world' }}", "true")]
+    [InlineData("{{ 'hello world' | contains: 'xyz' }}", "false")]
+    [InlineData("{{ 'world' | in_str: 'hello world' }}", "true")]
+    [InlineData("{{ 'ab' | repeat: 3 }}", "ababab")]
+    [InlineData("{{ '&lt;b&gt;' | html_unescape }}", "<b>")]
+    public async Task Hugo_高频文本过滤器(string template, string expected)
+    {
+        var result = await RenderAsync(template, CreateContext());
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task hugo_常量对象_可访问()
+    {
+        var result = await RenderAsync(
+            "[{{ hugo.version }}][{{ hugo.is_production }}][{{ hugo.environment }}]",
+            CreateContext());
+
+        Assert.Equal("[0.146.0][true][production]", result);
+    }
 }
 
 /// <summary>
