@@ -475,7 +475,7 @@ public sealed partial class BuiltinTemplateFunctions
             var keyBuilder = new System.Text.StringBuilder("concat|").Append(target).Append('|');
             foreach (var it in args.Skip(itemStart))
             {
-                var r = TemplateResource.FromScriptObject(it);
+                var r = TemplateResourceScribanAdapter.FromScriptObject(it);
                 if (r is not null)
                 {
                     AppendMemberKey(keyBuilder, r);
@@ -485,7 +485,7 @@ public sealed partial class BuiltinTemplateFunctions
                 {
                     foreach (var inner in en)
                     {
-                        var ir = TemplateResource.FromScriptObject(inner);
+                        var ir = TemplateResourceScribanAdapter.FromScriptObject(inner);
                         if (ir is not null)
                         {
                             AppendMemberKey(keyBuilder, ir);
@@ -574,7 +574,7 @@ public sealed partial class BuiltinTemplateFunctions
                 var r = a switch
                 {
                     TemplateResource tr => tr,
-                    ScriptObject o when o.ContainsKey("resource_type") => TemplateResource.FromScriptObject(o),
+                    ScriptObject o when o.ContainsKey("resource_type") => TemplateResourceScribanAdapter.FromScriptObject(o),
                     _ => null
                 };
                 if (r is not null)
@@ -657,7 +657,7 @@ public sealed partial class BuiltinTemplateFunctions
         // `$img.Resize "x300"`（Blowfish 的 `$authorImage.Fill` 实测 1580 处报
         // "The function `$authorImage.Fill` was not found"——命名空间级
         // resources.* 之外还需成员级）。Scriban 成员查找大小写敏感，双形态注册
-        TemplateResource.AttachImageOps = (obj, resource) =>
+        TemplateResourceScribanAdapter.AttachImageOps = (obj, resource) =>
         {
             foreach (var op in ImageOps)
             {
@@ -1409,7 +1409,7 @@ public sealed partial class BuiltinTemplateFunctions
             var optionArgs = new List<object?>();
             foreach (var a in args)
             {
-                if (resource is null && a is not string && TemplateResource.FromScriptObject(a) is { } r)
+                if (resource is null && a is not string && TemplateResourceScribanAdapter.FromScriptObject(a) is { } r)
                 {
                     resource = r;
                     name = r.Name;
@@ -3717,7 +3717,7 @@ public sealed partial class BuiltinTemplateFunctions
     {
         foreach (var a in args)
         {
-            if (a is not string && TemplateResource.FromScriptObject(a) is { } r)
+            if (a is not string && TemplateResourceScribanAdapter.FromScriptObject(a) is { } r)
             {
                 return r;
             }
@@ -3843,7 +3843,7 @@ public sealed partial class BuiltinTemplateFunctions
         }
     }
 
-    private TemplateResource? ToResource(object? value) => TemplateResource.FromScriptObject(value);
+    private TemplateResource? ToResource(object? value) => TemplateResourceScribanAdapter.FromScriptObject(value);
 
     private static (int Width, int Height) ParseImageSpec(string? spec)
     {

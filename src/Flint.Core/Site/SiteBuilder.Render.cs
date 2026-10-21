@@ -297,7 +297,9 @@ public sealed partial class SiteBuilder
                 _lookupProjectionCache[lookupCacheKey] = lookup;
             }
         }
-        ScribanTemplateRenderer.SetTaxonomyLookupPages(lookup.Count > 0 ? lookup : null);
+        // 分类查找注册表（2026-10-21：经 BuildRenderStateAccess，不再静态调用
+        // ScribanTemplateRenderer——Scriban 侧经转发属性读取同一份状态）
+        BuildRenderStateAccess.SetTaxonomyLookupPages(lookup.Count > 0 ? lookup : null);
 
         // 当页面列表为空时，使用当前时间作为 LastChange
         var lastChange = pages.Count > 0
@@ -375,18 +377,14 @@ public sealed partial class SiteBuilder
         const int slotsPerTarget = 8;
 
         // 分页标记按构建清空：跨构建残留会让"这轮没分页"的列表页被误判为分页。
-        // **router 也要登记**（FLUID-MIGRATION-PLAN 回归修复 2026-10-19）：
-        // 渲染器换成 TemplateEngineRouter 后 `is ScribanTemplateRenderer` 恒 false，
-        // 静态表（CurrentSitePages/CurrentSite）不登记 → .GetPage 查不到 section 页
-        // （hugo-book 的 menu-section 报 "Section 'docs' not found" 实测）
-        if (_templateRenderer is ScribanTemplateRenderer or TemplateEngineRouter)
-        {
-            ScribanTemplateRenderer.ResetPaginateTracking();
-            // 登记全量页面：.GetPage 需要 section 页，而页面对象的构造快照可能只有常规页
-            ScribanTemplateRenderer.SetCurrentSitePages(pages);
-            // 页面对象上的 .Site（`$page.site.params…`）需要站点对象
-            ScribanTemplateRenderer.SetCurrentSite(siteContext);
-        }
+        // **无条件登记**（2026-10-21 架构居中于 Fluid：经 BuildRenderStateAccess，
+        // 不再依赖 `is ScribanTemplateRenderer or TemplateEngineRouter` 类型检查——
+        // 纯 Fluid 站点同样需要分页追踪和 .GetPage 查找）
+        BuildRenderStateAccess.ResetPaginateTracking();
+        // 登记全量页面：.GetPage 需要 section 页，而页面对象的构造快照可能只有常规页
+        BuildRenderStateAccess.SetCurrentSitePages(pages);
+        // 页面对象上的 .Site（`$page.site.params…`）需要站点对象
+        BuildRenderStateAccess.SetCurrentSite(siteContext);
 
         // C1 分页多页产出（Hugo 语义）：列表页（home/section）的**第 1 页**始终产出
         //（就是列表页自身的 URL）；`/page/1/` 跳转页与 `/page/2..N/` 只在**模板调用过
@@ -557,7 +555,7 @@ public sealed partial class SiteBuilder
         var extraTargets = new List<PageContext>();
         foreach (var (listPage, defaultItems, _) in paginatedLists)
         {
-            if (!ScribanTemplateRenderer.WasPaginateInvoked(listPage.RelPermalink))
+            if (!BuildRenderStateAccess.WasPaginateInvoked(listPage.RelPermalink))
             {
                 continue;
             }
@@ -565,7 +563,7 @@ public sealed partial class SiteBuilder
             // 模板给 .Paginate 传了**显式集合/页大小**时以它为准（Hugo 语义）：
             // 分页页数与每页内容都按该集合与尺寸切片（papermod/m10c 的 home 实测；
             // loveit 的 home 传 `$posts.paginate`=6，按站点 2 算会多出 /page/2/）
-            var registration = ScribanTemplateRenderer.GetPaginateCollection(listPage.RelPermalink);
+            var registration = BuildRenderStateAccess.GetPaginateCollection(listPage.RelPermalink);
             var items = registration?.Items ?? defaultItems;
             var pageSize = registration is { Size: > 0 } ? registration.Size : config.Paginate;
             var totalPages = Math.Max(1,
@@ -847,7 +845,7 @@ public sealed partial class SiteBuilder
         foreach (var (firstPage, _) in firstRenders)
         {
             var baseRel = BaseRelPermalinkOf(firstPage);
-            if (!ScribanTemplateRenderer.WasPaginateInvoked(baseRel))
+            if (!BuildRenderStateAccess.WasPaginateInvoked(baseRel))
             {
                 continue;
             }
@@ -868,7 +866,7 @@ public sealed partial class SiteBuilder
         foreach (var taxPage in deferred)
         {
             var baseRel = BaseRelPermalinkOf(taxPage);
-            if (!ScribanTemplateRenderer.WasPaginateInvoked(baseRel))
+            if (!BuildRenderStateAccess.WasPaginateInvoked(baseRel))
             {
                 continue;
             }
@@ -877,7 +875,7 @@ public sealed partial class SiteBuilder
             // 超出该集合页数的 `/page/N/` 不该产出——hugo-paper 的 list.html 在 /tags/ 上
             // 算的是 `union .RegularPages .Sections`（taxonomy 页上为空集）→ Hugo 只产出
             // `/tags/page/1/`，此前按"词条页数量"产到 page/2（门禁④报不对称）
-            var reg = ScribanTemplateRenderer.GetPaginateCollection(baseRel);
+            var reg = BuildRenderStateAccess.GetPaginateCollection(baseRel);
             if (reg is not null)
             {
                 var size = reg.Size > 0 ? reg.Size : config.Paginate;

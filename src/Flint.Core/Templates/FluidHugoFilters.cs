@@ -75,6 +75,10 @@ internal static class FluidHugoFilters
         // ---- i18n ----
         f.AddFilter("i18n", I18n);
         f.AddFilter("T", I18n);
+        // ---- 分页（Hugo .Paginate 的 Liquid 等价；2026-10-21 补 Fluid 侧追踪）----
+        // {{ pages | paginate: 10 }}：标记当前列表页被模板分页，登记显式集合与页大小。
+        // 返回输入不变（分页器已由 PageContext.Paginator 预绑，过滤器只做追踪登记）
+        f.AddFilter("paginate", Paginate);
     }
 
     // ---- 文本族 ----
@@ -481,6 +485,69 @@ internal static class FluidHugoFilters
             return new(FluidValue.Create(text, ctx.Options));
         }
         return new(FluidValue.Create("", ctx.Options));
+    }
+
+    // ---- 分页（Hugo .Paginate 的 Liquid 等价）----
+
+    /// <summary>
+    /// paginate：标记当前列表页被模板分页（Hugo .Paginate 语义）。
+    /// {{ pages | paginate: 10 }}：登记到 BuildRenderState，使 SiteBuilder
+    /// 的 /page/N/ 产出逻辑能检测到 Fluid 站点也调用了分页。
+    /// **返回输入不变**——分页器已由 PageContext.Paginator 预绑，
+    /// 过滤器只做追踪登记（2026-10-21 补 Fluid 侧追踪，修复纯 Fluid
+    /// 站点 /page/N/ 永不产出的功能缺口）
+    /// </summary>
+    private static ValueTask<FluidValue> Paginate(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        // 经 AmbientValues 取当前页面的 RelPermalink（CreateFluidContext 设置）
+        var relPermalink = ctx.AmbientValues.TryGetValue(CurrentPageRelPermalinkKey, out var v) && v is string s
+            ? s
+            : null;
+        if (!string.IsNullOrEmpty(relPermalink))
+        {
+            Flint.Core.Site.BuildRenderStateAccess.NotePaginateInvoked(relPermalink);
+            // 显式集合与页大小：输入是页面集合，args.At(0) 是页大小
+            var items = ToObjectListSync(input, ctx);
+            var size = args.Count > 0 ? (int)ToNumber(args.At(0), ctx) : 0;
+            Flint.Core.Site.BuildRenderStateAccess.NotePaginateCollection(relPermalink, items, size);
+        }
+        return new(input);
+    }
+
+    /// <summary>AmbientValues 键：当前页面的 RelPermalink（paginate 过滤器用）</summary>
+    internal const string CurrentPageRelPermalinkKey = "__flint_fluid_current_page_rel";
+
+    /// <summary>同步对象列表化（paginate 过滤器用，输入已是 CLR 集合）</summary>
+    private static List<Flint.Core.Abstractions.PageContext> ToObjectListSync(FluidValue value, TemplateContext ctx)
+    {
+        var result = new List<Flint.Core.Abstractions.PageContext>();
+        if (value.IsNil())
+        {
+            return result;
+        }
+        if (value.ToObjectValue(ctx) is Flint.Core.Abstractions.PageContext single)
+        {
+            result.Add(single);
+            return result;
+        }
+        // 枚举集合元素
+        var enumerator = value.EnumerateAsync(ctx).GetAsyncEnumerator();
+        try
+        {
+            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+            {
+                var item = enumerator.Current;
+                if (!item.IsNil() && item.ToObjectValue(ctx) is Flint.Core.Abstractions.PageContext page)
+                {
+                    result.Add(page);
+                }
+            }
+        }
+        finally
+        {
+            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+        return result;
     }
 
     // ---- 转换辅助 ----

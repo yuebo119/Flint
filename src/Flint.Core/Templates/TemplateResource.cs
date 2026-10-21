@@ -5,11 +5,15 @@
 // 1. 模板函数是同步的（Scriban Import 走同步 lambda），故资源访问为同步 IO；
 // 2. 内容不可变——变换返回新实例（Hugo 语义：resources 是值对象）；
 // 3. AOT 安全——无反射，全部显式属性。
+//
+// **无 Scriban 依赖**（2026-10-21 架构居中于 Fluid）：Scriban 适配方法
+// （ToScriptObject/FromScriptObject/BuildMediaTypeObject/AttachImageOps）
+// 移至 TemplateResourceScribanAdapter.cs partial。Fluid 侧经
+// FluidValue.Create(resource) + 反射访问 CLR 属性，不碰这些方法。
 
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Scriban.Runtime;
 
 namespace Flint.Core.Templates;
 
@@ -204,104 +208,6 @@ public sealed class TemplateResource
             fingerprint: $"{algorithm.ToLowerInvariant()}-{Convert.ToBase64String(hash)}");
     }
 
-    /// <summary>
-    /// 媒体类型对象（Hugo .MediaType 是对象，含 Type/SubType/MainType/Suffixes）
-    /// ——主题用 .MediaType.SubType 判断（Ananke 实测）
-    /// </summary>
-    private static ScriptObject BuildMediaTypeObject(string mediaType)
-    {
-        var parts = (mediaType ?? "").Split('/', 2);
-        var main = parts.Length > 0 ? parts[0] : "";
-        var sub = parts.Length > 1 ? parts[1] : "";
-        var suffix = sub.Contains('+', StringComparison.Ordinal) ? sub[(sub.IndexOf('+') + 1)..] : sub;
-        var o = new ScriptObject
-        {
-            ["type"] = main, ["Type"] = main,
-            ["sub_type"] = sub, ["SubType"] = sub,
-            ["main_type"] = main, ["MainType"] = main,
-            ["suffix"] = suffix, ["Suffix"] = suffix
-        };
-        var suffixes = new ScriptArray();
-        if (suffix.Length > 0)
-        {
-            suffixes.Add(suffix);
-        }
-        o["suffixes"] = suffixes;
-        o["Suffixes"] = suffixes;
-        return o;
-    }
-
-    /// <summary>转 ScriptObject 供模板访问（双命名：snake 与 Pascal，与既有约定一致）</summary>
-    /// <summary>
-    /// 图像变换成员的注入点（由 <c>BuiltinTemplateFunctions.RegisterResourceFunctions</c>
-    /// 设置）：把 Resize/Fit/Fill/Crop/Process 挂到资源对象自身，
-    /// 使 <c>$img.Fill "600x600"</c> 这类成员调用可用。未设置时资源对象
-    /// 只有数据成员（调用变换会报 function not found）
-    /// </summary>
-    internal static Action<ScriptObject, TemplateResource>? AttachImageOps { get; set; }
-
-    /// <summary>资源 → 模板对象（数据成员 + 图像变换方法族）</summary>
-    public ScriptObject ToScriptObject()
-    {
-        var data = new ScriptObject();
-        if (Fingerprint is not null)
-        {
-            data["Integrity"] = Fingerprint;
-            data["integrity"] = Fingerprint;
-        }
-
-        var o = new ScriptObject
-        {
-            ["name"] = Name, ["Name"] = Name,
-            ["title"] = Title, ["Title"] = Title,
-            ["resource_type"] = ResourceType, ["ResourceType"] = ResourceType,
-            ["media_type"] = BuildMediaTypeObject(MediaType), ["MediaType"] = BuildMediaTypeObject(MediaType),
-            ["content"] = Content, ["Content"] = Content,
-            ["rel_permalink"] = RelPermalink, ["RelPermalink"] = RelPermalink,
-            ["permalink"] = Permalink, ["Permalink"] = Permalink,
-            ["width"] = Width, ["Width"] = Width,
-            ["height"] = Height, ["Height"] = Height,
-            ["data"] = data, ["Data"] = data,
-            ["params"] = Params, ["Params"] = Params,
-            ["source_path"] = SourcePath ?? "",
-            ["key"] = RelPermalink, ["Key"] = RelPermalink
-        };
-        // 图像变换方法族（Resize/Fit/Fill/Crop/Process）由资源命名空间注册方
-        // 注入：需要 provider 与产物登记，模板侧的 <c>$img.Fill "600x600"</c>
-        // 与 <c>resources.Fill $img …</c> 共用同一实现（Blowfish 实测 1580 处）
-        AttachImageOps?.Invoke(o, this);
-        return o;
-    }
-
-    /// <summary>从模板值还原资源对象（变换链的入参归一）</summary>
-    public static TemplateResource? FromScriptObject(object? value)
-    {
-        if (value is TemplateResource r)
-        {
-            return r;
-        }
-        if (value is not ScriptObject o)
-        {
-            return null;
-        }
-        var name = o["name"]?.ToString();
-        if (string.IsNullOrEmpty(name))
-        {
-            return null;
-        }
-        return new TemplateResource
-        {
-            Name = name,
-            Title = o["title"]?.ToString(),
-            ResourceType = o["resource_type"]?.ToString() ?? "other",
-            MediaType = o["media_type"]?.ToString() ?? "text/plain",
-            Content = o["content"]?.ToString() ?? "",
-            RelPermalink = o["rel_permalink"]?.ToString() ?? "",
-            Permalink = o["permalink"]?.ToString() ?? "",
-            Width = int.TryParse(o["width"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var w) ? w : 0,
-            Height = int.TryParse(o["height"]?.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var h) ? h : 0,
-            Fingerprint = (o["data"] as ScriptObject)?["integrity"]?.ToString(),
-            SourcePath = o["source_path"]?.ToString() is { Length: > 0 } sp ? sp : null
-        };
-    }
+    // Scriban 适配方法（ToScriptObject/FromScriptObject/BuildMediaTypeObject/
+    // AttachImageOps）已移至 TemplateResourceScribanAdapter.cs（2026-10-21）
 }

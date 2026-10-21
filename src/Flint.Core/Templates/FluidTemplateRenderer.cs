@@ -411,6 +411,8 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         }
         // i18n 过滤器的翻译表（缺键返回空串，对齐 Hugo）
         fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] = context.Site.Translations;
+        // 当前页面 RelPermalink（paginate 过滤器登记分页追踪用，2026-10-21）
+        fluidContext.AmbientValues[FluidHugoFilters.CurrentPageRelPermalinkKey] = context.Page.RelPermalink;
         // 依赖收集容器：AmbientValues 随 TemplateContext 生命周期，include 解析
         // 回调经同一 context 写入，并行渲染互不干扰（每渲染独立实例）
         fluidContext.AmbientValues[DepsKey] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -735,29 +737,35 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     public async Task<int> PrecompileTemplatesAsync(CancellationToken cancellationToken = default)
     {
         // 缓存键是逻辑名（相对路径去 .liquid）：站点与主题同名模板必须站点优先。
-        // 站点文件全量扫描，主题文件剔除与站点同名的逻辑名后追加
-        var siteRelativeNames = Directory.Exists(_templatesPath)
-            ? Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories)
-                .Select(f => Path.GetRelativePath(_templatesPath, f).Replace('\\', '/'))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // 站点文件全量扫描，主题文件剔除与站点同名的逻辑名后追加。
+        // **单次枚举**（2026-10-21 性能优化：此前站点目录枚举两次——
+        // 一次建 siteRelativeNames，一次建 templateFiles）
+        var siteRelativeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var templateFiles = new List<(string Path, string Root)>();
+        if (Directory.Exists(_templatesPath))
+        {
+            foreach (var f in Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(_templatesPath, f).Replace('\\', '/');
+                siteRelativeNames.Add(rel);
+                templateFiles.Add((f, _templatesPath));
+            }
+        }
 
-        var templateFiles = new List<(string Path, string Root)>(
-            Directory.Exists(_templatesPath)
-                ? Directory.EnumerateFiles(_templatesPath, "*.liquid", SearchOption.AllDirectories)
-                    .Select(f => (f, _templatesPath))
-                : []);
         foreach (var themePath in _themeTemplatePaths)
         {
             if (!Directory.Exists(themePath))
             {
                 continue;
             }
-            templateFiles.AddRange(Directory.EnumerateFiles(themePath, "*.liquid", SearchOption.AllDirectories)
-                .Where(f => !siteRelativeNames.Contains(
-                    Path.GetRelativePath(themePath, f).Replace('\\', '/'),
-                    StringComparer.OrdinalIgnoreCase))
-                .Select(f => (f, themePath)));
+            foreach (var f in Directory.EnumerateFiles(themePath, "*.liquid", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(themePath, f).Replace('\\', '/');
+                if (!siteRelativeNames.Contains(rel))
+                {
+                    templateFiles.Add((f, themePath));
+                }
+            }
         }
 
         await Parallel.ForEachAsync(

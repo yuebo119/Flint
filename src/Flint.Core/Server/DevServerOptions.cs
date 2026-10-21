@@ -1,6 +1,8 @@
 // Flint 静态站点生成器
 // 开发服务器选项
 
+using Flint.Core.Configuration;
+
 namespace Flint.Core.Server;
 
 /// <summary>
@@ -63,4 +65,10 @@ public sealed class DevServerOptions
     /// 模板变化的增量构建只重渲染这些页面，改模板秒刷当前页而其余页不动
     /// </summary>
     public bool FastRenderMode { get; init; } = true;
+
+    /// <summary>
+    /// 预加载的站点配置（ServeHandler 已加载时传入，避免 DevServer 首次构建
+    /// 重复 AutoLoadAsync——2026-10-21 性能优化）
+    /// </summary>
+    public SiteConfig? PreloadedConfig { get; init; }
 }

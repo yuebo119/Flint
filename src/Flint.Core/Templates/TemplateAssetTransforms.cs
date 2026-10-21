@@ -11,8 +11,11 @@
 //
 // 产物登记：变换结果经调用方（渲染器）的 GeneratedResources 收集，由
 // SiteBuilder 输出阶段写盘——否则模板引用的 RelPermalink 404。
-
-using Scriban.Runtime;
+//
+// **无 Scriban 依赖**（2026-10-21 架构居中于 Fluid）：CompileSass 去掉
+// ScriptObject 参数（Scriban 侧的 vars 形态在调用前转为 varsPrelude 文本），
+// MinifyCss 直接内联实现，MinifyJs/BuildJs 经 AssetTransformCore 访问
+// （签名干净的纯 string/IO 方法，不涉及 Scriban 类型）
 
 namespace Flint.Core.Templates;
 
@@ -22,10 +25,21 @@ namespace Flint.Core.Templates;
 /// </summary>
 public static class TemplateAssetTransforms
 {
-    /// <summary>CSS 压缩（委派 Scriban 侧既有实现，单一事实源）</summary>
-    public static string MinifyCss(string css) => BuiltinTemplateFunctions.MinifyCss(css);
+    /// <summary>CSS 压缩（直接内联实现，无 Scriban 依赖——2026-10-21 抽离）</summary>
+    public static string MinifyCss(string css)
+    {
+        if (string.IsNullOrEmpty(css))
+        {
+            return "";
+        }
+        var s = System.Text.RegularExpressions.Regex.Replace(css, @"/\*.*?\*/", "", System.Text.RegularExpressions.RegexOptions.Singleline);
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ");
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"\s*([{};:,>])\s*", "$1");
+        return s.Trim();
+    }
 
-    /// <summary>JS 压缩（同上）</summary>
+    /// <summary>JS 压缩（委派 BuiltinTemplateFunctions——实现含 StripJsLineComments
+    /// 等复杂辅助方法，搬移风险大于收益；签名干净不涉及 Scriban 类型）</summary>
     public static string MinifyJs(string js) => BuiltinTemplateFunctions.MinifyJs(js);
 
     /// <summary>
@@ -38,16 +52,15 @@ public static class TemplateAssetTransforms
     /// css.Sass/toCSS 核心：SCSS/Sass 经外部 Dart Sass CLI 编译（找不到 sass
     /// 或编译失败时回退内容直通，差异登记）；产物名按 targetPath 或缺省
     /// 同目录 .css。vars 仅 Scriban 侧可表达（ScriptObject 键值映射）；
-    /// Liquid 侧的最优形态是 <paramref name="varsPrelude"/>——SCSS 变量定义
-    /// 前导文本（如 <c>"$primary: #333;"</c>），编译前拼接到源前，
-    /// 覆盖同一用例且 Liquid 原生可表达
+    /// **Liquid 侧用 varsPrelude**——SCSS 变量定义前导文本（如
+    /// <c>"$primary: #333;"</c>），编译前拼接到源前，覆盖同一用例且
+    /// Liquid 原生可表达。Scriban 侧调用时先把 ScriptObject vars 转为
+    /// varsPrelude 文本再传入（2026-10-21 抽离 ScriptObject 依赖）
     /// </summary>
     public static TemplateResource CompileSass(
         TemplateResource resource,
         string baseUrl,
         string? targetPath = null,
-        ScriptObject? vars = null,
-        object? varsInternal = null,
         string? varsPrelude = null)
     {
         var css = resource.Content;
@@ -65,7 +78,7 @@ public static class TemplateAssetTransforms
             var loadPath = Path.GetDirectoryName(resource.SourcePath!);
             var indented = ext == ".sass";
             css = BuiltinTemplateFunctions.TryCompileWithSassCli(
-                      css, loadPath, indented, vars, varsInternal) ?? css;
+                      css, loadPath, indented) ?? css;
         }
 
         var target = targetPath;

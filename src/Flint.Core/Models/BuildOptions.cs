@@ -1,6 +1,8 @@
 // Flint 静态站点生成器
 // 构建选项类型
 
+using Flint.Core.Configuration;
+
 namespace Flint.Core.Models;
 
 /// <summary>
@@ -96,6 +98,14 @@ public sealed class BuildOptions
     /// 是否启用调试模式
     /// </summary>
     public bool Debug { get; init; }
+
+    /// <summary>
+    /// 预加载的站点配置（CLI 装配处已 AutoLoadAsync 时传入，避免 SiteBuilder
+    /// 重复加载——2026-10-21 性能优化：此前 BuildHandler 与 SiteBuilder 各
+    /// 加载一遍，300 篇站点的配置阶段 149ms 中约一半是重复加载的固定开销）。
+    /// null 时 SiteBuilder 自行加载（API 直调路径）
+    /// </summary>
+    public SiteConfig? PreloadedConfig { get; init; }
 }
 
 /// <summary>

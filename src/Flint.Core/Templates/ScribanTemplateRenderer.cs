@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Flint.Core.Abstractions;
+using Flint.Core.Site;
 using Scriban;
 using Scriban.Runtime;
 // 使用别名避免命名空间冲突
@@ -200,29 +201,31 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
 
         // 缓存键是逻辑名（相对路径去 .html）：站点与主题同名模板必须站点优先。
         // 并行写入对同键非确定序——站点文件全量扫描，主题文件剔除与站点同名的
-        // 逻辑名后追加
-        var siteRelativeNames = Directory.Exists(_templatesPath)
-            ? Directory.EnumerateFiles(_templatesPath, "*.html", SearchOption.AllDirectories)
-                .Select(f => Path.GetRelativePath(_templatesPath, f).Replace('\\', '/'))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase)
-            : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // 逻辑名后追加。
+        // **单次枚举**（2026-10-21 性能优化：此前站点目录枚举两次）
+        var siteRelativeNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var templateFiles = new List<(string Path, string Root)>();
+        foreach (var f in Directory.EnumerateFiles(_templatesPath, "*.html", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(_templatesPath, f).Replace('\\', '/');
+            siteRelativeNames.Add(rel);
+            templateFiles.Add((f, _templatesPath));
+        }
 
-        var templateFiles = new List<(string Path, string Root)>(
-            Directory.Exists(_templatesPath)
-                ? Directory.EnumerateFiles(_templatesPath, "*.html", SearchOption.AllDirectories)
-                    .Select(f => (f, _templatesPath))
-                : []);
         foreach (var themePath in _themeTemplatePaths)
         {
             if (!Directory.Exists(themePath))
             {
                 continue;
             }
-            templateFiles.AddRange(Directory.EnumerateFiles(themePath, "*.html", SearchOption.AllDirectories)
-                .Where(f => !siteRelativeNames.Contains(
-                    Path.GetRelativePath(themePath, f).Replace('\\', '/'),
-                    StringComparer.OrdinalIgnoreCase))
-                .Select(f => (f, themePath)));
+            foreach (var f in Directory.EnumerateFiles(themePath, "*.html", SearchOption.AllDirectories))
+            {
+                var rel = Path.GetRelativePath(themePath, f).Replace('\\', '/');
+                if (!siteRelativeNames.Contains(rel))
+                {
+                    templateFiles.Add((f, themePath));
+                }
+            }
         }
 
         await Parallel.ForEachAsync(
@@ -541,165 +544,84 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
     /// 页面对象工厂与分页函数都是静态路径拿不到渲染器实例，故用 AsyncLocal 而非实例字段；
     /// 分页字典仍用并发类型：同一次构建内页面渲染本身是并行的
     /// </summary>
-    private sealed class BuildRenderState
+    // BuildRenderState 已移至 Flint.Core.Site.BuildRenderState（2026-10-21
+    // 架构居中于 Fluid：SiteBuilder 不再静态调用 ScribanTemplateRenderer）。
+    // 以下内部转发属性保持 ScribanTemplateRenderer.Objects.cs 的引用点零改动
+
+    /// <summary>开新构建作用域（转发到 BuildRenderStateAccess）</summary>
+    internal static void BeginBuildScope() => BuildRenderStateAccess.BeginBuildScope();
+
+    // partial ScribanTemplateRenderer.Objects.cs 直引的同名访问点（转发）
+    private static IReadOnlyList<Flint.Core.Abstractions.PageContext>? CurrentSitePages => BuildRenderStateAccess.GetCurrentSitePages();
+
+    /// <summary>登记当前构建的全量站点页面（转发）</summary>
+    internal static void SetCurrentSitePages(IReadOnlyList<Flint.Core.Abstractions.PageContext> pages) => BuildRenderStateAccess.SetCurrentSitePages(pages);
+
+    /// <summary>登记分类/词条查找注册表（转发）</summary>
+    internal static void SetTaxonomyLookupPages(IReadOnlyList<Flint.Core.Abstractions.PageContext>? pages) =>
+        BuildRenderStateAccess.SetTaxonomyLookupPages(pages);
+
+    /// <summary>取分类/词条查找注册表（转发）</summary>
+    internal static IReadOnlyList<Flint.Core.Abstractions.PageContext>? GetTaxonomyLookupPages() =>
+        BuildRenderStateAccess.GetTaxonomyLookupPages();
+
+    /// <summary>登记当前构建的站点对象（转发）</summary>
+    internal static void SetCurrentSite(Flint.Core.Abstractions.SiteContext site) => BuildRenderStateAccess.SetCurrentSite(site);
+
+    /// <summary>标记某列表页被模板分页（转发）</summary>
+    internal static void NotePaginateInvoked(string? relPermalink) => BuildRenderStateAccess.NotePaginateInvoked(relPermalink);
+
+    /// <summary>登记显式分页集合与页大小（转发）</summary>
+    internal static void NotePaginateCollection(
+        string? relPermalink, IReadOnlyList<Flint.Core.Abstractions.PageContext> items, int size = 0) =>
+        BuildRenderStateAccess.NotePaginateCollection(relPermalink, items, size);
+
+    /// <summary>取显式分页集合与页大小（转发）</summary>
+    internal static PaginateRegistration? GetPaginateCollection(string relPermalink) =>
+        BuildRenderStateAccess.GetPaginateCollection(relPermalink);
+
+    /// <summary>登记模板创建的分页器（转发）</summary>
+    internal static void NotePaginatePager(string? relPermalink, PaginatorView pager) =>
+        BuildRenderStateAccess.NotePaginatePager(relPermalink, pager);
+
+    /// <summary>取模板创建的分页器（转发）</summary>
+    internal static PaginatorView? GetPaginatePager(string relPermalink) =>
+        BuildRenderStateAccess.GetPaginatePager(relPermalink);
+
+    /// <summary>该列表页是否被模板分页过（转发）</summary>
+    internal static bool WasPaginateInvoked(string relPermalink) =>
+        BuildRenderStateAccess.WasPaginateInvoked(relPermalink);
+
+    /// <summary>清空分页标记（转发）</summary>
+    internal static void ResetPaginateTracking() => BuildRenderStateAccess.ResetPaginateTracking();
+
+    // ---- Scriban 侧特有的构建级共享函数（不属引擎中立状态，留在本类） ----
+
+    /// <summary>
+    /// Scriban 侧构建级共享函数容器：i18n/template_exists/partialCached 等
+    /// 只依赖构建级数据，每构建一次、全部页面复用（原每页 new 三个）。
+    /// 与 BuildRenderState 分离：这些是 Scriban 模板函数对象，Fluid 路径不用
+    /// </summary>
+    private sealed class ScribanSharedFunctions
     {
-        /// <summary>
-        /// 本次构建中被模板调用过 <c>.Paginate</c> 的列表页 URL。
-        /// Hugo 的分页页由**模板调用**驱动：探测实证（v0.166）home 模板不调用
-        /// <c>.Paginate</c> 时站点不产出 <c>/page/2</c>，而列表模板调用时产出
-        /// <c>/page/1</c>（跳转页）+ <c>/page/2..N</c>。故分页页产出前先看是否有标记
-        /// </summary>
-        public ConcurrentDictionary<string, byte> PaginatedListUrls { get; } = new(StringComparer.Ordinal);
-
-        /// <summary>模板传给 <c>.Paginate</c> 的显式集合与页大小（按列表页 URL 登记）</summary>
-        public ConcurrentDictionary<string, PaginateRegistration> PaginateCollections { get; } = new(StringComparer.Ordinal);
-
-        /// <summary>模板 <c>.Paginate</c> 实际创建的分页器（按列表页 URL 登记）</summary>
-        public ConcurrentDictionary<string, PaginatorView> PaginatePagers { get; } = new(StringComparer.Ordinal);
-
-        /// <summary>
-        /// 当前构建的**全量站点页面**（含 section/term 页）——<c>.GetPage</c> 用它解析路径。
-        /// 页面对象按引用共享缓存（CWT），创建时机不同会拿到不同快照（列表渲染早于页面渲染），
-        /// 只靠构造参数会让 `<c>.GetPage "docs"</c>` 时有时无地找不到 section（hugo-book 实测），
-        /// 故由站点渲染入口统一登记，调用时读取（与分页标记同一模式）
-        /// </summary>
-        public IReadOnlyList<Flint.Core.Abstractions.PageContext>? CurrentSitePages { get; set; }
-
-        /// <summary>
-        /// 分类/词条页的**查找注册表**（Hugo 的 .Site.GetPage "/tags/x" 语义）。词条页在
-        /// 构建期第 9 阶段才渲染，而列表模板（loveit 的 summary）在第 8 阶段就要按
-        /// "/categories/xxx" 查它们拿 rel_permalink/title——故第 7 阶段用 TaxonomyService
-        /// 已建好的分类数据预建最小 PageContext 投影登记于此，GetPage 页面列表未命中时
-        /// 回退查本表。**不进 site.Pages**：避免 range site.pages 的主题行为变化
-        /// </summary>
-        public IReadOnlyList<Flint.Core.Abstractions.PageContext>? TaxonomyLookupPages { get; set; }
-
-        /// <summary>
-        /// 当前构建的**站点对象**——页面对象上的 <c>.Site</c> 用它（Hugo 的 `.Site` 在任意
-        /// 页面上可用；迁移产物里的 `$page.Site.Params…` 形态会落到 `$page.site.params`）。
-        /// 与 <see cref="CurrentSitePages"/> 同一模式：页面对象按引用共享、构造时机不定，
-        /// 故由站点渲染入口统一登记
-        /// </summary>
-        public Flint.Core.Abstractions.SiteContext? CurrentSite { get; set; }
-
-        /// <summary>构建级共享的 i18n 函数（T3.4）：只依赖构建翻译表，每构建一个、
-        /// 全部页面复用（原每页 new 一次）</summary>
         public I18nFunction? SharedI18nFunction { get; set; }
-
-        /// <summary>构建级共享的 templates.Exists 探测函数（T3.4，无构建态）</summary>
         public TemplateExistsFunction? SharedTemplateExistsFunction { get; set; }
-
-        /// <summary>构建级共享的 partialCached/includeCached 函数（T3.4，无页面态）</summary>
         public PartialCachedFunction? SharedPartialCachedFunction { get; set; }
-
-        /// <summary>构建级共享的 __partial_ret_set 函数（T6.3，无状态）</summary>
         public PartialRetSetFunction? SharedPartialRetSetFunction { get; set; }
     }
 
-    private static readonly AsyncLocal<BuildRenderState> BuildScope = new();
+    private static readonly AsyncLocal<ScribanSharedFunctions> SharedFunctionsScope = new();
+
+    private static ScribanSharedFunctions SharedFunctions => SharedFunctionsScope.Value ??= new ScribanSharedFunctions();
 
     /// <summary>
-    /// 当前构建作用域。惰性创建兜底"不经 BuildAsync 直接登记/渲染"的测试直调路径；
-    /// SiteBuilder 构建入口经 <see cref="BeginBuildScope"/> 显式开新作用域——
-    /// 必须在入口**同步前缀**创建（首个 await 之前），后续全部 await/并行渲染子任务
-    /// 才会继承同一实例；若首访问落在并行子任务里，各子任务会各自惰性创建互不相通
+    /// 取当前构建的站点对象转为 ScriptObject（Scriban 侧 .Site 成员用）。
+    /// 经 BuildRenderStateAccess 获取 SiteContext（2026-10-21：状态已外迁）
     /// </summary>
-    private static BuildRenderState Scope => BuildScope.Value ??= new BuildRenderState();
-
-    /// <summary>开新构建作用域（BuildAsync/IncrementalBuildAsync 入口同步前缀调用）</summary>
-    internal static void BeginBuildScope() => BuildScope.Value = new BuildRenderState();
-
-    // partial ScribanTemplateRenderer.Objects.cs 直引的同名访问点（属性保持引用点零改动）
-    private static IReadOnlyList<Flint.Core.Abstractions.PageContext>? CurrentSitePages => Scope.CurrentSitePages;
-
-    /// <summary>登记当前构建的全量站点页面（站点渲染开始时调用）</summary>
-    internal static void SetCurrentSitePages(IReadOnlyList<Flint.Core.Abstractions.PageContext> pages) => Scope.CurrentSitePages = pages;
-
-    /// <summary>登记分类/词条查找注册表（每次构建前由 SiteBuilder 调用；null 清空）</summary>
-    internal static void SetTaxonomyLookupPages(IReadOnlyList<Flint.Core.Abstractions.PageContext>? pages) =>
-        Scope.TaxonomyLookupPages = pages;
-
-    /// <summary>取分类/词条查找注册表（未登记时为 null）</summary>
-    internal static IReadOnlyList<Flint.Core.Abstractions.PageContext>? GetTaxonomyLookupPages() =>
-        Scope.TaxonomyLookupPages;
-
-    /// <summary>登记当前构建的站点对象（站点渲染开始时调用）</summary>
-    internal static void SetCurrentSite(Flint.Core.Abstractions.SiteContext site) => Scope.CurrentSite = site;
-
-    /// <summary>取当前构建的站点对象（未登记时为 null）</summary>
-    internal static ScriptObject? CurrentSiteObject() =>
-        Scope.CurrentSite is null ? null : CreateSiteObject(Scope.CurrentSite);
-
-    /// <summary>标记某列表页被模板分页（由 <c>.Paginate</c> 调用触发）</summary>
-    internal static void NotePaginateInvoked(string? relPermalink)
+    internal static ScriptObject? CurrentSiteObject()
     {
-        if (!string.IsNullOrEmpty(relPermalink))
-        {
-            Scope.PaginatedListUrls[relPermalink] = 0;
-        }
-    }
-
-    /// <summary>
-    /// 模板传给 <c>.Paginate</c> 的**显式集合与页大小**（Hugo 语义：按传入集合与尺寸分页）。
-    /// 站点侧据此计算分页页数与每页内容，而不是照当前页 <c>Pages</c> 切片
-    /// </summary>
-    /// <param name="Items">显式集合（Hugo 的 `.Paginate $pages` 第一参）</param>
-    /// <param name="Size">显式页大小（`.Paginate $pages N` 第二参）；未给时为 0 → 用站点配置</param>
-    internal sealed record PaginateRegistration(
-        IReadOnlyList<Flint.Core.Abstractions.PageContext> Items, int Size);
-
-    /// <summary>登记显式分页集合与页大小</summary>
-    internal static void NotePaginateCollection(
-        string? relPermalink, IReadOnlyList<Flint.Core.Abstractions.PageContext> items, int size = 0)
-    {
-        if (!string.IsNullOrEmpty(relPermalink))
-        {
-            Scope.PaginateCollections[relPermalink] = new PaginateRegistration(items, size);
-        }
-    }
-
-    /// <summary>取显式分页集合与页大小（无则 null）</summary>
-    internal static PaginateRegistration? GetPaginateCollection(string relPermalink) =>
-        Scope.PaginateCollections.TryGetValue(relPermalink, out var registration) ? registration : null;
-
-    /// <summary>
-    /// 模板 <c>.Paginate</c> **实际创建**的分页器（按列表页 URL 登记）。
-    /// Hugo 语义：`.Paginate` 会**改写该页的 `.Paginator`**，随后的 `.Paginator` 读到的是
-    /// 这一次创建的分页器——而不是站点预绑定的隐式分页器。
-    /// 反例（修复前实测）：stack 的 home 用
-    /// <c>where .Site.RegularPages "Type" "in" site.Params.mainSections</c> 得到**空集**
-    /// （其主题配置 mainSections = ["post"]，与内容段名 posts 不匹配）→ Hugo 侧
-    /// <c>.Paginate []</c> → `.Paginator` 为 1 页、不渲染页码链接、只产出 /page/1/；
-    /// 而预绑定的隐式分页器是"站点全部常规页"→ 3 页 → Flint 渲染出指向未产出页的链接
-    /// </summary>
-
-    /// <summary>登记模板创建的分页器</summary>
-    internal static void NotePaginatePager(string? relPermalink, PaginatorView pager)
-    {
-        if (!string.IsNullOrEmpty(relPermalink))
-        {
-            Scope.PaginatePagers[relPermalink] = pager;
-        }
-    }
-
-    /// <summary>取模板创建的分页器（无则 null → 用预绑定的隐式分页器）</summary>
-    internal static PaginatorView? GetPaginatePager(string relPermalink) =>
-        Scope.PaginatePagers.TryGetValue(relPermalink, out var pager) ? pager : null;
-
-    /// <summary>该列表页是否被模板分页过</summary>
-    internal static bool WasPaginateInvoked(string relPermalink) =>
-        Scope.PaginatedListUrls.ContainsKey(relPermalink);
-
-    /// <summary>
-    /// 清空分页标记（站点渲染开始时调用）。同一构建内串行重建（增量/热重载）时
-    /// 复用同一作用域实例，跨构建串味仍靠此清空；全量/增量入口的
-    /// <see cref="BeginBuildScope"/> 则直接换新实例（并行构建互不干扰）
-    /// </summary>
-    internal static void ResetPaginateTracking()
-    {
-        Scope.PaginatedListUrls.Clear();
-        Scope.PaginateCollections.Clear();
-        Scope.PaginatePagers.Clear();
+        var site = BuildRenderStateAccess.GetCurrentSite();
+        return site is null ? null : CreateSiteObject(site);
     }
 
     /// <summary>
@@ -2491,7 +2413,7 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
         // 捕获本页 siteContext 的翻译表，随 SiteContext 每构建装配
         // 构建级函数对象共享化（T3.4）：i18n/template_exists/partialCached 只依赖
         // 构建级数据，经 BuildRenderState 每构建一次、全部页面复用（原每页 new 三个）
-        var scopeState = Scope;
+        var scopeState = SharedFunctions;
         scopeState.SharedI18nFunction ??= new I18nFunction(context.Site.Translations);
         scopeState.SharedTemplateExistsFunction ??= new TemplateExistsFunction((FileTemplateLoader)_templateLoader);
         scopeState.SharedPartialCachedFunction ??= new PartialCachedFunction(this);

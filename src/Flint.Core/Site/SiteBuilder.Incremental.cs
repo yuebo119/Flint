@@ -31,7 +31,7 @@ public sealed partial class SiteBuilder
         var warnings = new ConcurrentBag<BuildWarning>();
 
         // 构建作用域：同 BuildAsync 入口（同步前缀开新实例，并行构建执行流隔离）
-        ScribanTemplateRenderer.BeginBuildScope();
+        BuildRenderStateAccess.BeginBuildScope();
         OutputDirectoryEnsurer.Reset();
         _writtenPaths.Clear();
 
@@ -53,7 +53,9 @@ public sealed partial class SiteBuilder
 
         try
         {
-            var config = await _configLoader.AutoLoadAsync(
+            // 配置加载（优先用预加载配置，避免重复 AutoLoadAsync——
+            // 2026-10-21 性能优化，同 BuildAsync）
+            var config = options.PreloadedConfig ?? await _configLoader.AutoLoadAsync(
                 options.SourcePath, cancellationToken);
 
             // 依赖图扩展：模板/partial 变化 → 使用它们的页面（此前依赖图无人喂，改 layout 页面不会更新）

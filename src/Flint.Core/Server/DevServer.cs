@@ -158,7 +158,8 @@ public sealed class DevServer : IDevServer, IDisposable
             OutputPath = options.OutputPath,
             IncludeDrafts = options.IncludeDrafts,
             IncludeFuture = options.IncludeFuture,
-            Parallelism = Environment.ProcessorCount
+            Parallelism = Environment.ProcessorCount,
+            PreloadedConfig = options.PreloadedConfig
         };
 
         var result = await _siteBuilder.BuildAsync(buildOptions, cancellationToken);

@@ -346,7 +346,7 @@ public sealed partial class SiteBuilder
                     baseRel = "/";
                 }
 
-                var registration = Flint.Core.Templates.ScribanTemplateRenderer.GetPaginateCollection(baseRel);
+                var registration = BuildRenderStateAccess.GetPaginateCollection(baseRel);
                 var items = registration?.Items ?? listPage.Pages ?? [];
                 var size = registration is { Size: > 0 } reg ? reg.Size : Math.Max(1, config.Paginate);
                 if (items.Count == 0)

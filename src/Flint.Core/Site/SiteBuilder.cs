@@ -89,8 +89,11 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
         // 构建作用域：渲染期登记（分页标记/全量页面/站点对象/分类查找）按执行流隔离。
         // 必须在同步前缀（首个 await 前）创建，本次构建的全部并行渲染子任务才会
-        // 继承同一实例——同进程并行构建（集成测试多站点 in-process）互不串写
-        ScribanTemplateRenderer.BeginBuildScope();
+        // 继承同一实例——同进程并行构建（集成测试多站点 in-process）互不串写。
+        // **BuildRenderStateAccess**（2026-10-21 架构居中于 Fluid：从
+        // ScribanTemplateRenderer 移至引擎中立类，SiteBuilder 不再静态调用
+        // Scriban 渲染器）
+        BuildRenderStateAccess.BeginBuildScope();
 
         // 输出目录缓存随构建重置：下方 CleanOutput 会删除输出目录，旧缓存
         // 若命中会跳过重建导致写入阶段报"目录不存在"
@@ -129,8 +132,9 @@ public sealed partial class SiteBuilder : ISiteBuilder
                 await CleanAsync(options.OutputPath, cancellationToken);
             }
 
-            // 1. 加载配置（自动检测 Flint/config/hugo × TOML/YAML/JSON 全部候选文件名）
-            var config = await _configLoader.AutoLoadAsync(
+            // 1. 加载配置（优先用 CLI 预加载的配置，避免重复 AutoLoadAsync——
+            // 2026-10-21 性能优化：BuildHandler 已加载一次，此处复用）
+            var config = options.PreloadedConfig ?? await _configLoader.AutoLoadAsync(
                 options.SourcePath, cancellationToken);
 
             // 1.5 注册站点级短代码（layouts/shortcodes/*.html，对齐 Hugo"短代码即模板"；

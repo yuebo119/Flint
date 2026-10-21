@@ -32,9 +32,12 @@ internal static class ServeHandler
         var sourcePath = Path.GetFullPath(source);
         var outputPath = Path.Combine(sourcePath, "public");
 
-        // 检查是否是有效的 Flint 站点
+        // 检查是否是有效的 Flint 站点：单文件配置或 config/_default/ 目录式配置
+        //（2026-10-21 一致性修复：此前只认单文件，目录式配置站点能构建但 serve
+        // 报"不是有效的 Flint 站点"——blowfish/congo/clarity 等主题只用目录式）
         var configPath = ConfigLoader.FindConfigFile(sourcePath);
-        if (configPath == null)
+        var hasConfigDir = Directory.Exists(Path.Combine(sourcePath, "config", "_default"));
+        if (configPath == null && !hasConfigDir)
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine("错误: 当前目录不是有效的 Flint 站点");
@@ -47,7 +50,9 @@ internal static class ServeHandler
         {
             // 创建核心组件
             var configLoader = new ConfigLoader();
-            var config = await configLoader.LoadAsync(configPath);
+            // AutoLoadAsync：目录式配置优先（与 BuildHandler 一致），
+            // 避免 DevServer 首次构建重复加载
+            var config = await configLoader.AutoLoadAsync(sourcePath);
             // 主题布局叠加（同 BuildHandler）：站点优先、主题回退，dev server 一致生效
             var themeLayoutDirs = config.Theme
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
@@ -138,7 +143,8 @@ internal static class ServeHandler
                 OpenBrowser = openBrowser,
                 IncludeDrafts = drafts,
                 IncludeFuture = true,
-                Verbose = verbose
+                Verbose = verbose,
+                PreloadedConfig = config
             };
 
             // 设置取消处理

@@ -5,7 +5,8 @@
 // "在 Fluid 热路径里调用 Scriban" 的意外耦合。
 //
 // 扫描范围（CONVENTIONS §8.4.2 的 Fluid 热路径定义）：FluidTemplateRenderer、
-// FlintMemberAccessStrategy、FluidBuiltinTemplateProvider。
+// FlintMemberAccessStrategy、FluidBuiltinTemplateProvider、TemplateAssetTransforms、
+// TemplateResource、FluidResourceFilters、BuildRenderState。
 // **不含 TemplateEngineRouter**——router 是路由入口，按设计同时持有两个
 // 渲染器（引用 ScribanTemplateRenderer 是其职责，见 TemplateEngineRouter.cs）。
 //
@@ -28,7 +29,20 @@ public sealed class EngineIsolationTests
     [
         "FluidTemplateRenderer",
         "FlintMemberAccessStrategy",
-        "FluidBuiltinTemplateProvider"
+        "FluidBuiltinTemplateProvider",
+        // 2026-10-21 架构居中于 Fluid：共享资产服务与模型已抽离 ScriptObject
+        "TemplateAssetTransforms",
+        "TemplateResource",
+        "FluidResourceFilters",
+        // BuildRenderState 在 Flint.Core.Site 命名空间（引擎中立类）
+        "BuildRenderState"
+    ];
+
+    /// <summary>Fluid 热路径的命名空间（BuildRenderState 在 Site 命名空间）</summary>
+    private static readonly string[] FluidHotPathNamespaces =
+    [
+        "Flint.Core.Templates",
+        "Flint.Core.Site"
     ];
 
     [Fact]
@@ -47,7 +61,7 @@ public sealed class EngineIsolationTests
             var typeDef = reader.GetTypeDefinition(typeDefHandle);
             var name = reader.GetString(typeDef.Name);
             if (!FluidHotPathTypes.Contains(name) ||
-                reader.GetString(typeDef.Namespace) != "Flint.Core.Templates")
+                !FluidHotPathNamespaces.Contains(reader.GetString(typeDef.Namespace)))
             {
                 continue;
             }
