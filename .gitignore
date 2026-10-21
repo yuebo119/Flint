@@ -87,3 +87,6 @@ __pycache__/
 matrix20/
 theme-verify/
 /tmp/
+
+# BenchmarkDotNet 产物（BDN 基准运行输出，可重新生成）
+BenchmarkDotNet.Artifacts/

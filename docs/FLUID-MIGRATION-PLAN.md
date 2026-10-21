@@ -236,7 +236,7 @@ Phase 3 之后再把 Fluid 从“新站点主力”推向“内置模板全面�
 
 当前提交 `1a6e31f` 里的 Fluid 只是 `.liquid` 备用分支，不能直接当主力。按上面 Phase 1 到 Phase 3 推进，才能得到平行的双引擎。
 
-## 实施状态（2026-10-19 收官；P4-3/P4-4/P5 补齐轮 + 递延收敛轮更新）
+## 实施状态（2026-10-19 收官；P4-3/P4-4/P5 补齐轮 + 递延收敛轮 + BDN 基准轮更新）
 
 **已完成**：Phase 0 全部（策略枚举 + `engine` 配置键、隔离规则入
 CONVENTIONS §8.4、IL 扫描装配测试过 mutation probe）；Phase 1 全部
@@ -249,12 +249,15 @@ partial、辅助模板双形态、8 项语义对拍过 mutation probe）；Phase
 （P4-1 分级台账、P4-2 Hugo 名过滤器族含 path/regex/group/apply/seq/
 shuffle、P4-3 resources 全量含产物型变换 + GeneratedResources 接线、
 P4-4 css.Sass/css.Build/js.Build 服务化含 vars/format/params 的
-Liquid 命名实参形态、P4-6 对拍测试）；Phase 5 全部（P5-1/P5-2
-IShortcodeRenderer/IRenderHookRenderer 接口由 router 与 Scriban
-渲染器双实现、P5-3 disableShortcodes 配置、P5-4 内置短代码本就 C#
-实现引擎无关、P5-5 Liquid render hooks）；Phase 6 全部（perf 套件
-双引擎对拍 0.296x、AOT 体积 +0.48%、engine-probe PASS、
-LIQUID-GUIDE 文档、README 双语更新）。
+Liquid 命名实参形态、P4-5 partial 语义（include 共享/render 隔离 +
+dict 上下文的 assign 映射，单测锁定）、P4-6 对拍测试）；Phase 5 全部
+（P5-1/P5-2 IShortcodeRenderer/IRenderHookRenderer 接口由 router 与
+Scriban 渲染器双实现、P5-3 disableShortcodes 配置、P5-4 内置短代码
+本就 C# 实现引擎无关、P5-5 Liquid render hooks）；Phase 6 全部
+（P6-1 BenchmarkDotNet 模板级基准 EngineRenderBenchmarks 实测
+0.09x + perf 套件对拍 0.296x + 站点级脚本 0.821x 三口径、
+P6-2 AOT 体积 +0.48%、P6-3 engine-probe PASS、P6-4 LIQUID-GUIDE、
+P6-5 README 双语）。
 
 **递延（有明确理由，差异清单登记于 docs/LIQUID-GUIDE.md §4）**：
 `strings.*`/`math.*` 命名空间**函数**形态（Liquid 语法无方法调用，

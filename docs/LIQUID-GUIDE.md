@@ -52,6 +52,12 @@ Flint new site mysite --engine scriban   # 旧 .html 脚手架（Hugo 兼容模�
 {% render 'partials/card' %}           {# render 隔离作用域 #}
 ```
 
+**partial 语义（P4-5）**：Hugo 的 `partial "x" (dict "a" 1)` 传 dict 上下文，
+Liquid 无对象字面量，等价形态是 **assign 后 include**（共享作用域，
+partial 内直取变量）；`render` 是隔离作用域（调用方 assign 不可见，
+页面成员 `page.*`/`site.*` 仍可用——模型全局绑定）。两种作用域语义由
+`include_共享作用域` / `render_隔离作用域` 单测锁定。
+
 - 成员访问**大小写不敏感**，且支持 snake_case：`page.word_count` 命中
   `PageContext.WordCount`（`FlintMemberAccessStrategy` 映射）。
 - 默认**不转义**（与 Scriban 侧 HTML 契约一致）：`{{ page.content }}` 原样输出。
@@ -209,13 +215,18 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
 
 ## 5. 性能与验证口径
 
-- 站点级 A/B（`scripts/engine-ab.sh`，300 篇同内容交错三轮中位数，
-  2026-10-19）：总计 Fluid 782.0ms vs Scriban 952.8ms（**0.821x**），
-  渲染段 270.5 vs 359.8（**0.752x**），模板预编译 59.8 vs 108.7；
-  产物文件集 343 个完全一致。
-- 模板级对拍（perf 套件 `双引擎渲染对拍`，同逻辑模板 3000 次交错三轮）：
-  Fluid 190,135 页/秒 vs Scriban 56,192 页/秒（**0.296x**）——模板级
-  收益远大于站点级（站点级被 IO/解析/写盘稀释；两个口径都进报告）。
+- **BenchmarkDotNet 模板级基准**（P6-1，`EngineRenderBenchmarks`，
+  .NET 11 RC2 / Ryzen 9 8945HX，2026-10-19）：Fluid 1.367μs / 2.76KB
+  vs Scriban 15.103μs / 45.33KB，**比值 0.09**（快约 11 倍、每次渲染
+  分配少约 16 倍）。运行：`dotnet run -c Release --project
+  tests/Flint.PerformanceTests -- bench --filter *EngineRenderBenchmarks*`。
+- **模板级对拍**（perf 套件 `双引擎渲染对拍`，同逻辑模板 3000 次交错
+  三轮）：Fluid 190,135 页/秒 vs Scriban 56,192 页/秒（0.296x）——
+  含循环开销的口径，BDN 是纯渲染严格口径，两者都进报告。
+- **站点级 A/B**（`scripts/engine-ab.sh`，300 篇同内容交错三轮中位数）：
+  总计 Fluid 782.0ms vs Scriban 952.8ms（0.821x），渲染段 270.5 vs
+  359.8（0.752x）；产物文件集 343 个完全一致。站点级构建含重 IO，
+  是 BDN 反模式，故用交错中位数脚本而非 BDN。
 - NativeAOT 冒烟：AOT 二进制构建 .liquid 站点 10 页全正确；模型属性经
   `DynamicDependency` 保留清单防裁剪（清单随模型类型演进而维护）。
   AOT 体积对比（迁移前 1a6e31f vs 迁移后，win-x64 单文件）：

@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Flint.Core\Flint.Core.csproj" />
+    <PackageReference Include="BenchmarkDotNet" />
   </ItemGroup>
 
 </Project>

@@ -248,6 +248,34 @@ public sealed class FluidTemplateRendererTests : IDisposable
     }
 
     [Fact]
+    public async Task include_共享作用域_assign_对_partial_可见()
+    {
+        // P4-5：Hugo 的 partial dict 上下文在 Liquid 的等价形态——
+        // assign 后 include（共享作用域），partial 内直取变量
+        WriteTemplate("index.liquid",
+            "{% assign label = '标签' %}{% include 'partials/card' %}");
+        WriteTemplate("partials/card.liquid", "<card>{{ label }}:{{ page.title }}</card>");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext("标题"));
+
+        Assert.Equal("<card>标签:标题</card>", result);
+    }
+
+    [Fact]
+    public async Task render_隔离作用域_assign_对_partial_不可见()
+    {
+        // P4-5：render 与 include 的作用域差异（Liquid 标准语义）——
+        // 隔离作用域下调用方 assign 的变量不可见（取空），页面成员仍可用
+        WriteTemplate("index.liquid",
+            "{% assign label = '标签' %}{% render 'partials/card' %}");
+        WriteTemplate("partials/card.liquid", "<card>[{{ label }}]{{ page.title }}</card>");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext("标题"));
+
+        Assert.Equal("<card>[]标题</card>", result);
+    }
+
+    [Fact]
     public async Task include_裸名回退到_default_形态()
     {
         WriteTemplate("index.liquid", "{% include 'head' %}");
