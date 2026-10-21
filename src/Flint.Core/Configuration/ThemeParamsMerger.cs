@@ -5,6 +5,7 @@
 // 两者作为默认值层，站点配置深覆盖——主题"开箱默认 + 站点定制"语义。
 // 合并语义：站点键保留站点值；仅主题有的键采用主题值；双方均为嵌套表时递归合并
 
+using System.Collections.Concurrent;
 
 namespace Flint.Core.Configuration;
 
@@ -193,10 +194,35 @@ public static class ThemeParamsMerger
         return null;
     }
 
+    /// <summary>
+    /// TOML 文件读取缓存（进程级，按 mtime+length 验效）：
+    /// serve 模式配置变化触发全量重建时，主题配置文件本身未变——
+    /// 缓存避免重复读取+解析（2026-10-21 性能优化）
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc, long Length)> TomlTextCache = new(StringComparer.OrdinalIgnoreCase);
+
     private static TomlTable? TryReadTomlTable(string file)
     {
-        var table = TomlynCompat.TryParseTable(File.ReadAllText(file));
-        return table;
+        var text = ReadCachedText(file);
+        if (text is null)
+        {
+            return null;
+        }
+        return TomlynCompat.TryParseTable(text);
+    }
+
+    /// <summary>读取文件文本（mtime+length 缓存，未命中或验效失败才读盘）</summary>
+    private static string? ReadCachedText(string file)
+    {
+        var info = new FileInfo(file);
+        if (TomlTextCache.TryGetValue(file, out var tc) &&
+            tc.MtimeUtc == info.LastWriteTimeUtc && tc.Length == info.Length)
+        {
+            return tc.Text;
+        }
+        var text = File.ReadAllText(file);
+        TomlTextCache[file] = (text, info.LastWriteTimeUtc, info.Length);
+        return text;
     }
 
     private static Dictionary<string, object>? ReadJsonDict(string file)

@@ -700,7 +700,9 @@ public sealed partial class SiteBuilder
         CancellationToken cancellationToken)
     {
         // 1. aliases 重定向页（Hugo front matter aliases 语义）：每个别名路径产出
-        //    meta-refresh 页面，指向页面真实 Permalink；路径逃逸的别名跳过
+        //    meta-refresh 页面，指向页面真实 Permalink；路径逃逸的别名跳过。
+        //    **并行写盘**（2026-10-21 性能优化：aliases 无数据依赖，可并行）
+        var aliasTasks = new List<Task>();
         foreach (var page in pages.Where(p => p.Aliases is { Count: > 0 }))
         {
             foreach (var alias in page.Aliases!)
@@ -716,8 +718,12 @@ public sealed partial class SiteBuilder
                     $"<link rel=\"canonical\" href=\"{page.Permalink}\">" +
                     $"<meta http-equiv=\"refresh\" content=\"0; url={page.Permalink}\">" +
                     $"</head><body>Redirecting to <a href=\"{page.Permalink}\">{page.Permalink}</a></body></html>\n";
-                await File.WriteAllTextAsync(aliasOutput, redirect, cancellationToken);
+                aliasTasks.Add(File.WriteAllTextAsync(aliasOutput, redirect, cancellationToken));
             }
+        }
+        if (aliasTasks.Count > 0)
+        {
+            await Task.WhenAll(aliasTasks);
         }
 
         // 2. 404 模板（layouts/404.html 存在时渲染输出 404.html）
