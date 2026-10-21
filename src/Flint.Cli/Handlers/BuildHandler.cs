@@ -158,12 +158,14 @@ internal static class BuildHandler
                 configLoader,
                 new SiteBuilderOptions { EnableDependencyTracking = false });
 
-            // 清理输出目录
-            if (clean && Directory.Exists(outputPath))
+            // 清理输出目录：由 BuildAsync 经 CleanOutput 选项执行（保留上方的
+            // 危险路径守卫）。此前此处自行调用 CleanAsync，而 BuildOptions 的
+            // CleanOutput 历史默认 true 又让 BuildAsync 再删一次（双删），
+            // 且默认全删与 USAGE.md 的「--clean 按需」契约矛盾——
+            // 2026-10-22 统一为单一清理点：CleanOutput 跟随 --clean 标志
+            if (clean && verbose)
             {
-                if (verbose)
-                    Console.WriteLine("清理输出目录...");
-                await siteBuilder.CleanAsync(outputPath, cancellationToken);
+                Console.WriteLine("清理输出目录...");
             }
 
             // 执行构建
@@ -181,6 +183,9 @@ internal static class BuildHandler
                 MissingLayout = string.Equals(missingLayout, "skip", StringComparison.OrdinalIgnoreCase)
                     ? Flint.Core.Models.MissingLayoutBehavior.Skip
                     : Flint.Core.Models.MissingLayoutBehavior.Error,
+                // 清理语义唯一来源：--clean 传 true，默认 false（不清理，
+                // 对齐 Hugo 与 USAGE.md:374 文档契约）
+                CleanOutput = clean,
                 // 传入已加载的配置，避免 SiteBuilder 重复 AutoLoadAsync
                 // （2026-10-21 性能优化：消除配置双加载，149ms → ~75ms）
                 PreloadedConfig = siteConfig

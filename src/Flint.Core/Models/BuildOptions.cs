@@ -75,9 +75,13 @@ public sealed class BuildOptions
     public string? CachePath { get; init; }
 
     /// <summary>
-    /// 是否清理输出目录
+    /// 是否在构建前清理输出目录（对齐 Hugo 语义：默认 <c>false</c> 不清理，
+    /// <c>--clean</c> 按需全量重建）。历史默认 <c>true</c> 使每次构建
+    /// 先递归删除再重写整个输出目录——实测 300 篇站点该删除段
+    /// 135~420ms、万页语料按微基准推算约 3s，与写盘本身同量级，
+    /// 且与 USAGE.md 文档契约及 Hugo 默认行为矛盾（2026-10-22 修正）
     /// </summary>
-    public bool CleanOutput { get; init; } = true;
+    public bool CleanOutput { get; init; }
 
     /// <summary>
     /// 是否生成 Source Map
