@@ -469,9 +469,13 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             deps.Add(resolved);
         }
 
+        // mtime 经短窗缓存（GetMtimeUtc）而非直查磁盘：include 每次执行都
+        // 经本回调，Fluid beta.8 无每上下文模板缓存，{% for %} 循环内的
+        // include 每迭代一次就 stat 一次——1000 页 × 5 include = 5000+ 次
+        // stat（2026-10-21 审计修复：此前 File.GetLastWriteTimeUtc 直查）
         var mtimeUtc = isBuiltin
             ? DateTimeOffset.MinValue
-            : new DateTimeOffset(File.GetLastWriteTimeUtc(resolved), TimeSpan.Zero);
+            : new DateTimeOffset(GetMtimeUtc(resolved), TimeSpan.Zero);
         return ValueTask.FromResult(new TemplateSourceInfo(
             mtimeUtc,
             token => ReadTemplateStreamAsync(resolved, token),

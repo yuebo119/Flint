@@ -713,6 +713,11 @@ public static partial class ConfigParser
             !string.Equals(config.Engine, "auto", StringComparison.OrdinalIgnoreCase))
             dict["engine"] = config.Engine;
 
+        // disableShortcodes 仅写回 true：默认 false 不出现在序列化产物里
+        // （2026-10-21 审计修复：此前解析端读但序列化端不写，往返丢失）
+        if (config.DisableShortcodes)
+            dict["disableShortcodes"] = true;
+
         if (config.DisableKinds.Count > 0)
             dict["disableKinds"] = config.DisableKinds.ToList();
 

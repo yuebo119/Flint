@@ -144,7 +144,10 @@ public sealed class CliLiquidContentPipelineTests : IAsyncLifetime
         buildResult.IsSuccess.Should().BeFalse("scriban 模式不注册 .liquid 短代码，缺失短代码应使构建失败");
         var output = buildResult.ErrorOutput + buildResult.StandardOutput;
         output.Should().Contain("notice", "失败原因应指向缺失的短代码");
-        output.Should().NotContain("liquid-marker", "不应把 .liquid 短代码内容渲染出来");
+        // 2026-10-21 审计修复：此前断言 NotContain("liquid-marker") 是空断言
+        // （短代码内容是 "<div>liquid</div>"，从来不含 "liquid-marker"）。
+        // 改为断言输出不含短代码内容本身
+        output.Should().NotContain("<div>liquid</div>", "不应把 .liquid 短代码内容渲染出来");
     }
 
     /// <summary>disableShortcodes = true 时连内置 C# 短代码也不注册（P5-3）</summary>

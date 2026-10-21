@@ -271,10 +271,13 @@ public sealed partial class SiteBuilder
                 // home 页兜底重渲（FLUID-MIGRATION-PLAN P1-3 补缺 2026-10-21）：
                 // 合成 home 节点的键含 '/' 被树 walk 跳过（不在 allPageContexts），
                 // 全量构建经 8.5 阶段 GenerateHomePageAsync 兜底产出；增量路径
-                // 此前不调它——改模板后首页永不更新（与引擎无关的既有缺口）。
-                // 模板变化时首页外观由模板决定，必须重产；树版 home（有 _index.md
-                // 的站点）已在 renderSet 渲染过，此处互斥
-                if (templateChanges.Count > 0 &&
+                // 此前只在模板变化时调它——纯内容变化（新增/编辑文章）时首页
+                // 列表不更新，与同一增量里 sitemap/feed 按 hasContentChanges
+                // 重产矛盾（sitemap 有新文章而首页列表仍旧）。
+                // **内容变化也触发**（2026-10-21 全面审计修复）：首页列表聚合
+                // "最新内容"，任何内容变化都可能影响首页外观。
+                // 树版 home（有 _index.md 的站点）已在 renderSet 渲染过，此处互斥
+                if ((templateChanges.Count > 0 || hasContentChanges) &&
                     !allPageContexts.Any(p => p.Kind == "home"))
                 {
                     var homePage = await GenerateHomePageAsync(

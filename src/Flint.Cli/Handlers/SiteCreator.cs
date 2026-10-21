@@ -79,8 +79,9 @@ internal static class SiteCreator
                 Console.WriteLine($"  创建目录: {dir}/");
             }
 
-            // 创建默认配置文件
-            CreateConfigFile(sitePath, name);
+            // 创建默认配置文件（engine 选择持久化：--engine scriban 时写入
+            // engine = "scriban"，否则不写——默认 auto 不出现在配置里）
+            CreateConfigFile(sitePath, name, useFluid ? null : "scriban");
 
             // 创建默认 archetype
             CreateDefaultArchetype(sitePath);
@@ -128,8 +129,10 @@ internal static class SiteCreator
         }
     }
 
-    private static void CreateConfigFile(string sitePath, string name)
+    private static void CreateConfigFile(string sitePath, string name, string? engine = null)
     {
+        // engine 非默认时写入配置（auto 不写——保持配置简洁）
+        var engineLine = engine is not null ? $"\n# 模板引擎策略（auto / fluid / scriban）\nengine = \"{engine}\"\n" : "";
         var configContent = $"""
             # Flint 站点配置文件
             # 详细配置说明请参考文档
@@ -137,7 +140,7 @@ internal static class SiteCreator
             # 站点基本信息
             baseURL = "http://localhost:1313/"
             languageCode = "zh-cn"
-            title = "{name}"
+            title = "{name}"{engineLine}
 
             # 构建选项
             [build]

@@ -107,6 +107,128 @@ public sealed class FluidTemplateRendererTests : IDisposable
     }
 
     [Fact]
+    public async Task AOT保留类型_paginator分组_成员可访问()
+    {
+        // AOT 冒烟回归（2026-10-21 审计补入）：PaginatorPageGroup 与
+        // PaginatorGroupBoundary 的 [DynamicDependency] 条目无 Fluid 测试兜底，
+        // 误删时不会红——而 AOT 失败是静默的（成员全部取空、结构正常）
+        var paginator = PaginatorView.Create(
+            [
+                new PageContext
+                {
+                    Title = "P1", Content = "", Permalink = "https://example.com/p1/",
+                    RelPermalink = "/p1/", Date = DateTimeOffset.UnixEpoch,
+                    Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero
+                },
+                new PageContext
+                {
+                    Title = "P2", Content = "", Permalink = "https://example.com/p2/",
+                    RelPermalink = "/p2/", Date = DateTimeOffset.UnixEpoch,
+                    Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero
+                }
+            ],
+            1, 10, "/posts/", "page")
+            .WithGroupBoundaries([new PaginatorGroupBoundary("2024", 2)]);
+
+        WriteTemplate("index.liquid",
+            "{% for g in page.paginator.page_groups %}[{{ g.key }}:{{ g.pages.size }}]{% endfor %}" +
+            "{% for b in page.paginator.group_boundaries %}<{{ b.key }}={{ b.count }}>{% endfor %}");
+
+        var context = CreateTestContext();
+        var withPaginator = new TemplateContext
+        {
+            Page = new PageContext
+            {
+                Title = context.Page.Title,
+                Content = context.Page.Content,
+                Permalink = context.Page.Permalink,
+                RelPermalink = context.Page.RelPermalink,
+                Date = context.Page.Date,
+                Tags = context.Page.Tags,
+                Categories = context.Page.Categories,
+                WordCount = context.Page.WordCount,
+                ReadingTime = context.Page.ReadingTime,
+                Kind = context.Page.Kind,
+                Paginator = paginator
+            },
+            Site = context.Site
+        };
+
+        var result = await _renderer.RenderAsync("index", withPaginator);
+
+        Assert.Equal("[2024:2]<2024=2>", result);
+    }
+
+    [Fact]
+    public async Task AOT保留类型_page_headings_成员可访问()
+    {
+        // AOT 冒烟回归（2026-10-21 审计补入）：MarkdownHeading 的
+        // [DynamicDependency] 条目无 Fluid 测试兜底
+        WriteTemplate("index.liquid",
+            "{% for h in page.headings %}[{{ h.level }}:{{ h.text }}]{% endfor %}");
+
+        var context = CreateTestContext();
+        var withHeadings = new TemplateContext
+        {
+            Page = new PageContext
+            {
+                Title = context.Page.Title,
+                Content = context.Page.Content,
+                Permalink = context.Page.Permalink,
+                RelPermalink = context.Page.RelPermalink,
+                Date = context.Page.Date,
+                Tags = context.Page.Tags,
+                Categories = context.Page.Categories,
+                WordCount = context.Page.WordCount,
+                ReadingTime = context.Page.ReadingTime,
+                Kind = context.Page.Kind,
+                Headings = [new MarkdownHeading { Level = 2, Text = "标题一", Id = "t1" }]
+            },
+            Site = context.Site
+        };
+
+        var result = await _renderer.RenderAsync("index", withHeadings);
+
+        Assert.Equal("[2:标题一]", result);
+    }
+
+    [Fact]
+    public async Task AOT保留类型_page_menu_entries_成员可访问()
+    {
+        // AOT 冒烟回归（2026-10-21 审计补入）：MenuItemConfig 的
+        // [DynamicDependency] 条目无 Fluid 测试兜底
+        WriteTemplate("index.liquid",
+            "{% for pair in page.menu_entries %}[{{ pair[0] }}:{{ pair[1].name }}:{{ pair[1].url }}]{% endfor %}");
+
+        var context = CreateTestContext();
+        var withMenus = new TemplateContext
+        {
+            Page = new PageContext
+            {
+                Title = context.Page.Title,
+                Content = context.Page.Content,
+                Permalink = context.Page.Permalink,
+                RelPermalink = context.Page.RelPermalink,
+                Date = context.Page.Date,
+                Tags = context.Page.Tags,
+                Categories = context.Page.Categories,
+                WordCount = context.Page.WordCount,
+                ReadingTime = context.Page.ReadingTime,
+                Kind = context.Page.Kind,
+                MenuEntries = new Dictionary<string, MenuItemConfig>
+                {
+                    ["main"] = new MenuItemConfig { Name = "文章", URL = "/posts/" }
+                }
+            },
+            Site = context.Site
+        };
+
+        var result = await _renderer.RenderAsync("index", withMenus);
+
+        Assert.Equal("[main:文章:/posts/]", result);
+    }
+
+    [Fact]
     public async Task site_menus_索引器成员可访问()
     {
         // P2-7 实证回归：C# 索引器不经 Fluid 成员语法——MenuCollection 经

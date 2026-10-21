@@ -79,9 +79,13 @@ public sealed class FluidResourceTransformTests : IDisposable
             {{ r | resource_fingerprint | jsonify }}
             """);
 
-        // 产物名形如 theme.<hash>.css
+        // 产物名形如 theme.<hash>.css——断言哈希段存在（不是原文件名 theme.css）
+        // 2026-10-21 审计修复：此前只断言 Contains("theme.") + Contains(".css")，
+        // 若 fingerprint 退化为恒等透传（产物名仍为 theme.css），两个断言全部通过
         Assert.Contains("theme.", result);
         Assert.Contains(".css", result);
+        // 指纹产物名必须含十六进制哈希段（theme.<hex>.css），原文件名无此形态
+        Assert.Matches(@"theme\.[0-9a-f]+\.css", result);
     }
 
     [Fact]
@@ -92,9 +96,11 @@ public sealed class FluidResourceTransformTests : IDisposable
             {{ r | resource_minify | jsonify }}
             """);
 
-        // 压缩后无 ": " 与 "; " 的空格形态（Lightning CSS 缺失时回退内置简单压缩，
-        // 断言落到"内容被处理过"的弱形态即可——精确压缩形态由 Sass/Minify 单测覆盖）
+        // 压缩后内容不含 ": " 与 "; " 的空格形态（2026-10-21 审计修复：
+        // 此前只断言 Contains("a.css")，minify 若是完全 no-op 测试照过）
         Assert.Contains("a.css", result);
+        Assert.Contains("color:red", result);
+        Assert.DoesNotContain("color : red", result);
     }
 
     [Fact]
@@ -167,9 +173,12 @@ public sealed class FluidResourceTransformTests : IDisposable
     {
         var result = await RenderAsync(
             "[{{ '/a/b/c.css' | path_base }}][{{ '/a/b/c.css' | path_dir }}][{{ '/a/b/c.css' | path_ext }}]" +
-            "[{{ 'a' | path_join: 'b', 'c.css' }}][{{ '/a/b/c.css' | path_split | first }}]");
+            // path_join 保留相对性（Hugo path.Join 语义）：相对输入产相对输出，
+            // 绝对输入（/ 开头）产绝对输出（2026-10-21 审计修复）
+            "[{{ 'a' | path_join: 'b', 'c.css' }}][{{ '/a' | path_join: 'b', 'c.css' }}]" +
+            "[{{ '/a/b/c.css' | path_split | first }}]");
 
-        Assert.Equal("[c.css][/a/b][.css][/a/b/c.css][/a/b]", result);
+        Assert.Equal("[c.css][/a/b][.css][a/b/c.css][/a/b/c.css][/a/b]", result);
     }
 
     [Fact]

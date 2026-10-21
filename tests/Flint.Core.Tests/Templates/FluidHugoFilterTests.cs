@@ -175,20 +175,70 @@ public sealed class FluidHugoFilterTests : IDisposable
 /// Scriban 与 Fluid 同名文本函数对拍（P4-6）：经共享
 /// <see cref="TemplateTextFunctions"/> 的两侧实现输出一致
 /// </summary>
-public sealed class TextFunctionParityTests
+public sealed class TextFunctionParityTests : IDisposable
 {
+    private readonly string _tempDir;
+    private readonly FluidTemplateRenderer _renderer;
+
+    public TextFunctionParityTests()
+    {
+        _tempDir = Path.Combine(Path.GetTempPath(), $"Flint_textfn_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_tempDir);
+        _renderer = new FluidTemplateRenderer(_tempDir, "https://example.com");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, true);
+        }
+        GC.SuppressFinalize(this);
+    }
+
+    private static TemplateContext CreateContext() => new()
+    {
+        Page = new PageContext
+        {
+            Title = "T", Content = "", Permalink = "https://example.com/t/",
+            RelPermalink = "/t/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [],
+            WordCount = 1, ReadingTime = TimeSpan.Zero
+        },
+        Site = new SiteContext
+        {
+            Title = "S", BaseURL = "https://example.com", Language = "zh-cn",
+            Pages = [], RegularPages = [],
+            Taxonomies = new TaxonomyCollection { Taxonomies = new Dictionary<string, IReadOnlyList<TaxonomyTerm>>() },
+            Menus = new MenuCollection { Menus = new Dictionary<string, IReadOnlyList<MenuItem>>() },
+            Config = new SiteConfig { BaseURL = "https://example.com", Title = "S" }
+        }
+    };
+
     [Theory]
     [InlineData("my-first-post")]
     [InlineData("hello_world")]
     [InlineData("Categories")]
     [InlineData("")]
-    public void 文本函数_双引擎同源(string input)
+    public void 文本函数_Fluid过滤器委派到共享实现(string input)
     {
-        // 共享实现的直接调用即对拍：Fluid 过滤器与 Scriban 函数均委派到
-        // TemplateTextFunctions（单一事实源，2026-10-19 抽取）
-        Assert.Equal(TemplateTextFunctions.Humanize(input), TemplateTextFunctions.Humanize(input));
-        Assert.Equal(TemplateTextFunctions.Urlize(input), TemplateTextFunctions.Urlize(input));
-        Assert.Equal(TemplateTextFunctions.Singularize(input), TemplateTextFunctions.Singularize(input));
+        // 经 Fluid 渲染器实际渲染，验证过滤器确实委派到 TemplateTextFunctions
+        // （2026-10-21 审计修复：此前 Assert.Equal(f(x), f(x)) 是同义反复，
+        // 永远不可能失败——若有人把 Fluid 过滤器改成本地实现，旧测试照过）
+        var ctx = CreateContext();
+        var humanized = RenderInline($"{{{{ '{input}' | humanize }}}}", ctx);
+        var urlized = RenderInline($"{{{{ '{input}' | urlize }}}}", ctx);
+        var singularized = RenderInline($"{{{{ '{input}' | singularize }}}}", ctx);
+
+        Assert.Equal(TemplateTextFunctions.Humanize(input), humanized);
+        Assert.Equal(TemplateTextFunctions.Urlize(input), urlized);
+        Assert.Equal(TemplateTextFunctions.Singularize(input), singularized);
+    }
+
+    private string RenderInline(string template, TemplateContext context)
+    {
+        var file = Path.Combine(_tempDir, "t.liquid");
+        File.WriteAllText(file, template);
+        return _renderer.RenderTemplateFileAsync(file, context).AsTask().GetAwaiter().GetResult();
     }
 
     [Theory]

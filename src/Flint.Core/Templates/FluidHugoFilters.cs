@@ -119,12 +119,23 @@ internal static class FluidHugoFilters
 
     private static ValueTask<FluidValue> Jsonify(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
-#pragma warning disable IL2026, IL3050 // jsonify 的输入是模板值对象（字符串/字典/标量），
-        // JsonSerializer(object) 的反射序列化在 NativeAOT 下对任意图形有裁剪风险；
-        // 与 VYaml 配置解析路径同口径文件级抑制——模型图形由模板作者保证
-        var json = System.Text.Json.JsonSerializer.Serialize(input.ToObjectValue(ctx));
+        // AOT 安全：JsonSerializer.Serialize(object) 对复杂 CLR 对象图形
+        // （PageContext/SiteContext 等）在 NativeAOT 裁剪后可能抛
+        // MissingMetadataException 或产生不完整 JSON。先尝试序列化，
+        // 失败时回退到 ToString 形态（2026-10-21 审计修复）。
+        // pragma 抑制：与 VYaml 配置解析路径同口径——模型图形由模板作者
+        // 保证，try-catch 兜底运行时失败
+#pragma warning disable IL2026, IL3050
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(input.ToObjectValue(ctx));
+            return new(FluidValue.Create(json, ctx.Options));
+        }
+        catch (Exception)
+        {
+            return new(FluidValue.Create(input.ToStringValue(ctx), ctx.Options));
+        }
 #pragma warning restore IL2026, IL3050
-        return new(FluidValue.Create(json, ctx.Options));
     }
 
     private static ValueTask<FluidValue> Identity(FluidValue input, FilterArguments args, TemplateContext ctx) =>
@@ -225,7 +236,7 @@ internal static class FluidHugoFilters
         var index = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var item in items)
         {
-            var member = MemberOf(ctx, item, key);
+            var member = await MemberOfAsync(ctx, item, key);
             var k = member?.ToString() ?? "";
             if (!index.TryGetValue(k, out var slot))
             {
@@ -242,7 +253,10 @@ internal static class FluidHugoFilters
 
     /// <summary>
     /// apply 'filter'：对集合每个元素应用指定名的过滤器（Hugo apply 语义）。
-    /// 过滤器名经 TemplateOptions.Filters 解析——已注册的任意过滤器可用
+    /// 过滤器名经 TemplateOptions.Filters 解析——已注册的任意过滤器可用。
+    /// **额外参数转发**（Hugo apply SLICE FUNCTION PARAM... 语义）：args.At(1)
+    /// 之后的参数原样传给目标过滤器（2026-10-21 审计修复：此前传
+    /// FilterArguments.Empty，额外参数全部丢弃）
     /// </summary>
     private static async ValueTask<FluidValue> Apply(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
@@ -251,12 +265,24 @@ internal static class FluidHugoFilters
         {
             return input;
         }
+        // 收集额外参数（args.At(1) 之后的位置参数 + 全部命名参数），
+        // 经 FilterArguments.Add 逐个构建（FilterArguments 无接受
+        // List<FluidValue> 的构造函数，只有 FluidValue[] 与 Add 方法）
+        var forwarded = FilterArguments.Empty;
+        for (var i = 1; i < args.Count; i++)
+        {
+            forwarded = forwarded.Add(args.At(i));
+        }
+        foreach (var name in args.Names)
+        {
+            forwarded = forwarded.Add(name, args[name]);
+        }
         var items = await ToObjectListAsync(input, ctx);
         var result = new List<object?>(items.Count);
         foreach (var item in items)
         {
             var value = FluidValue.Create(item, ctx.Options);
-            var transformed = await filter(value, FilterArguments.Empty, ctx);
+            var transformed = await filter(value, forwarded, ctx);
             result.Add(transformed.ToObjectValue(ctx));
         }
         return FluidValue.Create(result, ctx.Options);
@@ -316,9 +342,13 @@ internal static class FluidHugoFilters
         return list;
     }
 
-    /// <summary>取对象的成员值：经**当前上下文**的成员访问策略（Flint 策略，
-    /// snake_case 可命中；不用 TemplateOptions.Default——丢了 snake 映射）</summary>
-    private static object? MemberOf(TemplateContext ctx, object? item, string memberName)
+    /// <summary>
+    /// 取对象的成员值：经**当前上下文**的成员访问策略（Flint 策略，
+    /// snake_case 可命中；不用 TemplateOptions.Default——丢了 snake 映射）。
+    /// **await 而非 GetResult**（2026-10-21 审计修复：同步阻塞在
+    /// Parallel.ForEachAsync 下有线程池饥饿风险）
+    /// </summary>
+    private static async ValueTask<object?> MemberOfAsync(TemplateContext ctx, object? item, string memberName)
     {
         if (item is null || memberName.Length == 0)
         {
@@ -330,7 +360,7 @@ internal static class FluidHugoFilters
         {
             return null;
         }
-        var value = accessor.GetAsync(item, memberName, ctx).AsTask().GetAwaiter().GetResult();
+        var value = await accessor.GetAsync(item, memberName, ctx);
         return value.IsNil() ? null : value.ToObjectValue(ctx);
     }
 
@@ -352,7 +382,10 @@ internal static class FluidHugoFilters
     private static ValueTask<FluidValue> PathExt(FluidValue input, FilterArguments args, TemplateContext ctx) =>
         new(FluidValue.Create(Path.GetExtension(ToString(input, ctx).Replace('\\', '/')), ctx.Options));
 
-    /// <summary>path.Join：多段拼接（实参为段；空段跳过）</summary>
+    /// <summary>path.Join：多段拼接（实参为段；空段跳过）。
+    /// **保留相对性**（Hugo path.Join 委托 Go path.Join 语义）：首段以 / 开头
+    /// 时产物带 / 前缀，否则产物为相对路径（2026-10-21 审计修复：此前无条件
+    /// 前置 /，把 Hugo 的相对路径输出变成绝对路径）</summary>
     private static ValueTask<FluidValue> PathJoin(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         var parts = new List<string> { ToString(input, ctx) };
@@ -366,7 +399,13 @@ internal static class FluidHugoFilters
         }
         // 手工拼接（Path.Combine 在 Windows 上产反斜杠，与模板的可预期形态不符）
         var joined = string.Join('/', parts.Select(p => p.Trim('/', '\\')));
-        return new(FluidValue.Create(joined.Length == 0 ? "/" : "/" + joined, ctx.Options));
+        if (joined.Length == 0)
+        {
+            return new(FluidValue.Create("/", ctx.Options));
+        }
+        // 首段带 / 时保留绝对路径形态，否则相对路径（对齐 Go path.Join）
+        var isAbsolute = parts[0].StartsWith('/');
+        return new(FluidValue.Create(isAbsolute ? "/" + joined : joined, ctx.Options));
     }
 
     /// <summary>path.Split：返回 (dir, file) 二元组（Liquid 经二元索引消费）</summary>
