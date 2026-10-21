@@ -233,15 +233,18 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
   40.041 MB → 40.231 MB（**+0.48%**）。
 - 运行期装配探针：`dotnet run --project src/Flint.DevTools -- engine-probe`
   （Fluid 渲染路径不加载 Scriban 程序集，P6-3）。探针含**router 级
-  全链路**断言：经 TemplateEngineRouter（Scriban 工厂懒构造）+ SiteBuilder
-  完整构建纯 Fluid 站点，Scriban 渲染器全程未构造（P2-4 实质化：
-  新站点构建不加载 Scriban 程序集——此前 router 急构 Scriban，
-  “不加载”只是名义）。
+  全链路**断言：经 TemplateEngineRouter（Scriban 工厂懒构造，Lazy&lt;T&gt;
+  线程安全）+ SiteBuilder 完整构建纯 Fluid 站点，Scriban 渲染器全程
+  未构造（P2-4 实质化：新站点构建不加载 Scriban 程序集——此前 router
+  急构 Scriban，“不加载”只是名义）。
 - 静态隔离门禁：`EngineIsolationTests`（IL 扫描，mutation probe 验证灵敏度）。
 - 增量重渲（P1-3）：`.liquid` partial 变更触发依赖页面重渲染
   （`FluidIncrementalTests` 锁定；修复了增量路径 templateChanges 只认
   .html 的过滤缺口，以及合成 home 页不在树里导致模板变化不重渲的
   兜底缺口）。
+- 审计修复回归（2026-10-21）：`FluidAuditFixTests` 锁定 router 懒构造
+  并发单实例、include 路径/文本缓存（mtime+length 验效 + 构建边界
+  失效）、resource_concat 字符串路径实参。
 - 主题矩阵回归（29 个矩阵站点，迁移后二进制 vs 迁移前二进制同命令重建）：
   **零回归**——24 个站点页数一致；6 个站点（archie/congo/hermit/hextra/
   mainroad/relearn）在两个二进制上同样失败（预先存在的主题不兼容，

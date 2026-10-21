@@ -17,9 +17,8 @@ namespace Flint.Core.Templates;
 internal static class FluidTemplateFilters
 {
     /// <summary>注册全部 Liquid 过滤器（渲染器构造时调用一次）</summary>
-    public static void Register(TemplateOptions options, string baseUrl)
+    public static void Register(TemplateOptions options)
     {
-        FallbackBaseUrl = baseUrl;
         options.Filters.AddFilter("abs_url", AbsUrl);
         options.Filters.AddFilter("absURL", AbsUrl);
         options.Filters.AddFilter("absurl", AbsUrl);
@@ -34,17 +33,23 @@ internal static class FluidTemplateFilters
     private static ValueTask<FluidValue> RelUrl(FluidValue input, FilterArguments args, TemplateContext ctx) =>
         new(FluidValue.Create(RelUrl(ToString(input, ctx), BaseUrl(ctx)), ctx.Options));
 
-    /// <summary>baseUrl 经 AmbientValues 传入（每渲染上下文可覆盖；缺省用构造期站点 baseURL）</summary>
+    /// <summary>
+    /// baseUrl 经 AmbientValues 传入（每渲染上下文设置，见 CreateFluidContext）。
+    /// **不用静态回落**（2026-10-21 审计修复）：静态可变 baseUrl 在并行
+    /// 多站点构建（集成测试 in-process）下会串站点；真实渲染路径必经
+    /// CreateFluidContext，AmbientValues 恒有值，缺省只可能是直调测试
+    /// ——用固定常量足够
+    /// </summary>
     private static string BaseUrl(TemplateContext ctx) =>
         ctx.AmbientValues.TryGetValue(BaseUrlKey, out var v) && v is string s && s.Length > 0
             ? s
-            : FallbackBaseUrl;
+            : DefaultBaseUrl;
 
     /// <summary>渲染上下文的 baseURL  AmbientValues 键（CreateFluidContext 设置）</summary>
     internal const string BaseUrlKey = "__flint_fluid_base_url";
 
-    /// <summary>静态回落 baseURL（未经 CreateFluidContext 的直调路径，如内置模板单测）</summary>
-    internal static string FallbackBaseUrl = "http://localhost:1313/";
+    /// <summary>直调路径的固定回落 baseURL（不经 CreateFluidContext 的测试场景）</summary>
+    private const string DefaultBaseUrl = "http://localhost:1313/";
 
     private static string ToString(FluidValue value, TemplateContext ctx) =>
         value.IsNil() ? "" : value.ToStringValue(ctx);

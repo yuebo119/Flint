@@ -36,6 +36,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     private readonly string _templatesPath;
     // 主题布局回退目录（与 Scriban 侧同序：站点优先、主题按序回退）
     private readonly string[] _themeTemplatePaths;
+    // 站点基础 URL（构造期给定）：CreateFluidContext 里 Site.BaseURL 为
+    // 空时的 AmbientValues 回落（真实渲染 Site.BaseURL 恒有值）
+    private readonly string _baseUrl;
     private readonly TemplateLookup _lookup;
     private readonly FluidParser _parser;
     private readonly TemplateOptions _options;
@@ -89,6 +92,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(SiteContext))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PaginatorView))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PaginatorPageGroup))]
+    // 分组分页边界（paginator.group_boundaries 的条目）：record struct，
+    // 属性元数据同样会被裁剪（2026-10-21 审计补入）
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(PaginatorGroupBoundary))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TaxonomyTerm))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TaxonomyCollection))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(MenuItem))]
@@ -123,6 +129,7 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     {
         _templatesPath = templatesPath;
         _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
+        _baseUrl = baseUrl ?? "";
         _timeProvider = timeProvider;
         _builtins = builtins ?? new FluidBuiltinTemplateProvider();
         _resources = resources;
@@ -167,8 +174,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         };
 
         // URL 过滤器家族（abs_url/rel_url）：Hugo 内置 partial（twitter_cards）
-        // 与 Liquid 模板依赖；语义对齐 Scriban 侧 BuiltinTemplateFunctions
-        FluidTemplateFilters.Register(_options, baseUrl);
+        // 与 Liquid 模板依赖；语义对齐 Scriban 侧 BuiltinTemplateFunctions。
+        // baseUrl 每渲染经 AmbientValues 传入（不用静态——并行多站点竞态）
+        FluidTemplateFilters.Register(_options);
         // Hugo 名过滤器族（P4-2）：titleize/humanize/markdownify/delimit/
         // union/i18n 等 Fluid 内置 72 个之外的新站点高频名
         FluidHugoFilters.Register(_options);
@@ -389,12 +397,13 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         {
             CancellationToken = cancellationToken
         };
-        // URL 过滤器的站点 baseURL（abs_url/rel_url 经 AmbientValues 取，
-        // 每渲染可覆盖；未经本路径的直调回落 FluidTemplateFilters.FallbackBaseUrl）
-        fluidContext.AmbientValues[FluidTemplateFilters.BaseUrlKey] = context.Site.BaseURL;
+        // URL 过滤器的站点 baseURL（abs_url/rel_url 经 AmbientValues 取）：
+        // Site.BaseURL 优先，为空时回落构造期 baseUrl
+        var siteBaseUrl = string.IsNullOrEmpty(context.Site.BaseURL) ? _baseUrl : context.Site.BaseURL;
+        fluidContext.AmbientValues[FluidTemplateFilters.BaseUrlKey] = siteBaseUrl;
         // 资源/资产变换过滤器（P4-3/P4-4）：baseURL（产物 RelPermalink）、
         // 产物收集队列（GeneratedResources 通道）、资源提供者（路径形态解析）
-        fluidContext.AmbientValues[FluidResourceFilters.BaseUrlKey] = context.Site.BaseURL;
+        fluidContext.AmbientValues[FluidResourceFilters.BaseUrlKey] = siteBaseUrl;
         fluidContext.AmbientValues[FluidResourceFilters.GeneratedKey] = _generatedResources;
         if (_resources is not null)
         {
