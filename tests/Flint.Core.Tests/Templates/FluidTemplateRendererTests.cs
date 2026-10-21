@@ -103,6 +103,58 @@ public sealed class FluidTemplateRendererTests : IDisposable
         Assert.Equal(expected, result);
     }
 
+    // ---- include 高级形态（with/for/alias；2026-10-21 补测试覆盖）----
+
+    [Fact]
+    public async Task include_with_改名绑定()
+    {
+        WriteTemplate("partials/card.liquid", "[{{ local_title }}]");
+        WriteTemplate("index.liquid",
+            "{% include 'partials/card' with page.title as local_title %}");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext("Hello"));
+
+        Assert.Equal("[Hello]", result);
+    }
+
+    [Fact]
+    public async Task include_for_遍历绑定()
+    {
+        WriteTemplate("partials/item.liquid", "{{ item }}");
+        WriteTemplate("index.liquid",
+            "{% assign items = 'a,b,c' | split: ',' %}{% include 'partials/item' for items as item %}");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext());
+
+        Assert.Equal("abc", result);
+    }
+
+    [Fact]
+    public async Task render_隔离作用域_不泄漏变量()
+    {
+        WriteTemplate("partials/iso.liquid", "{{ secret }}");
+        WriteTemplate("index.liquid",
+            "{% assign secret = 'hidden' %}{% render 'partials/iso' %}");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext());
+
+        // render 隔离作用域：partial 内 secret 取空（调用方 assign 不可见）
+        Assert.Equal("", result);
+    }
+
+    [Fact]
+    public async Task include_共享作用域_可读取调用方变量()
+    {
+        WriteTemplate("partials/shared.liquid", "{{ secret }}");
+        WriteTemplate("index.liquid",
+            "{% assign secret = 'visible' %}{% include 'partials/shared' %}");
+
+        var result = await _renderer.RenderAsync("index", CreateTestContext());
+
+        // include 共享作用域：partial 内 secret 取到调用方 assign 的值
+        Assert.Equal("visible", result);
+    }
+
     [Fact]
     public async Task where_三参运算符_不等于()
     {
