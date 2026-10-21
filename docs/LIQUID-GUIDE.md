@@ -253,3 +253,52 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
   `is ScribanTemplateRenderer` 类型检查在 router 模式下恒 false，
   曾导致 .GetPage 查不到 section 页（hugo-book 实测）、翻译表回填与
   零 IO 依赖判定失效——已修为 router 穿透。
+
+## 6. Liquid 与 Scriban 对比（旧引擎 → 新引擎）
+
+### 6.1 共享与隔离
+
+| 维度 | 共享 | 隔离 |
+|---|---|---|
+| 输入模型 | `PageContext` / `SiteContext` / `Params` / `Data`（同一份对象，两引擎直绑） | — |
+| 模板查找 | 候选链顺序、主题叠加语义（`TemplateLookup` 扩展名参数化，两引擎各持一实例） | 描述符缓存 |
+| 输出 | 写盘、指纹、SRI、输出格式变体 | — |
+| 内容管线 | 短代码/render hook 的服务接口（`IShortcodeRenderer` / `IRenderHookRenderer`） | 具体实现按扩展名分发 |
+| 缓存 | — | 模板缓存、依赖表、资源追踪器、include 路径/文本缓存各自独立 |
+| 内置模板 | — | Scriban 内置（Hugo 主题用）与 Liquid 内置（新站点用）两套，逐条同构 |
+
+### 6.2 语法与语义差异
+
+| 方面 | Scriban（旧） | Liquid/Fluid（新） |
+|---|---|---|
+| 插值 | `{{ page.title }}` | `{{ page.title }}`（相同） |
+| 控制流 | `{{ for x in y }}` / `{{ if x }}` | `{% for x in y %}` / `{% if x %}`（标签语法） |
+| 赋值 | `{{ x = 1 }}` | `{% assign x = 1 %}` |
+| partial | `{{ include "x" }}` / `{{ partial "x" . }}` | `{% include 'x' %}`（共享作用域）/ `{% render 'x' %}`（隔离作用域） |
+| 对象字面量 | `{{ dict "a" 1 }}` | **无**（Liquid 语法限制；`group` 返回二元组列表替代） |
+| 对象方法调用 | `page.get_page "x"` | **无**（仅属性访问；方法需求走过滤器） |
+| 块捕获 | `{{ capture x }}…{{ end }}` | 无（assign 拼接替代） |
+| HTML 转义 | 默认不转义 | 默认不转义（相同契约） |
+| 成员大小写 | 不敏感 | 不敏感（相同） |
+| snake_case 成员 | `ScriptDictWithSnakeAliases` 别名表 | `FlintMemberAccessStrategy` 映射（相同效果） |
+| 空值语义 | 缺失成员取空不抛 | 相同 |
+| 函数平面 | 25 个命名空间 / 200+ 函数 | Fluid 内置 72 过滤器 + Flint 追加 Hugo 名过滤器（见 §3.2） |
+
+### 6.3 性能（三口径，全部本轮实测）
+
+| 口径 | 方法 | Fluid | Scriban | 比值 |
+|---|---|---|---|---|
+| 模板级（BDN 严格） | `EngineRenderBenchmarks`，同逻辑模板单次渲染 | 1.477 μs / 2.6 KB | 19.685 μs / 45.33 KB | **0.08x**（快约 13 倍，分配少约 17 倍） |
+| 模板级（perf 套件） | 3000 次交错三轮 | 190,135 页/秒 | 56,192 页/秒 | 0.296x |
+| 站点级（端到端） | 300 篇同内容交错三轮中位数 | 782.0 ms | 952.8 ms | **0.821x** |
+| 站点级渲染段 | 同上，仅渲染阶段 | 270.5 ms | 359.8 ms | 0.752x |
+
+**口径解读**：模板级差距（0.08x）远大于站点级（0.821x），因为站点构建的
+时间被配置加载、内容解析、分类、写盘等非渲染阶段稀释——渲染段在两类语料
+占 35%~47%（见 FLUID-MIGRATION-PLAN 的 P0-1/P0-2 基线表）。BDN 与 perf
+套件的差距（0.08x vs 0.296x）来自循环开销与 GC 采样口径不同，两者都进报告。
+
+### 6.4 二进制体积
+
+NativeAOT 单文件（win-x64）：迁移前 40.041 MB → 迁移后 40.231 MB，
+**+0.48%**（双引擎共存，Fluid 运行时 + 保留清单的代价）。
