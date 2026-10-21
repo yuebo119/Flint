@@ -32,6 +32,10 @@ internal static class FluidHugoFilters
     public static void Register(TemplateOptions options)
     {
         var f = options.Filters;
+        // ---- where 运算符包装（2026-10-21：Fluid 内置 where 只支持两形态，
+        // Hugo 的三参运算符形态 !=/>/</in/not in 会被静默当作相等比较——注册
+        // 包装拦截三参+已知运算符，按 Hugo 语义求值，否则委托内置）----
+        f.AddFilter("where", Where);
         // ---- 文本族（与 Scriban 侧共用 TemplateTextFunctions）----
         f.AddFilter("titleize", Titleize);
         f.AddFilter("title", Titleize);
@@ -497,7 +501,7 @@ internal static class FluidHugoFilters
     /// 过滤器只做追踪登记（2026-10-21 补 Fluid 侧追踪，修复纯 Fluid
     /// 站点 /page/N/ 永不产出的功能缺口）
     /// </summary>
-    private static ValueTask<FluidValue> Paginate(FluidValue input, FilterArguments args, TemplateContext ctx)
+    private static async ValueTask<FluidValue> Paginate(FluidValue input, FilterArguments args, TemplateContext ctx)
     {
         // 经 AmbientValues 取当前页面的 RelPermalink（CreateFluidContext 设置）
         var relPermalink = ctx.AmbientValues.TryGetValue(CurrentPageRelPermalinkKey, out var v) && v is string s
@@ -506,19 +510,21 @@ internal static class FluidHugoFilters
         if (!string.IsNullOrEmpty(relPermalink))
         {
             Flint.Core.Site.BuildRenderStateAccess.NotePaginateInvoked(relPermalink);
-            // 显式集合与页大小：输入是页面集合，args.At(0) 是页大小
-            var items = ToObjectListSync(input, ctx);
+            // 显式集合与页大小：输入是页面集合，args.At(0) 是页大小。
+            // **await 枚举**（2026-10-21：此前 ToObjectListSync 用 GetResult
+            // 同步阻塞，在 Parallel.ForEachAsync 下有线程池饥饿风险）
+            var items = await ToPageContextListAsync(input, ctx);
             var size = args.Count > 0 ? (int)ToNumber(args.At(0), ctx) : 0;
             Flint.Core.Site.BuildRenderStateAccess.NotePaginateCollection(relPermalink, items, size);
         }
-        return new(input);
+        return input;
     }
 
     /// <summary>AmbientValues 键：当前页面的 RelPermalink（paginate 过滤器用）</summary>
     internal const string CurrentPageRelPermalinkKey = "__flint_fluid_current_page_rel";
 
-    /// <summary>同步对象列表化（paginate 过滤器用，输入已是 CLR 集合）</summary>
-    private static List<Flint.Core.Abstractions.PageContext> ToObjectListSync(FluidValue value, TemplateContext ctx)
+    /// <summary>异步 PageContext 列表化（paginate 过滤器用，替代 sync-over-async）</summary>
+    private static async ValueTask<List<Flint.Core.Abstractions.PageContext>> ToPageContextListAsync(FluidValue value, TemplateContext ctx)
     {
         var result = new List<Flint.Core.Abstractions.PageContext>();
         if (value.IsNil())
@@ -530,24 +536,113 @@ internal static class FluidHugoFilters
             result.Add(single);
             return result;
         }
-        // 枚举集合元素
-        var enumerator = value.EnumerateAsync(ctx).GetAsyncEnumerator();
-        try
+        // 枚举集合元素（await 异步枚举，不用 GetResult 同步阻塞）
+        await foreach (var item in value.EnumerateAsync(ctx))
         {
-            while (enumerator.MoveNextAsync().AsTask().GetAwaiter().GetResult())
+            if (!item.IsNil() && item.ToObjectValue(ctx) is Flint.Core.Abstractions.PageContext page)
             {
-                var item = enumerator.Current;
-                if (!item.IsNil() && item.ToObjectValue(ctx) is Flint.Core.Abstractions.PageContext page)
-                {
-                    result.Add(page);
-                }
+                result.Add(page);
             }
         }
-        finally
-        {
-            enumerator.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
         return result;
+    }
+
+    // ---- where 运算符包装 ----
+
+    /// <summary>Hugo 已知的 where 运算符</summary>
+    private static readonly HashSet<string> WhereOperators = new(StringComparer.Ordinal)
+    {
+        "=", "==", "!=", "<>", ">", ">=", "<", "<=", "in", "not in", "intersect", "like"
+    };
+
+    /// <summary>
+    /// where 包装：三参形态（where COLLECTION "member" OP "target"）按 Hugo
+    /// 运算符语义求值；两参及以下委托 Fluid 内置 where（2026-10-21）
+    /// </summary>
+    private static async ValueTask<FluidValue> Where(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        // 三参 + 已知运算符 → Hugo 语义
+        if (args.Count == 3 && WhereOperators.Contains(ToString(args.At(1), ctx)))
+        {
+            var memberName = ToString(args.At(0), ctx);
+            var op = ToString(args.At(1), ctx);
+            var target = ToString(args.At(2), ctx);
+            var items = await ToObjectListAsync(input, ctx);
+            var result = new List<object?>();
+            foreach (var item in items)
+            {
+                var member = await MemberOfAsync(ctx, item, memberName);
+                var memberStr = member?.ToString() ?? "";
+                if (EvaluateWhereOperator(memberStr, op, target))
+                {
+                    result.Add(item);
+                }
+            }
+            return FluidValue.Create(result, ctx.Options);
+        }
+
+        // 非三参运算符形态：委托 Fluid 内置 where
+        var builtinWhere = ctx.Options.Filters.TryGetValue("__builtin_where", out var f)
+            ? f
+            : null;
+        if (builtinWhere is not null)
+        {
+            return await builtinWhere(input, args, ctx);
+        }
+
+        // 内置 where 不可用（不应发生）：退化为两参相等比较
+        if (args.Count >= 2)
+        {
+            var memberName = ToString(args.At(0), ctx);
+            var target = ToString(args.At(1), ctx);
+            var items = await ToObjectListAsync(input, ctx);
+            var result = new List<object?>();
+            foreach (var item in items)
+            {
+                var member = await MemberOfAsync(ctx, item, memberName);
+                if ((member?.ToString() ?? "") == target)
+                {
+                    result.Add(item);
+                }
+            }
+            return FluidValue.Create(result, ctx.Options);
+        }
+
+        return input;
+    }
+
+    /// <summary>求值 where 运算符（Hugo 语义：数值优先，回退字符串比较）</summary>
+    private static bool EvaluateWhereOperator(string member, string op, string target)
+    {
+        // 数值比较优先（word_count 等数值成员的 where > 应做数值比较）
+        if (double.TryParse(member, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var m) &&
+            double.TryParse(target, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var t))
+        {
+            return op switch
+            {
+                "=" or "==" => m == t,
+                "!=" or "<>" => m != t,
+                ">" => m > t,
+                ">=" => m >= t,
+                "<" => m < t,
+                "<=" => m <= t,
+                _ => m == t
+            };
+        }
+        return op switch
+        {
+            "=" or "==" => member == target,
+            "!=" or "<>" => member != target,
+            ">" => string.CompareOrdinal(member, target) > 0,
+            ">=" => string.CompareOrdinal(member, target) >= 0,
+            "<" => string.CompareOrdinal(member, target) < 0,
+            "<=" => string.CompareOrdinal(member, target) <= 0,
+            "in" => target.Contains(member, StringComparison.Ordinal),
+            "not in" => !target.Contains(member, StringComparison.Ordinal),
+            "like" => member.Contains(target, StringComparison.OrdinalIgnoreCase),
+            "intersect" => member.Split(',').Any(x => target.Split(',').Any(y => x.Trim() == y.Trim())),
+            _ => member == target
+        };
     }
 
     // ---- 转换辅助 ----

@@ -67,6 +67,14 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     private readonly ConcurrentDictionary<string, (string Text, DateTime MtimeUtc, long Length)> _includeTextCache =
         new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// include/render 的模板解析缓存（ITemplateCache 实现，2026-10-21）：
+    /// 键 = 物理路径，值 = (模板, mtime)。Fluid 的 TemplateLoader 经
+    /// TemplateOptions.TemplateCache 查询——命中即免重复 parser.TryParse。
+    /// mtime 不符即失效（与 _includeTextCache 同口径的 serve 热更新语义）
+    /// </summary>
+    private readonly IncludeTemplateCache _includeTemplateCache = new();
+
     /// <summary>AmbientValues 键：本次渲染收集的依赖物理路径集合（随 TemplateContext 生命周期）</summary>
     private const string DepsKey = "__flint_fluid_deps";
 
@@ -134,7 +142,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         _builtins = builtins ?? new FluidBuiltinTemplateProvider();
         _resources = resources;
         _lookup = TemplateLookup.Create(templatesPath, "liquid", _themeTemplatePaths);
-        _parser = new FluidParser();
+        // AllowLiquidTag（2026-10-21）：解锁 {% liquid %} 整块标签——Liquid 生态
+        // （Jekyll/Eleventy/Shopify 迁移产物）高频使用，Fluid 已完整实现该标签
+        _parser = new FluidParser(new FluidParserOptions { AllowLiquidTag = true });
 
         // page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
         // FluidValue.Create 会把 TimeSpan 转成 DateTimeValue（纪元+时长），
@@ -143,6 +153,11 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         var memberStrategy = new FlintMemberAccessStrategy();
         MemberAccessStrategyExtensions.Register<PageContext, ReadingTimeView>(
             memberStrategy, "ReadingTime", static (page, _) => new ReadingTimeView(page.ReadingTime));
+        // paginator.total_number_of_elements 别名（2026-10-21：Hugo 分页器
+        // 字段名是 TotalNumberOfElements，Flint 暴露 total_items——
+        // 注册别名访问器让 Hugo 模板的两种写法都命中）
+        MemberAccessStrategyExtensions.Register<PaginatorView, int>(
+            memberStrategy, "TotalNumberOfElements", static (p, _) => p.TotalItems);
         // site.menus.main / site.taxonomies.categories：C# 索引器不能经 Fluid
         // 成员语法访问，注册类型级访问器把成员名路由到索引器（缺失键空集合，
         // 与 Scriban 的 ScriptObject 键查找同语义）
@@ -168,6 +183,11 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
             // include/render 的模板解析委派 Flint 模板加载器（根序 + partials 形态 +
             // 内置回退），不用 Fluid 的文件系统提供者
             FileProvider = new DelegateTemplateFileProvider(ResolveIncludeAsync),
+            // include/render 的模板缓存（2026-10-21 性能优化：Fluid beta.8 的
+            // TemplateLoader 在 TemplateCache==null 时每次 include 执行都重新
+            // parser.TryParse——1000 页 × 5 include = 5000+ 次重复解析。
+            // 接入 ITemplateCache 后解析结果按路径缓存，mtime 不符即失效）
+            TemplateCache = _includeTemplateCache,
             // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开引擎侧限制）
             MaxRecursion = 0,
             MaxSteps = 0
@@ -312,7 +332,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     /// <summary>
     /// 直接渲染 Liquid 模板**内容**（无物理文件）：短代码/render hook 等
     /// 内容内联场景（FLUID-MIGRATION-PLAN P5-4/P5-5）。缓存键为调用方给的
-    /// 逻辑名（短代码名等），无 mtime 失效语义——内容由调用方生命周期管理
+    /// 逻辑名（短代码名等），无 mtime 失效语义——内容由调用方生命周期管理。
+    /// **走 _templateCache**（2026-10-21 性能优化：此前每次调用都重新
+    /// ParseOrThrow——50 张图的文章 = render-image.liquid 解析 50 次；
+    /// Scriban 侧对称实现全部解析一次复用）
     /// </summary>
     internal async ValueTask<string> RenderLiquidContentAsync(
         string content,
@@ -320,7 +343,16 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         FlintTemplateContext context,
         CancellationToken cancellationToken = default)
     {
-        var template = ParseOrThrow(content, sourceName);
+        IFluidTemplate template;
+        if (_templateCache.TryGetValue(sourceName, out var cached) && !IsStale(cached))
+        {
+            template = cached.Template;
+        }
+        else
+        {
+            template = ParseOrThrow(content, sourceName);
+            _templateCache[sourceName] = new CachedTemplate(template, null, DateTime.MinValue);
+        }
         return await RenderLoadedAsync(template, sourceName, null, context, cancellationToken);
     }
 
@@ -816,6 +848,8 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         // 的安全假设；构建间可能增删改——与 Scriban 侧 ClearTextCache 同口径）
         _includePathCache.Clear();
         _includeTextCache.Clear();
+        // include 模板解析缓存（ITemplateCache）同步清空
+        _includeTemplateCache.Clear();
         // 产物收集队列按构建清空（SiteBuilder 在渲染前调用本方法；渲染期产物
         // 在渲染后经 GeneratedResources 取走——跨构建不累积）
         _generatedResources.Clear();
@@ -981,4 +1015,35 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
     /// 模板 errorf 记录的错误：Fluid 侧无 errorf 函数（Phase 4 函数平面），恒空
     /// </summary>
     public IReadOnlyList<string> DrainTemplateErrors() => [];
+}
+
+/// <summary>
+/// include/render 的模板解析缓存（Fluid ITemplateCache 实现）：
+/// 键 = 物理路径，值 = (IFluidTemplate, mtime)。Fluid 的 TemplateLoader
+/// 每次 include 执行时经此查询——命中即免重复 parser.TryParse
+/// （2026-10-21：1000 页 × 5 include = 5000+ 次重复解析是 Fluid 路径
+/// 最大的纯解析浪费）
+/// </summary>
+internal sealed class IncludeTemplateCache : ITemplateCache
+{
+    private readonly ConcurrentDictionary<string, (IFluidTemplate Template, DateTimeOffset Mtime)> _cache = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool TryGetTemplate(string subpath, DateTimeOffset lastModified, out IFluidTemplate template)
+    {
+        if (_cache.TryGetValue(subpath, out var entry) && entry.Mtime == lastModified)
+        {
+            template = entry.Template;
+            return true;
+        }
+        template = null!;
+        return false;
+    }
+
+    public void SetTemplate(string subpath, DateTimeOffset lastModified, IFluidTemplate template)
+    {
+        _cache[subpath] = (template, lastModified);
+    }
+
+    /// <summary>清空缓存（构建边界 InvalidateMtimeCache 时调用）</summary>
+    public void Clear() => _cache.Clear();
 }

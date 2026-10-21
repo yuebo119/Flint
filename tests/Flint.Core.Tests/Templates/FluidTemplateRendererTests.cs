@@ -83,6 +83,84 @@ public sealed class FluidTemplateRendererTests : IDisposable
         File.WriteAllText(full, content);
     }
 
+    // ---- Liquid 标准标签冒烟测试（2026-10-21：Fluid 注册了 28 个标签，
+    //      此前只有 assign/include/render/for/if 有测试，其余零覆盖）----
+
+    [Theory]
+    [InlineData("{% unless page.title %}empty{% else %}{{ page.title }}{% endunless %}", "Test Page")]
+    [InlineData("{% case page.title %}{% when 'Test Page' %}match{% else %}no{% endcase %}", "match")]
+    [InlineData("{% capture x %}captured{% endcapture %}{{ x }}", "captured")]
+    [InlineData("{% for i in (1..3) %}{% cycle 'a', 'b' %}{% endfor %}", "aba")]
+    [InlineData("{% liquid assign x = 'hello'\n   assign y = 'world'\n   echo x %}{{ y }}", "helloworld")]
+    [InlineData("{% assign items = 'a,b,c' | split: ',' %}{% for item in items limit: 2 offset: 1 %}{{ item }}{% endfor %}", "bc")]
+    [InlineData("{% assign items = 'a,b,c' | split: ',' %}{% for item in items reversed %}{{ item }}{% endfor %}", "cba")]
+    [InlineData("{% raw %}{{ not_rendered }}{% endraw %}", "{{ not_rendered }}")]
+    [InlineData("{% assign x = 5 %}{% if x > 3 %}big{% elsif x > 1 %}mid{% else %}small{% endif %}", "big")]
+    public async Task Liquid_标准标签_冒烟(string template, string expected)
+    {
+        WriteTemplate("index.liquid", template);
+        var result = await _renderer.RenderAsync("index", CreateTestContext());
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public async Task where_三参运算符_不等于()
+    {
+        // H5 修复：Hugo where "Section" "!=" "posts" 运算符形态
+        WriteTemplate("index.liquid",
+            "{% assign filtered = pages | where: 'section', '!=', 'posts' %}{{ filtered.size }}");
+        var context = CreateTestContext(pages:
+        [
+            new PageContext { Title = "P1", Content = "", Permalink = "/p1/", RelPermalink = "/p1/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero, Section = "posts" },
+            new PageContext { Title = "P2", Content = "", Permalink = "/p2/", RelPermalink = "/p2/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero, Section = "docs" }
+        ]);
+        var result = await _renderer.RenderAsync("index", context);
+        Assert.Equal("1", result);
+    }
+
+    [Fact]
+    public async Task where_三参运算符_大于()
+    {
+        WriteTemplate("index.liquid",
+            "{% assign filtered = pages | where: 'word_count', '>', '50' %}{{ filtered.size }}");
+        var context = CreateTestContext(pages:
+        [
+            new PageContext { Title = "P1", Content = "", Permalink = "/p1/", RelPermalink = "/p1/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 100, ReadingTime = TimeSpan.Zero },
+            new PageContext { Title = "P2", Content = "", Permalink = "/p2/", RelPermalink = "/p2/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 30, ReadingTime = TimeSpan.Zero }
+        ]);
+        var result = await _renderer.RenderAsync("index", context);
+        Assert.Equal("1", result);
+    }
+
+    [Fact]
+    public async Task paginator_total_number_of_elements_别名()
+    {
+        // M3：Hugo 分页器字段名 TotalNumberOfElements
+        var paginator = PaginatorView.Create(
+            [
+                new PageContext { Title = "P1", Content = "", Permalink = "/p1/", RelPermalink = "/p1/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero },
+                new PageContext { Title = "P2", Content = "", Permalink = "/p2/", RelPermalink = "/p2/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero },
+                new PageContext { Title = "P3", Content = "", Permalink = "/p3/", RelPermalink = "/p3/", Date = DateTimeOffset.UnixEpoch, Tags = [], Categories = [], WordCount = 0, ReadingTime = TimeSpan.Zero }
+            ],
+            1, 2, "/posts/", "page");
+        WriteTemplate("index.liquid", "{{ page.paginator.total_number_of_elements }}");
+        var context = CreateTestContext();
+        var withPaginator = new TemplateContext
+        {
+            Page = new PageContext
+            {
+                Title = context.Page.Title, Content = context.Page.Content,
+                Permalink = context.Page.Permalink, RelPermalink = context.Page.RelPermalink,
+                Date = context.Page.Date, Tags = context.Page.Tags, Categories = context.Page.Categories,
+                WordCount = context.Page.WordCount, ReadingTime = context.Page.ReadingTime,
+                Kind = context.Page.Kind, Paginator = paginator
+            },
+            Site = context.Site
+        };
+        var result = await _renderer.RenderAsync("index", withPaginator);
+        Assert.Equal("3", result);
+    }
+
     [Fact]
     public async Task 渲染_Liquid_模板并绑定页面模型()
     {

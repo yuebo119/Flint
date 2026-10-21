@@ -6,6 +6,7 @@
 
 using System.Globalization;
 using Fluid;
+using Fluid.Filters;
 using Fluid.Values;
 
 namespace Flint.Core.Templates;
@@ -25,6 +26,9 @@ internal static class FluidTemplateFilters
         options.Filters.AddFilter("rel_url", RelUrl);
         options.Filters.AddFilter("relURL", RelUrl);
         options.Filters.AddFilter("relurl", RelUrl);
+        // Money 过滤器（2026-10-21：Fluid beta.8 的 TemplateOptions 构造函数
+        // 不自动注册 Money 4 个过滤器，需显式调用 WithMoneyFilters）
+        options.Filters.WithMoneyFilters();
     }
 
     private static ValueTask<FluidValue> AbsUrl(FluidValue input, FilterArguments args, TemplateContext ctx) =>
