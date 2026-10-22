@@ -138,6 +138,47 @@ public sealed class ContentCacheStoreTests : IDisposable
         Assert.Equal(0, loaded.MissCount);
     }
 
+    // ---- 缓存键路径解析（2026-10-22 自查修复的 Replace 多次剥离缺陷）----
+
+    [Fact]
+    public void 缓存键_常规路径_剥源根前缀并统一斜杠()
+    {
+        var rel = Flint.Core.Site.SiteBuilder.ContentCacheRelPath(
+            @"C:\site\content\posts\a.md", @"C:\site\");
+
+        Assert.Equal("content/posts/a.md", rel);
+    }
+
+    [Fact]
+    public void 缓存键_源目录名在路径后半段重复_只剥一次()
+    {
+        // Replace 会替换全部出现 → "contentalphasite/x.md"（与同站另一文件的
+        // 键可能碰撞导致错误命中）；切片只剥前缀
+        var rel = Flint.Core.Site.SiteBuilder.ContentCacheRelPath(
+            @"C:\alpha\content\alpha\x.md", @"C:\alpha\");
+
+        Assert.Equal("content/alpha/x.md", rel);
+    }
+
+    [Fact]
+    public void 缓存键_源根外路径_原样返回保唯一性()
+    {
+        var rel = Flint.Core.Site.SiteBuilder.ContentCacheRelPath(
+            @"C:\other\x.md", @"C:\site\");
+
+        Assert.Equal("C:/other/x.md", rel);
+    }
+
+    [Fact]
+    public void 缓存键_区分大小写差异仍剥前缀()
+    {
+        // Windows 路径大小写不敏感：枚举给出的 casing 与源根 casing 可能不同
+        var rel = Flint.Core.Site.SiteBuilder.ContentCacheRelPath(
+            @"c:\SITE\content\a.md", @"C:\site\");
+
+        Assert.Equal("content/a.md", rel);
+    }
+
     // ---- 构建级正确性 ----
 
     [Fact]

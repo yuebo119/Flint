@@ -81,9 +81,7 @@ public sealed partial class SiteBuilder
         {
             if (store is not null)
             {
-                var relPath = Path.GetFullPath(entry.Path)
-                    .Replace(sourceRoot, "", StringComparison.OrdinalIgnoreCase)
-                    .Replace('\\', '/');
+                var relPath = ContentCacheRelPath(Path.GetFullPath(entry.Path), sourceRoot);
                 var mtimeTicks = entry.MtimeUtc.UtcTicks;
                 if (store.TryGet(relPath, mtimeTicks, (int)entry.Size, out var cached))
                 {
@@ -200,6 +198,22 @@ public sealed partial class SiteBuilder
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// 持久缓存的相对路径键：剥源根前缀（只剥一次）+ 统一正斜杠。
+    /// **不能用 string.Replace 剥前缀**（2026-10-22 自查发现）：Replace 会替换
+    /// 路径中所有出现——源目录名在路径后半段重复时（如 /site/content/site/x.md）
+    /// 会被多剥一次，极端情况两个不同文件映射到同一键 → 错误命中返回他人内容。
+    /// 源根外的路径（理论不可达）返回原样，保证键唯一性
+    /// internal 供测试直测（ContentCacheStoreTests 锁定三形态）
+    /// </summary>
+    internal static string ContentCacheRelPath(string fullPath, string sourceRootWithSeparator)
+    {
+        var relative = fullPath.StartsWith(sourceRootWithSeparator, StringComparison.OrdinalIgnoreCase)
+            ? fullPath[sourceRootWithSeparator.Length..]
+            : fullPath;
+        return relative.Replace('\\', '/');
     }
 
     /// <summary>
