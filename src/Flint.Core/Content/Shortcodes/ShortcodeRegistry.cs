@@ -42,6 +42,15 @@ public sealed class ShortcodeRegistry : IShortcodeRegistry
         _processors[processor.Name] = processor;
     }
 
+    /// <summary>
+    /// 主题短代码容错告警（第三方内容：单个语法错误不阻断构建；站点短码
+    /// 保持 fail-fast 走异常路径）。集中单点：G13 门禁按源码行计数
+    /// Console 写点，router/Scriban/Fluid 三条注册路径共用此方法——
+    /// 迁移期基线 1 处被复制成 3 处触发棘轮 22&gt;20（2026-10-22）
+    /// </summary>
+    internal static void WarnSkippedThemeShortcode(string origin, string file, FormatException ex)
+        => Console.Error.WriteLine($"[警告] 跳过无法解析的主题短代码（{origin}）: {file} — {ex.Message}");
+
     /// <inheritdoc />
     public IShortcodeProcessor? Get(string name)
     {

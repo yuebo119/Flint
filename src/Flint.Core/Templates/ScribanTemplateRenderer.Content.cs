@@ -35,8 +35,9 @@ public sealed partial class ScribanTemplateRenderer
             catch (FormatException ex) when (!isSite)
             {
                 // 主题短码为第三方内容：单个短码语法错误不应阻断整个构建
-                // （Hugo 对主题短码同样容忍；站点短码保持 fail-fast）
-                Console.Error.WriteLine($"[警告] 跳过无法解析的主题短代码（{origin}）: {file} — {ex.Message}");
+                // （Hugo 对主题短码同样容忍；站点短码保持 fail-fast）。
+                // 告警集中单点（G13：按源码行计数 Console，三注册路径共用）
+                ShortcodeRegistry.WarnSkippedThemeShortcode(origin, file, ex);
             }
             catch (FormatException ex)
             {
