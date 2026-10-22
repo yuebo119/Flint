@@ -28,6 +28,14 @@ internal static class FluidHugoFilters
 
     private static readonly MarkdownParser SharedMarkdown = new();
 
+    /// <summary>
+    /// Fluid 内置 where 委托（注册时抢在覆盖前捕获）。AddFilter 是纯字典
+    /// 覆盖——不捕获就拿不到内置实现：原实现查不存在的 "__builtin_where"
+    /// 键，两参退化为自研相等比较、一参真值过滤静默不过滤（2026-10-22
+    /// 修复，FluidHugoWhereTests 锁定两参/一参/三参三形态）
+    /// </summary>
+    private static Func<FluidValue, FilterArguments, TemplateContext, ValueTask<FluidValue>>? _builtinWhere;
+
     /// <summary>注册全部 Hugo 名过滤器（渲染器构造时调用一次）</summary>
     public static void Register(TemplateOptions options)
     {
@@ -35,6 +43,11 @@ internal static class FluidHugoFilters
         // ---- where 运算符包装（2026-10-21：Fluid 内置 where 只支持两形态，
         // Hugo 的三参运算符形态 !=/>/</in/not in 会被静默当作相等比较——注册
         // 包装拦截三参+已知运算符，按 Hugo 语义求值，否则委托内置）----
+        // 先捕获内置再覆盖（lambda 适配为统一委托形态，与内置具名委托类型解耦）
+        if (f.TryGetValue("where", out var builtinWhere) && builtinWhere is not null)
+        {
+            _builtinWhere = (input, args, ctx) => builtinWhere(input, args, ctx);
+        }
         f.AddFilter("where", Where);
         // ---- 文本族（与 Scriban 侧共用 TemplateTextFunctions）----
         f.AddFilter("titleize", Titleize);
@@ -782,16 +795,16 @@ internal static class FluidHugoFilters
             return FluidValue.Create(result, ctx.Options);
         }
 
-        // 非三参运算符形态：委托 Fluid 内置 where
-        var builtinWhere = ctx.Options.Filters.TryGetValue("__builtin_where", out var f)
-            ? f
-            : null;
-        if (builtinWhere is not null)
+        // 非三参运算符形态：委托 Fluid 内置 where（两参相等 / 一参真值），
+        // 2026-10-22 起委托真实存在（注册时捕获）；捕获失败（理论仅当
+        // Fluid 改名内置 where）才退化为两参相等比较
+        if (_builtinWhere is not null)
         {
-            return await builtinWhere(input, args, ctx);
+            return await _builtinWhere(input, args, ctx);
         }
 
-        // 内置 where 不可用（不应发生）：退化为两参相等比较
+        // 兜底：两参相等比较（一参无内置可委托时不过滤，与 Shopify 语义
+        // 的差异由 FluidHugoWhereTests 锁定）
         if (args.Count >= 2)
         {
             var memberName = ToString(args.At(0), ctx);

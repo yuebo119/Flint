@@ -319,3 +319,25 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
 
 NativeAOT 单文件（win-x64）：迁移前 40.041 MB → 迁移后 40.231 MB，
 **+0.48%**（双引擎共存，Fluid 运行时 + 保留清单的代价）。
+
+---
+
+## 7. 迁移后深化：2026-10-22 审计修复记录
+
+FLUID-MIGRATION-PLAN P0-P6 完成后，「全面适配 Fluid」专项审计（两份只读
+代理报告）发现并修复五项缺陷，全部有锁定测试（`FluidAuditFix2026Tests`
+12 项 + `CliNewSiteFluidTests` 新增 2 项）：
+
+| # | 缺陷 | 修复 | 锁定测试 |
+|---|---|---|---|
+| 1 | `where` 委托键失效：查不存在的 `__builtin_where`，两参退化为自研相等、一参真值过滤静默不过滤 | 注册时抢在内置被覆盖前捕获委托，非运算符形态真实委托（两参相等 + 一参真值走 Fluid 原生语义） | `where_两参/一参/三参` 三形态 |
+| 2 | `_dependencyCache` 无失效路径：长驻 serve 进程增删/改名模板后静态依赖闭包过期 | `InvalidateMtimeCache` 补清（与 Scriban 侧对齐，此前仅 Scriban 清） | `依赖闭包缓存_构建边界失效` |
+| 3 | 裸 `FluidTemplateRenderer` 只实现 `ITemplateRenderer`：非 router 消费方（测试等）静默丢失全部短代码/hooks 注册 | 补实现 `IShortcodeRenderer`/`IRenderHookRenderer`（只认 .liquid，与 Scriban 侧只认 .html 对称）；`RenderHooks.LoadFluid` 入口签名不涉 Scriban（保 IL 隔离门禁）；router 的 .liquid 分支委托引擎实现 | `裸Fluid渲染器_*` 5 项 |
+| 4 | 静态依赖闭包 `.html` 后缀硬编码：Fluid 站点造出 `layouts/partials/x.html` 幻影路径 | `SiteBuilder.ResolveClosurePath` 按盘解析，无扩展名时 .liquid 优先、回落 .html（internal 可直测） | `闭包路径解析_*` 3 项 |
+| 5 | watch 模式 `themes/*/layouts` 变更落入资产路径：模板被拷进 public/（watch 产物比全量多一份副本） | 模板根扩展到主题 layouts 根（站点 + 各主题），分类与站点 layouts 同口径 | `主题layouts变更_不走资产路径` |
+
+附带：CLI `--engine` 非法值由静默按 fluid 改为 fail loud（`CliNewSiteFluidTests`
+锁定非法值与大小写不敏感）；脚手架 about.md 的「Scriban 模板引擎」文案
+修正为「Liquid 模板引擎」（默认站点产物是 .liquid，三方一致）。
+
+验证：单测 1302/1302 串行全绿（1 git 环境跳过）；集成套件复跑中。

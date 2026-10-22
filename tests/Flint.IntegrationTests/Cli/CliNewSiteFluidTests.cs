@@ -93,6 +93,38 @@ public sealed class CliNewSiteFluidTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// 2026-10-22：--engine 非法值 fail loud（此前静默按 fluid 生效，
+    /// 拼错如 liquid/auto 无感知）。大小写不敏感（FLUID/Fluid 均可）
+    /// </summary>
+    [Fact]
+    public async Task Engine_非法值_报错并不创建站点()
+    {
+        var siteName = $"bad-engine-{Guid.NewGuid():N}"[..16];
+        var sitePath = Path.Combine(_testDir, siteName);
+
+        var result = await _cli.NewSiteAsync(siteName, _testDir, engine: "liquid");
+
+        result.IsSuccess.Should().BeFalse("非法引擎值应失败");
+        // 错误信息含回显的引擎名（ASCII 子串——CLI 输出为 GBK 编码，
+        // UTF-8 中文字面量匹配不上，与 CliErrorHandlingTests 同口径只断言 ASCII）
+        result.ErrorOutput.Should().Contain("liquid", "错误信息应回显非法的引擎值");
+        Directory.Exists(sitePath).Should().BeFalse("失败时不应创建站点目录");
+    }
+
+    /// <summary>--engine 大小写不敏感（FLUID/Fluid 均按 fluid 处理）</summary>
+    [Fact]
+    public async Task Engine_大小写不敏感()
+    {
+        var siteName = $"upper-engine-{Guid.NewGuid():N}"[..17];
+        var sitePath = Path.Combine(_testDir, siteName);
+
+        var result = await _cli.NewSiteAsync(siteName, _testDir, engine: "FLUID");
+
+        result.IsSuccess.Should().BeTrue($"创建站点应该成功，错误: {result.ErrorOutput}");
+        File.Exists(Path.Combine(sitePath, "layouts", "index.liquid")).Should().BeTrue("FLUID 应按 fluid 生成 .liquid");
+    }
+
+    /// <summary>
     /// P2-5 冒烟：默认新站点构建产出首页/单页/列表/分类/RSS 且内容为 Fluid 渲染
     /// </summary>
     [Fact]

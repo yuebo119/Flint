@@ -26,9 +26,12 @@ namespace Flint.Core.Templates;
 
 /// <summary>
 /// 基于 Fluid 的 Liquid 模板渲染器：只认 <c>.liquid</c> 物理模板，
-/// Hugo 主题 <c>.html</c> 模板由 Scriban 渲染器负责（路由见 TemplateEngineRouter）
+/// Hugo 主题 <c>.html</c> 模板由 Scriban 渲染器负责（路由见 TemplateEngineRouter）。
+/// 内容管线两接口（IShortcodeRenderer/IRenderHookRenderer）与 Scriban 侧对称
+/// 实现（2026-10-22 接口对齐）：裸渲染器用法（测试/非 router 消费方）不再
+/// 静默丢失 .liquid 短代码与钩子；只认 .liquid 原生形态
 /// </summary>
-public sealed partial class FluidTemplateRenderer : ITemplateRenderer
+public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcodeRenderer, IRenderHookRenderer
 {
     /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）</summary>
     private sealed record CachedTemplate(IFluidTemplate Template, string? SourcePath, DateTime ModifiedTimeUtc);
@@ -865,6 +868,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer
         _includeTextCache.Clear();
         // include 模板解析缓存（ITemplateCache）同步清空
         _includeTemplateCache.Clear();
+        // 静态依赖闭包缓存同清（2026-10-22 修复：此前永不清空——长驻 serve
+        // 进程增删/改名模板后闭包过期，模板新增的 include 关系不上外部
+        // 变更事件，只能靠构建边界整体失效）
+        _dependencyCache.Clear();
         // 产物收集队列按构建清空（SiteBuilder 在渲染前调用本方法；渲染期产物
         // 在渲染后经 GeneratedResources 取走——跨构建不累积）
         _generatedResources.Clear();

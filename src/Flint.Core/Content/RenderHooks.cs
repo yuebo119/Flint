@@ -49,9 +49,25 @@ public sealed class RenderHooks
         ScribanTemplateRenderer renderer,
         IEnumerable<string>? themeLayoutDirectories = null,
         FluidTemplateRenderer? fluidRenderer = null)
+        => LoadCore(CollectMarkupDirs(layoutsDirectory, themeLayoutDirectories), renderer, fluidRenderer);
+
+    /// <summary>
+    /// **Fluid-only 装配**（裸 FluidTemplateRenderer 用，不经 router 的用法）：
+    /// 只探测 .liquid 钩子，.html 钩子不认（与裸 Scriban 渲染器只认 .html 对称）。
+    /// 签名不涉 Scriban 类型——调用方 FluidTemplateRenderer 是引擎隔离门禁的
+    /// 热路径类型，其 IL 不得出现 Scriban 程序集引用（EngineIsolationTests），
+    /// 故不能直接调 <see cref="Load"/>（其签名含 ScribanTemplateRenderer）
+    /// </summary>
+    public static RenderHooks? LoadFluid(
+        string layoutsDirectory,
+        FluidTemplateRenderer renderer,
+        IEnumerable<string>? themeLayoutDirectories = null)
+        => LoadCore(CollectMarkupDirs(layoutsDirectory, themeLayoutDirectories), null, renderer);
+
+    /// <summary>_markup 目录收集：站点优先、主题按序回退（同名钩子站点覆盖主题）</summary>
+    private static List<string> CollectMarkupDirs(
+        string layoutsDirectory, IEnumerable<string>? themeLayoutDirectories)
     {
-        // 站点 _markup 优先，主题 _markup 回退（同名钩子站点覆盖主题）——
-        // 对齐 Hugo 主题语义；无任何钩子目录时返回 null（默认渲染零开销）
         var markupDirs = new List<string> { Path.Combine(layoutsDirectory, "_markup") };
         if (themeLayoutDirectories is not null)
         {
@@ -60,7 +76,15 @@ public sealed class RenderHooks
                 markupDirs.Add(Path.Combine(themeDir, "_markup"));
             }
         }
+        return markupDirs;
+    }
 
+    /// <summary>钩子装配核心：两渲染器均可空（null = 不探该形态）；全无钩子返回 null</summary>
+    private static RenderHooks? LoadCore(
+        List<string> markupDirs,
+        ScribanTemplateRenderer? renderer,
+        FluidTemplateRenderer? fluidRenderer)
+    {
         if (markupDirs.All(d => !Directory.Exists(d)))
         {
             return null;
@@ -68,15 +92,15 @@ public sealed class RenderHooks
 
         // 每个钩子位：.liquid（Fluid）优先于 .html（Scriban）——新站点主力
         // 形态覆盖 Hugo 主题形态；Scriban 兼容模式下 fluidRenderer 为 null，
-        // 只认 .html
+        // 只认 .html；Fluid-only 装配下 renderer 为 null，只认 .liquid
         var link = TryLoadLiquidMulti(markupDirs, "render-link", fluidRenderer)
-            ?? TryLoadMulti(markupDirs, "render-link", renderer);
+            ?? (renderer is null ? null : TryLoadMulti(markupDirs, "render-link", renderer));
         var image = TryLoadLiquidMulti(markupDirs, "render-image", fluidRenderer)
-            ?? TryLoadMulti(markupDirs, "render-image", renderer);
+            ?? (renderer is null ? null : TryLoadMulti(markupDirs, "render-image", renderer));
         var heading = TryLoadLiquidMulti(markupDirs, "render-heading", fluidRenderer)
-            ?? TryLoadMulti(markupDirs, "render-heading", renderer);
+            ?? (renderer is null ? null : TryLoadMulti(markupDirs, "render-heading", renderer));
         var codeBlock = TryLoadLiquidMulti(markupDirs, "render-codeblock", fluidRenderer)
-            ?? TryLoadMulti(markupDirs, "render-codeblock", renderer);
+            ?? (renderer is null ? null : TryLoadMulti(markupDirs, "render-codeblock", renderer));
 
         // 语言专属变体：render-codeblock-<lang>（优先于通用 codeblock 钩子）。
         // .liquid 与 .html 双形态，同名时 .liquid 优先
@@ -100,7 +124,7 @@ public sealed class RenderHooks
                     var liquidContent = File.ReadAllText(file);
                     byLang[lang] = vars => RenderLiquidHook(fluidRenderer, liquidContent, "_markup/" + name, vars);
                 }
-                else if (file.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                else if (file.EndsWith(".html", StringComparison.OrdinalIgnoreCase) && renderer is not null)
                 {
                     byLang[lang] = vars => renderer.RenderHookTemplate("_markup/" + name, vars)
                         ?? throw new InvalidOperationException($"渲染钩子模板 {name} 未产出内容");

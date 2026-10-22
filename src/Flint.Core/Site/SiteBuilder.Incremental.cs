@@ -77,14 +77,28 @@ public sealed partial class SiteBuilder
             // 模板变化（T4.2）：layouts 下的文件从"资源"中分流，走受影响页重渲染而非全量重建。
             // **.html 与 .liquid 双形态**（FLUID-MIGRATION-PLAN P1-3 修复 2026-10-21）：
             // 此前只认 .html——改 .liquid partial 落入 assetChanges，依赖它的页面
-            // 不重渲（增量构建漏重渲，Fluid 依赖追踪白做）
-            var layoutsRoot = Path.GetFullPath(Path.Combine(
-                options.SourcePath,
-                string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir)) + Path.DirectorySeparatorChar;
+            // 不重渲（增量构建漏重渲，Fluid 依赖追踪白做）。
+            // **主题 layouts 同口径**（2026-10-22 修复）：此前只匹配站点 layouts 根，
+            // themes/<name>/layouts/** 落入 assetChanges 被当资产拷进 public/
+            // （watch 产物比全量多一份模板副本），页面重渲只靠依赖图隐式救回
+            var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
+            var templateRoots = new List<string>
+            {
+                Path.GetFullPath(Path.Combine(options.SourcePath, layoutDirName)) + Path.DirectorySeparatorChar
+            };
+            // ThemeNames 声明非空（Theme.Split 恒返回数组）——不做 is not null
+            // 检查：对非空属性的显式空检查会让可空流分析学到 maybe-null 状态
+            // 并泄漏到后续 LoadSiteDataAsync(options, config.ThemeNames) 调用点
+            // （CS8604，2026-10-22 实测）
+            foreach (var themeName in config.ThemeNames)
+            {
+                templateRoots.Add(Path.GetFullPath(Path.Combine(
+                    options.SourcePath, "themes", themeName, layoutDirName)) + Path.DirectorySeparatorChar);
+            }
             var templateChanges = affectedFiles
                 .Where(f => (f.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
                              f.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase)) &&
-                            f.StartsWith(layoutsRoot, StringComparison.OrdinalIgnoreCase))
+                            templateRoots.Any(r => f.StartsWith(r, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
 
             var assetChanges = affectedFiles

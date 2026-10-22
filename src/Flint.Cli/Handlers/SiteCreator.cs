@@ -8,9 +8,10 @@ namespace Flint.Cli;
 /// </summary>
 internal static class SiteCreator
 {
-    /// <summary>引擎选项：fluid（默认，FLUID-MIGRATION-PLAN P2-3 起新站点默认 Liquid）/ scriban（兼容模式）</summary>
-    internal const string EngineFluid = "fluid";
-    internal const string EngineScriban = "scriban";
+    /// <summary>引擎选项：FLUID（默认，FLUID-MIGRATION-PLAN P2-3 起新站点默认 Liquid）/ SCRIBAN（兼容模式）。
+    /// 取大写形态：CLI 入参经 ToUpperInvariant 归一后比较（CA1308 要求大写归一）</summary>
+    internal const string EngineFluid = "FLUID";
+    internal const string EngineScriban = "SCRIBAN";
 
     /// <summary>
     /// 创建新站点目录结构和默认文件
@@ -38,8 +39,27 @@ internal static class SiteCreator
             return 1;
         }
 
-        // 引擎参数归一：无法识别按 fluid（新站点默认主力引擎）
-        var useFluid = !string.Equals(engine, EngineScriban, StringComparison.OrdinalIgnoreCase);
+        // 引擎参数校验：仅接受 fluid（默认，生成 .liquid 脚手架）与 scriban
+        // （兼容模式，生成 .html 脚手架）。此前无法识别值静默按 fluid 生效，
+        // 拼错（如 liquid/auto/Fluid）无感知——2026-10-22 改为 fail loud。
+        // 注：Flint.toml 的 engine 键支持更宽的 auto/fluid/liquid/scriban
+        // （TemplateEngineRouter.ParsePolicy），CLI 只暴露 scaffold 的两形态
+        bool useFluid;
+        if (string.Equals(engine, EngineFluid, StringComparison.OrdinalIgnoreCase))
+        {
+            useFluid = true;
+        }
+        else if (string.Equals(engine, EngineScriban, StringComparison.OrdinalIgnoreCase))
+        {
+            useFluid = false;
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Error.WriteLine($"错误: 无法识别的模板引擎 '{engine}'。支持的值: fluid（默认，Liquid 脚手架）/ scriban（.html 脚手架）");
+            Console.ResetColor();
+            return 1;
+        }
 
         var sitePath = Path.Combine(Directory.GetCurrentDirectory(), name);
 
@@ -796,7 +816,7 @@ internal static class SiteCreator
             - 🚀 极速构建 - 比 Hugo 快 3-5 倍
             - 🔒 类型安全 - 编译时错误检查
             - 📦 Native AOT - 独立可执行文件
-            - 🎨 灵活模板 - Scriban 模板引擎
+            - 🎨 灵活模板 - Liquid 模板引擎
             """;
 
         File.WriteAllText(Path.Combine(sitePath, "content", "about.md"), aboutContent);

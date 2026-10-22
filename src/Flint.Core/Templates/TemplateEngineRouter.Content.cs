@@ -28,7 +28,10 @@ public sealed partial class TemplateEngineRouter
         // 内置 C# 短代码（figure/highlight/ref/relref/details/qr/gist/youtube）
         // 在 ShortcodeRegistry 构造时已注册，与引擎无关——本方法只管模板短代码
 
-        // Scriban 短代码（.html，Hugo 主题形态）
+        // Scriban 短代码（.html，Hugo 主题形态）——循环内联而非委托
+        // ScribanRenderer.RegisterShortcodesFrom：后者经 Lazy 工厂会构造
+        // Scriban 渲染器，纯 Fluid 站点（无 .html 短码）将因此加载 Scriban
+        // 程序集，破坏 P2-4 的懒构造契约（engine-probe 实证）
         foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.html"))
         {
             var name = Path.GetFileNameWithoutExtension(file);
@@ -51,28 +54,14 @@ public sealed partial class TemplateEngineRouter
 
         // Liquid 短代码（.liquid，新站点主力形态；P5-4 的内置短代码是 C# 实现，
         // 两种引擎站点都可用）。注册序在 .html 之后：同根内 .liquid 覆盖 .html。
+        // 委托 Fluid 渲染器实现（2026-10-22 接口对齐：逻辑收敛在引擎侧，
+        // router 只做分发——此前此处的 .liquid 循环是引擎实现的副本）
         // Scriban 兼容模式（engine: scriban）不认 .liquid 短代码
         if (!AllowsFluidContent)
         {
             return;
         }
-        foreach (var file in Directory.EnumerateFiles(shortcodesDir, "*.liquid"))
-        {
-            var name = Path.GetFileNameWithoutExtension(file);
-            var content = File.ReadAllText(file);
-            try
-            {
-                registry.Register(new LiquidTemplateShortcode(name, content, _fluid));
-            }
-            catch (FormatException ex) when (!isSite)
-            {
-                Console.Error.WriteLine($"[警告] 跳过无法解析的主题 Liquid 短代码（{origin}）: {file} — {ex.Message}");
-            }
-            catch (FormatException ex)
-            {
-                throw new FormatException($"加载 Liquid 短代码失败（{origin}）: {file}", ex);
-            }
-        }
+        _fluid.RegisterShortcodesFrom(registry, shortcodesDir, origin, isSite);
     }
 
     /// <inheritdoc />

@@ -154,9 +154,7 @@ public sealed partial class SiteBuilder
             }
 
             var physical = names
-                .Select(name => Path.GetFullPath(Path.Combine(
-                    layoutsDir,
-                    name.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ? name : name + ".html")))
+                .Select(name => ResolveClosurePath(layoutsDir, name))
                 .ToList();
             closureByTemplate[templateName] = physical;
             return physical;
@@ -171,6 +169,29 @@ public sealed partial class SiteBuilder
 
             _dependencyGraph.RegisterDependency(page.SourcePath, ClosureFor(page.Layout ?? "single"));
         }
+    }
+
+    /// <summary>
+    /// 静态闭包的物理路径解析：两侧引擎的 GetDependencies 都返回**无扩展名**
+    /// 逻辑名（include 名原样，Scriban 与 Fluid 同口径）——原实现无条件补
+    /// ".html"，对 Fluid 站点造出 layouts/partials/x.html 幻影路径（2026-10-22
+    /// 修复）。现按盘上实际文件解析：.liquid 优先（新站点主力形态），
+    /// 均不存在回落 .html（与历史行为一致）。精确依赖仍以渲染期
+    /// RenderedDependencies 为准，本解析只是静态兜底。
+    /// internal 供测试直测（FluidAuditFix2026Tests 锁定三形态）
+    /// </summary>
+    internal static string ResolveClosurePath(string layoutsDir, string name)
+    {
+        if (name.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+            name.EndsWith(".liquid", StringComparison.OrdinalIgnoreCase))
+        {
+            return Path.GetFullPath(Path.Combine(layoutsDir, name));
+        }
+
+        var liquid = Path.GetFullPath(Path.Combine(layoutsDir, name + ".liquid"));
+        return File.Exists(liquid)
+            ? liquid
+            : Path.GetFullPath(Path.Combine(layoutsDir, name + ".html"));
     }
 
     /// <summary>
