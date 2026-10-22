@@ -205,13 +205,14 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
     {
         var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
                         sass.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
-        // sass（当前 npm 包 bin 名）与 dart-sass（废弃旧包 bin 名，2026-10-22）
-        // 双形态：类 Unix 上都是 Node shebang 脚本，经 /bin/sh 驱动并确保
-        // 可执行位（NuGet 拷贝场景会丢 exec bit）
-        var sassFileName = Path.GetFileName(sass);
+        // 只有真正的 shell 脚本才经 /bin/sh 驱动：DartSass.Native 布局的 sass
+        // 是 shell 包装（exec src/dart），npm 布局的 sass 是 Node 脚本
+        // （#!/usr/bin/env node）——后者必须直接执行让内核处理 shebang，
+        // 用 /bin/sh 解释 JS 会 "Syntax error: word unexpected"
+        // （2026-10-22 CI 实证）。读 shebang 区分，而非只看文件名
         var isShellScript = !isCmdShim &&
                             !OperatingSystem.IsWindows() &&
-                            (sassFileName == "sass" || sassFileName == "dart-sass");
+                            IsPosixShellScript(sass);
 
         if (isShellScript)
         {
@@ -254,6 +255,31 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
 
     private static string QuoteArgument(string arg) =>
         arg.Contains(' ') ? "\"" + arg + "\"" : arg;
+
+    /// <summary>
+    /// 判断类 Unix 启动器是否为 shell 脚本（shebang 含 sh）：DartSass.Native
+    /// 布局的 sass 是 shell 包装（exec src/dart），npm 布局的 sass 是 Node
+    /// 脚本（#!/usr/bin/env node）。只有前者经 /bin/sh 驱动；Node 脚本直接
+    /// 执行，让内核按 shebang 调 node（2026-10-22：/bin/sh 解释 JS 报
+    /// "Syntax error: word unexpected"，CI ubuntu 实证）
+    /// </summary>
+    private static bool IsPosixShellScript(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(path);
+            var firstLine = reader.ReadLine();
+            return firstLine is not null &&
+                   firstLine.StartsWith('#') &&
+                   firstLine.Contains("sh", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 读不了 shebang 时保守判否：直接执行由内核按 shebang 处理，
+            // 失败会在编译错误里暴露真实原因，好过误判后 /bin/sh 乱解释
+            return false;
+        }
+    }
 
     private static void TryKill(Process process)
     {

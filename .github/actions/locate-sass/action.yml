@@ -3,17 +3,25 @@
 # 背景：产品侧 TemplateResourceFunctions.LocateSassExecutable 的定位链
 #   FLINT_SASS → procDir dart-sass.* → 仓库上溯 tools/dart-sass → PATH
 # 在 CI 里前三条全部不可用：
-#   - procDir：DartSass.Native 包已移除（1a6e31f 统一外部原生 CLI），
+#   - procDir：DartSass.Native 包已移除（1a6e31f 统一外部 CLI），
 #     不再往输出目录拷贝 dart-sass.<rid>
 #   - 仓库上溯：checkout 外无 tools/dart-sass
 #   - benchmarks/tools：被 .gitignore，checkout 拿不到
-#   - PATH：npm 全局前缀随 runner 镜像漂移，未必在 dotnet 进程 PATH 中
-# （2026-10-22 实证：test-windows/test-ubuntu 各 19 个 SassCompilerTests
-#   因「找不到 Dart Sass 可执行文件」全挂， nightly 同样会踩）
+#   - PATH：npm 全局前缀未必在 dotnet 进程 PATH 中
+# （2026-10-22 实证：特性分支首次 dispatch test-windows/test-ubuntu 各
+#   19 个 SassCompilerTests 全挂）
 #
-# 本 action 显式解析后写入 FLINT_SASS（定位链第一优先），两平台同构。
-# 解析策略：PATH 上的 sass → npm 全局前缀下的 sass 启动器 → 硬失败
-# （带诊断输出，好过 opaque 的「找不到可执行文件」）
+# 本 action 显式解析后写入 FLINT_SASS（定位链第一优先）。
+# 解析策略（顺序有意为之）：
+#   1. npm 全局前缀下的 sass 启动器——npm 输出平台原生路径
+#      （Windows: C:\...\sass.cmd），.NET File.Exists 直接认
+#   2. PATH 上的 sass（command -v）——Git Bash 会返回 /c/... MSYS
+#      路径，.NET 不认，需 cygpath -w 转 Windows 原生（2026-10-22
+#      第二轮实证：/c/npm/prefix/sass 注入后 File.Exists 失败）
+#   3. 都找不到 → 硬失败带 ::error:: 诊断（好过 opaque 的找不到可执行文件）
+#
+# 前置：job 里必须先 npm install -g sass（当前包名；旧包 dart-sass 的
+# bin 名是 dart-sass 不是 sass，装错包同样定位不到）。
 
 name: Locate Dart Sass
 description: 定位 npm 全局安装的 Dart Sass 并经 FLINT_SASS 环境变量注入后续步骤
@@ -23,29 +31,36 @@ runs:
   steps:
     - shell: bash
       run: |
-        SASS_PATH="$(command -v sass || true)"
+        SASS_PATH=""
 
-        # PATH 上找不到时直接问 npm 全局前缀（前缀本身未必在 PATH——
-        # runner 镜像的 node/npm 布局会漂移，这是 2026-10-22 修复的核心）
+        # 1) npm 全局前缀探测（npm 输出平台原生路径，优先于 command -v）
+        NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+        echo "npm global prefix: ${NPM_PREFIX:-<unknown>}"
+        if [[ -n "$NPM_PREFIX" ]]; then
+          for cand in \
+            "$NPM_PREFIX/sass.cmd" \
+            "$NPM_PREFIX/sass.bat" \
+            "$NPM_PREFIX/sass.exe" \
+            "$NPM_PREFIX/sass" \
+            "$NPM_PREFIX/dart-sass.cmd" \
+            "$NPM_PREFIX/dart-sass"; do
+            if [[ -f "$cand" ]]; then
+              SASS_PATH="$cand"
+              break
+            fi
+          done
+        fi
+
+        # 2) PATH 兜底：Git Bash 的 /c/... MSYS 路径转 Windows 原生
         if [[ -z "$SASS_PATH" ]]; then
-          NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
-          echo "npm global prefix: ${NPM_PREFIX:-<unknown>}"
-          if [[ -n "$NPM_PREFIX" ]]; then
-            for cand in \
-              "$NPM_PREFIX/sass.cmd" \
-              "$NPM_PREFIX/sass.bat" \
-              "$NPM_PREFIX/sass.exe" \
-              "$NPM_PREFIX/sass"; do
-              if [[ -f "$cand" ]]; then
-                SASS_PATH="$cand"
-                break
-              fi
-            done
+          SASS_PATH="$(command -v sass || true)"
+          if [[ -n "$SASS_PATH" && "$SASS_PATH" == /* ]] && command -v cygpath >/dev/null 2>&1; then
+            SASS_PATH="$(cygpath -w "$SASS_PATH")"
           fi
         fi
 
         if [[ -z "$SASS_PATH" ]]; then
-          echo "::error::Dart Sass 未找到。已尝试 PATH 与 npm 全局前缀。请确认前置步骤 npm install -g dart-sass 成功。"
+          echo "::error::Dart Sass 未找到。已尝试 npm 全局前缀与 PATH。请确认前置步骤 npm install -g sass 成功。"
           exit 1
         fi
 
