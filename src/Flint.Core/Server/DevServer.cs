@@ -244,6 +244,12 @@ public sealed class DevServer : IDevServer, IDisposable
                 }
             }
             catch (OperationCanceledException) { }
+            catch (Exception) when (cancellationToken.IsCancellationRequested)
+            {
+                // 停机中途被释放的对象（并发闸门 SemaphoreSlim 等）不该当成监视故障上报：
+                // 此前会打印 "文件监视错误: Cannot access a disposed object" 噪声，
+                // 掩盖真正的监视故障。取消已请求即视为正常收尾
+            }
             catch (Exception ex) { await Console.Error.WriteLineAsync($"文件监视错误: {ex.Message}"); }
         }, cancellationToken);
     }
@@ -307,6 +313,26 @@ public sealed class DevServer : IDevServer, IDisposable
             await _liveReloadNotifier.NotifyErrorAsync(ex.Message, cancellationToken);
             await Console.Error.WriteLineAsync($"构建异常: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// WS 热重载的 Origin 校验：与请求 Host 同源，或来自本机（dev server 语义，
+    /// 端口可随机）即为同源。跨站页面拿不到允许项，无法静默订阅构建事件。
+    /// </summary>
+    internal static bool IsSameOrigin(string origin, string hostHeader)
+    {
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (uri.Host is "localhost" or "127.0.0.1" or "::1" or "[::1]")
+        {
+            return true;
+        }
+
+        var originHost = uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}";
+        return string.Equals(originHost, hostHeader, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -411,6 +437,16 @@ public sealed class DevServer : IDevServer, IDisposable
             {
                 if (context.WebSockets.IsWebSocketRequest)
                 {
+                    // Origin 校验：浏览器发起的 WS 必带 Origin，跨站页面可静默连本地
+                    // dev server 读构建事件（构建进度/页面清单）；非同源来源拒绝。
+                    // 非浏览器客户端（CLI 工具、测试客户端）不带 Origin，保持放行
+                    var origin = context.Request.Headers["Origin"].ToString();
+                    if (origin.Length > 0 && !IsSameOrigin(origin, context.Request.Host.Value ?? ""))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                        return;
+                    }
+
                     var webSocket = await context.WebSockets.AcceptWebSocketAsync();
                     var clientId = Guid.NewGuid().ToString();
                     _liveReloadNotifier.AddClient(clientId, webSocket);

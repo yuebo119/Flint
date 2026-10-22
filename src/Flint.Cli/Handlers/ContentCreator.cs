@@ -14,7 +14,7 @@ internal static class ContentCreator
     /// 创建新内容文件
     /// </summary>
     /// <returns>0 表示成功，1 表示失败</returns>
-    public static int CreateNewContent(string path, string kind)
+    public static async Task<int> CreateNewContentAsync(string path, string kind)
     {
         // 验证内容路径
         if (string.IsNullOrWhiteSpace(path))
@@ -82,8 +82,13 @@ internal static class ContentCreator
 
         try
         {
+            // archetypeDir / theme 由站点配置驱动（TOML/YAML/JSON 皆可）；
+            // 配置非法或读取失败时回退默认目录名——`new content` 必须能在
+            // 半初始化站点里工作，不该因配置问题而不可用
+            var siteConfig = await TryLoadSiteConfigAsync(currentDir);
+
             // 查找 archetype 模板
-            var archetypeContent = FindArchetype(currentDir, kind, path);
+            var archetypeContent = FindArchetype(currentDir, kind, path, siteConfig);
 
             // 处理模板变量
             var content = ProcessArchetype(archetypeContent, path);
@@ -114,21 +119,29 @@ internal static class ContentCreator
         }
     }
 
-    private static string FindArchetype(string sitePath, string kind, string contentPath)
+    private static string FindArchetype(
+        string sitePath, string kind, string contentPath, SiteConfig? config)
     {
         // 搜索顺序（对齐主题回退规则：站点优先、主题补缺）：
-        // 1. archetypes/{kind}.md        → 主题 archetypes/{kind}.md
-        // 2. archetypes/{section}.md     → 主题 archetypes/{section}.md
-        // 3. archetypes/default.md       → 主题 archetypes/default.md
+        // 1. {archetypeDir}/{kind}.md        → 主题 {archetypeDir}/{kind}.md
+        // 2. {archetypeDir}/{section}.md     → 主题 {archetypeDir}/{section}.md
+        // 3. {archetypeDir}/default.md       → 主题 {archetypeDir}/default.md
         // 4. 内置默认模板
 
-        var archetypesDir = Path.Combine(sitePath, "archetypes");
-        var themeName = ReadThemeName(sitePath);
-        var themeArchetypesDirs = themeName is null
-            ? []
-            : themeName.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => Path.Combine(sitePath, "themes", t, "archetypes"))
-                .ToArray();
+        // archetypeDir 配置此前从不被读取（校验通过但无效），此处按配置取值
+        var archetypesDirName = config?.ArchetypeDir is { Length: > 0 } configured
+            ? configured
+            : "archetypes";
+        var archetypesDir = Path.Combine(sitePath, archetypesDirName);
+        // theme 优先取已加载配置（全格式）；配置不可用时退回 TOML 兼容读取
+        IReadOnlyList<string> themeNames = config is not null
+            ? config.ThemeNames
+            : ConfigLoader.TryGetThemeName(sitePath) is { } themeText
+                ? themeText.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                : [];
+        var themeArchetypesDirs = themeNames
+            .Select(t => Path.Combine(sitePath, "themes", t, archetypesDirName))
+            .ToArray();
 
         // 1. 指定的 kind（站点 → 主题）
         var archetype = TryReadArchetype(archetypesDir, $"{kind}.md")
@@ -186,12 +199,19 @@ internal static class ContentCreator
     }
 
     /// <summary>
-    /// 读取站点配置的 theme 名（主题 archetype 回退用）。
-    /// 已知边界：TOML 兼容层只解析 TOML 形态配置，YAML/JSON 配置的站点主题回退降级为站点级
+    /// 加载站点配置（archetypeDir/theme 用）。配置非法、文件缺失或读取失败返回 null，
+    /// 由调用方回退默认目录名
     /// </summary>
-    private static string? ReadThemeName(string siteDir)
+    private static async Task<SiteConfig?> TryLoadSiteConfigAsync(string siteDir)
     {
-        return ConfigLoader.TryGetThemeName(siteDir);
+        try
+        {
+            return await new ConfigLoader().AutoLoadAsync(siteDir).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or FormatException)
+        {
+            return null;
+        }
     }
 
     private static string? GetSectionFromPath(string path)

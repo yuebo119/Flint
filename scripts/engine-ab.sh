@@ -26,6 +26,17 @@ if [[ ! -x "$CLI" ]]; then
   exit 1
 fi
 
+# 构建形态随报告声明（EPSL 口径纪律）：JIT 口径会把非渲染段膨胀 10-15 倍，
+# 稀释渲染段占比、拉平两引擎差异，不声明形态的比值不可用于决策
+CLI_BYTES="$(stat -c%s "$CLI" 2>/dev/null || echo 0)"
+if [[ "$CLI_BYTES" -ge 30000000 ]]; then
+  CLI_SHAPE="NativeAOT（单文件，${CLI_BYTES} 字节）"
+else
+  CLI_SHAPE="JIT/R2R（${CLI_BYTES} 字节，性能结论须标注此形态）"
+fi
+echo "== CLI: $CLI"
+echo "== 构建形态: $CLI_SHAPE"
+
 echo "== 准备工作目录 $WORK"
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -125,7 +136,7 @@ phase_median() { # $1=glob 前缀，$2=阶段名；从 [phase] 行取中位数
 FLUID_TOTAL="$(median "$WORK/fluid")"
 SCRIBAN_TOTAL="$(median "$WORK/scriban")"
 echo ""
-echo "== 总构建耗时中位数（${ROUNDS} 轮，$POSTS 篇文章）"
+echo "== 总构建耗时中位数（${ROUNDS} 轮，$POSTS 篇文章）｜形态: $CLI_SHAPE"
 echo "  Fluid  : $FLUID_TOTAL ms"
 echo "  Scriban: $SCRIBAN_TOTAL ms"
 awk -v f="$FLUID_TOTAL" -v s="$SCRIBAN_TOTAL" 'BEGIN {

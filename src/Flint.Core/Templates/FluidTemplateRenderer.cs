@@ -119,6 +119,9 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(TimeSpan))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(DateTimeOffset))]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(ReadingTimeView))]
+    // hugo 信息视图（hugo.version / is_production / is_server / environment）：
+    // 4 个 getter 无静态引用，裁剪后模板静默取空（2026-10-22 审计补入）
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties, typeof(HugoInfoView))]
     public FluidTemplateRenderer(
         string templatesPath,
         string baseUrl = "",

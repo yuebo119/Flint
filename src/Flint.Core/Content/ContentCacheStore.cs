@@ -91,19 +91,22 @@ public sealed class ContentCacheStore
         var count = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(pos, 4));
         pos += 4;
 
+        // 每条记录的读取都先校验剩余长度：头部合法但负载被截断的 blob
+        // 会让 Slice 抛越界，而解析期越界在 Load 的 catch 之外会直接崩构建
         for (var i = 0; i < count; i++)
         {
-            var pathLen = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(pos, 4));
-            pos += 4;
-            var relPath = Encoding.UTF8.GetString(span.Slice(pos, pathLen));
-            pos += pathLen;
+            var pathLen = ReadInt(span, ref pos);
+            var relPath = Encoding.UTF8.GetString(ReadSpan(span, ref pos, pathLen));
 
-            var mtimeTicks = BinaryPrimitives.ReadInt64LittleEndian(span.Slice(pos, 8));
-            pos += 8;
-            var size = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(pos, 4));
-            pos += 4;
-            var len = BinaryPrimitives.ReadInt32LittleEndian(span.Slice(pos, 4));
-            pos += 4;
+            var mtimeTicks = BinaryPrimitives.ReadInt64LittleEndian(ReadSpan(span, ref pos, 8));
+            var size = ReadInt(span, ref pos);
+            var len = ReadInt(span, ref pos);
+
+            // 负载切片也要留在缓冲区内（TryGetByPath 会按 offset/length 取切片）
+            if (len < 0 || pos + len > span.Length)
+            {
+                throw new ArgumentException($"缓存 blob 第 {i} 条目的负载长度越界: {len}");
+            }
 
             _entries[relPath] = new CacheEntry(mtimeTicks, size, pos, len);
             pos += len;
@@ -111,6 +114,21 @@ public sealed class ContentCacheStore
 
         _buffer = buffer;
     }
+
+    private static ReadOnlySpan<byte> ReadSpan(ReadOnlySpan<byte> span, ref int pos, int length)
+    {
+        if (length < 0 || pos < 0 || pos + length > span.Length)
+        {
+            throw new ArgumentException($"缓存 blob 记录段越界（pos={pos}, len={length}, 总长={span.Length}）");
+        }
+
+        var slice = span.Slice(pos, length);
+        pos += length;
+        return slice;
+    }
+
+    private static int ReadInt(ReadOnlySpan<byte> span, ref int pos) =>
+        BinaryPrimitives.ReadInt32LittleEndian(ReadSpan(span, ref pos, 4));
 
     /// <summary>
     /// 命中查询：键 = （相对路径, mtime, size）三者全等才命中；
@@ -120,7 +138,8 @@ public sealed class ContentCacheStore
     {
         if (_entries.TryGetValue(relativePath, out var entry) &&
             entry.MtimeTicks == mtimeTicks &&
-            entry.Size == size)
+            entry.Size == size &&
+            IsInBuffer(entry))
         {
             HitCount++;
             content = _buffer.AsMemory(entry.Offset, entry.Length);
@@ -138,7 +157,7 @@ public sealed class ContentCacheStore
     /// </summary>
     public bool TryGetByPath(string relativePath, out ReadOnlyMemory<byte> content)
     {
-        if (_entries.TryGetValue(relativePath, out var entry))
+        if (_entries.TryGetValue(relativePath, out var entry) && IsInBuffer(entry))
         {
             HitCount++;
             content = _buffer.AsMemory(entry.Offset, entry.Length);
@@ -149,6 +168,10 @@ public sealed class ContentCacheStore
         content = default;
         return false;
     }
+
+    /// <summary>条目切片是否落在缓冲区内的兜底判据（解析期已校验，双保险）</summary>
+    private bool IsInBuffer(CacheEntry entry) =>
+        entry.Offset >= 0 && entry.Length >= 0 && entry.Offset + entry.Length <= _buffer.Length;
 
     /// <summary>
     /// 以本次构建的全部条目重写 blob（原子：临时文件 + 替换）。

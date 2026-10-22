@@ -253,7 +253,10 @@ internal static class PerfCommand
             var actualKey = $"{lookup.Test}|{lookup.Metric}";
             if (!results.TryGetValue(actualKey, out var actual))
             {
-                Console.WriteLine($"  ⚠️ 未在报告中找到: {actualKey}");
+                // 基线里登记过的指标在报告中缺失 = 门禁没有真正校验这一项。
+                // 此前只打警告并 continue，fail 仍为 0，门禁假绿
+                Console.WriteLine($"  [FAIL] {label}: 基线登记了 {actualKey}，但报告中未找到对应测量");
+                fail++;
                 continue;
             }
 

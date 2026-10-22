@@ -104,11 +104,11 @@ internal static class Program
         var kindOption = new Option<string>("--kind", "-k") { Description = "内容类型（archetype）", DefaultValueFactory = _ => "default" };
         newContentCmd.Arguments.Add(contentPathArg);
         newContentCmd.Options.Add(kindOption);
-        newContentCmd.SetAction(ctx =>
+        newContentCmd.SetAction(async (ctx, token) =>
         {
             var path = ctx.GetValue(contentPathArg);
             var kind = ctx.GetValue(kindOption);
-            return ContentCreator.CreateNewContent(path!, kind!);
+            return await ContentCreator.CreateNewContentAsync(path!, kind!);
         });
         newCommand.Subcommands.Add(newContentCmd);
 

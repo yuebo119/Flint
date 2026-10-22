@@ -51,8 +51,15 @@ public sealed partial class SiteBuilder : ISiteBuilder
     private readonly Dictionary<string, List<PageContext>> _lookupProjectionCache = new(StringComparer.Ordinal);
 
     // 渲染即写盘（T4.1）的路径去重表：先完成渲染者赢得写入权（TryAdd），
-    // 防止重复输出路径的并发双写；每次构建开头清空
-    private readonly ConcurrentDictionary<string, byte> _writtenPaths = new(StringComparer.Ordinal);
+    // 防止重复输出路径的并发双写；每次构建开头清空。
+    // 比较器跟随文件系统大小写语义：Windows/macOS 下 `About/x.html` 与
+    // `about/x.html` 是同一文件，Ordinal 会当成两条路径而双写
+    internal static readonly StringComparer OutputPathComparer =
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+    private readonly ConcurrentDictionary<string, byte> _writtenPaths = new(OutputPathComparer);
 
     // 依赖追踪开关（T4.3）：watch 模式需要渲染期精确登记供增量反查；
     // 一次性构建跳过每页 File.Exists stat

@@ -45,18 +45,71 @@ internal static class SsgBench
         var hugoPub = Path.Combine(root, "hugo-pub");
             var flintPub = Path.Combine(root, "flint-pub");
 
-            var hm = await BenchAsync("Hugo", hugo, new[] { "-s", Path.Combine(root, "hugo"), "-d", hugoPub, "--quiet" }, hugoPub, runs).ConfigureAwait(false);
-            var fm = await BenchAsync("Flint", flint, new[] { "build", "-s", Path.Combine(root, "flint"), "-o", flintPub }, flintPub, runs).ConfigureAwait(false);
+            var hugoArgs = new[] { "-s", Path.Combine(root, "hugo"), "-d", hugoPub, "--quiet" };
+            var flintArgs = new[] { "build", "-s", Path.Combine(root, "flint"), "-o", flintPub };
+
+            ProcessRunner.RequireExe(hugo);
+            ProcessRunner.RequireExe(flint);
+
+            // 形态随报告声明（EPSL 口径纪律）：JIT 口径把非渲染段膨胀 10-15 倍，
+            // 会稀释渲染优势、拉平两臂差异，不声明形态的比值不可用于决策
+            Console.WriteLine($"构建形态: Hugo {ShapeOf(hugo)} / Flint {ShapeOf(flint)}");
+
+            (await ProcessRunner.RunTimedAsync(hugo, hugoArgs).ConfigureAwait(false)).AssertSuccess("Hugo 预热");
+            (await ProcessRunner.RunTimedAsync(flint, flintArgs).ConfigureAwait(false)).AssertSuccess("Flint 预热");
+
+            // **交错采集**：单轮内两臂紧邻、跨轮交换先后（A/B/B/A），抵消机器漂移。
+            // 此前是"先跑完 N 轮 Hugo 再跑 N 轮 Flint"的串行分块，期间的环境波动
+            // 全部记到后一臂头上
+            var hugoTimes = new List<double>(runs);
+            var flintTimes = new List<double>(runs);
+            for (var i = 0; i < runs; i++)
+            {
+                if (i % 2 == 0)
+                {
+                    hugoTimes.Add(await RunOnceAsync("Hugo", hugo, hugoArgs, hugoPub).ConfigureAwait(false));
+                    flintTimes.Add(await RunOnceAsync("Flint", flint, flintArgs, flintPub).ConfigureAwait(false));
+                }
+                else
+                {
+                    flintTimes.Add(await RunOnceAsync("Flint", flint, flintArgs, flintPub).ConfigureAwait(false));
+                    hugoTimes.Add(await RunOnceAsync("Hugo", hugo, hugoArgs, hugoPub).ConfigureAwait(false));
+                }
+            }
+
+            var hm = ProcessRunner.Median(hugoTimes);
+            var fm = ProcessRunner.Median(flintTimes);
 
             Console.WriteLine($"=== {pages} 页冷构建（{runs} 次中位数，外部计时含进程启动）===");
-            Console.WriteLine($"Hugo : {ProcessRunner.Ms(hm)}");
-            Console.WriteLine($"Flint: {ProcessRunner.Ms(fm)}");
+            Console.WriteLine($"Hugo : {RunsDesc(hugoTimes)} median={ProcessRunner.Ms(hm)}");
+            Console.WriteLine($"Flint: {RunsDesc(flintTimes)} median={ProcessRunner.Ms(fm)}");
             Console.WriteLine($"比值 Flint/Hugo = {fm / hm:F2}x");
             return 0;
         });
 
         return cmd;
     }
+
+    /// <summary>二进制形态标注（AOT 单文件量级 ≥30MB）</summary>
+    private static string ShapeOf(string exe)
+    {
+        var bytes = new FileInfo(exe).Length;
+        return bytes >= 30_000_000
+            ? $"AOT({bytes / 1024 / 1024}MB)"
+            : $"JIT-R2R({bytes / 1024 / 1024}MB)";
+    }
+
+    private static async Task<double> RunOnceAsync(
+        string name, string exe, IReadOnlyList<string> args, string pub)
+    {
+        RepoGuard.DeleteTree(pub);
+        var result = await ProcessRunner.RunTimedAsync(exe, args).ConfigureAwait(false);
+        result.AssertSuccess($"{name} 单轮");
+        return result.ElapsedMs;
+    }
+
+    private static string RunsDesc(IReadOnlyList<double> times) =>
+        string.Join(' ', times.Select((t, i) => $"r{i + 1}={ProcessRunner.Ms(t)}"));
 
     /// <summary>双引擎同 content 同模板：每页 title+date front matter + 三段正文</summary>
     private static void Generate(string root, int pages)

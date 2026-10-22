@@ -44,6 +44,12 @@ internal static class DemoCommand
     private const int PortBase = 8401;
     private const int GalleryPort = 8400;
 
+    /// <summary>演示端口带下界（含）</summary>
+    private const int DemoPortMin = 8400;
+
+    /// <summary>演示端口带上界（含）：演示用自己的端口带反查 PID，</summary>
+    private const int DemoPortMax = 8499;
+
     // ---------------------------------------------------------------- demo build
 
     private static Command BuildDemoBuild()
@@ -372,19 +378,30 @@ internal static class DemoCommand
             }
         }
 
-        // 兜底：按 84xx 监听端口反查 PID（netstat 输出解析，与 bash 版同源）
+        // 兜底：按演示端口带（8400-8499）反查 PID（netstat 输出解析，与 bash 版同源）。
+        // 必须按端口号数值比对：此前用 `Contains(":84")` 子串匹配，
+        // 会把 :1843/:8084 等无关服务的进程一起杀掉
         try
         {
             var netstatStdout = Bench.ProcessRunner.RunTimedCaptureSync("netstat", NetstatArgs);
             foreach (var line in netstatStdout.Split('\n'))
             {
-                if (!line.Contains(":84", StringComparison.Ordinal) || !line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase))
+                if (!line.Contains("LISTENING", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
                 var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 0 || !int.TryParse(parts[^1], out var pid))
+                if (parts.Length < 2)
+                {
+                    continue;
+                }
+
+                var local = parts[1];
+                var colon = local.LastIndexOf(':');
+                if (colon < 0 || !int.TryParse(local[(colon + 1)..], out var localPort) ||
+                    localPort < DemoPortMin || localPort > DemoPortMax ||
+                    !int.TryParse(parts[^1], out var pid))
                 {
                     continue;
                 }

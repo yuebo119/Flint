@@ -297,7 +297,10 @@ public sealed partial class SiteBuilder
         // `<列表页>/index.xml`（如 /posts/index.xml、/tags/intro/index.xml）。主题 head 里的
         // `.OutputFormats.Get "rss"` 链接指向这些文件——列表页缺 RSS 产物时
         // `<link rel="alternate">` 404（ananke 全站 9 个 index.xml 缺失，实测）。
-        // 首页的 /index.xml 已由上方别名写出，此处只处理其余列表页与分页页。
+        // **home 也在这个循环里**：上方别名先写一份全站 feed 到 index.xml/rss.xml，
+        // 随后 home 的列表页 feed 覆盖 index.xml（Hugo 语义：/index.xml 是 home 的
+        // `.Pages` 订阅，不是全站订阅；rss.xml 是 Flint 历史别名，保留全站形态）。
+        // 此前注释写"此处只处理其余列表页"与代码不符。
         // **注意顺序**：rss 模板存在时必须**先写完根 RSS 再循环各列表页**——
         // 原先模板分支 `return` 会跳过列表页 RSS（blog-awesome/fixit 实测）
         // **每个列表页（含分页页）各自产出 RSS**：Hugo v0.166 探针——/posts/ 产出

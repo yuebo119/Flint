@@ -176,12 +176,14 @@ public sealed partial class SiteBuilder
         {
             if (_contentCache != null && _contentCache.TryGetCached(file, out var cached) && cached != null)
             {
+                CheckContentDiagnostics(cached, file.Path);
                 sink.Add(cached);
                 return;
             }
             try
             {
                 var parsed = await _contentParser.ParseAsync(file, ct);
+                CheckContentDiagnostics(parsed, file.Path);
                 sink.Add(parsed);
                 _contentCache?.Set(file, parsed);
             }
@@ -198,6 +200,41 @@ public sealed partial class SiteBuilder
                 });
             }
         }
+
+        static bool IsMarkdownContent(string path) =>
+            path.EndsWith(".md", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".markdown", StringComparison.OrdinalIgnoreCase);
+
+        // 内容级软诊断：不阻断构建，但"静默丢元数据/乱码"必须让用户看见
+        void CheckContentDiagnostics(ParsedContent parsed, string path)
+        {
+            if (!IsMarkdownContent(path))
+            {
+                return;
+            }
+
+            if (LooksLikeUnterminatedFrontMatter(parsed.RawMarkdown, out var delimiter))
+            {
+                warnings.Add(new BuildWarning
+                {
+                    WarningCode = "FM001",
+                    Message = $"疑似未闭合 front matter（首行 {delimiter} 之后没有配对分隔符）："
+                        + "元数据被当正文处理，title/draft/date 等设置不会生效",
+                    FilePath = path
+                });
+                return; // 未闭合时正文就是整段原文，乱码检查仍适用，但只报更具体的这条
+            }
+
+            if (parsed.RawMarkdown.Contains('\uFFFD', StringComparison.Ordinal))
+            {
+                warnings.Add(new BuildWarning
+                {
+                    WarningCode = "FM002",
+                    Message = "疑似非 UTF-8 编码（解码出现替换字符 U+FFFD）：请另存为 UTF-8，否则正文会乱码",
+                    FilePath = path
+                });
+            }
+        }
     }
 
     /// <summary>
@@ -208,6 +245,73 @@ public sealed partial class SiteBuilder
     /// 源根外的路径（理论不可达）返回原样，保证键唯一性
     /// internal 供测试直测（ContentCacheStoreTests 锁定三形态）
     /// </summary>
+    /// <summary>
+    /// 疑似未闭合 front matter：正文首行是 --- / +++ 分隔符，且其后没有配对分隔符。
+    /// 要求第二行形如 `键: 值`，避免把正文开头的 Markdown 分隔线（---）误报。
+    /// </summary>
+    internal static bool LooksLikeUnterminatedFrontMatter(string text, out string delimiter)
+    {
+        delimiter = "";
+        if (text.Length < 8)
+        {
+            return false;
+        }
+
+        var span = text.AsSpan();
+        if (span[0] == '\uFEFF')
+        {
+            span = span[1..];
+        }
+
+        var firstLineEnd = span.IndexOf('\n');
+        if (firstLineEnd < 0)
+        {
+            return false;
+        }
+
+        var firstLine = span[..firstLineEnd].TrimEnd('\r').Trim();
+        if (!firstLine.SequenceEqual("---") && !firstLine.SequenceEqual("+++"))
+        {
+            return false;
+        }
+
+        var rest = span[(firstLineEnd + 1)..];
+        var secondLineEnd = rest.IndexOf('\n');
+        var secondLine = (secondLineEnd < 0 ? rest : rest[..secondLineEnd]).Trim();
+        // YAML 用 `键: 值`、TOML 用 `键 = 值`；两者都不像则视为正文分隔线
+        if (secondLine.Length == 0 ||
+            (!secondLine.Contains(':') && !secondLine.Contains('=')))
+        {
+            return false;
+        }
+
+        // 找配对分隔符（整行只有分隔符才算配对）
+        var marker = firstLine.ToString();
+        var searchFrom = 0;
+        while (searchFrom < rest.Length)
+        {
+            var idx = rest[searchFrom..].IndexOf("\n" + marker, StringComparison.Ordinal);
+            if (idx < 0)
+            {
+                break;
+            }
+
+            var lineStart = searchFrom + idx + 1;
+            var lineEnd = rest[lineStart..].IndexOf('\n');
+            var candidate = (lineEnd < 0 ? rest[lineStart..] : rest[lineStart..(lineStart + lineEnd)])
+                .TrimEnd('\r').Trim();
+            if (candidate.SequenceEqual(marker.AsSpan()))
+            {
+                return false; // 有配对分隔符：front matter 正常，解析失败另有原因
+            }
+
+            searchFrom = lineStart + marker.Length;
+        }
+
+        delimiter = marker;
+        return true;
+    }
+
     internal static string ContentCacheRelPath(string fullPath, string sourceRootWithSeparator)
     {
         var relative = fullPath.StartsWith(sourceRootWithSeparator, StringComparison.OrdinalIgnoreCase)
