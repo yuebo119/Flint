@@ -133,6 +133,24 @@ public sealed class ContentCacheStore
     }
 
     /// <summary>
+    /// 仅按路径命中（输出写盘跳过用）：输出产物的键是路径 + 内容哈希
+    /// （哈希即 payload），无 mtime/size 语义——写入时两字段填 0
+    /// </summary>
+    public bool TryGetByPath(string relativePath, out ReadOnlyMemory<byte> content)
+    {
+        if (_entries.TryGetValue(relativePath, out var entry))
+        {
+            HitCount++;
+            content = _buffer.AsMemory(entry.Offset, entry.Length);
+            return true;
+        }
+
+        MissCount++;
+        content = default;
+        return false;
+    }
+
+    /// <summary>
     /// 以本次构建的全部条目重写 blob（原子：临时文件 + 替换）。
     /// 只在调用方判定「有变化」时调用，未变构建零写盘
     /// </summary>

@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
+using Flint.Core.Content;
 using Flint.Core.IO;
 using Flint.Core.Models;
 
@@ -391,6 +392,85 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>
+    /// 输出写盘跳过（2026-10-22，--cache 的一部分）：渲染结果的 FNV-1a 64
+    /// 哈希与上轮构建记录一致且产物文件仍在时，跳过写盘。海量站点重复构建
+    /// 的主要成本是逐文件写 IRP（微基准 148μs/文件 @10k），未变化页面本可
+    /// 完全免写。合计 64 位哈希在 1.4 万条目量级的碰撞概率约 5e-12，可忽略
+    /// </summary>
+    private ContentCacheStore? _outputCacheStore;
+
+    /// <summary>本轮构建实际产出（或其哈希未变）的条目，收尾时整体回写（掉队的旧条目自然淘汰）</summary>
+    private ConcurrentBag<(string RelPath, ulong Hash)>? _outputCacheEntries;
+
+    /// <summary>本轮是否有页面真正落盘（哈希不符/文件缺失）；全命中则零写盘</summary>
+    private bool _outputCacheDirty;
+
+    /// <summary>输出根的规范化前缀（相对路径键用；空串 = 输出缓存未启用）</summary>
+    private string _outputCacheRoot = "";
+
+    /// <summary>
+    /// 初始化输出写盘跳过：--cache 启用且未被 --clean 清空输出时装载上轮记录。
+    /// --clean 下产物必被删除、跳过检查只会白付 stat，故整体绕过（条目仍记录，
+    /// 供下次构建使用）
+    /// </summary>
+    private void InitOutputCache(BuildOptions options)
+    {
+        _outputCacheStore = null;
+        _outputCacheEntries = null;
+        _outputCacheDirty = false;
+        _outputCacheRoot = "";
+
+        if (string.IsNullOrEmpty(options.CachePath) || options.CleanOutput)
+        {
+            return;
+        }
+
+        _outputCacheStore = ContentCacheStore.Load(Path.Combine(options.CachePath, "output.blob"));
+        _outputCacheEntries = [];
+        _outputCacheRoot = OutputRootPrefix(options.OutputPath);
+    }
+
+    /// <summary>
+    /// 收尾回写输出条目（WriteOutputAsync 末尾调用，覆盖全部页面渲染点：
+    /// 阶段 8/8.5/9 的 TryWriteRenderedPageNowAsync 都发生在它之前）。
+    /// 条目集变化或有落盘才重写；写失败记 CACHE001 告警不阻断构建
+    /// </summary>
+    private void SaveOutputCacheIfDirty(BuildOptions options, ConcurrentBag<BuildWarning> warnings)
+    {
+        if (_outputCacheStore is null || _outputCacheEntries is null || string.IsNullOrEmpty(_outputCacheRoot))
+        {
+            return;
+        }
+
+        if (!_outputCacheDirty && _outputCacheStore.Count == _outputCacheEntries.Count)
+        {
+            return; // 全命中且条目集未变：零写盘
+        }
+
+        var blobPath = Path.Combine(options.CachePath!, "output.blob");
+        var entries = _outputCacheEntries.Select(e =>
+        {
+            var payload = new byte[8];
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt64LittleEndian(payload, e.Hash);
+            return (e.RelPath, 0L, new ReadOnlyMemory<byte>(payload));
+        });
+
+        try
+        {
+            _outputCacheStore.Save(blobPath, entries);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            warnings.Add(new BuildWarning
+            {
+                WarningCode = "CACHE001",
+                Message = $"输出缓存写入失败（不影响本次构建产物，下次构建将全量落盘）: {ex.Message}",
+                FilePath = blobPath
+            });
+        }
+    }
+
+    /// <summary>
     /// 渲染即写盘（T4.1）：页面渲染完成后由渲染线程直接落盘（normalize 前移到此），
     /// 消除"全部渲染完才开始写盘"的阶段分割——渲染尾部的 CPU 时间与磁盘 IO 重叠。
     /// <paramref name="rendered"/> 的 Content 落盘后置空（收集列表只留统计信息，
@@ -406,15 +486,36 @@ public sealed partial class SiteBuilder
             return false;
         }
 
+        // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
+        var content = rendered.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+            ? HtmlOutputNormalizer.Normalize(rendered.Content)
+            : rendered.Content;
+
+        // 输出写盘跳过：哈希与上轮一致且产物仍在 → 免写（含免建目录）。
+        // File.Exists 只在这一跳（本要写盘的分支）付一次 stat，全变更构建
+        // 走不到这里，零额外成本
+        if (_outputCacheStore is not null && _outputCacheEntries is not null)
+        {
+            var hash = ContentHashCache.ComputeHash64(System.Text.Encoding.UTF8.GetBytes(content));
+            var relOut = ContentCacheRelPath(rendered.OutputPath, _outputCacheRoot);
+            var unchanged = _outputCacheStore.TryGetByPath(relOut, out var prev) &&
+                            prev.Length == 8 &&
+                            System.Buffers.Binary.BinaryPrimitives.ReadUInt64LittleEndian(prev.Span) == hash &&
+                            File.Exists(rendered.OutputPath);
+            _outputCacheEntries.Add((relOut, hash));
+            if (unchanged)
+            {
+                rendered.Content = "";
+                return true; // 未变化：跳过写盘（产物已存在且内容一致）
+            }
+            _outputCacheDirty = true;
+        }
+
         var dir = Path.GetDirectoryName(rendered.OutputPath);
         if (!string.IsNullOrEmpty(dir))
         {
             OutputDirectoryEnsurer.Ensure(dir);
         }
-        // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
-        var content = rendered.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
-            ? HtmlOutputNormalizer.Normalize(rendered.Content)
-            : rendered.Content;
         await WriteFileWithRetryAsync(rendered.OutputPath, content, ct);
         rendered.Content = "";
         return true;
@@ -425,6 +526,7 @@ public sealed partial class SiteBuilder
         List<RenderedPage> taxonomyPages,
         List<ProcessedAsset> assets,
         BuildOptions options,
+        ConcurrentBag<BuildWarning> warnings,
         CancellationToken cancellationToken)
     {
         // 确保输出目录存在
@@ -465,6 +567,10 @@ public sealed partial class SiteBuilder
                 // 添加重试逻辑以处理文件访问冲突
                 await WriteBytesWithRetryAsync(outputPath, asset.Content.ToArray(), ct);
             });
+
+        // 输出写盘跳过的收尾：全部页面渲染点（阶段 8/8.5/9）都已在它之前
+        // 完成，此处整体回写条目（含本次未变化而免写的页——其条目保持有效）
+        SaveOutputCacheIfDirty(options, warnings);
     }
 
     /// <summary>

@@ -92,17 +92,22 @@ public sealed class ContentHashCache
     /// <summary>
     /// 计算内容哈希（FNV-1a 64 位，用于缓存变更检测足够）
     /// </summary>
-    private static string ComputeHash(ReadOnlyMemory<byte> content)
+    private static string ComputeHash(ReadOnlyMemory<byte> content) =>
+        ComputeHash64(content.Span).ToString("X16");
+
+    /// <summary>
+    /// FNV-1a 64 位哈希（内容变更检测用）。internal 复用：持久内容缓存的
+    /// 输出写盘跳过以「渲染结果哈希」判定是否重写（SiteBuilder.Output），
+    /// 与本缓存的变更检测同族算法，避免两处各写一份 FNV
+    /// </summary>
+    internal static ulong ComputeHash64(ReadOnlySpan<byte> content)
     {
         ulong hash = 14695981039346656037UL;
-        var span = content.Span;
-
-        foreach (var b in span)
+        foreach (var b in content)
         {
             hash ^= b;
             hash *= 1099511628211UL;
         }
-
-        return hash.ToString("X16");
+        return hash;
     }
 }

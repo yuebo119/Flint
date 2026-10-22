@@ -309,6 +309,135 @@ public sealed class ContentCacheStoreTests : IDisposable
         Assert.Contains("原始内容", ReadOutput(site, "posts/p1/index.html"));
     }
 
+    // ---- 输出写盘跳过（2026-10-22，--cache 的第二半：省掉逐文件写 IRP）----
+
+    [Fact]
+    public async Task 输出跳过_内容未变化_二次构建不重写产物()
+    {
+        var site = CreateSite();
+        var options = CreateOptions(site);
+        var builder = CreateBuilder(site);
+
+        var first = await builder.BuildAsync(options);
+        Assert.True(first.Success, Join(first.Errors));
+
+        var outputFile = Path.Combine(site, "public", "posts", "p1", "index.html");
+        var mtimeBefore = File.GetLastWriteTimeUtc(outputFile);
+
+        // 二次构建：内容与模板均未变 → 渲染结果哈希一致 → 免写（mtime 不动）
+        var second = await builder.BuildAsync(options);
+        Assert.True(second.Success, Join(second.Errors));
+
+        Assert.Equal(mtimeBefore, File.GetLastWriteTimeUtc(outputFile));
+    }
+
+    [Fact]
+    public async Task 输出跳过_内容变更_重写产物且反映新内容()
+    {
+        var site = CreateSite();
+        var options = CreateOptions(site);
+        var builder = CreateBuilder(site);
+
+        var first = await builder.BuildAsync(options);
+        Assert.True(first.Success, Join(first.Errors));
+        var outputFile = Path.Combine(site, "public", "posts", "p1", "index.html");
+        var mtimeBefore = File.GetLastWriteTimeUtc(outputFile);
+
+        await Task.Delay(50); // 避开 NTFS 同 tick 粒度，让“有重写”可断言
+        File.WriteAllText(Path.Combine(site, "content", "posts", "p1.md"), """
+            +++
+            title = "文章一改二"
+            date = 2026-01-01T00:00:00Z
+            draft = false
+            +++
+
+            这次的内容完全不同，哈希必变。
+            """);
+
+        var second = await builder.BuildAsync(options);
+        Assert.True(second.Success, Join(second.Errors));
+
+        Assert.Contains("这次的内容完全不同", File.ReadAllText(outputFile));
+        Assert.True(File.GetLastWriteTimeUtc(outputFile) > mtimeBefore,
+            "内容变更必须重写产物");
+    }
+
+    [Fact]
+    public async Task 输出跳过_产物文件被删除_重建该文件()
+    {
+        var site = CreateSite();
+        var options = CreateOptions(site);
+        var builder = CreateBuilder(site);
+
+        var first = await builder.BuildAsync(options);
+        Assert.True(first.Success, Join(first.Errors));
+
+        var outputFile = Path.Combine(site, "public", "posts", "p1", "index.html");
+        File.Delete(outputFile);
+
+        // 哈希仍匹配但文件已不在 → File.Exists 闸门必须拦住跳过，重建产物
+        var second = await builder.BuildAsync(options);
+        Assert.True(second.Success, Join(second.Errors));
+
+        Assert.True(File.Exists(outputFile), "产物缺失时不得跳过写盘");
+        Assert.Contains("原始内容", File.ReadAllText(outputFile));
+    }
+
+    [Fact]
+    public async Task 输出跳过_clean下绕过_全量重写()
+    {
+        var site = CreateSite();
+        var options = new BuildOptions
+        {
+            SourcePath = site,
+            OutputPath = Path.Combine(site, "public"),
+            Parallelism = 1,
+            CachePath = Path.Combine(site, ".flint-cache"),
+            CleanOutput = true
+        };
+        var builder = CreateBuilder(site);
+
+        var first = await builder.BuildAsync(options);
+        Assert.True(first.Success, Join(first.Errors));
+
+        var outputFile = Path.Combine(site, "public", "posts", "p1", "index.html");
+        var mtimeBefore = File.GetLastWriteTimeUtc(outputFile);
+
+        await Task.Delay(50);
+        var second = await builder.BuildAsync(options);
+        Assert.True(second.Success, Join(second.Errors));
+
+        // --clean 删除产物后必重建（跳过检查整体绕过，不存在“跳过后文件缺失”）
+        Assert.True(File.Exists(outputFile));
+        Assert.True(File.GetLastWriteTimeUtc(outputFile) > mtimeBefore,
+            "--clean 下产物应被重建");
+    }
+
+    [Fact]
+    public async Task 输出跳过_未开启cache_每次均重写()
+    {
+        var site = CreateSite();
+        var options = new BuildOptions
+        {
+            SourcePath = site,
+            OutputPath = Path.Combine(site, "public"),
+            Parallelism = 1
+        };
+        var builder = CreateBuilder(site);
+
+        var first = await builder.BuildAsync(options);
+        Assert.True(first.Success, Join(first.Errors));
+        var outputFile = Path.Combine(site, "public", "posts", "p1", "index.html");
+        var mtimeBefore = File.GetLastWriteTimeUtc(outputFile);
+
+        await Task.Delay(50);
+        var second = await builder.BuildAsync(options);
+        Assert.True(second.Success, Join(second.Errors));
+
+        Assert.True(File.GetLastWriteTimeUtc(outputFile) > mtimeBefore,
+            "默认路径（无 --cache）行为不变：每次构建都写盘");
+    }
+
     // ---- 辅助 ----
 
     private static string Join(IReadOnlyList<BuildError> errors) =>

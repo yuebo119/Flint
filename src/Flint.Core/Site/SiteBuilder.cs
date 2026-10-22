@@ -99,6 +99,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
         // 若命中会跳过重建导致写入阶段报"目录不存在"
         OutputDirectoryEnsurer.Reset();
         _writtenPaths.Clear();
+        InitOutputCache(options);
 
         // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr
         // 输出各阶段耗时；默认关闭，仅一个 bool 判断的开销
@@ -234,7 +235,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
 
             // 11. 写入输出文件（先创建目录）
             await WriteOutputAsync(
-                renderedPages, taxonomyPages, processedAssets, options, cancellationToken);
+                renderedPages, taxonomyPages, processedAssets, options, warnings, cancellationToken);
             Phase("11.写入输出");
 
             // 11.5 \u8f85\u52a9\u8f93\u51fa\uff08\u4e3b\u9898\u517c\u5bb9\u6279\u6b21\u4e00\uff09\uff1aaliases \u91cd\u5b9a\u5411\u9875/404/robots

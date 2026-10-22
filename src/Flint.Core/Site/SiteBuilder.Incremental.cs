@@ -34,6 +34,7 @@ public sealed partial class SiteBuilder
         BuildRenderStateAccess.BeginBuildScope();
         OutputDirectoryEnsurer.Reset();
         _writtenPaths.Clear();
+        InitOutputCache(options);
 
         // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态
         //（"改模板后立即增量"是测试锁定的高频真实场景）
@@ -313,7 +314,7 @@ public sealed partial class SiteBuilder
                         : [];
                 Phase("3.渲染+分类页");
 
-                await WriteOutputAsync(renderedPages, taxonomyPagesIncremental, [], options, cancellationToken);
+                await WriteOutputAsync(renderedPages, taxonomyPagesIncremental, [], options, warnings, cancellationToken);
 
                 // sitemap/rss/atom 是全局聚合产物，内容变化后必须重生成
                 // （此前增量路径完全跳过，删除内容后 sitemap 持久保留死链）；
