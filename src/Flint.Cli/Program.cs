@@ -163,6 +163,10 @@ internal static class Program
         var liveReloadOpt = new Option<bool>("--livereload", "-l") { Description = "启用热重载", DefaultValueFactory = _ => true };
         var draftsOpt = new Option<bool>("--drafts", "-D") { Description = "包含草稿内容", DefaultValueFactory = _ => true };
         var sourceOpt = new Option<string>("--source", "-s") { Description = "源目录", DefaultValueFactory = _ => "." };
+        var cacheOpt = new Option<bool>("--cache")
+        {
+            Description = "启用持久内容缓存（源目录 .flint-cache/，首次全量构建跳过未变化文件的读盘）"
+        };
 
         cmd.Options.Add(portOpt);
         cmd.Options.Add(hostOpt);
@@ -170,6 +174,7 @@ internal static class Program
         cmd.Options.Add(liveReloadOpt);
         cmd.Options.Add(draftsOpt);
         cmd.Options.Add(sourceOpt);
+        cmd.Options.Add(cacheOpt);
 
         cmd.SetAction(async (ctx, token) =>
         {
@@ -179,8 +184,9 @@ internal static class Program
             var liveReload = ctx.GetValue(liveReloadOpt);
             var drafts = ctx.GetValue(draftsOpt);
             var source = ctx.GetValue(sourceOpt);
+            var cache = ctx.GetValue(cacheOpt);
             var verbose = ctx.GetValue(verboseOption);
-            return await ServeHandler.ExecuteAsync(port, open, liveReload, drafts, source!, verbose, host!);
+            return await ServeHandler.ExecuteAsync(port, open, liveReload, drafts, source!, verbose, cache, host!);
         });
 
         rootCommand.Subcommands.Add(cmd);

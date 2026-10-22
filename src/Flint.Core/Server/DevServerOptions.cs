@@ -71,4 +71,11 @@ public sealed class DevServerOptions
     /// 重复 AutoLoadAsync——2026-10-21 性能优化）
     /// </summary>
     public SiteConfig? PreloadedConfig { get; init; }
+
+    /// <summary>
+    /// 持久内容缓存目录（serve --cache）：首次全量构建跳过未变化文件的读盘
+    /// 重解析（大语料首启省秒级）；后续增量重建不受影响（走 changedFiles
+    /// 路径 + 进程内缓存）。null = 不启用（默认）
+    /// </summary>
+    public string? CachePath { get; init; }
 }

@@ -364,6 +364,22 @@ public sealed class CliBoundaryConditionTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// --cache 选项在 build 与 serve 两个命令的帮助中都应存在（2026-10-22
+    /// 持久内容缓存的 CLI 面锁定；只断言 ASCII 选项名，CLI 输出为 GBK 编码）
+    /// </summary>
+    [Fact]
+    public async Task HelpOption_build与serve均列出_cache选项()
+    {
+        var build = await _cli.RunAsync(["build", "--help"]);
+        (build.StandardOutput + build.ErrorOutput).Should().Contain("--cache",
+            "build 应暴露 --cache");
+
+        var serve = await _cli.RunAsync(["serve", "--help"]);
+        (serve.StandardOutput + serve.ErrorOutput).Should().Contain("--cache",
+            "serve 应暴露 --cache");
+    }
+
+    /// <summary>
     /// 测试 help 命令
     /// </summary>
     [Fact]

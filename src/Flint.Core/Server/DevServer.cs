@@ -159,7 +159,9 @@ public sealed class DevServer : IDevServer, IDisposable
             IncludeDrafts = options.IncludeDrafts,
             IncludeFuture = options.IncludeFuture,
             Parallelism = Environment.ProcessorCount,
-            PreloadedConfig = options.PreloadedConfig
+            PreloadedConfig = options.PreloadedConfig,
+            // serve --cache：首次全量构建的扫描段走持久缓存（大语料省秒级）
+            CachePath = options.CachePath
         };
 
         var result = await _siteBuilder.BuildAsync(buildOptions, cancellationToken);
@@ -268,7 +270,10 @@ public sealed class DevServer : IDevServer, IDisposable
                 IncludeFuture = options.IncludeFuture,
                 Parallelism = Environment.ProcessorCount,
                 // fast render mode（T4.4）：模板变化的增量构建只重渲染浏览器访问中的页面
-                PreferredUrls = options.FastRenderMode ? _recentUrls.Snapshot() : null
+                PreferredUrls = options.FastRenderMode ? _recentUrls.Snapshot() : null,
+                // serve --cache：模板变化/mass edit 触发的全量重建同样走持久缓存
+                // （内容未变时全命中零写盘；增量路径不扫描，此键无副作用）
+                CachePath = options.CachePath
             };
 
             // 模板/配置/数据文件变化影响全站（首页、分类页等非内容页面也依赖它们），走全量重建；

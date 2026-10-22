@@ -27,6 +27,7 @@ internal static class ServeHandler
         bool drafts,
         string source,
         bool verbose,
+        bool cache,
         string host = "localhost")
     {
         var sourcePath = Path.GetFullPath(source);
@@ -144,7 +145,9 @@ internal static class ServeHandler
                 IncludeDrafts = drafts,
                 IncludeFuture = true,
                 Verbose = verbose,
-                PreloadedConfig = config
+                PreloadedConfig = config,
+                // serve --cache：持久内容缓存目录（源侧，与 build --cache 同址）
+                CachePath = cache ? Path.Combine(sourcePath, ".flint-cache") : null
             };
 
             // 设置取消处理

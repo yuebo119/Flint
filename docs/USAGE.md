@@ -390,6 +390,7 @@ Flint serve [选项]
 | `--open` | `-o` | true | 自动打开浏览器 |
 | `--livereload` | `-l` | true | 启用热重载 |
 | `--drafts` | `-D` | true | 包含草稿内容 |
+| `--cache` | - | false | 启用持久内容缓存（首次全量构建跳过未变化文件的读盘；与 `build --cache` 同址同语义） |
 | `--verbose` | `-v` | false | 详细输出 |
 
 ### Flint version - 版本信息
