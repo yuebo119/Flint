@@ -56,6 +56,7 @@ public sealed partial class SiteBuilder
         string sourcePath,
         IReadOnlyList<string> themeNames,
         BuildOptions options,
+        SiteConfig config,
         ConcurrentBag<BuildError> errors,
         CancellationToken cancellationToken,
         string basePathPrefix = "")
@@ -79,8 +80,12 @@ public sealed partial class SiteBuilder
         // 会 404**（hugo-paper 的 `url(./theme.png)`：Hugo 下解析为 /theme.png ✔、
         // Flint 下解析为 /assets/theme.png ✗）。static/ 本就映射到输出根，两者同前缀即
         // Hugo 的"站点资源同一命名空间"语义（static 先收集 → 同路径时 static 胜）
-        CollectAssetFiles(Path.Combine(sourcePath, "assets"), outputPrefixBase, isTheme: false, assetsByRelative);
-        CollectAssetFiles(Path.Combine(sourcePath, "static"), outputPrefixBase, isTheme: false, assetsByRelative);
+        // assetDir/staticDir 由配置驱动（config.assetDir/staticDir），空值取 Hugo 默认名。
+        // 此前写死字面量，配置里改了也无效（校验却照常通过）
+        var assetDirName = string.IsNullOrEmpty(config.AssetDir) ? "assets" : config.AssetDir;
+        var staticDirName = string.IsNullOrEmpty(config.StaticDir) ? "static" : config.StaticDir;
+        CollectAssetFiles(Path.Combine(sourcePath, assetDirName), outputPrefixBase, isTheme: false, assetsByRelative);
+        CollectAssetFiles(Path.Combine(sourcePath, staticDirName), outputPrefixBase, isTheme: false, assetsByRelative);
 
         // 主题列表按序收集（前面的优先，TryAdd 先到先得形成覆盖链）
         foreach (var themeName in themeNames)
@@ -233,7 +238,7 @@ public sealed partial class SiteBuilder
                 var ctx = new TemplateContext { Site = siteContext, Page = homePage ?? new PageContext
                 {
                     Title = config.Title, Content = "", Permalink = config.BaseURL,
-                    RelPermalink = "/", Date = DateTimeOffset.Now, Tags = [], Categories = [],
+                    RelPermalink = "/", Date = DateTimeOffset.MinValue, Tags = [], Categories = [],
                     WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
                 }};
                 var sitemap = await _templateRenderer.RenderAsync("sitemap", ctx, cancellationToken);
@@ -269,7 +274,7 @@ public sealed partial class SiteBuilder
             var rssCtx = new TemplateContext { Site = siteContext, Page = homePage ?? new PageContext
             {
                 Title = config.Title, Content = "", Permalink = config.BaseURL,
-                RelPermalink = "/", Date = DateTimeOffset.Now, Tags = [], Categories = [],
+                RelPermalink = "/", Date = DateTimeOffset.MinValue, Tags = [], Categories = [],
                 WordCount = 0, ReadingTime = TimeSpan.Zero, Type = "home"
             }};
             var rssContent = await _templateRenderer.RenderAsync("rss", rssCtx, cancellationToken);
@@ -814,6 +819,11 @@ public sealed partial class SiteBuilder
         // 1. aliases 重定向页（Hugo front matter aliases 语义）：每个别名路径产出
         //    meta-refresh 页面，指向页面真实 Permalink；路径逃逸的别名跳过。
         //    **并行写盘**（2026-10-21 性能优化：aliases 无数据依赖，可并行）
+        //    按目标路径去重：两个页面声明同一 alias、或 alias 撞上已渲染页面时，
+        //    并发写同一文件会抛 IOException（同目录 feed 写盘实测过 being used
+        //    by another process）或产出去向不确定的重定向页。先到者胜并可预测
+        //    （pages 顺序稳定），已由页面写入的路径不再被 alias 覆盖。
+        var aliasTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var aliasTasks = new List<Task>();
         foreach (var page in pages.Where(p => p.Aliases is { Count: > 0 }))
         {
@@ -821,6 +831,10 @@ public sealed partial class SiteBuilder
             {
                 var aliasOutput = ResolveAliasOutputPath(alias, options.OutputPath);
                 if (aliasOutput is null)
+                {
+                    continue;
+                }
+                if (!aliasTargets.Add(aliasOutput) || _writtenPaths.ContainsKey(aliasOutput))
                 {
                     continue;
                 }
@@ -851,7 +865,7 @@ public sealed partial class SiteBuilder
                 Permalink = config.BaseURL.TrimEnd('/') + "/404.html",
                 // 子路径构建时 rel 带前缀，输出才能落到 /<主题>/404.html
                 RelPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + "/404.html",
-                Date = DateTimeOffset.Now,
+                Date = DateTimeOffset.MinValue,
                 Tags = [],
                 Categories = [],
                 WordCount = 0,
@@ -879,7 +893,7 @@ public sealed partial class SiteBuilder
                 Permalink = config.BaseURL.TrimEnd('/') + "/robots.txt",
                 // 子路径构建时 rel 带前缀，输出才能落到 /<主题>/robots.txt
                 RelPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + "/robots.txt",
-                Date = DateTimeOffset.Now,
+                Date = DateTimeOffset.MinValue,
                 Tags = [],
                 Categories = [],
                 WordCount = 0,

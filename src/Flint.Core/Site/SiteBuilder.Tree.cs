@@ -979,7 +979,7 @@ public sealed partial class SiteBuilder
             Content = "",
             Permalink = Templates.TemplateResource.OriginOf(config.BaseURL) + relPermalink,
             RelPermalink = relPermalink,
-            Date = DateTimeOffset.Now,
+            Date = DateTimeOffset.MinValue,
             Tags = [],
             Categories = [],
             WordCount = 0,

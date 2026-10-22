@@ -35,20 +35,20 @@ public sealed class FeedGenerator
     public string GenerateRss(IReadOnlyList<PageContext> pages)
     {
         var sb = new StringBuilder();
-        var settings = CreateXmlSettings();
+        var settings = XmlOutput.CreateSettings(indent: true);
 
         using var writer = XmlWriter.Create(sb, settings);
 
-        writer.WriteStartDocument();
         writer.WriteStartElement("rss");
         writer.WriteAttributeString("version", "2.0");
         writer.WriteAttributeString("xmlns", "atom", null, AtomNamespace);
         writer.WriteAttributeString("xmlns", "content", null, ContentNamespace);
 
-        writer.WriteStartElement("channel");
-        WriteRssChannelInfo(writer);
-
         var feedPages = GetFeedPages(pages);
+
+        writer.WriteStartElement("channel");
+        WriteRssChannelInfo(writer, LatestFeedDate(feedPages));
+
         foreach (var page in feedPages)
         {
             WriteRssItem(writer, page);
@@ -56,10 +56,9 @@ public sealed class FeedGenerator
 
         writer.WriteEndElement(); // channel
         writer.WriteEndElement(); // rss
-        writer.WriteEndDocument();
         writer.Flush();
 
-        return sb.ToString();
+        return XmlOutput.WithPreamble(sb);
     }
 
     /// <summary>
@@ -70,35 +69,56 @@ public sealed class FeedGenerator
     public string GenerateAtom(IReadOnlyList<PageContext> pages)
     {
         var sb = new StringBuilder();
-        var settings = CreateXmlSettings();
+        var settings = XmlOutput.CreateSettings(indent: true);
 
         using var writer = XmlWriter.Create(sb, settings);
 
-        writer.WriteStartDocument();
         writer.WriteStartElement("feed", AtomNamespace);
 
-        WriteAtomFeedInfo(writer);
-
         var feedPages = GetFeedPages(pages);
+        WriteAtomFeedInfo(writer, LatestFeedDate(feedPages));
+
         foreach (var page in feedPages)
         {
             WriteAtomEntry(writer, page);
         }
 
         writer.WriteEndElement(); // feed
-        writer.WriteEndDocument();
         writer.Flush();
 
-        return sb.ToString();
+        return XmlOutput.WithPreamble(sb);
     }
 
-    private void WriteRssChannelInfo(XmlWriter writer)
+    /// <summary>
+    /// feed 级时间戳的取值：页面最大日期（feedPages 已按日期降序）。
+    /// 不用构建时刻：同一输入两次构建会产出不同字节，且 CDN/差分部署与
+    /// --cache 写盘跳过都会因此失效（2026-10-22 审计 P0-4）。
+    /// 无可用日期返回 null，调用方省略该元素。
+    /// </summary>
+    private static DateTimeOffset? LatestFeedDate(IReadOnlyList<PageContext> pages)
+    {
+        foreach (var page in pages)
+        {
+            var date = page.LastMod ?? page.Date;
+            if (date != DateTimeOffset.MinValue)
+            {
+                return date;
+            }
+        }
+
+        return null;
+    }
+
+    private void WriteRssChannelInfo(XmlWriter writer, DateTimeOffset? lastBuildDate)
     {
         writer.WriteElementString("title", _options.Title);
         writer.WriteElementString("link", _options.BaseUrl);
         writer.WriteElementString("description", _options.Description ?? "");
         writer.WriteElementString("language", _options.Language);
-        writer.WriteElementString("lastBuildDate", FormatRssDate(DateTimeOffset.Now));
+        if (lastBuildDate.HasValue)
+        {
+            writer.WriteElementString("lastBuildDate", FormatRssDate(lastBuildDate.Value));
+        }
 
         if (!string.IsNullOrEmpty(_options.Copyright))
         {
@@ -131,7 +151,11 @@ public sealed class FeedGenerator
         writer.WriteString(GetAbsoluteUrl(page.Permalink));
         writer.WriteEndElement();
 
-        writer.WriteElementString("pubDate", FormatRssDate(page.Date));
+        // pubDate 可选元素：零值时间省略，避免 0001-01-01 进入订阅源
+        if (page.Date != DateTimeOffset.MinValue)
+        {
+            writer.WriteElementString("pubDate", FormatRssDate(page.Date));
+        }
 
         // 描述/摘要
         var description = page.Summary ?? page.Description ?? "";
@@ -159,12 +183,15 @@ public sealed class FeedGenerator
         writer.WriteEndElement(); // item
     }
 
-    private void WriteAtomFeedInfo(XmlWriter writer)
+    private void WriteAtomFeedInfo(XmlWriter writer, DateTimeOffset? updated)
     {
         writer.WriteElementString("title", _options.Title);
         writer.WriteElementString("subtitle", _options.Description ?? "");
         writer.WriteElementString("id", _options.BaseUrl);
-        writer.WriteElementString("updated", FormatAtomDate(DateTimeOffset.Now));
+        if (updated.HasValue)
+        {
+            writer.WriteElementString("updated", FormatAtomDate(updated.Value));
+        }
 
         // Self link
         writer.WriteStartElement("link");
@@ -216,8 +243,17 @@ public sealed class FeedGenerator
         writer.WriteAttributeString("type", "text/html");
         writer.WriteEndElement();
 
-        writer.WriteElementString("published", FormatAtomDate(page.Date));
-        writer.WriteElementString("updated", FormatAtomDate(page.LastMod ?? page.Date));
+        // published/updated 在无日期页上省略（零值时间不是有效时间戳）
+        if (page.Date != DateTimeOffset.MinValue)
+        {
+            writer.WriteElementString("published", FormatAtomDate(page.Date));
+        }
+
+        var entryUpdated = page.LastMod ?? page.Date;
+        if (entryUpdated != DateTimeOffset.MinValue)
+        {
+            writer.WriteElementString("updated", FormatAtomDate(entryUpdated));
+        }
 
         // Summary
         var summary = page.Summary ?? page.Description ?? "";
@@ -273,16 +309,6 @@ public sealed class FeedGenerator
         var baseUrl = _options.BaseUrl.TrimEnd('/');
         var normalizedPath = path.StartsWith('/') ? path : "/" + path;
         return baseUrl + normalizedPath;
-    }
-
-    private static XmlWriterSettings CreateXmlSettings()
-    {
-        return new XmlWriterSettings
-        {
-            Indent = true,
-            Encoding = Encoding.UTF8,
-            OmitXmlDeclaration = false
-        };
     }
 
     private static string FormatRssDate(DateTimeOffset date)

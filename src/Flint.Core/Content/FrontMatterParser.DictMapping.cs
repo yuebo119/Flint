@@ -16,6 +16,42 @@ namespace Flint.Core.Content;
 public sealed partial class FrontMatterParser
 {
     /// <summary>
+    /// 键名大小写归一：仅在存在大写字母时复制成大小写不敏感字典。
+    /// 合法内容通常全小写，此时零分配直接复用原字典（万页构建热路径）。
+    /// </summary>
+    private static Dictionary<string, object> WithCaseInsensitiveKeys(Dictionary<string, object> dict)
+    {
+        if (ReferenceEquals(dict.Comparer, StringComparer.OrdinalIgnoreCase))
+        {
+            return dict;
+        }
+
+        var hasUpper = false;
+        foreach (var key in dict.Keys)
+        {
+            if (key.AsSpan().ContainsAnyInRange('A', 'Z'))
+            {
+                hasUpper = true;
+                break;
+            }
+        }
+
+        if (!hasUpper)
+        {
+            return dict;
+        }
+
+        var normalized = new Dictionary<string, object>(dict.Count, StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in dict)
+        {
+            // 大小写不同的重复键（title 与 Title）后者覆盖，与 YAML 重复键语义一致
+            normalized[key] = value;
+        }
+
+        return normalized;
+    }
+
+    /// <summary>
     /// 将字典转换为 FrontMatter
     /// </summary>
     private static FrontMatter ConvertDictToFrontMatter(
@@ -23,6 +59,11 @@ public sealed partial class FrontMatterParser
         FrontMatterFormat format,
         TimeZoneInfo? siteTimeZone)
     {
+        // 键名大小写归一：Hugo 侧 mapstructure 反序列化对键名大小写不敏感，
+        // `Title:`/`Draft:` 同样生效；此前快路径白名单 OrdinalIgnoreCase 放行了大写键，
+        // 取值却走精确键查找，导致标题变 Untitled、`Draft: true` 的草稿照常发布。
+        dict = WithCaseInsensitiveKeys(dict);
+
         // Hugo 特殊日期源（date/lastmod = ":git"/":filemodtime"/":filename"）：
         // 解析期不产出时间，只记录源标记，由 FrontMatterExtensions.WithDateSources 兑现
         var (date, dateSource) = GetDictDateWithSource(dict, "date", siteTimeZone);

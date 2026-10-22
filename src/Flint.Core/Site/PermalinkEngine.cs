@@ -24,7 +24,9 @@ internal static class PermalinkEngine
             _ => config.Permalinks?.Pages
         };
 
-        var date = content.Metadata.Date ?? DateTimeOffset.Now;
+        // 零值时间而非构建时刻：permalink 含 :year/:month 时，回落 Now 会让
+        // 无日期页的 URL 随构建当天漂移（同仓 Tree.cs 对无日期页同样用零值）
+        var date = content.Metadata.Date ?? DateTimeOffset.MinValue;
         var fileName = Path.GetFileNameWithoutExtension(content.SourcePath);
 
         // slug 变量：显式 slug 优先，否则文件名（index.md/_index.md 用父目录名）。

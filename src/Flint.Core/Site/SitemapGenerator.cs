@@ -38,16 +38,10 @@ public sealed class SitemapGenerator
     public string Generate(IReadOnlyList<PageContext> pages)
     {
         var sb = new StringBuilder();
-        var settings = new XmlWriterSettings
-        {
-            Indent = _options.Indent,
-            Encoding = Encoding.UTF8,
-            OmitXmlDeclaration = false
-        };
+        var settings = XmlOutput.CreateSettings(_options.Indent);
 
         using var writer = XmlWriter.Create(sb, settings);
 
-        writer.WriteStartDocument();
         writer.WriteStartElement("urlset", SitemapNamespace);
 
         if (_options.IncludeAlternateLanguages)
@@ -61,10 +55,9 @@ public sealed class SitemapGenerator
         }
 
         writer.WriteEndElement(); // urlset
-        writer.WriteEndDocument();
         writer.Flush();
 
-        return sb.ToString();
+        return XmlOutput.WithPreamble(sb);
     }
 
     private void WriteUrlEntry(XmlWriter writer, PageContext page)
@@ -82,8 +75,12 @@ public sealed class SitemapGenerator
         writer.WriteElementString("loc", url);
 
         // lastmod - 可选
+        // lastmod - 可选；零值时间（0001-01-01）不是有效日期，省略该元素
         var lastMod = page.LastMod ?? page.Date;
-        writer.WriteElementString("lastmod", FormatDate(lastMod));
+        if (lastMod != DateTimeOffset.MinValue)
+        {
+            writer.WriteElementString("lastmod", FormatDate(lastMod));
+        }
 
         // changefreq - 可选
         if (_options.IncludeChangeFreq)
@@ -157,6 +154,7 @@ public sealed class SitemapGenerator
 
     private static string FormatDate(DateTimeOffset date)
     {
+        // 零值时间不出现在 sitemap 里：无日期页的 lastmod 由调用方省略
         return date.ToString("yyyy-MM-dd");
     }
 }
