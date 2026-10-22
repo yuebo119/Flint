@@ -45,6 +45,14 @@ jobs:
           dotnet build src/Flint.AiGate -c Release
       - name: 单元测试（Flint.Core.Tests）
         run: dotnet run --project tests/Flint.Core.Tests -c Release --no-build -- -parallelMode none
+      - name: 工具链测试（Tools.Tests / ThemeMigrator.Tests）
+        # 这两个测试项目不在 Flint.slnx 内（独立工具链），此前 CI 完全不覆盖：
+        # ThemeMigrator 6742 行 + 103 项测试、DevTools 4705 行的回归无人发现
+        run: |
+          dotnet build tests/Flint.Tools.Tests -c Release
+          dotnet build tests/Flint.ThemeMigrator.Tests -c Release
+          dotnet run --project tests/Flint.Tools.Tests -c Release --no-build
+          dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release --no-build
       - name: 质量门禁（AiGate gate-check 18 项）
         run: dotnet run --project src/Flint.AiGate -c Release --no-build -- gate-check
 

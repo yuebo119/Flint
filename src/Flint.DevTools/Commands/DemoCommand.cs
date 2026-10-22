@@ -33,13 +33,13 @@ internal static class DemoCommand
     private static string FixturesCorpus => Path.Combine(DemoSitesDir, "fixtures", "corpus");
 
     private static string MigratorExe => Path.Combine(
-        RepoPaths.RepoRoot, "src", "Flint.ThemeMigrator", "bin", "Debug", "net10.0", "Flint.ThemeMigrator.exe");
+        RepoPaths.RepoRoot, "src", "Flint.ThemeMigrator", "bin", "Debug", RepoPaths.TargetFrameworkMoniker, "Flint.ThemeMigrator.exe");
 
     private static string FlintExe => Path.Combine(
-        RepoPaths.RepoRoot, "src", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint.exe");
+        RepoPaths.RepoRoot, "src", "Flint.Cli", "bin", "Release", RepoPaths.TargetFrameworkMoniker, "win-x64", "Flint.exe");
 
     private static string DemoServeExe => Path.Combine(
-        DemoSitesDir, "demo-serve", "bin", "Release", "net10.0", "demo-serve.exe");
+        DemoSitesDir, "demo-serve", "bin", "Release", RepoPaths.TargetFrameworkMoniker, "demo-serve.exe");
 
     private const int PortBase = 8401;
     private const int GalleryPort = 8400;

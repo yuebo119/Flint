@@ -547,39 +547,45 @@ public sealed class CliTestRunner : IDisposable
 
         // 尝试在项目输出目录中查找
         var baseDir = AppContext.BaseDirectory;
-        var possiblePaths = new[]
+
+        // 先取本测试程序集自身的构建配置（…\bin\<config>\<tfm>\），
+        // 同配置的 CLI 产物优先：此前 Debug 路径固定排在 Release 之前，
+        // Release 配置下的集成测试实际跑的是 Debug 二进制，测试结论与发布形态脱钩
+        var ownConfig = baseDir
+            .Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
+            .SkipWhile(s => !string.Equals(s, "bin", StringComparison.OrdinalIgnoreCase))
+            .Skip(1)
+            .FirstOrDefault() ?? "Release";
+        var otherConfig = string.Equals(ownConfig, "Debug", StringComparison.OrdinalIgnoreCase) ? "Release" : "Debug";
+
+        var repoRoot = Path.Combine(baseDir, "..", "..", "..", "..", "..");
+        var candidates = new List<string>
         {
-            // 优先使用发布目录（AOT 编译的独立可执行文件）
-            // 从 tests/Flint.IntegrationTests/bin/Debug/net10.0 到 src/publish 需要向上 5 级
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "publish", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "publish", "Flint"),
-            // 当前 TFM（net11.0，见 Directory.Build.props）优先——net10.0 旧二进制
+            // 发布目录（AOT 独立可执行文件）优先
+            Path.Combine(repoRoot, "src", "publish", "Flint.exe"),
+            Path.Combine(repoRoot, "src", "publish", "Flint"),
+        };
+        foreach (var config in new[] { ownConfig, otherConfig })
+        {
+            // 当前 TFM（net11.0，见 Directory.Build.props）；net10.0 旧二进制
             // 在本机无对应运行时，进程启动失败会让全部 E2E 测试静默变红
             //（exit!=0 且无 stderr，2026-10-19 双引擎迁移实测）
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "win-x64", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "win-x64", "Flint"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "win-x64", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "win-x64", "Flint"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net11.0", "Flint"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net11.0", "Flint"),
-            
-            // 在解决方案目录结构中查找（非 AOT 版本，带 RID 子目录）
-            // 从 tests/Flint.IntegrationTests/bin/Debug/net10.0 到 src/Flint.Cli/bin/Debug/net10.0/win-x64 需要向上 5 级
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net10.0", "win-x64", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net10.0", "win-x64", "Flint"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint"),
-            
-            // 在解决方案目录结构中查找（非 AOT 版本，不带 RID 子目录）
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net10.0", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Debug", "net10.0", "Flint"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net10.0", "Flint.exe"),
-            Path.Combine(baseDir, "..", "..", "..", "..", "..", "src", "Flint.Cli", "bin", "Release", "net10.0", "Flint"),
-            
-            // 注意：不使用测试输出目录中的 Flint.exe，因为它的 runtimeconfig.json 配置不正确
-        };
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net11.0", "win-x64", "Flint.exe"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net11.0", "win-x64", "Flint"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net11.0", "Flint.exe"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net11.0", "Flint"));
+        }
+
+        foreach (var config in new[] { ownConfig, otherConfig })
+        {
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net10.0", "win-x64", "Flint.exe"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net10.0", "win-x64", "Flint"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net10.0", "Flint.exe"));
+            candidates.Add(Path.Combine(repoRoot, "src", "Flint.Cli", "bin", config, "net10.0", "Flint"));
+        }
+
+        // 注意：不使用测试输出目录中的 Flint.exe，因为它的 runtimeconfig.json 配置不正确
+        var possiblePaths = candidates.ToArray();
 
         foreach (var path in possiblePaths)
         {

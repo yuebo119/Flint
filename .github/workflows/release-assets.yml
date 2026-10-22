@@ -55,11 +55,19 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          P="src/Flint.Cli/bin/Release/net10.0/${{ matrix.rid }}/publish/Flint"
+          # TFM 目录名不写死（net11.0 之后还会变）：按 glob 定位发布目录，
+          # 此前硬编码 net10.0 会让本步骤在 TFM 升级后必然失败
+          PDT=$(ls -d src/Flint.Cli/bin/Release/net*/${{ matrix.rid }}/publish 2>/dev/null | head -n 1)
+          if [ -z "$PDT" ]; then
+            echo "未找到 AOT 发布产物目录: src/Flint.Cli/bin/Release/net*/${{ matrix.rid }}/publish" >&2
+            exit 1
+          fi
           NAME="Flint-${TAG}-${{ matrix.rid }}"
           if [ "${{ matrix.rid }}" = "win-x64" ]; then
-            P="$P.exe"
+            P="$PDT/Flint.exe"
             NAME="$NAME.exe"
+          else
+            P="$PDT/Flint"
           fi
           cp "$P" "dist/$NAME"
           echo "ASSET_NAME=$NAME" >> "$GITHUB_ENV"

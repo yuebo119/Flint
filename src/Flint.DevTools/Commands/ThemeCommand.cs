@@ -536,8 +536,8 @@ internal static class ThemeCommand
     private static async Task RunMatrix(string[] requested)
     {
         var names = requested.Length > 0 ? requested : MatrixThemes;
-        var migrator = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.ThemeMigrator", "bin", "Debug", "net10.0", "Flint.ThemeMigrator.exe");
-        var flint = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint.exe");
+        var migrator = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.ThemeMigrator", "bin", "Debug", RepoPaths.TargetFrameworkMoniker, "Flint.ThemeMigrator.exe");
+        var flint = Path.Combine(RepoPaths.RepoRoot, "src", "Flint.Cli", "bin", "Release", RepoPaths.TargetFrameworkMoniker, "win-x64", "Flint.exe");
         var hugo = Path.GetFullPath(HugoExe);
 
         // Hugo 的 Dart Sass（TOCSS-DART）要求 dart-sass 可执行在 PATH——extended

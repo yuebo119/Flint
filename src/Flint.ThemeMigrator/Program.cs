@@ -46,7 +46,17 @@ for (var i = 0; i < args.Length; i++)
         case "--hugo-output" when i + 1 < args.Length:
             hugoOutput = args[++i];
             break;
+        // 已知选项缺值、未知选项一律拒绝：此前它们落入位置参数，
+        // `--foo bar` 会把源/目标挤位，配合输出目录自动删更危险
+        case "--report" or "--verify" or "--site-output" or "--flint" or "--hugo-output":
+            Console.Error.WriteLine($"选项 {args[i]} 缺少参数值");
+            return 2;
         default:
+            if (args[i].StartsWith("--", StringComparison.Ordinal))
+            {
+                Console.Error.WriteLine($"未知选项: {args[i]}");
+                return 2;
+            }
             positional.Add(args[i]);
             break;
     }

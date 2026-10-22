@@ -98,8 +98,28 @@ internal sealed class ThemeMigrator
             return summary;
         }
 
+        // 危险路径守卫：目标目录会被递归删除（无回收站）。目标与源重叠、
+        // 或目标是盘根/一级目录时直接拒绝——此前无任何判据，
+        // `Migrate <主题> <主题>` 会先删掉源目录再迁移空气
+        var sourceFull = Path.GetFullPath(sourceRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var targetFull = Path.GetFullPath(targetRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var overlap = string.Equals(sourceFull, targetFull, StringComparison.OrdinalIgnoreCase)
+            || sourceFull.StartsWith(targetFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || targetFull.StartsWith(sourceFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        var tooShallow = targetFull.Length <= Path.GetPathRoot(targetFull)!.TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length + 1;
+        if (overlap || tooShallow)
+        {
+            summary.GlobalDiagnostics.Add(
+                $"拒绝迁移：输出目录 ({targetFull}) 与源目录重叠或为盘根/一级目录，递归删除会丢失源内容");
+            return summary;
+        }
+
         if (Directory.Exists(targetRoot))
         {
+            summary.GlobalDiagnostics.Add($"清空已存在的输出目录: {targetFull}");
             Directory.Delete(targetRoot, recursive: true);
         }
         Directory.CreateDirectory(targetRoot);

@@ -260,7 +260,9 @@ Flint 支持 CommonMark + GFM 扩展：
 
 ## 模板语法
 
-Flint 使用 Scriban 模板引擎。
+Flint 支持双模板引擎：新站点默认 Fluid（Liquid 语法，`.liquid` 模板），
+Hugo 主题兼容走 Scriban（`.html` 模板）。语法差异与选型见 `TEMPLATE-STANDARD.md`
+与 `LIQUID-GUIDE.md`。
 
 ### 变量访问
 
@@ -367,13 +369,14 @@ Flint build [选项]
 | 选项 | 简写 | 默认值 | 说明 |
 |------|------|--------|------|
 | `--source` | `-s` | `.` | 源目录 |
-| `--output` | `-o` | `public` | 输出目录 |
+| `--output` | `-o` | 站点 `publishDir`，未配置则 `public` | 输出目录 |
 | `--minify` | `-m` | false | 压缩 HTML/CSS/JS |
 | `--drafts` | `-D` | false | 包含草稿内容 |
 | `--future` | `-F` | false | 包含未来日期的内容 |
-| `--clean` | - | false | 构建前清理输出目录 |
+| `--clean` | - | false | 构建前清理输出目录（拒绝与源内容目录重叠的输出目录） |
 | `--cache` | - | false | 启用持久内容缓存（源目录 `.flint-cache/`）：未变化文件免读盘重解析、未变化产物免写盘（渲染照常执行）。实测 14.6k 页语料重复构建扫描+解析段 1.28s → 0.45s（-65%）、总构建 3.50s → 1.44s（-59%） |
-| `--verbose` | `-v` | false | 详细输出 |
+| `--missing-layout` | - | `error` | 缺模板时的处理：`error` 构建失败 / `skip` 跳过该页 |
+| `--verbose` | `-v` | false | 详细输出（根命令与子命令均可） |
 
 **`--cache` 说明**：缓存在源目录 `.flint-cache/content.blob`，被 CI 或本地重复构建复用。使用它的仓库应把 `.flint-cache/` 加入 `.gitignore`（缓存含内容原文，且体积与内容同量级）。已知边界：同一文件系统时间片内、同长度的内容改写可能漏检（NTFS 时间片下编辑器原子替换场景），因此该缓存是显式开关而非默认行为；`--clean` 不影响缓存（缓存在源侧），需强制重读时删 `.flint-cache/` 即可。
 
@@ -387,11 +390,12 @@ Flint serve [选项]
 |------|------|--------|------|
 | `--source` | `-s` | `.` | 源目录 |
 | `--port` | `-p` | `1313` | 服务器端口 |
-| `--open` | `-o` | true | 自动打开浏览器 |
+| `--host` | - | `localhost` | 绑定地址（默认仅本机） |
+| `--open` | - | true | 自动打开浏览器（`-o` 归 build --output，serve 不占用） |
 | `--livereload` | `-l` | true | 启用热重载 |
 | `--drafts` | `-D` | true | 包含草稿内容 |
 | `--cache` | - | false | 启用持久内容缓存（首次全量构建跳过未变化文件的读盘；与 `build --cache` 同址同语义） |
-| `--verbose` | `-v` | false | 详细输出 |
+| `--verbose` | `-v` | false | 详细输出（根命令与子命令均可） |
 
 ### Flint version - 版本信息
 

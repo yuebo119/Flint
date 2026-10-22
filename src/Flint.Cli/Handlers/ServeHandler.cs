@@ -54,10 +54,16 @@ internal static class ServeHandler
             // AutoLoadAsync：目录式配置优先（与 BuildHandler 一致），
             // 避免 DevServer 首次构建重复加载
             var config = await configLoader.AutoLoadAsync(sourcePath);
+            // 输出目录取站点配置 publishDir（未配置则 public），与 build 同口径
+            outputPath = Path.Combine(sourcePath,
+                string.IsNullOrEmpty(config.PublishDir) ? "public" : config.PublishDir);
+            // 目录名由配置驱动，空值取 Hugo 默认名（与 BuildHandler 同口径）
+            var layoutDirName = string.IsNullOrEmpty(config.LayoutDir) ? "layouts" : config.LayoutDir;
+            var assetDirName = string.IsNullOrEmpty(config.AssetDir) ? "assets" : config.AssetDir;
             // 主题布局叠加（同 BuildHandler）：站点优先、主题回退，dev server 一致生效
             var themeLayoutDirs = config.Theme
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => Path.Combine(sourcePath, "themes", t, "layouts"))
+                .Select(t => Path.Combine(sourcePath, "themes", t, layoutDirName))
                 .ToArray();
             // 双引擎（FLUID-MIGRATION-PLAN，与 BuildHandler 同构）：Fluid 渲染
             // .liquid 与 Fluid 原生站点内置回退，Scriban 渲染 Hugo 主题 .html；
@@ -65,19 +71,19 @@ internal static class ServeHandler
             // **Scriban 经工厂懒构造**（P2-4）：纯 Fluid 站点的 serve 不预构 Scriban
             var templateRenderer = new TemplateEngineRouter(
                 new FluidTemplateRenderer(
-                    Path.Combine(sourcePath, "layouts"),
+                    Path.Combine(sourcePath, layoutDirName),
                     config.BaseURL,
                     builtins: null,
                     resources: new FileSystemResourceProvider(config.BaseURL,
                     [
-                        Path.Combine(sourcePath, "assets"),
+                        Path.Combine(sourcePath, assetDirName),
                         .. config.Theme
                             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                            .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
+                            .Select(t => Path.Combine(sourcePath, "themes", t, assetDirName))
                     ]),
                     themeLayoutDirs),
                 () => new ScribanTemplateRenderer(
-                    Path.Combine(sourcePath, "layouts"),
+                    Path.Combine(sourcePath, layoutDirName),
                     config.BaseURL,
                     new TemplateEnvironmentInfo
                     {
@@ -90,10 +96,10 @@ internal static class ServeHandler
                     //（yinyang 的 head.html 实测）
                     new FileSystemResourceProvider(config.BaseURL,
                     [
-                        Path.Combine(sourcePath, "assets"),
+                        Path.Combine(sourcePath, assetDirName),
                         .. config.Theme
                             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                            .Select(t => Path.Combine(sourcePath, "themes", t, "assets"))
+                            .Select(t => Path.Combine(sourcePath, "themes", t, assetDirName))
                     ]),
                     themeLayoutDirs),
                 TemplateEngineRouter.ParsePolicy(config));
@@ -102,7 +108,7 @@ internal static class ServeHandler
             // router 实现 IRenderHookRenderer（P5-2）：.liquid 钩子分发给 Fluid；
             // Scriban 兼容模式下只认 .html
             var renderHooks = templateRenderer.LoadRenderHooks(
-                Path.Combine(sourcePath, "layouts"), themeLayoutDirs);
+                Path.Combine(sourcePath, layoutDirName), themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             // P5-3：disableShortcodes 时内置 C# 短代码也不注册（同 BuildHandler）
             var contentParser = new ContentParser(new FrontMatterParser(), markdownParser,

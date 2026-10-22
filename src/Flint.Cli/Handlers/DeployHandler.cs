@@ -124,6 +124,10 @@ internal static partial class DeployHandler
             return 1;
         }
 
+        // --delete 让远端多余对象被删（镜像语义）：打印将要镜像的源与目标，
+        // 避免"我只想上传"却意外清空 bucket 的误操作；dryRun 时同样可见
+        Console.WriteLine($"镜像: {sourcePath} → s3://{bucket}（--delete：远端多余对象会被删除）");
+
         var args = $"s3 sync \"{sourcePath}\" \"s3://{bucket}\" --delete";
         if (dryRun)
             args += " --dryrun";
@@ -187,13 +191,36 @@ internal static partial class DeployHandler
             if (verbose)
                 Console.WriteLine($"远程仓库: {SanitizeRemoteUrl(remoteUrl)}");
 
-            // 克隆 gh-pages 分支或创建新分支
+            // 克隆 gh-pages 分支；克隆失败必须先判定分支是否真的不存在：
+            // 网络/权限导致的克隆失败若走"初始化新分支 + force push"，
+            // 一次抖动就会用一个新孤儿分支覆盖远端已有历史（历史 P1）。
+            // 用 ls-remote 精确区分：退出码 0 = 分支存在（克隆失败即真故障，中止）；
+            // 退出码 2 = 无匹配 ref（分支不存在，可安全初始化）；其余 = 探测本身失败，中止。
             var cloneResult = await RunCommandAsync("git", $"clone --branch gh-pages --single-branch \"{remoteUrl}\" \"{tempDir}\"", verbose);
             if (cloneResult != 0)
             {
-                // 分支不存在（或克隆失败——网络/权限错误同样落到这里）
+                var lsRemote = await RunCommandAsync(
+                    "git", $"ls-remote --exit-code --heads \"{remoteUrl}\" gh-pages", verbose);
+
+                if (lsRemote == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("错误: gh-pages 分支存在但克隆失败（网络或权限问题），已中止以避免覆盖远端历史");
+                    Console.WriteLine("请检查网络/凭据后重试；确需覆盖时请手动推送");
+                    Console.ResetColor();
+                    return cloneResult;
+                }
+
+                if (lsRemote != 2)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine($"错误: 无法确认远端 gh-pages 分支状态（ls-remote 退出码 {lsRemote}），已中止");
+                    Console.ResetColor();
+                    return lsRemote;
+                }
+
                 if (verbose)
-                    Console.WriteLine("克隆 gh-pages 失败（分支不存在或网络/权限问题），初始化新的 gh-pages 分支...");
+                    Console.WriteLine("远端无 gh-pages 分支，初始化新的 gh-pages 分支...");
                 await RunCommandAsync("git", $"init \"{tempDir}\"", verbose);
                 await RunCommandAsync("git", $"-C \"{tempDir}\" checkout --orphan gh-pages", verbose);
                 await RunCommandAsync("git", $"-C \"{tempDir}\" remote add origin \"{remoteUrl}\"", verbose);
@@ -234,7 +261,9 @@ internal static partial class DeployHandler
                 return commitResult;
             }
 
-            var pushResult = await RunCommandAsync("git", $"-C \"{tempDir}\" push origin gh-pages --force", verbose);
+            // 普通推送即可：两条路径（克隆成功后在克隆 HEAD 之上提交 / 分支不存在时新建孤儿分支）
+            // 都是快进推送，不需要 --force；去掉 --force 后远端历史不会再被静默重写
+            var pushResult = await RunCommandAsync("git", $"-C \"{tempDir}\" push origin gh-pages", verbose);
 
             if (pushResult == 0)
             {

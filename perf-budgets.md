@@ -33,7 +33,7 @@
 
 ## 4. 运行时形态决策（已定，改前须裁决）
 
-NativeAOT + OptimizationPreference=Size（SSG 选体积优先，与 BenchmarkDotNet 测量的 JIT 形态区分；性能结论须声明构建形态——对齐 EPSL 构建形态易错点纪律）。
+NativeAOT + OptimizationPreference=Speed（2026-10-13 极致性能轮起：SSG 热路径是模板解释与 Markdown 解析，体积优先会抑制 ILC 内联/向量化。与 BenchmarkDotNet 测量的 JIT 形态区分；性能结论须声明构建形态——对齐 EPSL 构建形态易错点纪律）。
 
 ## 5. 明确不做（含分解数据）
 

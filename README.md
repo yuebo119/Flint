@@ -309,14 +309,15 @@ enableGitInfo = true                # 启用 date: ":git"
 | `flint deploy <target>` | 部署（s3://、gh-pages、netlify、vercel） |
 | `flint version` | 显示版本信息 |
 
-**构建选项**：`--source/-s`（默认 `.`）、`--output/-o`（`public`）、
+**构建选项**：`--source/-s`（默认 `.`）、`--output/-o`（默认取站点配置
+`publishDir`，未配置则 `public`）、
 `--minify/-m`、`--drafts/-D`、`--future/-F`、`--clean`、`--cache`
 （持久内容缓存，重复构建跳过未变化文件的读盘）、`--verbose/-v`、
 `--missing-layout`（`error`/`skip`，默认 error）。
 
 **服务器选项**：`--port/-p`（1313）、`--host`（localhost）、`--open`（默认
 true）、`--livereload/-l`（默认 true）、`--drafts/-D`（默认 true）、
-`--source/-s`（`.`）。
+`--cache`（与 build 同址同语义）、`--source/-s`（`.`）。
 
 ---
 

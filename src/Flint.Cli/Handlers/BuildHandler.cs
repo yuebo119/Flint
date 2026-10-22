@@ -24,7 +24,7 @@ internal static class BuildHandler
         bool minify,
         bool drafts,
         bool future,
-        string output,
+        string? output,
         string source,
         bool clean,
         bool cache,
@@ -33,22 +33,59 @@ internal static class BuildHandler
         CancellationToken cancellationToken = default)
     {
         var sourcePath = Path.GetFullPath(source);
-        var outputPath = Path.GetFullPath(output);
+        // output 未显式指定时取站点配置的 publishDir（此前该配置解析、校验齐全
+        // 却全链路无人消费，`-o` 之外没有生效路径）
+        var outputExplicit = !string.IsNullOrWhiteSpace(output);
+        var outputPath = outputExplicit ? Path.GetFullPath(output!) : string.Empty;
 
-        // 清理守卫：--clean 会递归删除输出目录（无回收站），
-        // 输出目录等于源目录或包含源目录时必须拒绝，否则源内容不可逆丢失。
-        // GetFullPath 保留尾分隔符（如 "C:\site\"），直接拼接分隔符会产生
-        // 双分隔符使前缀匹配恒失效（守卫被绕过、源目录被删）——先归一化再比较
-        var sourceNorm = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var outputNorm = outputPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        if (clean && (string.Equals(outputNorm, sourceNorm, StringComparison.OrdinalIgnoreCase)
-            || sourceNorm.StartsWith(outputNorm + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
+        // 清理守卫：--clean 会递归删除输出目录（无回收站），两种情形必须拒绝：
+        //   1. 输出等于源、或是源的祖先（删输出即删源）
+        //   2. 输出落在源的**内容目录**内（如 -o content）：删输出即删源内容。
+        // 注意不能一概拒绝"输出在源目录内"——Hugo 默认布局的 public/ 就在站点根下。
+        // GetFullPath 保留尾分隔符（如 "C:\site\"），直接拼分隔符会产生双分隔符
+        // 使前缀匹配恒失效——先归一化再比较
+        static bool IsDangerousClean(string outputPath, string sourcePath, SiteConfig config)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"错误: 输出目录 ({outputPath}) 等于或包含源目录 ({sourcePath})，--clean 将删除源内容，已拒绝");
-            Console.ResetColor();
-            return 1;
+            var sourceNorm = sourcePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var outputNorm = outputPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(outputNorm, sourceNorm, StringComparison.OrdinalIgnoreCase)
+                || sourceNorm.StartsWith(outputNorm + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            if (!outputNorm.StartsWith(sourceNorm + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            var relative = outputNorm[(sourceNorm.Length + 1)..];
+            var firstSegment = relative.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+            if (string.IsNullOrEmpty(firstSegment))
+            {
+                return false;
+            }
+
+            return SourceDirectoryNames(config).Contains(firstSegment, StringComparer.OrdinalIgnoreCase);
         }
+
+        static string[] SourceDirectoryNames(SiteConfig config) =>
+        [
+            Name(config.ContentDir, "content"),
+            Name(config.LayoutDir, "layouts"),
+            Name(config.StaticDir, "static"),
+            Name(config.AssetDir, "assets"),
+            Name(config.DataDir, "data"),
+            Name(config.ArchetypeDir, "archetypes"),
+            "themes",
+            "config",
+            "i18n"
+        ];
+
+        static string Name(string configured, string fallback) =>
+            string.IsNullOrEmpty(configured) ? fallback : configured;
 
         // 检查是否是有效的 Flint 站点：单文件配置或 config/_default/ 目录式配置
         //（Hugo 0.116+ 推荐形式；blowfish/congo/clarity 等主题只用目录式）
@@ -63,17 +100,6 @@ internal static class BuildHandler
             return 1;
         }
 
-        if (verbose)
-        {
-            Console.WriteLine($"源目录: {sourcePath}");
-            Console.WriteLine($"输出目录: {outputPath}");
-            Console.WriteLine($"配置文件: {configPath}");
-            Console.WriteLine($"压缩: {minify}");
-            Console.WriteLine($"包含草稿: {drafts}");
-            Console.WriteLine($"包含未来内容: {future}");
-            Console.WriteLine();
-        }
-
         try
         {
             // 创建核心组件
@@ -81,19 +107,50 @@ internal static class BuildHandler
             // AutoLoadAsync：目录式配置优先（按段合并），否则读单文件；
             // 末段统一做主题默认参数合并
             var siteConfig = await configLoader.AutoLoadAsync(sourcePath, cancellationToken);
+
+            if (!outputExplicit)
+            {
+                outputPath = Path.GetFullPath(string.IsNullOrEmpty(siteConfig.PublishDir)
+                    ? "public"
+                    : siteConfig.PublishDir);
+            }
+
+            if (clean && IsDangerousClean(outputPath, sourcePath, siteConfig))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"错误: 输出目录 ({outputPath}) 与源目录 ({sourcePath}) 的源内容目录重叠，--clean 将删除源内容，已拒绝");
+                Console.ResetColor();
+                return 1;
+            }
+
+            if (verbose)
+            {
+                Console.WriteLine($"源目录: {sourcePath}");
+                Console.WriteLine($"输出目录: {outputPath}");
+                Console.WriteLine($"配置文件: {configPath}");
+                Console.WriteLine($"压缩: {minify}");
+                Console.WriteLine($"包含草稿: {drafts}");
+                Console.WriteLine($"包含未来内容: {future}");
+                Console.WriteLine();
+            }
+            // 目录名由配置驱动（layoutDir/assetDir），空值取 Hugo 默认名；
+            // 此前写死字面量，配置改了也无效（校验照常通过）
+            var layoutDirName = string.IsNullOrEmpty(siteConfig.LayoutDir) ? "layouts" : siteConfig.LayoutDir;
+            var assetDirName = string.IsNullOrEmpty(siteConfig.AssetDir) ? "assets" : siteConfig.AssetDir;
+
             // 主题布局叠加（对齐 Hugo 主题语义）：站点 layouts 优先，theme 配置的
             // 主题目录按序回退——mod 下载的主题其 layouts 由此生效
             var themeLayoutDirs = siteConfig.Theme
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => Path.Combine(sourcePath, "themes", t, "layouts"))
+                .Select(t => Path.Combine(sourcePath, "themes", t, layoutDirName))
                 .ToArray();
 
             // 模板资源提供者（Hugo Pipes）：站点 assets/ 优先，主题 assets/ 按序回退——
             // resources.Get/Match/ByType 由此读取；未提供时 resources.* 注册为空对象
-            var assetRoots = new List<string> { Path.Combine(sourcePath, "assets") };
+            var assetRoots = new List<string> { Path.Combine(sourcePath, assetDirName) };
             assetRoots.AddRange(siteConfig.Theme
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Select(t => Path.Combine(sourcePath, "themes", t, "assets")));
+                .Select(t => Path.Combine(sourcePath, "themes", t, assetDirName)));
             var resourceProvider = new FileSystemResourceProvider(siteConfig.BaseURL, [.. assetRoots]);
             var environment = new TemplateEnvironmentInfo
             {
@@ -108,13 +165,13 @@ internal static class BuildHandler
             // 的构建全程不构造 Scriban 渲染器，Scriban 程序集不被加载
             var templateRenderer = new TemplateEngineRouter(
                 new FluidTemplateRenderer(
-                    Path.Combine(sourcePath, "layouts"),
+                    Path.Combine(sourcePath, layoutDirName),
                     siteConfig.BaseURL,
                     builtins: null,
                     resources: resourceProvider,
                     themeLayoutDirs),
                 () => new ScribanTemplateRenderer(
-                    Path.Combine(sourcePath, "layouts"),
+                    Path.Combine(sourcePath, layoutDirName),
                     siteConfig.BaseURL,
                     environment,
                     resourceProvider,
@@ -125,7 +182,7 @@ internal static class BuildHandler
             // router 实现 IRenderHookRenderer（P5-2）：.liquid 钩子分发给 Fluid；
             // Scriban 兼容模式下只认 .html
             var renderHooks = templateRenderer.LoadRenderHooks(
-                Path.Combine(sourcePath, "layouts"), themeLayoutDirs);
+                Path.Combine(sourcePath, layoutDirName), themeLayoutDirs);
             var markdownParser = renderHooks is not null ? new MarkdownParser(renderHooks) : new MarkdownParser();
             // P5-3：disableShortcodes 时内置 C# 短代码（figure/highlight/ref 等）
             // 也不注册——经 ShortcodeRegistry 的 registerBuiltins 开关，
