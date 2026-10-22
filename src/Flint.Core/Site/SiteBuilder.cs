@@ -142,14 +142,11 @@ public sealed partial class SiteBuilder : ISiteBuilder
             RegisterSiteShortcodes(options.SourcePath, config);
             Phase("1.配置加载+短码");
 
-            // 2. 扫描内容文件
-            var contentFiles = await ScanContentFilesAsync(options.SourcePath, config.ThemeNames, cancellationToken);
-            Phase("2.扫描内容");
-
-            // 3. 使用 Channel 并发解析内容
-            var parsedContents = await ParseContentsAsync(
-                contentFiles, options, errors, cancellationToken);
-            Phase("3.解析");
+            // 2+3. 扫描+解析流式管线（2026-10-22 合并两阶段：读取 IO 与
+            // 解析 CPU 在 Channel worker 内重叠，省 min(读,解析) 串行时间）
+            var parsedContents = await ScanAndParseContentsAsync(
+                options.SourcePath, config.ThemeNames, options, errors, cancellationToken);
+            Phase("2+3.扫描+解析(流式)");
 
             // 4. 过滤草稿和未来内容
             var filteredContents = FilterContents(parsedContents, options);

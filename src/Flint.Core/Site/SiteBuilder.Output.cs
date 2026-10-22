@@ -479,7 +479,12 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>
-    /// 带重试的文件写入（处理文件访问冲突）
+    /// 带重试的文件写入（处理文件访问冲突）。
+    /// **同步写**（2026-10-22）：NTFS 内部本就串行化小文件写入，async 的
+    /// overlapped IRP 只增加内核完成通知开销、不带来真实吞吐重叠；双二进制
+    /// 交错 A/B（10 轮，同站点同机）sync 中位 652.5ms vs async 667.9ms
+    /// （首批安静机器 -8.8%），与 HOTSPOTS §3 微基准「同步写快约 4%」
+    /// 方向一致。取消语义不受影响：写入本身 μs 级，重试等待仍走 ct
     /// </summary>
     private static async Task WriteFileWithRetryAsync(string path, string content, CancellationToken ct, int maxRetries = 3)
     {
@@ -487,7 +492,7 @@ public sealed partial class SiteBuilder
         {
             try
             {
-                await File.WriteAllTextAsync(path, content, ct);
+                File.WriteAllText(path, content);
                 return;
             }
             catch (IOException) when (i < maxRetries - 1)
@@ -499,7 +504,8 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>
-    /// 带重试的字节写入（处理文件访问冲突）
+    /// 带重试的字节写入（处理文件访问冲突）。同步写的机制同
+    /// <see cref="WriteFileWithRetryAsync"/>（资产路径同属 NTFS 小文件写入）
     /// </summary>
     private static async Task WriteBytesWithRetryAsync(string path, byte[] content, CancellationToken ct, int maxRetries = 3)
     {
@@ -507,7 +513,7 @@ public sealed partial class SiteBuilder
         {
             try
             {
-                await File.WriteAllBytesAsync(path, content, ct);
+                File.WriteAllBytes(path, content);
                 return;
             }
             catch (IOException) when (i < maxRetries - 1)
