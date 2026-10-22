@@ -86,3 +86,29 @@ jobs:
         run: dotnet run --project tests/Flint.IntegrationTests -c Release --no-build
       - name: 质量门禁（AiGate gate-check 18 项）
         run: dotnet run --project src/Flint.AiGate -c Release --no-build -- gate-check
+
+  # nightly：Linux（ext4）性能基线——写盘墙的平台对照（R6 4.3 Linux 基线
+  # 的 CI 承载，本地 WSL 无发行版故只能上 CI）。Windows NTFS 小文件创建是
+  # 万页构建 60-75% 的物理墙（HOTSPOTS.md §3），ext4 对照数据决定「极致
+  # 优化」上限评估。报告制（无阈值）：首轮起采集基线，原始日志与汇总上传
+  # artifact，回归阈值门禁待基线稳定后补
+  perf-linux:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - name: 发布 AOT CLI（linux-x64，生产形态）
+        run: dotnet publish src/Flint.Cli -c Release -r linux-x64 --self-contained -p:PublishAot=true -o tmp/aot-linux
+      - name: 双引擎站点级 A/B（300 篇 × 3 轮交错，ext4 + AOT）
+        # 第三参传 AOT CLI：JIT 口径会把非渲染段膨胀 10-15 倍稀释渲染优势
+        # （JIT 0.727x vs AOT 0.548x，2026-10-22 Windows 实测）
+        run: bash scripts/engine-ab.sh 300 3 "$PWD/tmp/aot-linux/Flint"
+      - name: 上传性能基线产物（原始日志 + 汇总，保留 30 天）
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-linux-baseline
+          path: tmp/engine-ab/
+          retention-days: 30

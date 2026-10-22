@@ -8,7 +8,9 @@
 #   记录阶段耗时（渲染段/解析段/扫描段/写盘段占比即 P0-2 基线）
 # - 统计：各变体取三轮中位数；产物对称性（P2-7）对比两变体 public/ 文件集
 #
-# 用法：bash scripts/engine-ab.sh [文章数，默认 300] [轮数，默认 3]
+# 用法：bash scripts/engine-ab.sh [文章数，默认 300] [轮数，默认 3] [CLI 路径，默认 Debug JIT]
+# CLI 覆盖：第三参或环境变量 FLINT_CLI——AOT 口径重测时传 Release+AOT 发布产物
+# （JIT 口径会稀释渲染段占比：非渲染段被 JIT 编译开销膨胀 10-15 倍）
 # 输出：tmp/engine-ab/ 下的原始日志与汇总（tmp 不入库）
 
 set -euo pipefail
@@ -16,7 +18,7 @@ set -euo pipefail
 POSTS="${1:-300}"
 ROUNDS="${2:-3}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLI="$ROOT/src/Flint.Cli/bin/Debug/net11.0/win-x64/Flint.exe"
+CLI="${3:-${FLINT_CLI:-$ROOT/src/Flint.Cli/bin/Debug/net11.0/win-x64/Flint.exe}}"
 WORK="$ROOT/tmp/engine-ab"
 
 if [[ ! -x "$CLI" ]]; then
@@ -92,35 +94,31 @@ for r in $(seq 1 "$ROUNDS"); do
   echo "  轮次 $r 完成"
 done
 
-# ---- 3. 汇总（awk 中位数，无 python 依赖） ----
-# 日志是 Windows 控制台编码（GBK/ISO-8859）：解析前 iconv 转 UTF-8，
-# 否则 awk 里的中文阶段名（"总计"/"渲染页面"）逐字节匹配不上（AGENTS.md
-# 环境坑 #17：GBK 日志被当二进制）
+# ---- 3. 汇总（中位数，无 python 依赖；awk 用字段匹配，兼容 mawk） ----
+# 日志编码：Windows 控制台为 GBK、Linux 为 UTF-8——先按 UTF-8 校验，
+# 失败（含中文字节的 GBK 流必失败）再回退 GBK 转换。原实现 GBK 优先，
+# 在 Linux 上会把合法 UTF-8 中文误按 GBK 解成乱码（iconv 不报错），
+# 阶段名匹配全落空
 read_logs() { # $1=glob 前缀 → UTF-8 文本流（只取编号轮次，排除 warmup）
-  iconv -f GBK -t UTF-8 "$1"-[0-9]*.log 2>/dev/null || iconv -f UTF-8 -t UTF-8 "$1"-[0-9]*.log
+  iconv -f UTF-8 -t UTF-8 "$1"-[0-9]*.log 2>/dev/null \
+    || iconv -f GBK -t UTF-8 "$1"-[0-9]*.log 2>/dev/null
 }
 
 median() { # $1=glob 前缀；从"总计 xxxms"行取中位数
-  read_logs "$1" | awk '
-    /总计/ && match($0, /([0-9.]+)ms/, m) { vals[++n] = m[1] }
+  read_logs "$1" | awk '$2 == "总计" { print $3 }' | sort -n | awk '
+    { v[NR] = $1 }
     END {
-      if (n == 0) { print "n/a"; exit }
-      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++)
-        if (vals[j] + 0 < vals[i] + 0) { t = vals[i]; vals[i] = vals[j]; vals[j] = t }
-      printf "%.1f", (n % 2 ? vals[(n + 1) / 2] : (vals[n / 2] + vals[n / 2 + 1]) / 2)
+      if (NR == 0) { print "n/a"; exit }
+      printf "%.1f", (NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2)
     }'
 }
 
 phase_median() { # $1=glob 前缀，$2=阶段名；从 [phase] 行取中位数
-  read_logs "$1" | awk -v phase="$2" '
-    match($0, /\[phase\][[:space:]]+([^[:space:]]+)[[:space:]]+([0-9.]+)ms/, m) {
-      if (m[1] == phase) vals[++n] = m[2]
-    }
+  read_logs "$1" | awk -v phase="$2" '$2 == phase { print $3 }' | sort -n | awk '
+    { v[NR] = $1 }
     END {
-      if (n == 0) { print "n/a"; exit }
-      for (i = 1; i <= n; i++) for (j = i + 1; j <= n; j++)
-        if (vals[j] + 0 < vals[i] + 0) { t = vals[i]; vals[i] = vals[j]; vals[j] = t }
-      printf "%.1f", (n % 2 ? vals[(n + 1) / 2] : (vals[n / 2] + vals[n / 2 + 1]) / 2)
+      if (NR == 0) { print "n/a"; exit }
+      printf "%.1f", (NR % 2 ? v[(NR + 1) / 2] : (v[NR / 2] + v[NR / 2 + 1]) / 2)
     }'
 }
 
@@ -138,7 +136,9 @@ awk -v f="$FLUID_TOTAL" -v s="$SCRIBAN_TOTAL" 'BEGIN {
 for variant in fluid scriban; do
   echo ""
   echo "== $variant 阶段耗时中位数（ms，P0-2 基线）"
-  for phase in 0.模板预编译 1.配置加载+短码 2.扫描内容 3.解析 4.页面上下文 6.taxonomy 7.站点上下文 8.渲染页面 9.分类页 10.资源 11.写入输出 11.5辅助输出 12.sitemap/feed 12.5模板错误汇聚 总计; do
+  # 阶段名含圆括号（"2+3.扫描+解析(流式)"）必须引号包裹，否则 bash 当成
+  # 子 shell 语法报错（2026-10-22 实测）
+  for phase in 0.模板预编译 1.配置加载+短码 "2+3.扫描+解析(流式)" 4.页面上下文 6.taxonomy 7.站点上下文 8.渲染页面 9.分类页 10.资源 11.写入输出 11.5辅助输出 12.sitemap/feed 12.5模板错误汇聚 总计; do
     v="$(phase_median "$WORK/$variant" "$phase")"
     [[ "$v" == "n/a" ]] || printf "  %-24s %9s ms\n" "$phase" "$v"
   done
