@@ -178,8 +178,25 @@ public sealed class ContentCacheStore
             pos += content.Length;
         }
 
-        var tempPath = blobPath + ".tmp";
-        File.WriteAllBytes(tempPath, buffer);
-        File.Move(tempPath, blobPath, overwrite: true);
+        // 临时文件名带随机后缀：同一站点上并发跑两个 --cache 构建时
+        // 各写各的临时文件（固定名会互相覆盖，让 Move 失败或写出半截）
+        var tempPath = $"{blobPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            File.WriteAllBytes(tempPath, buffer);
+            File.Move(tempPath, blobPath, overwrite: true);
+        }
+        catch
+        {
+            // 失败时清掉自己的临时文件（避免残留堆积），原异常照抛给调用方
+            // 转成构建告警（CACHE001）
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
+        }
     }
 }
