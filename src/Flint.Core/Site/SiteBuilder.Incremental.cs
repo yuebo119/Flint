@@ -122,7 +122,7 @@ public sealed partial class SiteBuilder
                     // 装配后的树已含本次变更，"更新前旧签名"无从取起（前后同树恒等、
                     // 比较永假），以空哨兵强制 taxonomy 页重产
                     var allParsed = await ScanAndParseContentsAsync(
-                        options.SourcePath, config.ThemeNames, options, errors, cancellationToken);
+                        options.SourcePath, config.ThemeNames, options, errors, warnings, cancellationToken);
                     tree = AssemblePageTree(FilterContents(allParsed, options), options.SourcePath, config);
                     _currentPageTree = tree;
                     // 树整体重装：旧缓存条目对应的节点内容已不可信

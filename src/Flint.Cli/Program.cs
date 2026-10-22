@@ -117,6 +117,10 @@ internal static class Program
         var outputOpt = new Option<string>("--output", "-o") { Description = "输出目录", DefaultValueFactory = _ => "public" };
         var sourceOpt = new Option<string>("--source", "-s") { Description = "源目录", DefaultValueFactory = _ => "." };
         var cleanOpt = new Option<bool>("--clean") { Description = "构建前清理输出目录" };
+        var cacheOpt = new Option<bool>("--cache")
+        {
+            Description = "启用持久内容缓存（源目录 .flint-cache/，跳过未变化文件的读盘重解析；默认关闭）"
+        };
 
         cmd.Options.Add(minifyOpt);
         cmd.Options.Add(draftsOpt);
@@ -124,6 +128,7 @@ internal static class Program
         cmd.Options.Add(outputOpt);
         cmd.Options.Add(sourceOpt);
         cmd.Options.Add(cleanOpt);
+        cmd.Options.Add(cacheOpt);
         var missingLayoutOpt = new Option<string>("--missing-layout")
         {
             Description = "缺失模板的处理: error（构建失败，默认）或 skip（跳过该页继续）",
@@ -140,8 +145,9 @@ internal static class Program
             var output = ctx.GetValue(outputOpt);
             var source = ctx.GetValue(sourceOpt);
             var clean = ctx.GetValue(cleanOpt);
+            var cache = ctx.GetValue(cacheOpt);
             var verbose = ctx.GetValue(verboseOption);
-            return await BuildHandler.ExecuteAsync(minify, drafts, future, output!, source!, clean, verbose, missingLayout, token);
+            return await BuildHandler.ExecuteAsync(minify, drafts, future, output!, source!, clean, cache, verbose, missingLayout, token);
         });
 
         rootCommand.Subcommands.Add(cmd);

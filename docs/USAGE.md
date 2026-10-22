@@ -372,7 +372,10 @@ Flint build [选项]
 | `--drafts` | `-D` | false | 包含草稿内容 |
 | `--future` | `-F` | false | 包含未来日期的内容 |
 | `--clean` | - | false | 构建前清理输出目录 |
+| `--cache` | - | false | 启用持久内容缓存（源目录 `.flint-cache/`）；重复构建跳过未变化文件的读盘重解析，实测 14.6k 页语料扫描+解析段 1.39s → 0.51s（-63%）、总构建 -18% |
 | `--verbose` | `-v` | false | 详细输出 |
+
+**`--cache` 说明**：缓存在源目录 `.flint-cache/content.blob`，被 CI 或本地重复构建复用。使用它的仓库应把 `.flint-cache/` 加入 `.gitignore`（缓存含内容原文，且体积与内容同量级）。已知边界：同一文件系统时间片内、同长度的内容改写可能漏检（NTFS 时间片下编辑器原子替换场景），因此该缓存是显式开关而非默认行为；`--clean` 不影响缓存（缓存在源侧），需强制重读时删 `.flint-cache/` 即可。
 
 ### Flint serve - 开发服务器
 

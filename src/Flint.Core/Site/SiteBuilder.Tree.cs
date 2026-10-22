@@ -6,6 +6,7 @@ using System.IO.Enumeration;
 using System.Threading.Channels;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
+using Flint.Core.Content;
 using Flint.Core.Models;
 using PageBundleType = Flint.Core.Site.PageTrees.PageBundleType;
 using PageTree = Flint.Core.Site.PageTrees.PageTree;
@@ -36,11 +37,12 @@ public sealed partial class SiteBuilder
         IReadOnlyList<string>? themeNames,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
+        ConcurrentBag<BuildWarning> warnings,
         CancellationToken cancellationToken)
     {
         // 内容收集（A2 主题兼容）：站点 content 优先，主题 content 按序补缺——
         // 键 = content/ 下的相对路径，站点已有的路径不被主题覆盖（对齐 Hugo 主题语义）
-        var filesByRelative = new Dictionary<string, (string Path, DateTimeOffset MtimeUtc)>(StringComparer.OrdinalIgnoreCase);
+        var filesByRelative = new Dictionary<string, (string Path, DateTimeOffset MtimeUtc, long Size)>(StringComparer.OrdinalIgnoreCase);
         CollectContentFiles(Path.Combine(sourcePath, "content"), filesByRelative);
         if (themeNames is not null)
         {
@@ -57,7 +59,55 @@ public sealed partial class SiteBuilder
             return [];
         }
 
+        // 持久内容缓存（--cache 显式开启时）：一次顺序读替代 N 次按文件
+        // open/read（实测读文件被过滤驱动逐 IRP 串行化，32 worker 仅
+        // 1.24~1.47x）。未开启时 store 为 null，行为与之前完全一致
+        var blobPath = string.IsNullOrEmpty(options.CachePath)
+            ? null
+            : Path.Combine(options.CachePath, "content.blob");
+        var store = blobPath is null ? null : ContentCacheStore.Load(blobPath);
+        var anyMiss = false;
+
+        // 相对源根路径作缓存键：唯一（站点与主题内容同链）且不含绝对路径——
+        // 缓存文件可能被用户提交进仓库（历史重写教训：绝对路径泄露家目录）
+        var sourceRoot = Path.GetFullPath(sourcePath) + Path.DirectorySeparatorChar;
+        var blobEntries = new ConcurrentBag<(string RelPath, long MtimeTicks, ReadOnlyMemory<byte> Content)>();
+
         var results = new ConcurrentBag<ParsedContent>();
+
+        // 取内容字节：持久缓存命中零 IO，未命中读盘并记入新 blob
+        ValueTask<ReadOnlyMemory<byte>> LoadBytesAsync(
+            (string Path, DateTimeOffset MtimeUtc, long Size) entry, CancellationToken ct)
+        {
+            if (store is not null)
+            {
+                var relPath = Path.GetFullPath(entry.Path)
+                    .Replace(sourceRoot, "", StringComparison.OrdinalIgnoreCase)
+                    .Replace('\\', '/');
+                var mtimeTicks = entry.MtimeUtc.UtcTicks;
+                if (store.TryGet(relPath, mtimeTicks, (int)entry.Size, out var cached))
+                {
+                    blobEntries.Add((relPath, mtimeTicks, cached));
+                    return ValueTask.FromResult(cached);
+                }
+                anyMiss = true;
+                return ReadAndRecordAsync(entry, relPath, mtimeTicks, ct);
+            }
+            return ReadAndRecordAsync(entry, relPath: null, mtimeTicks: 0, ct);
+
+            async ValueTask<ReadOnlyMemory<byte>> ReadAndRecordAsync(
+                (string Path, DateTimeOffset MtimeUtc, long Size) e,
+                string? relPath, long mtimeTicks, CancellationToken ct2)
+            {
+                // 读取异常语义同原扫描阶段：不逐文件容错，传播致整构建失败
+                var bytes = await File.ReadAllBytesAsync(e.Path, ct2);
+                if (relPath is not null)
+                {
+                    blobEntries.Add((relPath, mtimeTicks, bytes));
+                }
+                return bytes;
+            }
+        }
 
         // 小站点直并行（避免 Channel 与消费者任务的固定开销），与原
         // ParseContentsAsync 小批量分支同阈值
@@ -75,16 +125,17 @@ public sealed partial class SiteBuilder
                     var file = new ContentFile
                     {
                         Path = entry.Path,
-                        RawContent = await File.ReadAllBytesAsync(entry.Path, ct),
+                        RawContent = await LoadBytesAsync(entry, ct),
                         ModifiedTime = entry.MtimeUtc
                     };
                     await ParseOneAsync(file, results, ct);
                 });
+            SaveCacheIfDirty(blobPath, store, entries.Length, anyMiss, blobEntries, warnings);
             return [.. results];
         }
 
         // 流式：枚举产入有界 Channel，worker 读+解析，读 IO 与解析 CPU 重叠
-        var channel = Channel.CreateBounded<(string Path, DateTimeOffset MtimeUtc)>(
+        var channel = Channel.CreateBounded<(string Path, DateTimeOffset MtimeUtc, long Size)>(
             new BoundedChannelOptions(options.Parallelism * 2)
             {
                 FullMode = BoundedChannelFullMode.Wait
@@ -104,11 +155,10 @@ public sealed partial class SiteBuilder
             {
                 await foreach (var entry in channel.Reader.ReadAllAsync(cancellationToken))
                 {
-                    // 读取异常语义同原扫描阶段：不逐文件容错，传播致整构建失败
                     var file = new ContentFile
                     {
                         Path = entry.Path,
-                        RawContent = await File.ReadAllBytesAsync(entry.Path, cancellationToken),
+                        RawContent = await LoadBytesAsync(entry, cancellationToken),
                         ModifiedTime = entry.MtimeUtc
                     };
                     await ParseOneAsync(file, results, cancellationToken);
@@ -119,6 +169,7 @@ public sealed partial class SiteBuilder
         await producer;
         await Task.WhenAll(consumers);
 
+        SaveCacheIfDirty(blobPath, store, entries.Length, anyMiss, blobEntries, warnings);
         return [.. results];
 
         // 单文件解析+缓存（与原 ParseContentsAsync 消费者体同逻辑）：
@@ -152,19 +203,58 @@ public sealed partial class SiteBuilder
     }
 
     /// <summary>
-    /// 收集 content 目录下的 Markdown 到「相对路径 → (物理路径, mtime)」字典（A2）；
+    /// 持久缓存回写：有未命中（新增/变更/删除）才重写 blob；全命中零写盘。
+    /// 缓存写失败不阻断构建（下次构建重读即为自愈路径），但记构建告警
+    /// （用户显式开启了 --cache，写不进应知情；不用 Console：G13 门禁
+    /// 禁止库代码新增 Console 直写）
+    /// </summary>
+    private static void SaveCacheIfDirty(
+        string? blobPath,
+        ContentCacheStore? store,
+        int entryCount,
+        bool anyMiss,
+        ConcurrentBag<(string RelPath, long MtimeTicks, ReadOnlyMemory<byte> Content)> blobEntries,
+        ConcurrentBag<BuildWarning> warnings)
+    {
+        if (blobPath is null || store is null)
+        {
+            return;
+        }
+        if (!anyMiss && store.Count == entryCount)
+        {
+            return; // 全命中且条目集未变：零写盘
+        }
+
+        try
+        {
+            store.Save(blobPath, blobEntries);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            warnings.Add(new BuildWarning
+            {
+                WarningCode = "CACHE001",
+                Message = $"内容缓存写入失败（不影响本次构建产物，下次构建将失效回退重读）: {ex.Message}",
+                FilePath = blobPath
+            });
+        }
+    }
+
+    /// <summary>
+    /// 收集 content 目录下的 Markdown 到「相对路径 → (物理路径, mtime, size)」字典（A2）；
     /// TryAdd 先到先得形成站点覆盖主题的优先级链
     /// </summary>
     /// <remarks>
-    /// #13 目录枚举直取 mtime：FileSystemEntry.LastWriteTimeUtc 来自目录枚举缓冲区
-    /// （Win32 FIND_DATA / Linux getdents 元数据），零额外 stat。原形态每文件
-    /// FileInfo 构造（一次 stat）与读取完全相加（探针实测 stat≈read≈57μs/文件，
-    /// 14621 文件省约 700ms）。扩展名判定用 OrdinalIgnoreCase + EndsWith 而非
-    /// 平台通配（*.md 在原 Win32 通配下会误收 .mdoc、在 Linux 下又不收 .MD，
-    /// 此处统一为"大小写不敏感的 .md 后缀"，对齐 Hugo 的内容文件识别语义）
+    /// #13 目录枚举直取 mtime/size：FileSystemEntry.LastWriteTimeUtc 与
+    /// Length 均来自目录枚举缓冲区（Win32 FIND_DATA / Linux getdents 元数据），
+    /// 零额外 stat。原形态每文件 FileInfo 构造（一次 stat）与读取完全相加
+    /// （探针实测 stat≈read≈57μs/文件，14621 文件省约 700ms）。size 供持久
+    /// 内容缓存做键（--cache），不额外付 IO。扩展名判定用 OrdinalIgnoreCase
+    /// + EndsWith 而非平台通配（*.md 在原 Win32 通配下会误收 .mdoc、在 Linux
+    /// 下又不收 .MD，此处统一为"大小写不敏感的 .md 后缀"，对齐 Hugo 语义）
     /// </remarks>
     private static void CollectContentFiles(
-        string contentDir, Dictionary<string, (string Path, DateTimeOffset MtimeUtc)> filesByRelative)
+        string contentDir, Dictionary<string, (string Path, DateTimeOffset MtimeUtc, long Size)> filesByRelative)
     {
         if (!Directory.Exists(contentDir))
         {
@@ -173,22 +263,22 @@ public sealed partial class SiteBuilder
 
         // transform 内完成过滤标记：非目录且后缀 .md 才做全路径构造（命中项
         // 才付 ToFullPath），未命中项返回 Keep=false 由循环跳过
-        var enumerable = new FileSystemEnumerable<(bool Keep, string Path, DateTimeOffset MtimeUtc)>(
+        var enumerable = new FileSystemEnumerable<(bool Keep, string Path, DateTimeOffset MtimeUtc, long Size)>(
             contentDir,
             static (ref FileSystemEntry entry) =>
                 !entry.IsDirectory && entry.FileName.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-                    ? (true, entry.ToFullPath(), entry.LastWriteTimeUtc)
-                    : (false, string.Empty, default(DateTimeOffset)),
+                    ? (true, entry.ToFullPath(), entry.LastWriteTimeUtc, entry.Length)
+                    : (false, string.Empty, default(DateTimeOffset), 0L),
             new EnumerationOptions { RecurseSubdirectories = true });
 
-        foreach (var (keep, path, mtimeUtc) in enumerable)
+        foreach (var (keep, path, mtimeUtc, size) in enumerable)
         {
             if (!keep)
             {
                 continue;
             }
             var rel = Path.GetRelativePath(contentDir, path).Replace('\\', '/');
-            filesByRelative.TryAdd(rel, (path, mtimeUtc));
+            filesByRelative.TryAdd(rel, (path, mtimeUtc, size));
         }
     }
 

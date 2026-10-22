@@ -27,6 +27,7 @@ internal static class BuildHandler
         string output,
         string source,
         bool clean,
+        bool cache,
         bool verbose,
         string? missingLayout = null,
         CancellationToken cancellationToken = default)
@@ -186,6 +187,10 @@ internal static class BuildHandler
                 // 清理语义唯一来源：--clean 传 true，默认 false（不清理，
                 // 对齐 Hugo 与 USAGE.md:374 文档契约）
                 CleanOutput = clean,
+                // 持久内容缓存（--cache 显式开启）：缓存放源目录 .flint-cache/
+                // （源侧而非输出侧：--clean 清输出不连带废缓存；Hugo 的
+                // resources/_gen 同思路）。默认 null = 不启用，行为与之前一致
+                CachePath = cache ? Path.Combine(sourcePath, ".flint-cache") : null,
                 // 传入已加载的配置，避免 SiteBuilder 重复 AutoLoadAsync
                 // （2026-10-21 性能优化：消除配置双加载，149ms → ~75ms）
                 PreloadedConfig = siteConfig

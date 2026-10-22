@@ -310,7 +310,8 @@ enableGitInfo = true                # 启用 date: ":git"
 | `flint version` | 显示版本信息 |
 
 **构建选项**：`--source/-s`（默认 `.`）、`--output/-o`（`public`）、
-`--minify/-m`、`--drafts/-D`、`--future/-F`、`--clean`、`--verbose/-v`、
+`--minify/-m`、`--drafts/-D`、`--future/-F`、`--clean`、`--cache`
+（持久内容缓存，重复构建跳过未变化文件的读盘）、`--verbose/-v`、
 `--missing-layout`（`error`/`skip`，默认 error）。
 
 **服务器选项**：`--port/-p`（1313）、`--host`（localhost）、`--open`（默认
