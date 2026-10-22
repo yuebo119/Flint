@@ -1,6 +1,7 @@
 // Flint 静态站点生成器
 // 模块管理器实现（AOT 兼容）
 
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -63,8 +64,11 @@ public sealed partial class ModuleManager : IDisposable
         {
             gitRef = repository[(atSign + 1)..];
             repository = repository[..atSign];
-            return await InstallFromGitAsync(
-                $"https://github.com/{ParseRepository(repository)}.git", gitRef, cancellationToken);
+            // ParseRepository 返回元组：直接插值会得到 "(owner, repo)" 这种 URL
+            // （2026-10-22 由新增的参数校验暴露：`mod get owner/repo@main` 实际
+            // 一直拼出畸形地址，git clone 必然失败）
+            var (gitOwner, gitRepo) = ParseRepository(repository);
+            return await InstallFromGitAsync(BuildGitUrl(gitOwner, gitRepo), gitRef, cancellationToken);
         }
 
         var (owner, repo) = ParseRepository(repository);
@@ -74,7 +78,7 @@ public sealed partial class ModuleManager : IDisposable
                     ?? await GetLatestVersionAsync(owner, repo, cancellationToken);
 
         var modulePath = Path.Combine(_modulesPath, repo);
-        var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, cancellationToken);
+        var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, repo, cancellationToken);
         var descriptor = await ReadModuleDescriptorAsync(modulePath, cancellationToken);
         await UpdateLockFileAsync(repo, descriptor, version, sha256, cancellationToken);
         return descriptor;
@@ -117,10 +121,22 @@ public sealed partial class ModuleManager : IDisposable
         try
         {
             Directory.CreateDirectory(tempDir);
-            var args = refName is null
-                ? $"clone --depth 1 --quiet \"{gitUrl}\" \"{tempDir}\""
-                : $"clone --depth 1 --quiet --branch \"{refName}\" \"{gitUrl}\" \"{tempDir}\"";
-            var (code, output, error) = await RunGitAsync(args, ct);
+            ValidateGitValue("git 仓库地址", gitUrl);
+            if (refName is not null)
+            {
+                ValidateGitValue("git ref", refName);
+            }
+
+            var cloneArgs = new List<string> { "clone", "--depth", "1", "--quiet" };
+            if (refName is not null)
+            {
+                cloneArgs.Add("--branch");
+                cloneArgs.Add(refName);
+            }
+
+            cloneArgs.Add(gitUrl);
+            cloneArgs.Add(tempDir);
+            var (code, output, error) = await RunGitAsync(cloneArgs, ct);
             if (code != 0)
             {
                 throw new InvalidOperationException($"git clone 失败（{gitUrl}@{refName ?? "默认分支"}）: {error}{output}");
@@ -141,7 +157,7 @@ public sealed partial class ModuleManager : IDisposable
             var headSha = "unknown";
             try
             {
-                var (_, shaOut, _) = await RunGitAsync("-C \"" + tempDir + "\" rev-parse HEAD", ct);
+                var (_, shaOut, _) = await RunGitAsync(["-C", tempDir, "rev-parse", "HEAD"], ct);
                 var trimmed = shaOut.Trim();
                 if (trimmed.Length > 0)
                 {
@@ -162,23 +178,95 @@ public sealed partial class ModuleManager : IDisposable
         }
     }
 
-    private static async Task<(int Code, string Output, string Error)> RunGitAsync(string arguments, CancellationToken ct)
+    /// <summary>
+    /// 由 owner/repo 组装 git 克隆地址。<c>ParseRepository</c> 返回元组，
+    /// 直接对数插值会拼出 "(owner, repo)" 这种畸形 URL（2026-10-22 修复）
+    /// </summary>
+    internal static string BuildGitUrl(string owner, string repo) =>
+        $"https://github.com/{owner}/{repo}.git";
+
+    /// <summary>git 子进程等待上限：clone 卡住时不能无限等待</summary>
+    private const int GitTimeoutSeconds = 300;
+
+    private static async Task<(int Code, string Output, string Error)> RunGitAsync(
+        IReadOnlyList<string> args,
+        CancellationToken ct)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "git",
-            Arguments = arguments,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true
         };
+
+        // 逐项传参：refName/gitUrl 直接来自用户输入，拼字符串会被 shell 或 git
+        // 当成额外选项解析（ArgumentList 不做 shell 展开）
+        foreach (var arg in args)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(GitTimeoutSeconds));
+
         using var process = System.Diagnostics.Process.Start(psi)
             ?? throw new InvalidOperationException("无法启动 git 进程（git 是否已安装？）");
-        var output = await process.StandardOutput.ReadToEndAsync(ct);
-        var error = await process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        return (process.ExitCode, output, error);
+
+        // 双流并发读取：顺序读 stdout 再读 stderr，在 stderr 写满管道缓冲区时会死锁
+        var outputTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var errorTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKill(process);
+            if (ct.IsCancellationRequested)
+            {
+                ct.ThrowIfCancellationRequested();
+            }
+
+            throw new InvalidOperationException(
+                $"git 命令超时（{GitTimeoutSeconds}s，进程已终止）: git {string.Join(' ', args)}");
+        }
+
+        return (process.ExitCode, await outputTask.ConfigureAwait(false), await errorTask.ConfigureAwait(false));
+    }
+
+    private static void TryKill(System.Diagnostics.Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            // 进程已退出或平台不支持 Kill(true)：无需处理，调用方按超时/取消上报
+        }
+    }
+
+    /// <summary>
+    /// git 参数安全校验：ArgumentList 已经阻断 shell 注入，但以 '-' 开头的值仍会被
+    /// git 当成选项（如 <c>--upload-pack=...</c>），必须显式拒绝。
+    /// </summary>
+    private static void ValidateGitValue(string label, string value)
+    {
+        if (value.Length == 0 || value[0] == '-')
+        {
+            throw new ArgumentException($"无效的 {label}: {value}");
+        }
+
+        if (value.Any(char.IsWhiteSpace) || value.Contains('\u0000', StringComparison.Ordinal))
+        {
+            throw new ArgumentException($"无效的 {label}（含空白或控制字符）: {value}");
+        }
     }
 
     private static void CopyDirectory(string source, string target)
@@ -222,7 +310,7 @@ public sealed partial class ModuleManager : IDisposable
             return;
         }
 
-        var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, cancellationToken);
+        var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, moduleName, cancellationToken);
         var newDesc = new ModuleDescriptor { Name = descriptor.Name, Version = version, Repository = descriptor.Repository };
         await UpdateLockFileAsync(moduleName, newDesc, version, sha256, cancellationToken);
     }
@@ -317,9 +405,12 @@ public sealed partial class ModuleManager : IDisposable
     }
 
     /// <summary>
-    /// 下载并解压模块到目标路径，返回包内容的 SHA256（写入 lockfile 供完整性校验）
+    /// 下载并解压模块到目标路径，返回包内容的 SHA256（写入 lockfile 供完整性校验）。
+    /// 落盘前先做 lockfile 比对：同一版本重装时包内容必须与上次记录一致，
+    /// 否则拒绝安装（上游重打 tag = 供应链篡改）。
     /// </summary>
-    private async Task<string> DownloadModuleAsync(string owner, string repo, string version, string targetPath, CancellationToken ct)
+    private async Task<string> DownloadModuleAsync(
+        string owner, string repo, string version, string targetPath, string lockKey, CancellationToken ct)
     {
         // version 可能来自 CLI --version：未经校验直接拼进下载 URL 是注入点
         if (!VersionRegex().IsMatch(version))
@@ -328,8 +419,56 @@ public sealed partial class ModuleManager : IDisposable
         }
         var zipData = await DownloadZipWithLimitAsync(
             new Uri($"https://github.com/{owner}/{repo}/archive/refs/tags/{version}.zip"), ct);
-        await ExtractModuleAsync(zipData, targetPath, ct);
-        return Convert.ToHexStringLower(SHA256.HashData(zipData));
+
+        var sha256 = Convert.ToHexStringLower(SHA256.HashData(zipData));
+        await VerifyAgainstLockAsync(lockKey, version, sha256, ct);
+
+        await Task.Run(() => ExtractModule(zipData, targetPath, ct), ct);
+        return sha256;
+    }
+
+    /// <summary>
+    /// lockfile 完整性校验：条目存在且版本一致时才比对（首次安装/换版本无记录即跳过）。
+    /// <c>sha256</c> 字段在 git/本地安装里记的是短 SHA 或 "local"，那些形态不参与比对。
+    /// </summary>
+    internal async Task VerifyAgainstLockAsync(string lockKey, string version, string sha256, CancellationToken ct)
+    {
+        if (!File.Exists(_lockFilePath))
+        {
+            return;
+        }
+
+        var content = await File.ReadAllTextAsync(_lockFilePath, ct);
+        if (TomlynCompat.TryParseTable(content) is not TomlTable lockData ||
+            !lockData.TryGetValue(lockKey, out var entry) || entry is not TomlTable table)
+        {
+            return;
+        }
+
+        if (!table.TryGetValue("version", out var recordedVersion) ||
+            !string.Equals(recordedVersion?.ToString(), version, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (!table.TryGetValue("sha256", out var recordedSha))
+        {
+            return;
+        }
+
+        var expected = recordedSha?.ToString();
+        if (string.IsNullOrEmpty(expected) || expected is "unknown" or "local")
+        {
+            return;
+        }
+
+        if (!string.Equals(expected, sha256, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"模块 {lockKey}@{version} 的内容哈希与 lockfile 记录不符：" +
+                $"记录 {expected[..Math.Min(12, expected.Length)]}…，实际 {sha256[..12]}…。" +
+                "上游包可能被替换；确认无误后删除 lockfile 对应条目再重装以重新固定。");
+        }
     }
 
     /// <summary>
@@ -362,17 +501,73 @@ public sealed partial class ModuleManager : IDisposable
         return buffer.ToArray();
     }
 
+    /// <summary>解压后总字节上限（zip bomb 防护；下载上限只管压缩体，不管展开体）</summary>
+    private const long MaxExtractedBytes = 512L * 1024 * 1024;
+
+    /// <summary>解压条目数上限（防海量小文件条目耗尽 inode/句柄）</summary>
+    private const int MaxExtractedEntries = 20_000;
+
     /// <summary>
-    /// 原子解压：先解压到目标目录旁的临时目录，再整体换入；失败保留原安装
+    /// 原子解压：先解压到目标目录旁的临时目录，再整体换入；失败保留原安装。
+    /// 逐条目校验（zip slip 与 zip bomb）：条目路径必须落在临时目录内，
+    /// 条目数与展开总字节有上限。
     /// </summary>
-    private static async Task ExtractModuleAsync(byte[] zipData, string targetPath, CancellationToken ct)
+    /// <summary>
+    /// 逐条目校验解压（zip slip 与 zip bomb）：条目路径必须落在临时目录内，
+    /// 条目数与展开总字节有上限。上限做成参数便于测试用小阈值验证防护本身。
+    /// </summary>
+    internal static void ExtractModule(byte[] zipData, string targetPath, CancellationToken ct) =>
+        ExtractModule(zipData, targetPath, MaxExtractedBytes, MaxExtractedEntries, ct);
+
+    internal static void ExtractModule(
+        byte[] zipData, string targetPath, long maxBytes, int maxEntries, CancellationToken ct)
     {
         var tempPath = targetPath + ".tmp-" + Guid.NewGuid().ToString("N");
         var backupPath = targetPath + ".old-" + Guid.NewGuid().ToString("N");
         try
         {
-            await System.IO.Compression.ZipFile.ExtractToDirectoryAsync(
-                new MemoryStream(zipData), tempPath, ct);
+            Directory.CreateDirectory(tempPath);
+            var tempFull = Path.GetFullPath(tempPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+            using (var archive = new ZipArchive(new MemoryStream(zipData), ZipArchiveMode.Read))
+            {
+                if (archive.Entries.Count > maxEntries)
+                {
+                    throw new InvalidOperationException(
+                        $"压缩包条目数超过上限 ({maxEntries}): {archive.Entries.Count} 条");
+                }
+
+                long extracted = 0;
+                foreach (var entry in archive.Entries)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    // 目录条目（Name 为空）无需落文件
+                    if (entry.Name.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    extracted += entry.Length;
+                    if (extracted > maxBytes)
+                    {
+                        throw new InvalidOperationException(
+                            $"压缩包展开体积超过上限 ({maxBytes} 字节)，疑似 zip bomb");
+                    }
+
+                    var destination = Path.GetFullPath(Path.Combine(tempPath, entry.FullName));
+                    if (!destination.StartsWith(tempFull, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidOperationException(
+                            $"压缩包条目越出目标目录（zip slip）: {entry.FullName}");
+                    }
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                    entry.ExtractToFile(destination, overwrite: true);
+                }
+            }
+
             var extractedDir = Directory.GetDirectories(tempPath).FirstOrDefault() ?? tempPath;
 
             var hasOld = Directory.Exists(targetPath);
@@ -396,6 +591,8 @@ public sealed partial class ModuleManager : IDisposable
         {
             if (Directory.Exists(tempPath))
                 Directory.Delete(tempPath, recursive: true);
+            if (Directory.Exists(backupPath))
+                Directory.Delete(backupPath, recursive: true);
         }
     }
 
