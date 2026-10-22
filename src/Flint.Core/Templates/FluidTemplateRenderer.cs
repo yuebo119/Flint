@@ -146,8 +146,16 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
         _resources = resources;
         _lookup = TemplateLookup.Create(templatesPath, "liquid", _themeTemplatePaths);
         // AllowLiquidTag（2026-10-21）：解锁 {% liquid %} 整块标签——Liquid 生态
-        // （Jekyll/Eleventy/Shopify 迁移产物）高频使用，Fluid 已完整实现该标签
-        _parser = new FluidParser(new FluidParserOptions { AllowLiquidTag = true });
+        // （Jekyll/Eleventy/Shopify 迁移产物）高频使用，Fluid 已完整实现该标签。
+        // AllowParentheses（2026-10-22）：解锁括号分组表达式 `{{ (a or b) and c }}`。
+        // 注意这是 Fluid 对标准 Liquid 的扩展（Shopify Liquid 条件求值不支持
+        // 分组，Hugo Go 模板有自己的管道语法）——区间字面量 (1..3) 本就可用，
+        // 此开关只影响条件/赋值表达式的分组求值，LIQUID-GUIDE §4 差异清单登记
+        _parser = new FluidParser(new FluidParserOptions
+        {
+            AllowLiquidTag = true,
+            AllowParentheses = true
+        });
 
         // page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
         // FluidValue.Create 会把 TimeSpan 转成 DateTimeValue（纪元+时长），

@@ -86,6 +86,18 @@ public sealed class FluidTemplateRendererTests : IDisposable
     // ---- Liquid 标准标签冒烟测试（2026-10-21：Fluid 注册了 28 个标签，
     //      此前只有 assign/include/render/for/if 有测试，其余零覆盖）----
 
+    // AllowParentheses（2026-10-22 开启）：括号分组表达式。区间字面量
+    // (1..3) 本就可用（上方 cycle 行），此处锁定条件/赋值的分组求值
+    [Theory]
+    [InlineData("{% assign a = true %}{% assign b = false %}{% if (a or b) and a %}yes{% else %}no{% endif %}", "yes")]
+    [InlineData("{% assign a = true %}{% assign b = false %}{% if (a or b) and b %}yes{% else %}no{% endif %}", "no")]
+    public async Task Liquid_括号分组表达式_冒烟(string template, string expected)
+    {
+        WriteTemplate("index.liquid", template);
+        var result = await _renderer.RenderAsync("index", CreateTestContext());
+        Assert.Equal(expected, result);
+    }
+
     [Theory]
     [InlineData("{% unless page.title %}empty{% else %}{{ page.title }}{% endunless %}", "Test Page")]
     [InlineData("{% case page.title %}{% when 'Test Page' %}match{% else %}no{% endcase %}", "match")]
