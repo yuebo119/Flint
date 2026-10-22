@@ -878,6 +878,9 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
         // 漏清会让 ClearCache 后的重渲染仍拿旧模板文本——同时间粒度改写
         // mtime 不前进时是静默陈旧输出）
         ((FileTemplateLoader)_templateLoader).ClearTextCache();
+        // 路径解析缓存（含未命中结果的负缓存）同清：否则新增/改名的 partial
+        // 在长驻进程里永远解析到旧的空结果
+        ((FileTemplateLoader)_templateLoader).ClearPathCache();
     }
 
     /// <summary>partialCached 结果缓存：键 = name + variants（对齐 Hugo partialCached 语义）</summary>
@@ -2119,6 +2122,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
     {
         _mtimeCache.Clear();
         _lookup?.Invalidate();
+        // 路径解析缓存（含负缓存）随构建边界失效：构建间模板可能增删改名
+        ((FileTemplateLoader)_templateLoader).ClearPathCache();
         // fileExists 结果随构建入口失效（文件增删在下次构建重新探测）
         _builtinFunctions.InvalidateFileExistsCache();
     }

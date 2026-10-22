@@ -202,6 +202,7 @@ public sealed partial class SiteBuilder
     private async Task<IReadOnlyDictionary<string, object>> LoadSiteDataAsync(
         BuildOptions options,
         IReadOnlyList<string> themeNames,
+        SiteConfig config,
         CancellationToken cancellationToken)
     {
         var merged = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
@@ -218,7 +219,9 @@ public sealed partial class SiteBuilder
             }
         }
 
-        var dataDir = Path.Combine(options.SourcePath, "data");
+        // dataDir 由配置驱动（config.dataDir），空值取 Hugo 默认名 "data"
+        var dataDir = Path.Combine(options.SourcePath,
+            string.IsNullOrEmpty(config.DataDir) ? "data" : config.DataDir);
         if (Directory.Exists(dataDir))
         {
             foreach (var (key, value) in await _dataLoader.LoadAsync(dataDir, cancellationToken))

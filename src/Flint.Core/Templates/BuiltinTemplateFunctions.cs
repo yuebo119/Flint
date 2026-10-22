@@ -274,6 +274,10 @@ public sealed partial class BuiltinTemplateFunctions
                 s = a[0]?.ToString();
                 length = ToInt(a[1]);
             }
+            // 非正长度直接返回空串：`s[..length]` 对负长度抛 ArgumentOutOfRange，
+            // 会从 DynamicCustomFunction 逃出并让整页渲染失败
+            if (length <= 0)
+                return "";
             if (string.IsNullOrEmpty(s) || s.Length <= length)
                 return s ?? "";
             if (a.Length > 2 && a[2]?.ToString() is { Length: > 0 } explicitEllipsis)
@@ -292,8 +296,12 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // replace - 替换字符串
+        // 空 old 在 .NET 是 ArgumentException（Go 的 strings.Replace 会做插入），
+        // 主题里 `replace $s "" "-"` 属误用，按无操作处理而不是让整页渲染失败
         obj.Import("replace", (string? s, string? old, string? @new) =>
-            s?.Replace(old ?? "", @new ?? "") ?? "");
+            string.IsNullOrEmpty(s) ? ""
+            : string.IsNullOrEmpty(old) ? s
+            : s.Replace(old, @new ?? "", StringComparison.Ordinal));
 
         // replace_re - 正则替换
         // 参数序按 Hugo 文档：replaceRE PATTERN REPLACEMENT INPUT [LIMIT]。
@@ -367,7 +375,9 @@ public sealed partial class BuiltinTemplateFunctions
             if (start >= s.Length)
                 return "";
             var length = rest.Length > 0 ? rest[0] : s.Length - start;
-            if (length < 0 || start + length > s.Length)
+            // 用减法判界而非 start + length：后者在 length 取 int.MaxValue 时溢出为负，
+            // 判据失效后 Substring 抛 ArgumentOutOfRange
+            if (length < 0 || length > s.Length - start)
                 length = s.Length - start;
             return s.Substring(start, length);
         });
@@ -903,7 +913,9 @@ public sealed partial class BuiltinTemplateFunctions
         });
 
         // range - 生成范围
-        obj.Import("range", (int count) => Enumerable.Range(0, count));
+        // 负 count 在 Enumerable.Range 抛 ArgumentOutOfRange；Hugo 的 range 对越界
+        // 上界返回空序列，模板边界输入不应让整页渲染失败
+        obj.Import("range", (int count) => count <= 0 ? Enumerable.Empty<int>() : Enumerable.Range(0, count));
 
         // in - 检查是否在集合中（Hugo 语义：haystack 是字符串时按子串，
         // 是序列时按元素）。形参用 object? 不用 IEnumerable——严格形参会被

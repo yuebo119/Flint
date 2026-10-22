@@ -227,7 +227,7 @@ public sealed partial class SiteBuilder
                 var taxonomies = taxonomyService.BuildTaxonomies(allPageContexts);
                 // data identity 已在 IsGlobalIdentityPath 归为全量装配——此处 data 变化
                 // 必然伴随全量重建，重新加载保证 site.data 反映最新内容
-                var siteData = await LoadSiteDataAsync(options, config.ThemeNames, cancellationToken);
+                var siteData = await LoadSiteDataAsync(options, config.ThemeNames, config, cancellationToken);
                 var translations = Translations.Load(
                     options.SourcePath, config.ThemeNames, config.LanguageCode);
                 // 签名传入 BuildSiteContext：签名一致（纯正文编辑）时 lookup 投影

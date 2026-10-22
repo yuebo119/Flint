@@ -167,7 +167,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 7. 构建站点上下文（含 data/ 目录数据 → site.data 模板变量）。
             // 签名顺带算出并传给 BuildSiteContext（#12 投影复用；XOR 聚合成本
             // 为一次全树 Walk，万页毫秒级）
-            var siteData = await LoadSiteDataAsync(options, config.ThemeNames, cancellationToken);
+            var siteData = await LoadSiteDataAsync(options, config.ThemeNames, config, cancellationToken);
             var translations = Translations.Load(
                 options.SourcePath, config.ThemeNames, config.LanguageCode);
             var taxonomySignature = _currentPageTree is null ? null : ComputeTaxonomySignature(_currentPageTree);
@@ -178,7 +178,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
             // 与页面渲染无数据依赖（只读 config 与源目录），两路线程池互不阻塞，
             // 渲染完成后汇合
             var assetsTask = ProcessAssetsAsync(
-                options.SourcePath, config.ThemeNames, options, errors, cancellationToken,
+                options.SourcePath, config.ThemeNames, options, config, errors, cancellationToken,
                 Flint.Core.Templates.TemplateResource.BasePathOf(config.BaseURL));
 
             var renderedPages = await RenderPagesAsync(

@@ -320,6 +320,10 @@ internal sealed class FileTemplateLoader : ITemplateLoader
     /// 失效路径，dev server 模板变化/缓存清理时必须一并清）</summary>
     internal void ClearTextCache() => _textCache.Clear();
 
+    /// <summary>清空路径解析缓存。未命中结果也在缓存里（null 也缓存），
+    /// 不在构建边界清空时，serve 期间新增/改名的 partial 会永久解析失败</summary>
+    internal void ClearPathCache() => _pathCache.Clear();
+
     // Scriban 7 的 ITemplateLoader.LoadAsync 返回注解为 ValueTask<string?>
     public ValueTask<string?> LoadAsync(Scriban.TemplateContext context, SourceSpan callerSpan, string templatePath)
     {

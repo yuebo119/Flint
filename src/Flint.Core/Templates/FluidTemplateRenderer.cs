@@ -206,8 +206,11 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
             // parser.TryParse——1000 页 × 5 include = 5000+ 次重复解析。
             // 接入 ITemplateCache 后解析结果按路径缓存，mtime 不符即失效）
             TemplateCache = _includeTemplateCache,
-            // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开引擎侧限制）
-            MaxRecursion = 0,
+            // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开步数限制）；
+            // 递归深度必须有限：0 在 Fluid 语义里等于不限制（TemplateContext 判
+            // `MaxRecursion > 0` 才生效），自 include / A→B→A 会直坠不可捕获的
+            // StackOverflow 让进程消失。500 层足以覆盖正常嵌套 partial
+            MaxRecursion = 500,
             MaxSteps = 0
         };
 
@@ -622,6 +625,12 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
                 // GetFullPath 归一化分隔符（候选形态用 / 拼接，Windows 上
                 // Path.Combine 产出混合分隔符——依赖键必须与物理路径同形态）
                 var candidate = Path.GetFullPath(Path.Combine(root, form));
+                // 根内校验（对齐 Scriban 侧 FileTemplateLoader）：include 名来自
+                // 模板内容，`{% include "../../x" %}` 若不拦会读出模板根之外的文件
+                if (!IsUnderRoot(candidate, root))
+                {
+                    continue;
+                }
                 if (File.Exists(candidate))
                 {
                     return candidate;
@@ -638,6 +647,15 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
         }
 
         return null;
+    }
+
+    /// <summary>候选路径是否位于模板根内（防 include 名穿越出根）</summary>
+    private static bool IsUnderRoot(string fullPath, string root)
+    {
+        var normalizedRoot = Path.GetFullPath(root)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        return fullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>include 名的候选文件形态（有序，对齐 FileTemplateLoader 的搜索序）</summary>
