@@ -162,9 +162,9 @@ internal static class SiteCreator
             languageCode = "zh-cn"
             title = "{name}"{engineLine}
 
-            # 构建选项
-            [build]
-              publishDir = "public"
+            # 构建选项（publishDir 是顶层键：Hugo 语义，也是解析器唯一读取的位置。
+            # 此前写在 [build] 表里，配置被静默忽略，build/serve 恒用默认 public）
+            publishDir = "public"
 
             # 分页设置
             paginate = 10

@@ -259,7 +259,10 @@ public static partial class ConfigParser
             StaticDir = GetDictString(dict, "staticDir") ?? GetDictString(dict, "staticdir") ?? "static",
             AssetDir = GetDictString(dict, "assetDir") ?? GetDictString(dict, "assetdir") ?? "assets",
             DataDir = GetDictString(dict, "dataDir") ?? GetDictString(dict, "datadir") ?? "data",
-            PublishDir = GetDictString(dict, "publishDir") ?? GetDictString(dict, "publishdir") ?? "public",
+            // publishDir：顶层优先；[build] 表是旧脚手架产物（已改为顶层），保留兼容读取
+            PublishDir = GetDictString(dict, "publishDir") ?? GetDictString(dict, "publishdir")
+                ?? GetBuildString(dict, "publishDir") ?? GetBuildString(dict, "publishdir")
+                ?? "public",
             ArchetypeDir = GetDictString(dict, "archetypeDir") ?? GetDictString(dict, "archetypedir") ?? "archetypes",
             Permalinks = ParseDictPermalinks(dict),
             Taxonomies = ParseDictTaxonomies(dict),
@@ -308,6 +311,10 @@ public static partial class ConfigParser
             _ => null
         };
     }
+
+    /// <summary>读取 [build] 表内的字符串键（旧脚手架把 publishDir 放在该表下）</summary>
+    private static string? GetBuildString(Dictionary<string, object> dict, string key) =>
+        GetDictObject(dict, "build") is { } build ? GetDictString(build, key) : null;
 
     private static Dictionary<string, object>? GetDictObject(Dictionary<string, object> dict, string key)
     {

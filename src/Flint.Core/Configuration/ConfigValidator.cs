@@ -224,6 +224,13 @@ public sealed partial class ConfigValidator : IConfigValidator
         {
             ValidatePath(errors, "caches.dir", config.Caches.Dir);
         }
+
+        // theme 名也参与路径拼接（themes/<name>），必须与上述目录同口径校验。
+        // 漏校验时 theme="../../evil" 会读取站点外 theme.toml/layouts 并渲染进产物
+        foreach (var themeName in config.ThemeNames)
+        {
+            ValidatePath(errors, "theme", themeName);
+        }
     }
 
     private static void ValidatePath(List<ValidationError> errors, string propertyPath, string path)

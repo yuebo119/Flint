@@ -35,27 +35,7 @@ public sealed class ConfigLoader : IConfigLoader
         string configPath,
         CancellationToken cancellationToken = default)
     {
-        if (!File.Exists(configPath))
-        {
-            throw new FileNotFoundException($"配置文件不存在: {configPath}", configPath);
-        }
-
-        var content = await File.ReadAllTextAsync(configPath, cancellationToken).ConfigureAwait(false);
-        var format = ConfigParser.DetectFormat(configPath);
-        var config = ConfigParser.Parse(content, format);
-
-        // 配置校验接线：非法配置 fail loud（对齐 Hugo 对无效配置的行为），
-        // 校验器此前从未接入加载链——写完即死的 305 行休眠价值在此激活
-        var validation = new ConfigValidator().Validate(config);
-        if (!validation.IsValid)
-        {
-            var details = string.Join("\n",
-                validation.Errors.Select(e => $"  - {e.PropertyPath}: {e.Message}"));
-            throw new InvalidOperationException($"站点配置校验失败:\n{details}");
-        }
-
-        // 环境变量覆盖接线（USAGE.md 文档化的 FLINT_* 覆盖语义）
-        return EnvironmentOverrides.ApplyOverrides(config);
+        return Finalize(await ParseFileAsync(configPath, cancellationToken).ConfigureAwait(false));
     }
 
     /// <inheritdoc />
@@ -67,9 +47,42 @@ public sealed class ConfigLoader : IConfigLoader
         }
 
         var content = File.ReadAllText(configPath);
-        var format = ConfigParser.DetectFormat(configPath);
+        return Finalize(ConfigParser.Parse(content, ConfigParser.DetectFormat(configPath)));
+    }
 
+    /// <summary>
+    /// 加载并解析单个配置文件（不含覆盖与校验，供 AutoLoadAsync 在主题参数合并后只做一次终态化）
+    /// </summary>
+    private static async ValueTask<SiteConfig> ParseFileAsync(string configPath, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(configPath))
+        {
+            throw new FileNotFoundException($"配置文件不存在: {configPath}", configPath);
+        }
+
+        var content = await File.ReadAllTextAsync(configPath, cancellationToken).ConfigureAwait(false);
+        var format = ConfigParser.DetectFormat(configPath);
         return ConfigParser.Parse(content, format);
+    }
+
+    /// <summary>
+    /// 终态化：先应用环境变量覆盖，再校验。顺序不可交换——此前先校验后覆盖，
+    /// 校验对象不是最终配置，`Flint_CONTENTDIR=../../x` 之类覆盖可绕过全部校验。
+    /// 目录式配置（config/_default/）同样走这里，不再跳过校验与覆盖。
+    /// </summary>
+    private static SiteConfig Finalize(SiteConfig config)
+    {
+        var effective = EnvironmentOverrides.ApplyOverrides(config);
+
+        var validation = new ConfigValidator().Validate(effective);
+        if (!validation.IsValid)
+        {
+            var details = string.Join("\n",
+                validation.Errors.Select(e => $"  - {e.PropertyPath}: {e.Message}"));
+            throw new InvalidOperationException($"站点配置校验失败:\n{details}");
+        }
+
+        return effective;
     }
 
     /// <inheritdoc />
@@ -81,7 +94,8 @@ public sealed class ConfigLoader : IConfigLoader
         var dirConfig = TryLoadConfigDirectory(directory);
         if (dirConfig is not null)
         {
-            return ThemeParamsMerger.Merge(dirConfig, directory);
+            // 合并后终态化：目录式配置此前直接返回，校验与环境变量覆盖双双失效
+            return Finalize(ThemeParamsMerger.Merge(dirConfig, directory));
         }
 
         var configPath = FindConfigFile(directory);
@@ -91,11 +105,12 @@ public sealed class ConfigLoader : IConfigLoader
                 $"在目录 {directory} 中未找到配置文件。支持的文件名: {string.Join(", ", ConfigFileNames)}");
         }
 
-        var config = await LoadAsync(configPath, cancellationToken).ConfigureAwait(false);
+        var config = await ParseFileAsync(configPath, cancellationToken).ConfigureAwait(false);
 
         // 主题默认参数合并（主题系统 P1-2）：主题 theme.toml 的 [params] 作为默认值，
-        // 站点配置深覆盖——AutoLoadAsync 是生产装配唯一入口，stub 测试语义不受影响
-        return ThemeParamsMerger.Merge(config, directory);
+        // 站点配置深覆盖——AutoLoadAsync 是生产装配唯一入口，stub 测试语义不受影响。
+        // 合并是最后一步重建，故覆盖与校验放在合并之后，避免被重建丢弃
+        return Finalize(ThemeParamsMerger.Merge(config, directory));
     }
 
     /// <summary>

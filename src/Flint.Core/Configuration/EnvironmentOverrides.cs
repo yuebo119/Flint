@@ -110,6 +110,29 @@ public static class EnvironmentOverrides
     /// <summary>
     /// 应用环境变量覆盖到配置对象
     /// </summary>
+    /// <summary>
+    /// FLINT_PARAMS_&lt;KEY&gt; 覆盖 site.params（README/USAGE 文档化的能力，此前文档承诺但无实现）。
+    /// 键名去前缀后转小写；未覆盖时原样返回原字典（零分配）。
+    /// </summary>
+    private static IReadOnlyDictionary<string, object> MergeParamsOverrides(
+        IReadOnlyDictionary<string, object> current,
+        Dictionary<string, string> envVars)
+    {
+        Dictionary<string, object>? merged = null;
+        foreach (var (key, value) in envVars)
+        {
+            if (!key.StartsWith("PARAMS_", StringComparison.Ordinal) || key.Length == "PARAMS_".Length)
+            {
+                continue;
+            }
+
+            merged ??= new Dictionary<string, object>(current, StringComparer.OrdinalIgnoreCase);
+            merged[key["PARAMS_".Length..].ToLowerInvariant()] = value;
+        }
+
+        return merged ?? current;
+    }
+
     private static SiteConfig ApplyOverridesToConfig(SiteConfig config, Dictionary<string, string> envVars)
     {
         // 基本属性覆盖
@@ -141,6 +164,12 @@ public static class EnvironmentOverrides
         // 缓存配置覆盖
         var caches = ApplyCacheOverrides(config.Caches, envVars);
 
+        // TIMEZONE 此前只在零覆盖探测表里出现、从不读取（探测到却不生效）。
+        // 键名保留调用方写的下划线（Flint_TIME_ZONE → "TIME_ZONE"），两种写法都收
+        var timeZone = GetEnvValue(envVars, "TIME_ZONE")
+            ?? GetEnvValue(envVars, "TIMEZONE")
+            ?? config.TimeZone;
+
         return new SiteConfig
         {
             BaseURL = baseUrl,
@@ -155,7 +184,7 @@ public static class EnvironmentOverrides
             Paginate = paginate,
             PaginatePath = paginatePath,
             EnableGitInfo = enableGitInfo,
-            TimeZone = config.TimeZone,
+            TimeZone = timeZone,
             SummaryLength = summaryLength,
             Copyright = copyright,
             DisablePathToLower = config.DisablePathToLower,
@@ -170,7 +199,7 @@ public static class EnvironmentOverrides
             Permalinks = config.Permalinks,
             Taxonomies = config.Taxonomies,
             Menus = config.Menus,
-            Params = config.Params,
+            Params = MergeParamsOverrides(config.Params, envVars),
             Markup = config.Markup,
             Outputs = config.Outputs,
             Languages = config.Languages,
