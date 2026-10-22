@@ -31,6 +31,8 @@ jobs:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
         run: npm install -g dart-sass
+      - name: 定位 Dart Sass 并注入 FLINT_SASS
+        uses: ./.github/actions/locate-sass
       - name: 构建（Release）
         # AiGate 非 slnx 成员（G16 独立工具链），slnx 构建只把它作为 Tools.Tests
         # 的传递引用且配置注入丢失（落到 bin/Debug），门禁 step 的 no-build 直跑
@@ -54,6 +56,8 @@ jobs:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
         run: sudo npm install -g dart-sass
+      - name: 定位 Dart Sass 并注入 FLINT_SASS
+        uses: ./.github/actions/locate-sass
       - name: 构建（Release）
         run: dotnet build -c Release
       - name: 单元测试（Flint.Core.Tests）
@@ -71,6 +75,9 @@ jobs:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
         run: npm install -g dart-sass
+      - name: 定位 Dart Sass 并注入 FLINT_SASS
+        # 同 test-windows：nightly 的单测 3 轮与集成套件同样需要 sass 可发现
+        uses: ./.github/actions/locate-sass
       - name: 构建（Release）
         # AiGate 显式补构建（非 slnx 成员，传递构建配置注入落 Debug，见 test-windows 同款注释）
         run: |

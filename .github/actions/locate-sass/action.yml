@@ -1,0 +1,53 @@
+# 定位 Dart Sass 并经 FLINT_SASS 注入（CI 兜底，2026-10-22）
+#
+# 背景：产品侧 TemplateResourceFunctions.LocateSassExecutable 的定位链
+#   FLINT_SASS → procDir dart-sass.* → 仓库上溯 tools/dart-sass → PATH
+# 在 CI 里前三条全部不可用：
+#   - procDir：DartSass.Native 包已移除（1a6e31f 统一外部原生 CLI），
+#     不再往输出目录拷贝 dart-sass.<rid>
+#   - 仓库上溯：checkout 外无 tools/dart-sass
+#   - benchmarks/tools：被 .gitignore，checkout 拿不到
+#   - PATH：npm 全局前缀随 runner 镜像漂移，未必在 dotnet 进程 PATH 中
+# （2026-10-22 实证：test-windows/test-ubuntu 各 19 个 SassCompilerTests
+#   因「找不到 Dart Sass 可执行文件」全挂， nightly 同样会踩）
+#
+# 本 action 显式解析后写入 FLINT_SASS（定位链第一优先），两平台同构。
+# 解析策略：PATH 上的 sass → npm 全局前缀下的 sass 启动器 → 硬失败
+# （带诊断输出，好过 opaque 的「找不到可执行文件」）
+
+name: Locate Dart Sass
+description: 定位 npm 全局安装的 Dart Sass 并经 FLINT_SASS 环境变量注入后续步骤
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        SASS_PATH="$(command -v sass || true)"
+
+        # PATH 上找不到时直接问 npm 全局前缀（前缀本身未必在 PATH——
+        # runner 镜像的 node/npm 布局会漂移，这是 2026-10-22 修复的核心）
+        if [[ -z "$SASS_PATH" ]]; then
+          NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+          echo "npm global prefix: ${NPM_PREFIX:-<unknown>}"
+          if [[ -n "$NPM_PREFIX" ]]; then
+            for cand in \
+              "$NPM_PREFIX/sass.cmd" \
+              "$NPM_PREFIX/sass.bat" \
+              "$NPM_PREFIX/sass.exe" \
+              "$NPM_PREFIX/sass"; do
+              if [[ -f "$cand" ]]; then
+                SASS_PATH="$cand"
+                break
+              fi
+            done
+          fi
+        fi
+
+        if [[ -z "$SASS_PATH" ]]; then
+          echo "::error::Dart Sass 未找到。已尝试 PATH 与 npm 全局前缀。请确认前置步骤 npm install -g dart-sass 成功。"
+          exit 1
+        fi
+
+        echo "FLINT_SASS=$SASS_PATH" >> "$GITHUB_ENV"
+        echo "已定位 sass: $SASS_PATH"
