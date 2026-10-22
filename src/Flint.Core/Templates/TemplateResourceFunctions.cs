@@ -861,9 +861,12 @@ public sealed partial class BuiltinTemplateFunctions
             candidates.Add(env);
         }
 
+        // 启动器名：sass（当前 npm 包 sass 的 bin 名）与 dart-sass（已废弃
+        // 旧包 dart-sass 的 bin 名，2026-10-22 前 CI 装了一年这个包——
+        // 只认 sass 会让装旧包的用户与 CI 都定位不到）双形态容忍
         var launcherNames = OperatingSystem.IsWindows()
-            ? new[] { "sass.bat", "sass.cmd", "sass.exe", "sass" }
-            : new[] { "sass", "sass.bat" };
+            ? new[] { "sass.bat", "sass.cmd", "sass.exe", "sass", "dart-sass.cmd", "dart-sass.bat", "dart-sass.exe", "dart-sass" }
+            : new[] { "sass", "dart-sass" };
 
         // **进程目录同级的 dart-sass* 启动器**：CLI 自包含发布把 Dart Sass
         // 运行时放在 Flint.exe 旁边（Windows: dart-sass.win-x64/sass.bat；
@@ -905,11 +908,12 @@ public sealed partial class BuiltinTemplateFunctions
             }
         }
 
-        // PATH 上的 sass（dart-sass 的 .bat/.exe 或类 Unix 的启动脚本）
+        // PATH 上的 sass（当前包 bin 名）或 dart-sass（废弃旧包 bin 名，
+        // 2026-10-22：CI 装旧包一年未暴露即因 DartSass.Native procDir 兜底）
         var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator);
         foreach (var pd in pathDirs)
         {
-            foreach (var exe in new[] { "sass.bat", "sass.cmd", "sass.exe", "sass" })
+            foreach (var exe in new[] { "sass.bat", "sass.cmd", "sass.exe", "sass", "dart-sass.cmd", "dart-sass.bat", "dart-sass.exe", "dart-sass" })
             {
                 var full = Path.Combine(pd.Trim(), exe);
                 if (File.Exists(full))

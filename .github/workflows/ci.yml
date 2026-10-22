@@ -30,7 +30,10 @@ jobs:
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
-        run: npm install -g dart-sass
+        # 装当前包名 sass：旧包 dart-sass 的 bin 名是 dart-sass（不是 sass），
+        # 产品侧 LocateSassExecutable 找 sass 永远匹配不上——2026-10-22
+        # CI 红 19 挂的根因（旧路径因 DartSass.Native procDir 兜底从未暴露）
+        run: npm install -g sass
       - name: 定位 Dart Sass 并注入 FLINT_SASS
         uses: ./.github/actions/locate-sass
       - name: 构建（Release）
@@ -55,7 +58,10 @@ jobs:
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
-        run: sudo npm install -g dart-sass
+        # 装当前包名 sass：旧包 dart-sass 的 bin 名是 dart-sass（不是 sass），
+        # 产品侧 LocateSassExecutable 找 sass 永远匹配不上——2026-10-22
+        # CI 红 19 挂的根因（旧路径因 DartSass.Native procDir 兜底从未暴露）
+        run: sudo npm install -g sass
       - name: 定位 Dart Sass 并注入 FLINT_SASS
         uses: ./.github/actions/locate-sass
       - name: 构建（Release）
@@ -74,7 +80,7 @@ jobs:
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
-        run: npm install -g dart-sass
+        run: npm install -g sass
       - name: 定位 Dart Sass 并注入 FLINT_SASS
         # 同 test-windows：nightly 的单测 3 轮与集成套件同样需要 sass 可发现
         uses: ./.github/actions/locate-sass

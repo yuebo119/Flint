@@ -205,9 +205,13 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
     {
         var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
                         sass.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase);
+        // sass（当前 npm 包 bin 名）与 dart-sass（废弃旧包 bin 名，2026-10-22）
+        // 双形态：类 Unix 上都是 Node shebang 脚本，经 /bin/sh 驱动并确保
+        // 可执行位（NuGet 拷贝场景会丢 exec bit）
+        var sassFileName = Path.GetFileName(sass);
         var isShellScript = !isCmdShim &&
                             !OperatingSystem.IsWindows() &&
-                            Path.GetFileName(sass) == "sass";
+                            (sassFileName == "sass" || sassFileName == "dart-sass");
 
         if (isShellScript)
         {
