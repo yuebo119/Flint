@@ -2,6 +2,7 @@
 // 使用 System.CommandLine 2.0 构建 CLI
 
 using System.CommandLine;
+using System.Globalization;
 using Flint.Core;
 
 namespace Flint.Cli;
@@ -16,16 +17,23 @@ internal static class Program
     /// </summary>
     public static async Task<int> Main(string[] args)
     {
+        // 输出确定性：显式钉不变文化，取代此前靠 InvariantGlobalization 达成的
+        // "无 ICU 即无本地化"副作用（该模式下 IANA 时区名也无法解析）。
+        // 排序/大小写/数字格式化一律走不变文化，跨机器构建产物一致
+        CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+        CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
+
         var rootCommand = new RootCommand(FlintInfo.Description);
 
-        // 全局选项
-        var verboseOption = new Option<bool>("--verbose", "-v") { Description = "输出详细日志信息" };
-        var debugOption = new Option<bool>("--debug", "-d") { Description = "输出调试信息" };
+        // 全局选项：Recursive 让子命令也能解析（此前 -v/-d 只挂根命令，
+        // `build --verbose` 报 Unrecognized 而 USAGE.md 把它列为 build 选项）
+        var verboseOption = new Option<bool>("--verbose", "-v") { Description = "输出详细日志信息", Recursive = true };
+        var debugOption = new Option<bool>("--debug", "-d") { Description = "输出调试信息", Recursive = true };
         rootCommand.Options.Add(verboseOption);
         rootCommand.Options.Add(debugOption);
 
         // 添加所有命令
-        AddVersionCommand(rootCommand);
+        AddVersionCommand(rootCommand, verboseOption);
         AddNewCommands(rootCommand);
         AddBuildCommand(rootCommand, verboseOption);
         AddServeCommand(rootCommand, verboseOption);
@@ -36,14 +44,13 @@ internal static class Program
         return await parseResult.InvokeAsync().ConfigureAwait(false);
     }
 
-    private static void AddVersionCommand(RootCommand rootCommand)
+    private static void AddVersionCommand(RootCommand rootCommand, Option<bool> verboseOption)
     {
         var cmd = new Command("version", "显示版本信息");
-        var verboseOpt = new Option<bool>("--verbose", "-v") { Description = "显示详细版本信息" };
-        cmd.Options.Add(verboseOpt);
+        // 复用根命令的递归 --verbose：子命令再声明同名选项会与递归选项冲突
         cmd.SetAction(ctx =>
         {
-            var verbose = ctx.GetValue(verboseOpt);
+            var verbose = ctx.GetValue(verboseOption);
             if (verbose)
             {
                 Console.WriteLine(FlintInfo.DetailedVersionInfo);
@@ -114,7 +121,10 @@ internal static class Program
         var minifyOpt = new Option<bool>("--minify", "-m") { Description = "压缩 HTML、CSS 和 JavaScript 输出" };
         var draftsOpt = new Option<bool>("--drafts", "-D") { Description = "包含草稿内容" };
         var futureOpt = new Option<bool>("--future", "-F") { Description = "包含未来日期的内容" };
-        var outputOpt = new Option<string>("--output", "-o") { Description = "输出目录", DefaultValueFactory = _ => "public" };
+        var outputOpt = new Option<string?>("--output", "-o")
+        {
+            Description = "输出目录（未指定时取站点配置 publishDir，未配置则 public）"
+        };
         var sourceOpt = new Option<string>("--source", "-s") { Description = "源目录", DefaultValueFactory = _ => "." };
         var cleanOpt = new Option<bool>("--clean") { Description = "构建前清理输出目录" };
         var cacheOpt = new Option<bool>("--cache")
@@ -147,7 +157,7 @@ internal static class Program
             var clean = ctx.GetValue(cleanOpt);
             var cache = ctx.GetValue(cacheOpt);
             var verbose = ctx.GetValue(verboseOption);
-            return await BuildHandler.ExecuteAsync(minify, drafts, future, output!, source!, clean, cache, verbose, missingLayout, token);
+            return await BuildHandler.ExecuteAsync(minify, drafts, future, output, source!, clean, cache, verbose, missingLayout, token);
         });
 
         rootCommand.Subcommands.Add(cmd);

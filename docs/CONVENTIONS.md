@@ -75,7 +75,7 @@ Flint.Core.Tests → Flint.Core
 | 配置项 | 值 | 说明 |
 |--------|---|------|
 | `TargetFramework` | `net11.0` | 单目标，**不多目标** |
-| `LangVersion` | `13.0` | 锁定语言版本，不随 SDK 漂移 |
+| `LangVersion` | `15.0` | 锁定语言版本，不随 SDK 漂移 |
 | `Nullable` | `enable` | 全项目可空引用类型 |
 | `TreatWarningsAsErrors` | `true` | **零警告门禁** |
 | `AnalysisLevel` | `latest-all` | 启用所有最新分析器规则 |
@@ -89,10 +89,16 @@ csproj 只写 `<PackageReference Include="..." />`（无 Version——CPM，见 
 
 ```xml
 <PublishAot>true</PublishAot>
-<OptimizationPreference>Size</OptimizationPreference>
-<IlcOptimizationPreference>Size</IlcOptimizationPreference>
-<InvariantGlobalization>true</InvariantGlobalization>
+<OptimizationPreference>Speed</OptimizationPreference>
+<IlcOptimizationPreference>Speed</IlcOptimizationPreference>
+<InvariantGlobalization>false</InvariantGlobalization>
 ```
+
+`InvariantGlobalization` 曾为 `true`（省 IANA/ICU 依赖链），但该模式同时移除
+tzdata：`timeZone = "Asia/Shanghai"`（README 示例值）在发布形态直接中止构建，
+`TimeZoneInfo.TryConvertIanaIdToWindowsId` 这类自带映射表也一并失效。
+跨机器输出确定性改由 CLI 启动期显式钉 `CultureInfo.InvariantCulture` 保证
+（`Program.Main`），不再依赖"移除 ICU"这一副作用。
 
 发布链：`dotnet publish src/Flint.Cli -c Release -r win-x64 --self-contained -p:PublishAot=true`
 （缺 `-p:PublishAot=true` 时 csproj 的 `PublishAot=false` 生效，产出 ~89MB 非 AOT 单文件）。

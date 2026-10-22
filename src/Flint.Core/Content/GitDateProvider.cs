@@ -198,12 +198,45 @@ public static class ContentParserDateSetup
     {
         if (!string.IsNullOrWhiteSpace(config.TimeZone))
         {
-            parser.SiteTimeZone = TimeZoneInfo.FindSystemTimeZoneById(config.TimeZone);
+            parser.SiteTimeZone = ResolveTimeZone(config.TimeZone);
         }
 
         if (config.EnableGitInfo)
         {
             parser.GitDates = new GitDateProvider(contentDirectory);
         }
+    }
+
+    /// <summary>
+    /// 解析 timeZone 配置，IANA（<c>Asia/Shanghai</c>）与 Windows（<c>China Standard Time</c>）两种写法都接受。
+    /// Release 发布形态开启 <c>InvariantGlobalization</c>，ICU 的 IANA 数据库不可用，
+    /// <see cref="TimeZoneInfo.FindSystemTimeZoneById"/> 对 IANA 名直接抛
+    /// <see cref="TimeZoneNotFoundException"/>（README 的示例值就是 IANA 名，构建会中止）。
+    /// <see cref="TimeZoneInfo.TryConvertIanaIdToWindowsId"/> 用的是内嵌静态映射表，
+    /// 不依赖 ICU，可把 IANA 名换成系统 ID 再查。
+    /// </summary>
+    internal static TimeZoneInfo ResolveTimeZone(string id)
+    {
+        if (TimeZoneInfo.TryFindSystemTimeZoneById(id, out var direct))
+        {
+            return direct;
+        }
+
+        if (TimeZoneInfo.TryConvertIanaIdToWindowsId(id, out var windowsId) &&
+            TimeZoneInfo.TryFindSystemTimeZoneById(windowsId, out var fromIana))
+        {
+            return fromIana;
+        }
+
+        if (TimeZoneInfo.TryConvertWindowsIdToIanaId(id, out var ianaId) &&
+            TimeZoneInfo.TryFindSystemTimeZoneById(ianaId, out var fromWindows))
+        {
+            return fromWindows;
+        }
+
+        throw new InvalidOperationException(
+            $"无法解析配置中的 timeZone = \"{id}\"：既不是有效的 IANA 时区名（如 Asia/Shanghai），" +
+            "也不是本机支持的 Windows 时区 ID。" +
+            "该配置为必填校验：请检查是否拼写错误，或改用 UTC。");
     }
 }

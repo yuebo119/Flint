@@ -29,7 +29,12 @@
     <IlcGenerateStackTraceData>false</IlcGenerateStackTraceData>
     <IlcDisableReflection>false</IlcDisableReflection>
     <StripSymbols>true</StripSymbols>
-    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 不开 InvariantGlobalization（2026-10-22 审计）：该模式下 ICU/tzdata
+         整体缺席，TimeZoneInfo 既解析不了 IANA 名（Asia/Shanghai，README 示例值）
+         也解析不了 TryConvertIanaIdToWindowsId 这类自带的映射表，配置 timeZone
+         直接中止构建。跨机器输出确定性改由启动期显式钉 InvariantCulture 保证
+         （CultureInfo.DefaultThreadCurrentCulture），不依赖"移除 ICU"这一副作用 -->
+    <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
 
   <!-- 版本信息 -->
