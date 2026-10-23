@@ -73,6 +73,29 @@ public sealed class ContentDiagnosticsTests
         Assert.False(SiteBuilder.LooksLikeUnterminatedFrontMatter("---\n\n", out _));
     }
 
+    [Fact]
+    public async Task 未闭合页面解析后RawMarkdown仍保留分隔符()
+    {
+        // 诊断的输入是解析后的 RawMarkdown（正文），不是原始文件：
+        // 若某条解析路径把未闭合分隔符当 YAML 文档吃掉，正文就是空串，
+        // 诊断永远不会触发（serve/build 都是静默丢元数据）
+        var parser = new Flint.Core.Content.ContentParser();
+        var file = new Flint.Core.Models.ContentFile
+        {
+            Path = "u.md",
+            RawContent = System.Text.Encoding.UTF8.GetBytes("---\ntitle: 未闭合\ndraft: true\n\n正文行\n"),
+            ModifiedTime = DateTimeOffset.UtcNow
+        };
+
+        var parsed = await parser.ParseAsync(file, CancellationToken.None);
+
+        Assert.True(
+            SiteBuilder.LooksLikeUnterminatedFrontMatter(parsed.RawMarkdown, out var delimiter),
+            $"RawMarkdown 首行应保留分隔符，实际前缀: {parsed.RawMarkdown[..Math.Min(20, parsed.RawMarkdown.Length)]}");
+        Assert.Equal("---", delimiter);
+        Assert.Null(parsed.Metadata.Date);
+    }
+
     #endregion
 
     #region WS Origin 校验
