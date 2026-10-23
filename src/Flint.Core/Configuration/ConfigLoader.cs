@@ -165,6 +165,13 @@ public sealed class ConfigLoader : IConfigLoader
             {
                 return;
             }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // 语法错误不能静默跳过（此前 YAML 段解析失败被吞成空字典，
+                // 站点在缺段的情况下照样"构建成功"）。报出文件路径与实际错误
+                throw new InvalidDataException(
+                    $"配置段解析失败: {path}: {ex.Message}", ex);
+            }
 
             var key = Path.GetFileNameWithoutExtension(path);
             // 已知段名（params.toml → params 段等）与 hugo/config 之外的**任意文件名**

@@ -106,6 +106,9 @@ public sealed partial class SiteBuilder : ISiteBuilder
         // 若命中会跳过重建导致写入阶段报"目录不存在"
         OutputDirectoryEnsurer.Reset();
         _writtenPaths.Clear();
+        // taxonomy/term 的 feed 上下文同一构建内累积：serve 长驻进程里不清空的话，
+        // 已删除词条的 index.xml 会一直重写、列表随编辑无限增长
+        TaxonomyFeedContexts.Clear();
         InitOutputCache(options);
 
         // 阶段计时诊断（热点画像/优化验证基建）：FLINT_TRACE_PHASES=1 时向 stderr

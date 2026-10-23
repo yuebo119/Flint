@@ -112,15 +112,11 @@ public static partial class ConfigParser
     public static Dictionary<string, object> ParseYamlDict(string content)
     {
         ArgumentNullException.ThrowIfNull(content);
-        try
-        {
-            return SharedYaml.DeserializeDictionary(content)
-                   ?? new Dictionary<string, object>();
-        }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            return new Dictionary<string, object>();
-        }
+        // 不吞解析异常：目录式配置里某个段文件语法错误时，静默返回空字典会让站点
+        // 在缺少该段的情况下"成功"构建（baseURL/params 丢失且无任何提示）。
+        // 错误信息里的文件路径由调用方（ConfigLoader.MergeFile）补上
+        return SharedYaml.DeserializeDictionary(content)
+               ?? new Dictionary<string, object>();
     }
 
     /// <summary>

@@ -34,6 +34,8 @@ public sealed partial class SiteBuilder
         BuildRenderStateAccess.BeginBuildScope();
         OutputDirectoryEnsurer.Reset();
         _writtenPaths.Clear();
+        // 同 BuildAsync：taxonomy/term feed 上下文按构建重置，避免跨构建累积
+        TaxonomyFeedContexts.Clear();
         InitOutputCache(options);
 
         // 构建边界：同 BuildAsync，增量同样必须看到模板的最新状态

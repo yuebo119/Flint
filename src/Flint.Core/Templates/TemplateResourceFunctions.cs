@@ -298,6 +298,18 @@ public sealed partial class BuiltinTemplateFunctions
     public IReadOnlyList<TemplateResource> GeneratedResources => _generated;
 
     /// <summary>
+    /// 按构建边界清空产物收集队列。输出阶段取走产物后不清的话，serve 长驻进程里
+    /// 上一轮删掉的资源会一直重写，队列随编辑无限增长（Fluid 侧有同口径清理）
+    /// </summary>
+    internal void ClearGeneratedResources()
+    {
+        lock (_generatedGate)
+        {
+            _generated.Clear();
+        }
+    }
+
+    /// <summary>
     /// 为命名空间对象补小写/下划线形态键（Scriban 成员查找大小写敏感）。
     /// Hugo 官方写法是 PascalCase（resources.Get），但旧模板/惯用写法是小写（resources.get）
     /// </summary>

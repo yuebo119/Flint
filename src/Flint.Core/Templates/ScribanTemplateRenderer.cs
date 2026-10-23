@@ -2129,6 +2129,8 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
         // 数据已经变了——serve 长驻进程不清会一直渲染旧站点数据
         _partialResultCache.Clear();
         _storeUseCache.Clear();
+        // 模板产物收集队列按构建清空（与 Fluid 侧 _generatedResources.Clear 同口径）
+        _builtinFunctions.ClearGeneratedResources();
         // fileExists 结果随构建入口失效（文件增删在下次构建重新探测）
         _builtinFunctions.InvalidateFileExistsCache();
     }

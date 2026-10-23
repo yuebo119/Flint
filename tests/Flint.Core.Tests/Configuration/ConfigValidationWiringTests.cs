@@ -102,6 +102,39 @@ public sealed class ConfigValidationWiringTests : IDisposable
     }
 
     [Fact]
+    public async Task 目录式配置段语法错误必须显式报错()
+    {
+        var configDir = Path.Combine(_siteDir, "config", "_default");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(
+            Path.Combine(configDir, "hugo.toml"),
+            "baseURL = \"https://example.com/\"\ntitle = \"T\"\n");
+        // 坏掉的 YAML 段：此前被吞成空字典，站点在缺少该段时照样构建成功
+        File.WriteAllText(Path.Combine(configDir, "params.yaml"), "params: [unclosed\n  bad: : :\n");
+
+        var ex = await Assert.ThrowsAsync<InvalidDataException>(
+            async () => await new ConfigLoader().AutoLoadAsync(_siteDir).ConfigureAwait(false));
+
+        Assert.Contains("params.yaml", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task 目录式配置正常段仍合并()
+    {
+        var configDir = Path.Combine(_siteDir, "config", "_default");
+        Directory.CreateDirectory(configDir);
+        File.WriteAllText(
+            Path.Combine(configDir, "hugo.toml"),
+            "baseURL = \"https://example.com/\"\ntitle = \"T\"\n");
+        // 目录式配置的约定：params.yaml 的**内容**即 params 段（不再包一层 params:）
+        File.WriteAllText(Path.Combine(configDir, "params.yaml"), "author: 段文件\n");
+
+        var config = await new ConfigLoader().AutoLoadAsync(_siteDir);
+
+        Assert.Equal("段文件", config.Params["author"]?.ToString());
+    }
+
+    [Fact]
     public async Task FLINT_PARAMS前缀注入站点参数()
     {
         var path = WriteConfig("baseURL = \"https://example.com/\"\ntitle = \"T\"\n[params]\n  author = \"config\"\n");
