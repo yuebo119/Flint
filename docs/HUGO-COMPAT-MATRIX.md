@@ -598,6 +598,13 @@ ananke 结构 55.6 → **56.7** / 文本 92.0。
 Flint 的 `BuildFormatObject` 对分页页（RelPermalink 形如 `/x/page/N/`）做归一，使其
 RSS 链接指向列表根 feed。
 
+**feed 时间戳取页面日期而非构建时刻**（Flint 决策，非 Hugo 逐字段对齐）：`lastBuildDate`
+与 Atom 的 `<updated>` 取 feed 内页面的最大日期，无日期则省略该元素；无 `pubDate` 的页面
+不再输出 `0001-01-01`，无 `lastmod` 的页面不再输出 `0001-01-01`。理由：同一输入两次构建
+必须字节一致（否则 CDN 缓存、差分部署与 `--cache` 写盘跳过全部失效），构建时刻不进产物。
+`timeZone` 同时接受 IANA 名（`Asia/Shanghai`）与 Windows ID（`China Standard Time`），
+发布形态需保留 tzdata（`Directory.Build.props` 的 `InvariantGlobalization=false`）。
+
 **三十、ByWeight 破平、in-section 导航与格式参数内的管道（本轮第十项）**。
 三处探针级修正：① **`.Pages.ByWeight` 等权重按日期降序破平**（探针：等权
 Jan/Feb/Mar → `[c][b][a]`）；Flint 此前按标题破平，techdoc 的菜单树递归遍历
