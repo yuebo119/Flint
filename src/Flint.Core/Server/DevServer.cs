@@ -338,9 +338,8 @@ public sealed class DevServer : IDevServer, IDisposable
     /// <summary>
     /// 判断是否为影响全站的变更（模板/配置/数据文件）
     /// </summary>
-    private static bool IsGlobalChange(string path, string sourcePath)
-    {
-        var normalized = Path.GetFullPath(path);
+    internal static bool IsGlobalChange(string path, string sourcePath)
+    {        var normalized = Path.GetFullPath(path);
         var root = Path.GetFullPath(sourcePath);
         if (!root.EndsWith(Path.DirectorySeparatorChar))
         {
@@ -364,6 +363,15 @@ public sealed class DevServer : IDevServer, IDisposable
             (fileName.StartsWith("flint.", StringComparison.OrdinalIgnoreCase)
              || fileName.StartsWith("config.", StringComparison.OrdinalIgnoreCase)
              || fileName.StartsWith("hugo.", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        // 渲染钩子（layouts/**/_markup/**）：不经模板加载器，页面→模板依赖图里
+        // 没有它，增量反查会判定"无页面受影响"而跳过重渲染。hook 影响每一页的
+        // 链接/图片/标题渲染，必须按全量变更处理（2026-10-22 serve 实测：
+        // 改 render-link.liquid 后页面不变，直到改一次 content 才生效）
+        if (Array.Exists(segments, s => s.Equals("_markup", StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }

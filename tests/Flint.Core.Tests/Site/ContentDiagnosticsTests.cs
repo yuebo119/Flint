@@ -91,4 +91,27 @@ public sealed class ContentDiagnosticsTests
     }
 
     #endregion
+
+    #region 监听变更的全局性判定
+
+    private static readonly string SiteRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "flint-site"));
+
+    [Theory]
+    [InlineData("layouts/_markup/render-link.liquid", true)]     // 渲染钩子：依赖图里没有它
+    [InlineData("layouts/_markup/render-image.html", true)]
+    [InlineData("layouts/post/_markup/render-heading.liquid", true)]
+    [InlineData("data/menu.toml", true)]
+    [InlineData("archetypes/default.md", true)]
+    [InlineData("Flint.toml", true)]
+    [InlineData("config/_default/hugo.toml", false)]              // 目录式配置由单独路径处理
+    [InlineData("layouts/_default/single.html", false)]           // 普通模板走依赖图反查
+    [InlineData("content/posts/a.md", false)]
+    public void 监听变更全局性判定(string relativePath, bool expected)
+    {
+        var full = Path.Combine(SiteRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
+
+        Assert.Equal(expected, DevServer.IsGlobalChange(full, SiteRoot));
+    }
+
+    #endregion
 }

@@ -174,11 +174,54 @@ public sealed class RenderHooks
             var file = Path.Combine(dir, name + ".liquid");
             if (File.Exists(file))
             {
-                var content = File.ReadAllText(file);
-                return vars => RenderLiquidHook(renderer, content, name, vars);
+                var hookFile = new HookTemplateFile(file);
+                return vars => RenderLiquidHook(
+                    renderer, hookFile.GetContent(Environment.TickCount64), name, vars);
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// Liquid 钩子模板文件的内容读取：按 mtime + 50ms 窗口节流。
+    /// 此前在加载时一次性读入并闭包捕获，serve 里改 hook 文件永不生效
+    /// （渲染器的编译缓存虽有内容失效判据，但拿到的仍是旧文本）；
+    /// 每次调用都读盘则每个链接/图片各付一次 IO，故用窗口节流。
+    /// </summary>
+    internal sealed class HookTemplateFile(string file)
+    {
+        private const long ReloadWindowMs = 50;
+
+        private readonly string _file = file;
+        private string _content = "";
+        private DateTime _mtimeUtc;
+        private long _length;
+        private long _checkedAtMs = long.MinValue;
+        private bool _loaded;
+
+        internal string GetContent(long nowMs)
+        {
+            if (_loaded && nowMs - _checkedAtMs < ReloadWindowMs)
+            {
+                return _content;
+            }
+
+            // (mtime, length) 双字段验效：NTFS 同时间粒度内改写 mtime 可能不前进，
+            // 只看 mtime 会把新内容当旧内容（与模板文本缓存同口径）
+            var info = new FileInfo(_file);
+            var mtime = info.LastWriteTimeUtc;
+            var length = info.Exists ? info.Length : 0;
+            if (!_loaded || mtime != _mtimeUtc || length != _length)
+            {
+                _content = info.Exists ? File.ReadAllText(_file) : "";
+                _mtimeUtc = mtime;
+                _length = length;
+            }
+
+            _loaded = true;
+            _checkedAtMs = nowMs;
+            return _content;
+        }
     }
 
     private static string RenderLiquidHook(
@@ -187,6 +230,13 @@ public sealed class RenderHooks
         string hookName,
         IReadOnlyDictionary<string, object> vars)
     {
+        // 空模板与 Scriban 侧同口径返回空串（Hugo 也允许空 hook）。
+        // 非空模板渲染出空结果仍报错——那是钩子逻辑写坏，不该静默吞掉整段正文
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return "";
+        }
+
         // 钩子变量经 ExtraValues 通道合并进 Fluid 模型顶层键
         // （Liquid 无 page 包装，.Text/.Level 等直取）；page/site 用最小
         // 上下文（hook 渲染期无真实页面上下文，与 Scriban 侧同口径）

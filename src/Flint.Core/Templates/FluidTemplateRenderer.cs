@@ -33,8 +33,11 @@ namespace Flint.Core.Templates;
 /// </summary>
 public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcodeRenderer, IRenderHookRenderer
 {
-    /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）</summary>
-    private sealed record CachedTemplate(IFluidTemplate Template, string? SourcePath, DateTime ModifiedTimeUtc);
+    /// <summary>缓存条目：编译结果 + 源文件路径 + mtime（增量/长驻渲染的失效依据）；
+    /// <paramref name="SourceText"/> 只对无物理路径的合成来源（hook:/shortcode:）填充，
+    /// 作为"内容变了就重编译"的判据——这类来源 SourcePath 为 null，mtime 判据恒不命中</summary>
+    private sealed record CachedTemplate(
+        IFluidTemplate Template, string? SourcePath, DateTime ModifiedTimeUtc, string? SourceText = null);
 
     private readonly string _templatesPath;
     // 主题布局回退目录（与 Scriban 侧同序：站点优先、主题按序回退）
@@ -368,14 +371,18 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
         CancellationToken cancellationToken = default)
     {
         IFluidTemplate template;
-        if (_templateCache.TryGetValue(sourceName, out var cached) && !IsStale(cached))
+        if (_templateCache.TryGetValue(sourceName, out var cached) &&
+            !IsStale(cached) &&
+            (cached.SourceText is null || string.Equals(cached.SourceText, content, StringComparison.Ordinal)))
         {
             template = cached.Template;
         }
         else
         {
             template = ParseOrThrow(content, sourceName);
-            _templateCache[sourceName] = new CachedTemplate(template, null, DateTime.MinValue);
+            // 合成来源（hook:/shortcode:）没有物理路径：把源文本存进缓存，
+            // 内容变则下次重编译（serve 改 hook/短代码才能生效）
+            _templateCache[sourceName] = new CachedTemplate(template, null, DateTime.MinValue, content);
         }
         return await RenderLoadedAsync(template, sourceName, null, context, cancellationToken);
     }

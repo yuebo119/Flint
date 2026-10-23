@@ -2124,6 +2124,11 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
         _lookup?.Invalidate();
         // 路径解析缓存（含负缓存）随构建边界失效：构建间模板可能增删改名
         ((FileTemplateLoader)_templateLoader).ClearPathCache();
+        // partialCached 结果缓存同样按构建边界失效：配置/参数/i18n 变化触发全量重建时
+        // 模板文件可能一个都没改（模板重载的失效路径走不到），但 partial 里嵌的站点
+        // 数据已经变了——serve 长驻进程不清会一直渲染旧站点数据
+        _partialResultCache.Clear();
+        _storeUseCache.Clear();
         // fileExists 结果随构建入口失效（文件增删在下次构建重新探测）
         _builtinFunctions.InvalidateFileExistsCache();
     }
