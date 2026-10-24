@@ -208,18 +208,24 @@ internal static class Program
         var targetArg = new Argument<string>("target") { Description = "部署目标 (s3://bucket, gh-pages, netlify, vercel)" };
         var sourceOpt = new Option<string>("--source", "-s") { Description = "源目录", DefaultValueFactory = _ => "public" };
         var dryRunOpt = new Option<bool>("--dry-run") { Description = "模拟部署，不实际上传" };
+        var forceOpt = new Option<bool>("--force")
+        {
+            Description = "gh-pages：远端分支存在但克隆失败时仍强制覆盖（会重写远端历史，需显式声明）"
+        };
 
         cmd.Arguments.Add(targetArg);
         cmd.Options.Add(sourceOpt);
         cmd.Options.Add(dryRunOpt);
+        cmd.Options.Add(forceOpt);
 
         cmd.SetAction(async (ctx, token) =>
         {
             var target = ctx.GetValue(targetArg);
             var source = ctx.GetValue(sourceOpt);
             var dryRun = ctx.GetValue(dryRunOpt);
+            var force = ctx.GetValue(forceOpt);
             var verbose = ctx.GetValue(verboseOption);
-            return await DeployHandler.ExecuteAsync(target!, source!, dryRun, verbose);
+            return await DeployHandler.ExecuteAsync(target!, source!, dryRun, verbose, force);
         });
 
         rootCommand.Subcommands.Add(cmd);

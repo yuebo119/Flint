@@ -19,7 +19,8 @@ internal static partial class DeployHandler
         string target,
         string source,
         bool dryRun,
-        bool verbose)
+        bool verbose,
+        bool force = false)
     {
         var sourcePath = Path.GetFullPath(source);
 
@@ -60,7 +61,7 @@ internal static partial class DeployHandler
             return deployTarget.Type switch
             {
                 DeployType.S3 => await DeployToS3Async(sourcePath, deployTarget.Destination, dryRun, verbose),
-                DeployType.GitHubPages => await DeployToGitHubPagesAsync(sourcePath, dryRun, verbose),
+                DeployType.GitHubPages => await DeployToGitHubPagesAsync(sourcePath, dryRun, verbose, force),
                 DeployType.Netlify => await DeployToNetlifyAsync(sourcePath, dryRun, verbose),
                 DeployType.Vercel => await DeployToVercelAsync(sourcePath, dryRun, verbose),
                 _ => throw new NotSupportedException($"不支持的部署类型: {deployTarget.Type}")
@@ -147,7 +148,8 @@ internal static partial class DeployHandler
         return result;
     }
 
-    private static async Task<int> DeployToGitHubPagesAsync(string sourcePath, bool dryRun, bool verbose)
+    private static async Task<int> DeployToGitHubPagesAsync(
+        string sourcePath, bool dryRun, bool verbose, bool force = false)
     {
         Console.WriteLine("部署到 GitHub Pages");
 
@@ -197,33 +199,46 @@ internal static partial class DeployHandler
             // 用 ls-remote 精确区分：退出码 0 = 分支存在（克隆失败即真故障，中止）；
             // 退出码 2 = 无匹配 ref（分支不存在，可安全初始化）；其余 = 探测本身失败，中止。
             var cloneResult = await RunCommandAsync("git", $"clone --branch gh-pages --single-branch \"{remoteUrl}\" \"{tempDir}\"", verbose);
+            // 显式 --force 时为旧语义兜底：不探测远端状态，直接孤儿分支 + 强制推送。
+            // 需要覆盖远端历史的流水线必须显式声明，默认路径保持"克隆失败即中止"
+            var forcePush = false;
             if (cloneResult != 0)
             {
-                var lsRemote = await RunCommandAsync(
-                    "git", $"ls-remote --exit-code --heads \"{remoteUrl}\" gh-pages", verbose);
-
-                if (lsRemote == 0)
+                if (force)
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("错误: gh-pages 分支存在但克隆失败（网络或权限问题），已中止以避免覆盖远端历史");
-                    Console.WriteLine("请检查网络/凭据后重试；确需覆盖时请手动推送");
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("警告: --force 已启用——将用本地构建产物重建 gh-pages 并强制覆盖远端历史");
                     Console.ResetColor();
-                    return cloneResult;
                 }
-
-                if (lsRemote != 2)
+                else
                 {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine($"错误: 无法确认远端 gh-pages 分支状态（ls-remote 退出码 {lsRemote}），已中止");
-                    Console.ResetColor();
-                    return lsRemote;
+                    var lsRemote = await RunCommandAsync(
+                        "git", $"ls-remote --exit-code --heads \"{remoteUrl}\" gh-pages", verbose);
+
+                    if (lsRemote == 0)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine("错误: gh-pages 分支存在但克隆失败（网络或权限问题），已中止以避免覆盖远端历史");
+                        Console.WriteLine("请检查网络/凭据后重试；确需覆盖时加 --force（会重写远端历史）");
+                        Console.ResetColor();
+                        return cloneResult;
+                    }
+
+                    if (lsRemote != 2)
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"错误: 无法确认远端 gh-pages 分支状态（ls-remote 退出码 {lsRemote}），已中止");
+                        Console.ResetColor();
+                        return lsRemote;
+                    }
                 }
 
                 if (verbose)
-                    Console.WriteLine("远端无 gh-pages 分支，初始化新的 gh-pages 分支...");
+                    Console.WriteLine("初始化新的 gh-pages 分支...");
                 await RunCommandAsync("git", $"init \"{tempDir}\"", verbose);
                 await RunCommandAsync("git", $"-C \"{tempDir}\" checkout --orphan gh-pages", verbose);
                 await RunCommandAsync("git", $"-C \"{tempDir}\" remote add origin \"{remoteUrl}\"", verbose);
+                forcePush = force;
             }
 
             // 清空目录（保留 .git）
@@ -261,9 +276,12 @@ internal static partial class DeployHandler
                 return commitResult;
             }
 
-            // 普通推送即可：两条路径（克隆成功后在克隆 HEAD 之上提交 / 分支不存在时新建孤儿分支）
-            // 都是快进推送，不需要 --force；去掉 --force 后远端历史不会再被静默重写
-            var pushResult = await RunCommandAsync("git", $"-C \"{tempDir}\" push origin gh-pages", verbose);
+            // 普通推送即可：克隆成功后在克隆 HEAD 之上提交（快进）；分支不存在时新建孤儿
+            // 分支（也是快进）。只有显式 --force 的覆盖路径才需要强制推送
+            var pushArgs = forcePush
+                ? $"-C \"{tempDir}\" push origin gh-pages --force"
+                : $"-C \"{tempDir}\" push origin gh-pages";
+            var pushResult = await RunCommandAsync("git", pushArgs, verbose);
 
             if (pushResult == 0)
             {
