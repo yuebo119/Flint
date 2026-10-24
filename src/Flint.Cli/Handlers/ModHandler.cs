@@ -81,13 +81,19 @@ internal static class ModHandler
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"\n模块安装成功！");
             Console.ResetColor();
+            // 身份是**目录名**：config 里 `theme = "<目录名>"` 才找得到布局。
+            // 此前打印 descriptor.Name（theme.toml 自述名），zip 安装时与实际目录
+            // 不一致（装到 themes/<仓库名>，却提示 themes/<自述名>）
+            var installedDirName = string.IsNullOrEmpty(descriptor.LocalPath)
+                ? descriptor.Name
+                : Path.GetFileName(descriptor.LocalPath);
             Console.WriteLine($"  名称: {descriptor.Name}");
             Console.WriteLine($"  版本: {descriptor.Version}");
-            Console.WriteLine($"  位置: themes/{descriptor.Name}");
+            Console.WriteLine($"  位置: themes/{installedDirName}");
 
             Console.WriteLine();
             Console.WriteLine("要使用此主题，请在 Flint.toml 中添加:");
-            Console.WriteLine($"  theme = \"{descriptor.Name}\"");
+            Console.WriteLine($"  theme = \"{installedDirName}\"");
 
             return 0;
         }
@@ -228,6 +234,17 @@ internal static class ModHandler
                 Console.Write($"  {module.Name}");
                 Console.ResetColor();
                 Console.WriteLine($" @ {module.Version}");
+
+                // 目录名才是 config 里 `theme = "..."` 的值；自述名与目录名不同时
+                // （zip 安装装到 themes/<仓库名>）一并显示，免得用户猜
+                var dirName = string.IsNullOrEmpty(module.LocalPath)
+                    ? null
+                    : Path.GetFileName(module.LocalPath);
+                if (dirName is not null &&
+                    !string.Equals(dirName, module.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"    目录: themes/{dirName}（theme = \"{dirName}\"）");
+                }
 
                 if (verbose)
                 {

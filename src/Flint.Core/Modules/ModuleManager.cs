@@ -81,7 +81,21 @@ public sealed partial class ModuleManager : IDisposable
         var sha256 = await DownloadModuleAsync(owner, repo, version, modulePath, repo, cancellationToken);
         var descriptor = await ReadModuleDescriptorAsync(modulePath, cancellationToken);
         await UpdateLockFileAsync(repo, descriptor, version, sha256, cancellationToken);
-        return descriptor;
+
+        // 成功回执里的版本必须是**实际安装版本**（lockfile 记录值），不是 theme.toml
+        // 自述版本：第三方主题的 theme.toml 普遍只有 [version].min，读出来是默认
+        // "1.0.0"，而实际装的是 v4.2.6 这类 tag
+        return new ModuleDescriptor
+        {
+            Name = descriptor.Name,
+            Version = version,
+            Repository = descriptor.Repository,
+            Description = descriptor.Description,
+            License = descriptor.License,
+            MinVersion = descriptor.MinVersion,
+            Tags = descriptor.Tags,
+            LocalPath = modulePath
+        };
     }
 
     /// <summary>
@@ -173,8 +187,7 @@ public sealed partial class ModuleManager : IDisposable
         }
         finally
         {
-            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); }
-            catch (IOException) { }
+            TryDeleteDirectory(tempDir);
         }
     }
 
@@ -296,6 +309,8 @@ public sealed partial class ModuleManager : IDisposable
     public async ValueTask UpdateAsync(string moduleName, string? version = null, CancellationToken cancellationToken = default)
     {
         ValidateModuleName(moduleName);
+        // 用户可能用 theme.toml 里的自述名（mod list 曾按它显示），实际目录是另一名字
+        moduleName = await ResolveInstalledNameAsync(moduleName, cancellationToken);
         var modulePath = Path.Combine(_modulesPath, moduleName);
         if (!Directory.Exists(modulePath))
             throw new InvalidOperationException($"模块未安装: {moduleName}");
@@ -324,7 +339,25 @@ public sealed partial class ModuleManager : IDisposable
         {
             // 损坏的模块目录（缺 theme.toml）跳过但保留其他条目，不让整个列表失败
             try
-            { modules.Add(await ReadModuleDescriptorAsync(dir, cancellationToken)); }
+            {
+                var descriptor = await ReadModuleDescriptorAsync(dir, cancellationToken);
+                // 版本取 lockfile 记录的**实际安装版本**（theme.toml 的 version 只是
+                // 主题自述：第三方主题普遍没有该字段，读出来是默认 1.0.0，而实际装的是
+                // v4.2.6 这类 tag）。Name 保留自述名供人读，LocalPath 供调用方显示目录名
+                var installedVersion = await GetLockVersionAsync(
+                    Path.GetFileName(dir), cancellationToken);
+                modules.Add(new ModuleDescriptor
+                {
+                    Name = descriptor.Name,
+                    Version = installedVersion ?? descriptor.Version,
+                    Repository = descriptor.Repository,
+                    Description = descriptor.Description,
+                    License = descriptor.License,
+                    MinVersion = descriptor.MinVersion,
+                    Tags = descriptor.Tags,
+                    LocalPath = dir
+                });
+            }
             catch (Exception ex) when (ex is IOException or TomlException) { }
         }
         return modules;
@@ -344,11 +377,44 @@ public sealed partial class ModuleManager : IDisposable
     {
         // 模块名来自 CLI 参数：themes/.. 会把删除目标解析为站点根，递归删除不可逆
         ValidateModuleName(moduleName);
+        moduleName = await ResolveInstalledNameAsync(moduleName, cancellationToken);
         var modulePath = Path.Combine(_modulesPath, moduleName);
         if (!Directory.Exists(modulePath))
             throw new InvalidOperationException($"模块未安装: {moduleName}");
         Directory.Delete(modulePath, recursive: true);
         await RemoveFromLockFileAsync(moduleName, cancellationToken);
+    }
+
+    /// <summary>
+    /// 把用户输入的名字解析成实际安装目录名。目录名是身份（`theme = "&lt;目录名&gt;"`、
+    /// lockfile 键、remove/update 的目标共用它）；若按目录名找不到，再按 theme.toml
+    /// 的自述名反查一次——兼容 git 安装（目录名取自 theme.toml）与 zip 安装
+    /// （目录名取自仓库名）两种形态下的用户输入
+    /// </summary>
+    private async ValueTask<string> ResolveInstalledNameAsync(string moduleName, CancellationToken ct)
+    {
+        if (Directory.Exists(Path.Combine(_modulesPath, moduleName)) || !Directory.Exists(_modulesPath))
+        {
+            return moduleName;
+        }
+
+        foreach (var dir in Directory.GetDirectories(_modulesPath))
+        {
+            try
+            {
+                var descriptor = await ReadModuleDescriptorAsync(dir, ct);
+                if (string.Equals(descriptor.Name, moduleName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return Path.GetFileName(dir);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or TomlException)
+            {
+                // 损坏目录跳过：反查失败按"未安装"报错，由调用方给出可读消息
+            }
+        }
+
+        return moduleName;
     }
 
     /// <summary>模块名必须为安全文件名段（拒绝路径分隔符与 . / .. 父目录引用）</summary>
@@ -585,14 +651,32 @@ public sealed partial class ModuleManager : IDisposable
                 throw;
             }
             if (hasOld)
-                Directory.Delete(backupPath, recursive: true);
+                TryDeleteDirectory(backupPath);
         }
         finally
         {
-            if (Directory.Exists(tempPath))
-                Directory.Delete(tempPath, recursive: true);
-            if (Directory.Exists(backupPath))
-                Directory.Delete(backupPath, recursive: true);
+            TryDeleteDirectory(tempPath);
+            TryDeleteDirectory(backupPath);
+        }
+    }
+
+    /// <summary>
+    /// 尽力清理临时目录：Windows 上杀软实时扫描会短暂锁住刚写入的文件
+    /// （本机实测 pack-*.idx 被拒），清理失败不能把**已经成功**的安装判成失败，
+    /// 残留交给系统临时目录清理
+    /// </summary>
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 锁未释放：留待系统清理
         }
     }
 
