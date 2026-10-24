@@ -41,6 +41,7 @@
   <PropertyGroup>
     <Version>0.2.1</Version>
     <Authors>Flint Team</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <Company>Flint</Company>
     <Product>Flint Static Site Generator</Product>
     <Description>高性能静态站点生成器，使用 .NET 11 和 Native AOT 构建</Description>

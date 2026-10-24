@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
+  <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-blue">
   <img alt=".NET" src="https://img.shields.io/badge/.NET-10-purple">
   <img alt="NativeAOT" src="https://img.shields.io/badge/deploy-NativeAOT%20single--file-green">
   <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
@@ -563,4 +563,4 @@ include the theme name and `demo build` reproduction steps.
 
 ## 📄 License
 
-MIT License
+Licensed under the [Apache License 2.0](LICENSE).
