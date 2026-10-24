@@ -233,6 +233,11 @@ Flint **不自动转义**模板输出——`page.title`、`page.content` 原样�
 主题是一整套模板 + 样式 + 示例内容，`flint mod get <repo>` 装到 `themes/`。
 **核心规则：同名时你的文件永远赢，主题只补缺。**
 
+`mod` 的身份是**目录名**（`themes/` 下的目录名，也就是配置里 `theme = "..."` 要写的值），
+它不一定等于主题自述名：`flint mod get panr/hugo-theme-terminal` 装到
+`themes/hugo-theme-terminal/`（自述名是 Terminal）。`mod list` 会同时打印自述名、
+锁定的实际安装版本，以及两者不同时的目录名；`mod remove` 自述名与目录名都接受。
+
 页面用哪个模板由**页面特征**决定——`layouts/posts/single.html` 只对
 posts 生效，`layouts/blog/` 按 front matter `type` 路由：
 
@@ -307,6 +312,10 @@ enableGitInfo = true                # 启用 date: ":git"
 | `flint serve` | 启动开发服务器 |
 | `flint mod <sub>` | 模块管理（init/get/update/list/remove） |
 | `flint deploy <target>` | 部署（s3://、gh-pages、netlify、vercel） |
+
+**gh-pages 部署的覆盖语义**：默认"能快进就推"，克隆失败时先用 `ls-remote` 区分
+远端分支是否存在——存在（网络/权限问题）即中止，避免用孤儿分支覆盖远端历史。
+确实需要重写远端历史时加 `--force` 显式声明。
 | `flint version` | 显示版本信息 |
 
 **构建选项**：`--source/-s`（默认 `.`）、`--output/-o`（默认取站点配置
