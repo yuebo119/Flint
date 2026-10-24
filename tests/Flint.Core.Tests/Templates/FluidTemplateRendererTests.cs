@@ -621,6 +621,11 @@ public sealed class FluidTemplateRendererTests : IDisposable
         Assert.Equal("v1", await _renderer.RenderAsync("index", CreateTestContext()));
 
         File.WriteAllText(Path.Combine(_tempDir, "index.liquid"), "v2");
+        // 显式推进 mtime：NTFS 时间片内等长改写（v1→v2）mtime 可能不前进，而缓存
+        // 验效只认 mtime（同粒度+同长度替换是代码里登记的残留边界）。本用例验的是
+        // "失效后立刻看到新内容"，需要一次真实的 mtime 变化才不依赖机器时序
+        File.SetLastWriteTimeUtc(
+            Path.Combine(_tempDir, "index.liquid"), DateTime.UtcNow.AddSeconds(1));
         _renderer.InvalidateMtimeCache();
 
         Assert.Equal("v2", await _renderer.RenderAsync("index", CreateTestContext()));
