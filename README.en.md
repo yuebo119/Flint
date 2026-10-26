@@ -507,9 +507,9 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 
 | Technology | Role |
 |------|------|
-| **.NET 11 RC2** | Current RC line; NativeAOT compilation, single-file publish |
+| **.NET 11 RC3** | Current RC line; NativeAOT compilation, single-file publish |
 | **Scriban 7.5 + Fluid 3.0 beta** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
-| **Markdig 1.4** | CommonMark + GFM parsing |
+| **Markdig 1.5** | CommonMark + GFM parsing |
 | **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |
 | **Lightning CSS** | CSS minification (external CLI, falls back to built-in simple minifier) |
 | **ImageSharp 3.1** | Image processing (resize/format conversion/responsive) |

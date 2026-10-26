@@ -598,7 +598,7 @@ dotnet run --project src/Flint.DevTools -- demo build      # 至少 blast radius
 | 常驻工具 | 进 `src/Flint.DevTools`（开发运维：bench/audit/corpus/release/perf/theme/demo）或 `src/Flint.AiGate`（质量门禁），子命令形态 | 反复调用、要进提交前流程或 CI | 基准测试、门禁扫描、发布工具 |
 | 交互排查 | `csi`（SDK 自带 Roslyn REPL） | 边写边试的探索 | 正则调参、模板行为验证 |
 
-文件型应用最小形态（本机 .NET 11.0.100-rc.2 实测可用）：
+文件型应用最小形态（本机 .NET 11.0.100-rc.3 实测可用，2026-10-26 复验）：
 
 ```csharp
 #:package Humanizer@2.14.1

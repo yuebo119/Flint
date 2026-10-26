@@ -474,9 +474,9 @@ Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 | 技术 | 说明 |
 |------|------|
-| **.NET 11 RC2** | 当前 RC 线，NativeAOT 原生编译，单文件发布 |
+| **.NET 11 RC3** | 当前 RC 线，NativeAOT 原生编译，单文件发布 |
 | **Scriban 7.5 + Fluid 3.0 beta** | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
-| **Markdig 1.4** | CommonMark + GFM 解析 |
+| **Markdig 1.5** | CommonMark + GFM 解析 |
 | **Dart Sass CLI** | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`） |
 | **Lightning CSS** | CSS 压缩（外部 CLI，缺失回退内置简单压缩） |
 | **ImageSharp 3.1** | 图片处理（缩放/格式转换/响应式） |

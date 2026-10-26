@@ -58,7 +58,7 @@ Flint v0.2.1 (.NET 11)
 `-v` 输出:
 ```
 Flint v0.2.1
-运行时: .NET 11.0.0-rc.2
+运行时: .NET 11.0.0-rc.3
 操作系统: Microsoft Windows 10.0.19045
 架构: X64
 ```
