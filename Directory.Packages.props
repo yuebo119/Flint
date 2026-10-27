@@ -7,7 +7,8 @@
   <ItemGroup>
     <!-- CLI 框架（3.0 RC：减少反射、支持裁剪/AOT，API 有破坏性变化） -->
     <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.3.26522.148" />
-    <!-- 模板引擎：Scriban 仍为默认引擎；Fluid 作为 Liquid 备用引擎接入 -->
+    <!-- 模板引擎：双引擎 auto 路由（.liquid→Fluid、Hugo .html→Scriban）；
+         新站点为 Fluid 原生（Liquid 内置兜底），Scriban 长期做 Hugo 兼容 -->
     <PackageVersion Include="Scriban" Version="7.5.3" />
     <PackageVersion Include="Fluid.Core" Version="3.0.0-beta.8" />
     <!-- Markdown 解析 -->
