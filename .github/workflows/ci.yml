@@ -98,6 +98,10 @@ jobs:
           dotnet build -c Release
           dotnet build src/Flint.AiGate -c Release
       - name: 单元测试 × 3 轮（抓偶发）
+        # bash 循环语法必须显式声明 shell：windows-latest 默认 pwsh，
+        # 解析 `for i in ...; do` 直接 ParserError——nightly 自 5fbad60
+        # 落地起 12 连挂全栽在此，集成与门禁从未真正跑过
+        shell: bash
         run: |
           for i in 1 2 3; do
             echo "=== 第 $i 轮 ==="
