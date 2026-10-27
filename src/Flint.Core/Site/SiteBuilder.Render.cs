@@ -796,13 +796,26 @@ public sealed partial class SiteBuilder
         return list;
     }
 
+    /// <summary>
+    /// 词条裁剪键：分类名 + 分隔符 + 规范化词条名（与 <see cref="TaxonomyService"/> 的
+    /// 词条归一化同口径）。键集恒用 OrdinalIgnoreCase 比较，词条大小写差异不产生漏渲
+    /// </summary>
+    internal static string TermKey(string taxonomyName, string termName) =>
+        string.Concat(taxonomyName, "\u0001", TaxonomyService.NormalizeTerm(termName));
+
+    /// <param name="onlyTerms">
+    /// 增量裁剪（可选）：非 null 时只渲染集合内的词条页（键由 <see cref="TermKey"/> 生成），
+    /// 列表页（无 TermName）始终渲染。用于"改一个页面的 tags"只重产受影响词条，
+    /// 而不是全量重渲（fixit 106 页 / 508 词条页实测：全量 16.5s，受影响词条量级 ~0.5s）
+    /// </param>
     private async Task<List<RenderedPage>> GenerateTaxonomyPagesAsync(
         TaxonomyCollection taxonomies,
         SiteContext siteContext,
         SiteConfig config,
         BuildOptions options,
         ConcurrentBag<BuildError> errors,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlySet<string>? onlyTerms = null)
     {
         var results = new List<RenderedPage>();
         // 并行渲染段的收集容器（T3.1）：渲染完成后按确定性序号合并进 results
@@ -836,6 +849,12 @@ public sealed partial class SiteBuilder
         {
             // 列表页（无 TermName）受 "taxonomy" 控制，term 页受 "term" 控制
             if (taxPage.TermName is null ? taxonomyDisabled : termDisabled)
+            {
+                continue;
+            }
+            // 增量裁剪：只重产受影响词条（列表页 TermName 为 null，不受裁剪）
+            if (onlyTerms is not null && taxPage.TermName is not null &&
+                !onlyTerms.Contains(TermKey(taxPage.TaxonomyName, taxPage.TermName)))
             {
                 continue;
             }

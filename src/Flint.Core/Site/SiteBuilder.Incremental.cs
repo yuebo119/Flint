@@ -165,12 +165,38 @@ public sealed partial class SiteBuilder
                     changedFilesList, options, errors, cancellationToken);
                 var filteredChanges = FilterContents(parsedChanges, options);
 
+                // 增量裁剪：记录变化页涉及的全部词条（**旧 + 新**，两侧都取）。
+                // 取旧侧是因为删词条/改日期同样影响原词条页（成员移除、排序变化）；
+                // 只按"新词条"裁剪会漏渲原词条页。词条键经 TermKey 归一化，
+                // 集合用 OrdinalIgnoreCase——词条大小写差异不产生漏渲
+                var taxonomyConfigs = TaxonomyService.FromConfigured(config.Taxonomies);
+                var changedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                void CollectTerms(FrontMatter? metadata)
+                {
+                    if (metadata is null)
+                    {
+                        return;
+                    }
+                    foreach (var taxonomyName in taxonomyConfigs.Keys)
+                    {
+                        foreach (var raw in TaxonomyService.GetTermValues(metadata, taxonomyName))
+                        {
+                            if (string.IsNullOrWhiteSpace(raw))
+                            {
+                                continue;
+                            }
+                            changedTerms.Add(TermKey(taxonomyName, raw));
+                        }
+                    }
+                }
+
                 foreach (var parsed in filteredChanges)
                 {
                     var key = ContentKeyFor(options.SourcePath, config, parsed.SourcePath);
                     var existing = tree.Get(key);
                     if (existing is not null)
                     {
+                        CollectTerms(existing.Content?.Metadata);
                         existing.Content = parsed;
                     }
                     else
@@ -189,6 +215,7 @@ public sealed partial class SiteBuilder
                         });
                         EnsureAncestors(tree, key);
                     }
+                    CollectTerms(parsed.Metadata);
                     // 节点内容已变：签名条目缓存失效，下次全站签名时按新内容重算
                     _taxonomyEntryCache.Remove(key);
                 }
@@ -202,6 +229,7 @@ public sealed partial class SiteBuilder
                     string? staleOutput = null;
                     if (oldNode?.Content is not null)
                     {
+                        CollectTerms(oldNode.Content.Metadata);
                         var oldRelPermalink = PermalinkEngine.GeneratePermalink(oldNode.Content, config);
                         staleOutput = GetOutputPath(oldRelPermalink, options.OutputPath);
                     }
@@ -311,10 +339,13 @@ public sealed partial class SiteBuilder
 
                 // 分类/词条页聚合全部内容的 tags/categories——tags/categories 增删改
                 // 使其陈旧必须重产；纯正文编辑（taxonomy 签名一致）跳过重产。
-                // 模板变化时也重渲染（term/taxonomy 页外观由模板决定）
+                // 模板变化时也重渲染（term/taxonomy 页外观由模板决定）。
+                // 签名变化时按受影响词条裁剪（changedTerms）：只重产变化页涉及旧/新词条的
+                // 词条页 + 全部列表页，其余词条页保持原样（fixit 实测 508 页全量重渲 16.5s）
                 var taxonomyPagesIncremental = templateChanges.Count > 0 || taxonomyDataChanged
                     ? await GenerateTaxonomyPagesAsync(
-                        taxonomies, siteContext, config, options, errors, cancellationToken)
+                        taxonomies, siteContext, config, options, errors, cancellationToken,
+                        templateChanges.Count > 0 ? null : changedTerms)
                         : [];
                 Phase("3.渲染+分类页");
 

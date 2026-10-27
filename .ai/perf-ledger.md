@@ -130,6 +130,25 @@ S3 反向验证：配对 A/B 的 A 臂即"移除改动"状态（旧二进制）�
 | `--cache` 复测（既有特性） | 10k：冷构建 2286-2759ms、随后热重建 **425-463ms**（非缓存热重建 1684.5ms，-73%） | 保持现状（显式开关），作为重复构建的推荐路径 |
 | Scriban 主题 CPU | fixit 106 页 30.7s（渲染 10.6s + 分类页 18.7s）、loveit 3.3s、blowfish 1.5s；模板加载已有 50ms mtime TTL 缓存与路径解析缓存 | **不立项**：慢在 Scriban 解释器与主题模板规模，策略上走主题迁移到 Liquid（300 页 A/B 已测 Fluid/Scriban=0.550x） |
 
+### 增量分类页裁剪（同日追加实施）
+
+**问题**：taxonomy 签名（成员/标题/日期聚合）一变就全量重产分类页。fixit（106 篇 / 231 词条 / 508 个词条页）serve 实测：改一处 tags → **16536ms**。
+
+**改动**：变化页涉及的词条（**旧 + 新**，两侧都收集）构成裁剪集，只重产这些词条页；分类列表页始终重产（词条计数/集合可能变）；模板变化时不裁剪（外观全量重算）。落点 `SiteBuilder.Incremental.cs`（收集）、`SiteBuilder.Render.cs`（`onlyTerms` 过滤）、`TaxonomyService.cs`（front matter 词条提取，与页面口径同源）。
+
+| 口径 | 改前 | 改后 | 结论 |
+| --- | --- | --- | --- |
+| fixit serve·改 tags（新增词条） | 16536ms | **3832ms** | **-77%**（同机同站点，AOT） |
+| fixit serve·改正文（签名不变） | 3170ms | 2002ms | 噪声内偏快 |
+| fixit serve·改正文（首轮） | 501ms | 510ms | 无回归 |
+| perf gate 增量构建（100 页无分类） | 50.2ms | 49.1ms | 无回归 |
+
+锁定测试：`TermScopedIncrementalTests` 3 项（未受影响词条页 mtime 不变 / 删除页后原词条页重产且去掉被删页 / 模板变化不裁剪），变异（传 `null` 关闭裁剪）令第 1 项红。
+
+**剩余大头**：列表页分页仍全量（fixit `/tags/` 231 词条 ÷ paginate 5 = 47 页，每页跑完整 baseof）约占改后 3.8s 的 2s。进一步裁剪需要模板级推理（列表页模板可读 `site.taxonomies` 全量），不做。
+
+**同区发现（未修，非本轮引入）**：`ComputeTaxonomySignature` 只聚合 tags/categories，**不含自定义 taxonomy**（`Params[plural]`）。因此在增量里改自定义分类（如 `series`）不会触发分类页重产，watch 下会留旧产物。修法是把配置的分类名纳入签名文本；本轮只记录，未改。
+
 ### 未测与触发条件
 
 - Linux/ext4 未测（CI `perf-linux` nightly 仅 300 页 engine-ab）：本轮结论是 Windows + 过滤驱动的墙，Linux 上 mkdir 更便宜，热重建收益占比会变小。

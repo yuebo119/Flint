@@ -4,6 +4,7 @@
 using System.Text.RegularExpressions;
 using Flint.Core.Abstractions;
 using Flint.Core.Configuration;
+using Flint.Core.Models;
 
 namespace Flint.Core.Site;
 
@@ -163,22 +164,37 @@ public sealed partial class TaxonomyService
     /// <summary>
     /// 从页面获取指定分类的术语值
     /// </summary>
-    private static IEnumerable<string> GetTermValues(PageContext page, string taxonomyName)
+    private static IEnumerable<string> GetTermValues(PageContext page, string taxonomyName) =>
+        GetTermValues(page.Tags, page.Categories, page.Params, taxonomyName);
+
+    /// <summary>
+    /// 从 front matter 获取指定分类的术语值（增量构建按词条裁剪重渲染集合用）。
+    /// 与 <see cref="GetTermValues(PageContext, string)"/> 同源同判据，避免两处口径漂移
+    /// </summary>
+    internal static IEnumerable<string> GetTermValues(FrontMatter metadata, string taxonomyName) =>
+        GetTermValues(metadata.Tags, metadata.Categories, metadata.Params, taxonomyName);
+
+    private static IEnumerable<string> GetTermValues(
+        IReadOnlyList<string> tags,
+        IReadOnlyList<string> categories,
+        IReadOnlyDictionary<string, object>? parameters,
+        string taxonomyName)
     {
         return taxonomyName.ToLowerInvariant() switch
         {
-            "tags" => page.Tags,
-            "categories" => page.Categories,
-            _ => GetCustomTaxonomyValues(page, taxonomyName)
+            "tags" => tags,
+            "categories" => categories,
+            _ => GetCustomTaxonomyValues(parameters, taxonomyName)
         };
     }
 
     /// <summary>
     /// 获取自定义分类的值
     /// </summary>
-    private static IEnumerable<string> GetCustomTaxonomyValues(PageContext page, string taxonomyName)
+    private static IEnumerable<string> GetCustomTaxonomyValues(
+        IReadOnlyDictionary<string, object>? parameters, string taxonomyName)
     {
-        if (page.Params.TryGetValue(taxonomyName, out var value))
+        if (parameters is not null && parameters.TryGetValue(taxonomyName, out var value))
         {
             return value switch
             {
@@ -193,9 +209,10 @@ public sealed partial class TaxonomyService
     }
 
     /// <summary>
-    /// 规范化术语名称
+    /// 规范化术语名称（增量路径的裁剪键与 <see cref="BuildTaxonomyTerms"/> 同口径，
+    /// 故放宽为 internal 供 <see cref="SiteBuilder.TermKey"/> 复用，不另起一份归一化）
     /// </summary>
-    private static string NormalizeTerm(string term)
+    internal static string NormalizeTerm(string term)
     {
         return term.Trim();
     }
