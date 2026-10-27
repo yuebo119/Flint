@@ -16,71 +16,63 @@
 </p>
 
 Flint is a static site generator built in C# / .NET 10+: 10k-page sites build
-in 3.5 seconds, incrementals take 75ms, the deliverable is a native single
+in 2.6 seconds, incrementals take 64ms, the deliverable is a native single
 file — and it ships an AST-level automated migration toolchain for
 Hugo themes.
 
 | 10k-page build | Incremental | Deliverable | Real-corpus memory |
 |:---:|:---:|:---:|:---:|
-| **3.5s** (0.81x Hugo) | **75ms** | **40MB** single file | on par with Hugo (-2%) |
+| **2.6s** (0.51x Hugo) | **64ms** | **41MB** single file | less than Hugo (USS -38%) |
 
 ---
 
 ## Table of Contents
 
-- [Highlights](#-highlights)
+- [Features](#-features)
 - [Quick Start](#-quick-start)
 - [Demo Sites](#-demo-sites)
 - [Usage](#-usage)
 - [Configuration and Commands](#️-configuration-and-commands)
-- [Best Practices](#-best-practices)
 - [Performance](#-performance)
 - [SSG Comparison](#-ssg-comparison)
 - [FAQ](#-faq)
-- [Roadmap](#️-roadmap)
 - [Development](#️-development)
 - [Contributing](#-contributing)
 - [License](#-license)
 
 ---
 
-## ✨ Highlights
+## ✨ Features
 
-**Build throughput and predictability** — 10k pages in 3.5s (0.81x Hugo),
-75ms incrementals, ±1% dispersion over three cold builds, lower load-drift
-sensitivity than the reference (×1.4 vs ×1.6). Incrementals are
-dependency-graph driven: editing one article rebuilds only the affected
-pages.
+**Dual template engines** — Fluid (Liquid syntax) powers new sites; Scriban
+carries Hugo theme compatibility. `engine = auto` routes by template
+extension, both can coexist in one site, and pure-Liquid sites never load
+Scriban.
 
-**Zero-dependency native deployment** — a .NET 10+ NativeAOT single-file
-app: no runtime, no node_modules, no JIT warmup. The deliverable is one exe.
+**Build performance** — 10k-page cold builds in 2.6s (0.51x Hugo, fastest
+of 14 SSGs in the same-window matrix), 64ms dependency-graph incrementals
+rebuilding only affected pages; the `--cache` persistent content cache cuts
+repeat-build total time another 59% with byte-identical output.
 
-**The Hugo compatibility layer** — lookup order / render hooks / shortcode
-API / 20 namespace functions all aligned; ThemeMigrator converts Go
-templates at the AST level, marking indeterminable semantics with
-`TODO-HUGO` instead of silently mistranslating — 21 real themes verified.
-Migration drops from "rewrite" to "one command plus a few adjudications".
+**Migrate Hugo themes directly** — lookup order / render hooks / shortcode
+API / namespace functions aligned; ThemeMigrator converts Go templates at
+the AST level, flagging indeterminable semantics with `TODO-HUGO` instead
+of silently mistranslating; 21 real themes verified.
 
-**Local asset pipeline** — Sass is compiled by the external Dart Sass CLI
-(`FLINT_SASS` or `sass` on PATH; CI installs dart-sass); CSS minification
-prefers Lightning CSS and falls back to a built-in simple minifier;
-TypeScript type stripping is homegrown (unrecognized syntax passes
-through untouched — a browser error beats silent corruption); image
-processing results cached on disk. Heavy TS/SCSS themes need an external
-Sass executable.
+**Zero-dependency single-file delivery** — .NET 10 NativeAOT: no runtime,
+no node_modules, no JIT warmup — the deliverable is one exe; the asset
+pipeline covers CSS minification, TS type stripping, image processing, and
+fingerprinting.
 
-**Engineering-grade quality assurance** — the `perf gate` regression gate
-(three-run median ratchet, degradation intercepted before merge); FsCheck
-property testing, 1131 unit tests and 1649 integration tests (fast checks
-cover build + unit tests + gates on both platforms; nightly runs the full
-suite including integration); output path-escape protection and atomic
-cache-entry writes.
+**Millisecond cold start** — NativeAOT means no JIT warmup and no runtime
+bootstrap: process start to a usable command at a 106ms median (measured
+2026-10-28, win-x64 single file, median of 10 runs spanning 89-117ms).
 
-Under the hood: a three-phase parallel pipeline (parse/render/write +
-Server GC), content-signature transform caching (executed once, reused
-site-wide), Win32 single-segment writes (write-phase median -42%), and a
-Scriban semantic bridge (lenient comparison / collection normalization —
-real themes render unchanged).
+**Sass/SCSS compilation** — external Dart Sass CLI (`FLINT_SASS` or `sass`
+on PATH): IncludePaths, compressed output, and inline source maps;
+per-build content-signature caching compiles each SCSS once no matter how
+many pages reference it; Chinese input on Windows goes through UTF-8 temp
+files, immune to system code-page mojibake.
 
 ---
 
@@ -98,7 +90,7 @@ real themes render unchanged).
 git clone https://github.com/yuebo119/Flint.git
 cd Flint
 
-# Windows (NativeAOT single file ~40MB; omitting -p:PublishAot=true yields ~89MB non-AOT)
+# Windows (NativeAOT single file ~41MB; omitting -p:PublishAot=true yields ~89MB non-AOT)
 dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish
 
 # Linux / macOS (Apple Silicon)
@@ -258,11 +250,19 @@ by front matter `type`:
 
 | Page kind | Candidate order (earlier wins) |
 |---|---|
-| Regular page | `{type}/{layout}` → `{type}/single` → `{section}/{layout}` → `{section}/single` → `{layout}` → `single` → `all` |
-| Home | `index` → `home` → `list` → `all` |
-| Section | `{section}/section` → `{section}/list` → `section/section` → `section/list` → `list` → `all` |
-| Taxonomy | `{taxonomy}/terms` → `{taxonomy}/taxonomy` → `{taxonomy}/list` → `terms` → `taxonomy` → `list` |
-| Term | `{taxonomy}/term` → `{taxonomy}/taxonomy` → … → `term` → `taxonomy` → `list` |
+| Regular page | `{type}/{layout}` → `{type}/page` → `{type}/single` → `{section}/{layout}` → `{section}/page` → `{section}/single` → `{layout}` → `page` → `single` → `all` |
+| Home | `{type}/{layout}` → `{type}/home` → `{type}/index` → `{type}/list` → `{layout}` → `home` → `index` → `list` → `all` |
+| Section | `{type}/{layout}` → `{type}/section` → `{type}/list` → `{section}/{layout}` → `{section}/section` → `{section}/list` → `section/{layout}` → `section/section` → `section/list` → `{layout}` → `section` → `list` → `all` |
+| Taxonomy | `{taxonomy}/{layout}` → `{taxonomy}/terms` → `{taxonomy}/taxonomy` → `{taxonomy}/list` → `taxonomy/{layout}` → `taxonomy/terms` → `taxonomy/taxonomy` → `taxonomy/list` → `_default/terms` → `_default/taxonomy` → `taxonomy` → `list` → `all` |
+| Term | `{taxonomy}/{layout}` → `{taxonomy}/term` → `{taxonomy}/list` → `term/{layout}` → `term/term` → `term/list` → `taxonomy/{layout}` → `taxonomy/term` → `_default/taxonomy` → `_default/term` → `term` → `list` → `all` |
+
+Three conventions: bare names (no slash) expand to the `_default/{name}`
+form first, then `{name}`; each level checks the site's `layouts/` before
+the theme's (same name, site wins); `{type}` levels fall back to the
+section name when unset, and `page` precedes `single` while `home`
+precedes `index` — orderings verified by stepwise elimination against
+Hugo v0.166; full chains in
+`src/Flint.Core/Templates/PageTemplateCandidates.cs`.
 
 Theme directories at build time: `layouts/` (incl. shortcodes and render
 hooks) falls back in order with the site overriding; `static/` and `assets/`
@@ -344,96 +344,65 @@ true), `--source/-s` (`.`).
 
 ---
 
-## 📐 Best Practices
-
-Squeeze every drop out of Flint's speed, caching, and tooling — each
-practice maps to a real engine strength.
-
-1. **Eat site-wide loops with partialCached** — sidebar/nav loops whose
-   output doesn't depend on the page, one line cached site-wide
-   (`{{ partialcached "partials/sidebar" "site-wide" }}`); page-dependent
-   partials use `include`. Complexity-ladder measurements show site-wide
-   O(N) loops are the dominant template cost
-2. **Stay on incremental builds' good side** — organize content by section;
-   pair `:git` with `enableGitInfo = true`; set `timeZone` explicitly to
-   prevent cross-machine sort drift; use `--clean` only for true full
-   rebuilds
-3. **The production trio** — `dotnet publish -p:PublishAot=true` (native
-   single-file app) + `flint build --minify` + asset fingerprinting:
-   ```scriban
-   {{ $css = resources.Get "css/main.css" | resources.Minify | resources.Fingerprint }}
-   <link rel="stylesheet" href="{{ $css.RelPermalink }}" integrity="{{ $css.Data.Integrity }}">
-   ```
-   Sass results are content-signature cached within a build: reference one
-   SCSS from many pages, it compiles once
-4. **Let ThemeMigrator do the heavy lifting** — ① `dotnet run --project
-   src/Flint.ThemeMigrator -- <hugo-dir> <flint-dir>` AST-level
-   conversion, then search `TODO-HUGO` and adjudicate each; ②
-   `flint build --missing-layout skip` to get running first (remove keys
-   Hugo 0.145 dropped, e.g. `_build`); ③ `theme matrix <theme>` +
-   `audit assets/elements` comparing dual-side artifacts; ④
-   `demo build <theme> --serve` preview under the shared corpus. Flint
-   ships 12 built-in shortcodes; theme-private ones migrate with the theme
-5. **Escape untrusted content explicitly** — see the escaping contract above
-6. **Multi-environment via env vars** — one config across dev/staging/prod;
-   inject env vars in CI to switch
-7. **Wire perf gate into CI** — baseline in `scripts/perf-baseline.json`;
-   re-record after optimizations to tighten the bar. Flint's ±1% dispersion
-   lets you set thresholds tight
-
----
-
 ## 📊 Performance
 
-> Same-machine, same-corpus, same-window measurements (2026-09-25 quiet
-> window, median of 3 cold builds) · Windows 10 x64 · 32 cores · .NET SDK
-> 10.0.401 · Hugo v0.165.0 Extended official binary vs Flint
-> (Release + NativeAOT single file). Full methodology and fairness
-> notes in [benchmarks/REPORT.md](benchmarks/REPORT.md); reproduction
-> commands under [Development](#️-development).
+> Measured 2026-10-27 on one machine in one window (cold builds,
+> multi-run medians) · Windows 10 x64 · Hugo v0.168.0 vs Flint v0.3.0
+> NativeAOT. Absolute values drift across windows, so only same-window
+> ratios are compared. Methodology in [benchmarks/REPORT.md](benchmarks/REPORT.md);
+> reproduction commands under [Development](#️-development).
 
 ### End-to-End Builds
 
-| Corpus | Pages | Hugo | **Flint AOT** | Ratio |
-|------|------|-----:|--------------:|:----:|
-| 10k synthetic | 10,007 | 4336ms | **3530ms** | **0.81x** |
-| MDN Web Docs | 14,576 | 8515ms | **7086ms** | **0.83x** |
+| Corpus | Pages | Hugo | **Flint Scriban** | **Flint Fluid** |
+|------|------|-----:|--------------:|--------------:|
+| 10k synthetic (SsgBench) | 10,000 | 5179ms | **2909ms (0.56x)** | **2620ms (0.51x)** |
+| MDN Web Docs (Hugo-migrated corpus) | 14,621 | 8153ms | **4292ms (0.53x)** | — |
 
-The bigger the scale, the wider the lead — and it's consistent: 10k-page
-runs disperse within ±1% (3505–3540ms); quiet-to-loaded window drift is
-×1.6 for Hugo vs ×1.4 for Flint.
+The 10k ratio reproduces at 0.50-0.56x across three nights; the real MDN
+corpus sits at 0.53x. The Fluid arm runs a same-content `.liquid` twin of
+the synthetic corpus whose output is byte-identical to the Scriban arm
+(10,005 files, all hashes equal); MDN is a Hugo-migrated corpus
+(`.html` templates) with no Fluid arm.
 
 ### Theme Complexity Ladder (1000 pages × L1/L2/L3)
 
 | Level | Theme content | Hugo | **Flint** | Ratio |
 | ---- | -------- | ---- | ----- | ---- |
-| L1 basic | single-page rendering | 649ms | **488ms** | **0.75x** |
-| L2 medium | + sidebar O(N) site-wide loop | 830ms | **746ms** | **0.90x** |
-| L3 heavy | + two O(N) loops + nested partials + partialCached | 1266ms | **1112ms** | **0.88x** |
+| L1 basic | single-page rendering | 698ms | **437ms** | **0.63x** |
+| L2 medium | + sidebar O(N) site-wide loop | 983ms | **593ms** | **0.60x** |
+| L3 heavy | + two O(N) loops + nested partials + partialCached | 1265ms | **865ms** | **0.68x** |
 
 ### Peak Memory (build process, RSS / USS · MB)
 
 | Corpus | Hugo | **Flint** | USS delta |
 |------|------|-----------|---------|
-| 10k synthetic | 440 / 415 | **530 / 514** | +24% |
-| MDN 14,621 pages | 1531 / 1505 | **1494 / 1476** | **-2% (less)** |
+| 10k synthetic | 399 / 392 | **338 / 321** | **-18% (less)** |
+| MDN 14,621 pages | 1427 / 1402 | **893 / 872** | **-38% (less)** |
 
-### In-Process Suite (Release, 11/11 green)
+### In-Process Suite (Release, 12/12 green)
 
-Markdown parsing 238k files/sec · template rendering 69k pages/sec ·
-incremental 75ms (full build 214ms, 2.82x speedup) · config load 0.20ms ·
-concurrency speedup 1.12x · pathological detection green with the
-integration suite (1649 tests, run in full by nightly).
+Markdown parsing 229k files/sec · template rendering Scriban 54k / Fluid
+175k pages/sec (paired ratio 0.31x) · incremental 64ms (3.4x speedup) ·
+10k-site in-process throughput 5,244 pages/sec (0.19ms/page) · config load
+0.31ms · concurrency speedup 2.13x · pathological detection green with the
+integration suite (1667 tests, run in full by nightly).
 
-### 2026-10 performance round (same-engine version A/B, not vs Hugo)
+### v0.3.0 performance changes (vs the v0.2.1 baseline)
 
-AOT publish form, same-round interleaved sampling medians: full build of the
-14,621-page real corpus (MDN) **-10.0%** (10,443ms → 9,399ms); 10k-page
-synthetic corpus -3.4% to -5.5%. Largest single item: the scan IO rework
-(directory enumeration takes mtime directly, removing one stat per file;
-syscall-level measurement shows stat and read cost the same and add up
-completely). Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md`
-and `.ai/perf-ledger.md`.
+- Fluid became the primary engine: rendering throughput is 3.2x Scriban's
+  (in-process pairing 175k vs 54k pages/sec, 2026-10-27).
+- Persistent content cache `--cache`: repeat builds of a 14,622-page site
+  **-59%** total time, byte-identical output (measured 2026-10-22, local).
+- Incremental taxonomy-page trimming: tag-only edits rebuild 16.5s → 3.8s
+  (2026-10-27); hot rebuilds skip no-op directory creation, another ~7.7%
+  off total time.
+- vs Hugo over the same period: the 10k ratio moved 0.81x → 0.56x (Scriban
+  arm, like-for-like; the Fluid arm at 0.51x), each ratio from its own
+  same-window interleaved run.
+
+Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
+`.ai/perf-ledger.md`.
 
 ---
 
@@ -443,8 +412,8 @@ and `.ai/perf-ledger.md`.
 |---|---|---|---|---|---|---|
 | Runtime | **C# / .NET 10+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
-| Build performance (10k pages) | **3.5s (same-machine measured)** | 4.3s (same-machine measured) | not measured | not measured | not measured | not measured |
-| Incremental builds | **75ms** | supported | supported | supported | limited | supported |
+| Build performance (10k pages) | **1.00x (fastest, 2.6s)** | 1.60x | 19.06x | 2.94x | 5.06x | 13.30x |
+| Incremental builds | **64ms** | supported | supported | supported | limited | supported |
 | Asset pipeline | **in-process Sass + TS type stripping + minify + fingerprint** | Hugo Pipes (Extended) | Vite toolchain | plugins | plugins | plugins |
 | Image processing | **resize/fit/fill/crop, responsive** | built-in | sharp ecosystem | plugins | plugins | plugins |
 | Content model | **three-format Front Matter + taxonomies + shortcodes** | comparable | Content Collections (typed) | data cascade | Front Matter + taxonomies | Front Matter |
@@ -454,10 +423,13 @@ and `.ai/perf-ledger.md`.
 | Quality assurance | **perf gate + property testing** | — | — | — | — | — |
 | Console encoding | **forced UTF-8** | GBK on Windows | UTF-8 | UTF-8 | UTF-8 | UTF-8 |
 
-> Only Flint vs Hugo was measured on the same machine, corpus, and window;
-> the other engines were not benchmarked in this repo — their columns state
-> public structural facts. The eight measured Flint-vs-Hugo difference
-> points are documented in
+> Build-performance figures come from the thirteen-engine same-window matrix
+> measured 2026-10-27 (same-machine 10k-page cold builds, ratios normalized
+> to the fastest arm: Fluid+Liquid Flint at 3478ms = 1.00x; Statiq at 91.8x
+> and MkDocs at 84.6x — not shown in the table — are the slowest of all 14
+> engines measured, Docusaurus was excluded after superlinear collapse);
+> the remaining columns state public structural facts. The eight measured
+> Flint-vs-Hugo difference points are documented in
 > [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md); the theme compatibility
 > matrix in [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md).
 
@@ -486,18 +458,6 @@ or point `FLINT_SASS` at the executable.
 Yes — under the 100-article shared corpus with full taxonomy/tag pagination
 it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 600s. All other themes build in seconds to low minutes.
-
----
-
-## 🗺️ Roadmap
-
-- Continue converging the Hugo compatibility layer: gap list and priorities
-  in [docs/HUGO-GAP-TASKS.md](docs/HUGO-GAP-TASKS.md); theme compatibility
-  matrix in [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md)
-- Grow theme coverage beyond the current 21 verified themes (candidate pool
-  in `theme-migrator/candidates/`)
-- Build out a standalone shortcode ecosystem (theme-private shortcodes
-  currently ride along via theme migration)
 
 ---
 

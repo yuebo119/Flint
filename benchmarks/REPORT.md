@@ -160,3 +160,93 @@ dotnet run --project src/Flint.DevTools -- perf gate
 ```
 
 报告快照：`benchmarks/reports/`（四轮演进）+ `TestResults/`（本轮明细）。
+
+## 11. 2026-10-27/28 轮：v0.3.0 发布基线（三臂对照 + 十三引擎矩阵）
+
+**测试日期**：2026-10-27/28　**Flint**：0.3.0（Release + NativeAOT 单文件
+41,076,224 字节）　**对照**：Hugo v0.168.0 Extended。协议：冷构建（输出删除
+在计时外）、预热 1 + 多轮中位、臂间 2s 间隔 + 轮转顺序（消除前臂落盘冲刷
+串扰）、外部计时含进程启动；跨窗口绝对值漂移大（同一 Hugo 二进制三晚
+4336→5503→4400ms），只取同窗交错比值。
+
+### 11.1 端到端三臂（SsgBench 万页合成，10,000 页，5 轮轮转中位）
+
+| 臂 | 数值 | 比值 |
+| -- | ---- | ---- |
+| Hugo v0.168.0 | 5179ms（5032-5202） | 1.00x |
+| Flint Scriban（`.html`） | 2909ms（2832-2955） | **0.56x** |
+| Flint Fluid（`.liquid` 孪生站） | 2620ms（2596-2702） | **0.51x** |
+
+Fluid 臂为同内容 `.liquid` 孪生站（`benchmarks/corpus/ssg-bench/flint-liquid`，
+`engine = "fluid"`），与 Scriban 臂产物逐字节一致（10,005 文件哈希全同）。
+
+### 11.2 MDN 真实语料（14,621 页，Hugo 迁移 `.html`，4 轮轮转中位）
+
+| 臂 | 数值 | 比值 |
+| -- | ---- | ---- |
+| Hugo | 8153ms（8057-8246） | 1.00x |
+| Flint Scriban | 4292ms（4258-4327） | **0.53x** |
+
+每页成本自洽校验：Flint 0.29ms/页与万页合成一致，Hugo 0.56ms/页吻合。
+
+### 11.3 主题复杂度阶梯（1000 页 × 3 次中位）
+
+| 层级 | Hugo | Flint | 比值 |
+| ---- | ---- | ----- | ---- |
+| L1 基础 | 698ms | 437ms | **0.63x** |
+| L2 中等 | 983ms | 593ms | **0.60x** |
+| L3 重度 | 1265ms | 865ms | **0.68x** |
+
+### 11.4 内存峰值（构建进程，2 轮中位，MB）
+
+| 语料 | Hugo RSS/USS | Flint RSS/USS | USS 差异 |
+| ---- | ------------ | ------------- | -------- |
+| 万页合成 | 399 / 392 | 338 / 321 | **-18%** |
+| MDN 14,621 页 | 1427 / 1402 | 893 / 872 | **-38%** |
+
+### 11.5 进程内套件（Release，12/12 全绿）
+
+| 指标 | 数值 |
+| ---- | ---- |
+| 站点构建吞吐 | 100 页 3017 / 500 页 4131 / 1000 页 4487 / 10000 页 **5244 页/秒** |
+| 复杂主题（1000 页） | 3527 页/秒 |
+| 增量构建 | 64.13ms（加速 3.4x） |
+| Markdown 解析 | 228,980 文件/秒 |
+| 模板渲染 | Scriban 53,947 / **Fluid 175,047 页/秒**（对拍比值 0.308x） |
+| 配置加载 | 0.307ms |
+| 并发构建加速比 | 2.13x |
+| 可扩展性 | O(n) 线性（比率 0.62x） |
+| AOT 冷启动 | `flint version` 中位 **106ms**（10 次，89-117ms） |
+
+### 11.6 十三引擎万页矩阵（2026-10-27，同窗，vsFastest 归一化）
+
+锚 = Flint+Liquid 3478ms = 1.00x：Flint+Scriban 1.15x、Zola 1.15x、
+Hugo 1.60x、Eleventy 2.94x、Jekyll 5.06x、Pelican 5.22x、Hexo 13.30x、
+VitePress 18.16x、Astro 19.06x、Gatsby 21.17x、VuePress 32.72x、
+MkDocs 84.55x；Statiq 91.8x（另窗以 Flint 锚归一化，全场 14 款最慢）；
+Docusaurus 因规模超线性崩溃（100 页 7.4s → 4k 页 206s，万页无产出）
+排除有据。
+
+### 11.7 协议勘误（相对 9 月轮数字差异的来源）
+
+1. **clean 旗标陷阱**：`--clean`/`--cleanDestinationDir` 的删除阶段计入
+   时长会显著虚胀（MDN 曾测得 9644/15408ms 的失真值）；本轮删除一律在
+   计时外。
+2. **Hugo `-d` 相对 CWD**：相对路径相对当前目录而非 `--source`，须传
+   绝对路径。
+3. **臂间串扰**：前臂约一万文件的落盘冲刷会泄进下一臂计时窗（Fluid 臂
+   曾现 2648-4356ms 假噪声），臂间 2s 间隔 + 轮转后各臂离散 <4%。
+4. **跨窗口纪律**：绝对值不可跨窗比较，比值取同窗交错；9 月轮
+   0.74-0.80x → 本轮 0.51-0.56x 的改善来自 Fluid 主力引擎化与 10 月
+   优化轮，两轮各自同窗有效。
+
+### 11.8 可复现命令
+
+```bash
+dotnet run --project src/Flint.DevTools -- bench ssg          # 万页 Hugo vs Flint(Scriban)
+dotnet run --project src/Flint.DevTools -- bench complexity   # 复杂度阶梯
+dotnet run --project src/Flint.DevTools -- bench memory       # 内存峰值（含 MDN）
+dotnet run --project src/Flint.DevTools -- perf run           # 进程内套件 + HTML 报告
+# Fluid 臂：benchmarks/corpus/ssg-bench/flint-liquid（同内容 .liquid 孪生站）
+#   flint build -s benchmarks/corpus/ssg-bench/flint-liquid -o <输出>（绝对路径）
+```
