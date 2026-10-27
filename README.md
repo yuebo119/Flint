@@ -1,7 +1,7 @@
 # Flint
 
 <p align="center">
-  <strong>🔥 高性能静态站点生成器 · C# / .NET 11 · NativeAOT 单文件</strong>
+  <strong>🔥 高性能静态站点生成器 · C# / .NET 10 · NativeAOT 单文件</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
   <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
 </p>
 
-Flint 是一个用 C# / .NET 11 实现的静态站点生成器：万页站点 3.5 秒构建，
+Flint 是一个用 C# / .NET 10 实现的静态站点生成器：万页站点 3.5 秒构建，
 增量构建 75ms，交付物是一个原生单文件——并内置 Hugo 主题的
 AST 级自动迁移工具链。
 
@@ -50,7 +50,7 @@ AST 级自动迁移工具链。
 三次冷构建离散 ±1%，负载漂移敏感度低于对照（×1.4 vs ×1.6）。增量由
 依赖图驱动：改一篇文章只重建受影响的页面。
 
-**零依赖原生部署** —— .NET 11 NativeAOT 单文件应用：无运行时、无
+**零依赖原生部署** —— .NET 10 NativeAOT 单文件应用：无运行时、无
 node_modules、无 JIT 预热，交付物是一个 exe。
 
 **Hugo 兼容层** —— lookup order / 渲染钩子 / 短码 API / 25 命名空间
@@ -415,7 +415,7 @@ stat 与读盘成本相等且完全相加）。优化清单与量具见
 
 | 维度 | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
-| 实现与运行时 | **C# / .NET 11，AOT 单文件应用** | Go 单二进制 | Node + 依赖树 | Node + 依赖树 | Ruby + gems | Node + 依赖树 |
+| 实现与运行时 | **C# / .NET 10，AOT 单文件应用** | Go 单二进制 | Node + 依赖树 | Node + 依赖树 | Ruby + gems | Node + 依赖树 |
 | 模板系统 | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid | EJS / Pug 等 |
 | 构建性能（万页） | **3.5s（同机实测）** | 4.3s（同机实测） | 未实测 | 未实测 | 未实测 | 未实测 |
 | 增量构建 | **75ms** | 支持 | 支持 | 支持 | 有限 | 支持 |
@@ -474,7 +474,7 @@ Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 | 技术 | 说明 |
 |------|------|
-| **.NET 11 RC3** | 当前 RC 线，NativeAOT 原生编译，单文件发布 |
+| **.NET 10 LTS** | 长期支持线，NativeAOT 原生编译，单文件发布 |
 | **Scriban 7.5 + Fluid 3.0 beta** | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
 | **Markdig 1.5** | CommonMark + GFM 解析 |
 | **Dart Sass CLI** | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`） |

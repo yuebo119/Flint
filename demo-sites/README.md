@@ -8,7 +8,7 @@
 
 ```
 demo-sites/
-├── demo-serve/           # 单进程多端口静态服务（.NET 11；8400 画廊 + 8401-8421 主题）
+├── demo-serve/           # 单进程多端口静态服务（.NET 10；8400 画廊 + 8401-8421 主题）
 ├── fixtures/corpus/     # 统一测试语料（100 篇长文 + 静态资源）
 ├── gallery-source/      # 画廊站源码（Flint 自建，无主题依赖）
 ├── gallery/             # 画廊站落地形态（static/shots/ 21 张预览图入库）
@@ -36,7 +36,7 @@ dotnet run --project ../src/Flint.DevTools -- demo gallery --serve
 dotnet run --project ../src/Flint.DevTools -- demo stop
 ```
 
-**服务架构（2026-09-25 起 .NET 11）**：22 个端口由**一个进程**服务
+**服务架构（2026-09-25 起 .NET 10）**：22 个端口由**一个进程**服务
 （`demo-sites/demo-serve/`，TcpListener 手写最小 HTTP；端口→文档根映射走命令行
 参数，也支持 `--list` 映射文件）。演进：最早每端口一个 `python -m http.server`
 （22 进程实测 490MB 工作集）→ 09-24 合并单 python 进程（21MB）→ 09-25 换

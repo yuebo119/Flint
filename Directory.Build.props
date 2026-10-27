@@ -1,7 +1,7 @@
 <Project>
   <PropertyGroup>
-    <TargetFramework>net11.0</TargetFramework>
-    <LangVersion>15.0</LangVersion>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
@@ -44,6 +44,6 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Company>Flint</Company>
     <Product>Flint Static Site Generator</Product>
-    <Description>高性能静态站点生成器，使用 .NET 11 和 Native AOT 构建</Description>
+    <Description>高性能静态站点生成器，使用 .NET 10 和 Native AOT 构建</Description>
   </PropertyGroup>
 </Project>

@@ -52,13 +52,13 @@ Flint version -v     # 附运行时/操作系统/架构
 
 输出示例:
 ```
-Flint v0.2.1 (.NET 11)
+Flint v0.2.1 (.NET 10)
 ```
 
 `-v` 输出:
 ```
 Flint v0.2.1
-运行时: .NET 11.0.0-rc.3
+运行时: .NET 10.0.12
 操作系统: Microsoft Windows 10.0.19045
 架构: X64
 ```

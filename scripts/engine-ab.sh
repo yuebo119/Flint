@@ -18,7 +18,7 @@ set -euo pipefail
 POSTS="${1:-300}"
 ROUNDS="${2:-3}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-CLI="${3:-${FLINT_CLI:-$ROOT/src/Flint.Cli/bin/Debug/net11.0/win-x64/Flint.exe}}"
+CLI="${3:-${FLINT_CLI:-$ROOT/src/Flint.Cli/bin/Debug/net10.0/win-x64/Flint.exe}}"
 WORK="$ROOT/tmp/engine-ab"
 
 if [[ ! -x "$CLI" ]]; then

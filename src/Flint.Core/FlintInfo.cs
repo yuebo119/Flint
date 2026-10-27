@@ -26,9 +26,9 @@ public static class FlintInfo
         typeof(FlintInfo).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     /// <summary>
-    /// 目标运行时
+    /// 目标运行时（须与 Directory.Build.props 的 TargetFramework 同步）
     /// </summary>
-    public const string Runtime = ".NET 11";
+    public const string Runtime = ".NET 10";
 
     /// <summary>
     /// 获取完整的版本信息字符串
