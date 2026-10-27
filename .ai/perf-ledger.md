@@ -149,7 +149,19 @@ S3 反向验证：配对 A/B 的 A 臂即"移除改动"状态（旧二进制）�
 
 **剩余大头**：列表页分页仍全量（fixit `/tags/` 231 词条 ÷ paginate 5 = 47 页，每页跑完整 baseof）约占改后 3.8s 的 2s。进一步裁剪需要模板级推理（列表页模板可读 `site.taxonomies` 全量），不做。
 
-**同区发现（未修，非本轮引入）**：`ComputeTaxonomySignature` 只聚合 tags/categories，**不含自定义 taxonomy**（`Params[plural]`）。因此在增量里改自定义分类（如 `series`）不会触发分类页重产，watch 下会留旧产物。修法是把配置的分类名纳入签名文本；本轮只记录，未改。
+**同区缺陷已修（同日，后续提交）**：`ComputeTaxonomySignature` 原只聚合 tags/categories，**不含自定义 taxonomy**（`Params[plural]`）——增量里改自定义分类（如 `series`）不改变签名，watch 下留旧产物。现签名条目覆盖站点声明的**全部**分类（分类名本身也进条目文本，改配置声明同样触发重产），词条提取复用 `TaxonomyService.GetTermValues(FrontMatter, ...)` 与实际成员判定同源。锁定测试 `TermScopedIncrementalTests.自定义taxonomy改值_触发分类页重产`；变异回旧行为（只聚合 tags/categories）令其红。
+
+### 安全回归探针（本轮实跑，PF 门禁项）
+
+| 探针 | 结果 |
+| --- | --- |
+| 路径越界（front matter `url: "../../evil-escape"`） | 落盘到输出根内 `evil/index.html`，未逃逸 |
+| 模板 include 逃逸（`include "../../secret.txt"`，根外含标记文件） | 产物不含标记，未泄漏 |
+| 供应链参数注入（`mod get owner/repo@--upload-pack=x`） | exit=1 被拒，未安装 |
+| sitemap 产物严格解析 | `XmlReader` 逐节点读完 6065 节点，声明 `encoding="utf-8"` 与字节一致 |
+| 自递归 partial（Scriban `partial` 自引用） | 被 200 层嵌套上限拦截并报 RENDER001（exit=1），不挂死、不栈溢出 |
+| 空模板（`single.html` 零字节） | exit=0，产出 0 字节页面，不崩 |
+| 超大输出（约 97MB 单页） | exit=0，624ms，产物 102,400,000 字节完整 |
 
 ### 未测与触发条件
 

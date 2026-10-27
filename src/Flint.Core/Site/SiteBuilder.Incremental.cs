@@ -120,6 +120,9 @@ public sealed partial class SiteBuilder
             if (contentChanges.Count > 0 || templateChanges.Count > 0)
             {
                 var tree = _currentPageTree;
+                // 站点声明的分类名（含自定义 taxonomy）：签名与词条裁剪集共用同一份，
+                // 保证"签名覆盖的分类"与"重产判定的分类"口径一致
+                var taxonomyConfigs = TaxonomyService.FromConfigured(config.Taxonomies);
                 string taxonomySignatureBefore;
                 if (tree is null)
                 {
@@ -136,7 +139,7 @@ public sealed partial class SiteBuilder
                 }
                 else
                 {
-                    taxonomySignatureBefore = ComputeTaxonomySignature(tree);
+                    taxonomySignatureBefore = ComputeTaxonomySignature(tree, taxonomyConfigs.Keys);
                 }
 
                 // 1. 变化文件逐个应用到树（新增/更新 → 原位替换；删除 → 摘除节点）
@@ -169,7 +172,6 @@ public sealed partial class SiteBuilder
                 // 取旧侧是因为删词条/改日期同样影响原词条页（成员移除、排序变化）；
                 // 只按"新词条"裁剪会漏渲原词条页。词条键经 TermKey 归一化，
                 // 集合用 OrdinalIgnoreCase——词条大小写差异不产生漏渲
-                var taxonomyConfigs = TaxonomyService.FromConfigured(config.Taxonomies);
                 var changedTerms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 void CollectTerms(FrontMatter? metadata)
                 {
@@ -251,7 +253,7 @@ public sealed partial class SiteBuilder
 
                 // 2. 全量上下文从树产出（零重解析）
                 var allPageContexts = BuildPageContextsFromTree(tree, config);
-                var taxonomySignatureAfter = ComputeTaxonomySignature(tree);
+                var taxonomySignatureAfter = ComputeTaxonomySignature(tree, taxonomyConfigs.Keys);
                 // taxonomy identity：签名一致（纯正文编辑）时 term/taxonomy 页
                 // 内容不变，仅模板变化时才需重渲染
                 var taxonomyDataChanged = taxonomySignatureBefore != taxonomySignatureAfter;
@@ -500,7 +502,13 @@ public sealed partial class SiteBuilder
     /// 聚合方式：每节点条目哈希成 128-bit 后 XOR——顺序无关（去掉原实现的
     /// 全量 Sort 与 MB 级 Join 分配），节点级条目缓存复用未变化页的哈希
     /// </summary>
-    private string ComputeTaxonomySignature(PageTree tree)
+    /// <param name="taxonomyNames">
+    /// 站点声明的分类名（含自定义 taxonomy）：条目文本必须覆盖**全部**声明分类，
+    /// 否则改自定义分类（如 <c>series</c>，值在 <c>Params</c> 里）不改变签名 →
+    /// 增量路径判定"分类页无需重产"→ watch 下留旧产物。此前只聚合 tags/categories。
+    /// 分类名本身也进条目文本：改配置的分类声明同样要触发重产
+    /// </param>
+    private string ComputeTaxonomySignature(PageTree tree, IReadOnlyCollection<string> taxonomyNames)
     {
         ulong lo = 0, hi = 0;
         tree.Walk(new PageTreeWalker
@@ -513,9 +521,7 @@ public sealed partial class SiteBuilder
                 {
                     if (!_taxonomyEntryCache.TryGetValue(node.Key, out var entry))
                     {
-                        var text = string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                            $"{node.Key}|{md.Title}|{md.Slug}|{md.Date:O}|{md.Draft}|{{{string.Join(",", md.Tags.OrderBy(t => t, StringComparer.Ordinal))}}}|{{{string.Join(",", md.Categories.OrderBy(c => c, StringComparer.Ordinal))}}}");
-                        entry = HashTaxonomyEntry(text);
+                        entry = HashTaxonomyEntry(BuildTaxonomyEntryText(node.Key, md, taxonomyNames));
                         _taxonomyEntryCache[node.Key] = entry;
                     }
                     lo ^= entry.Lo;
@@ -526,6 +532,43 @@ public sealed partial class SiteBuilder
         });
         // 128-bit XOR 聚合：同集合不同遍历序结果恒等（原实现靠 Sort 保证，此处天然成立）
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{lo:x16}{hi:x16}");
+    }
+
+    /// <summary>
+    /// 节点签名条目文本：分类名升序 + 该分类下的词条值升序。词条提取复用
+    /// <see cref="TaxonomyService.GetTermValues(FrontMatter, string)"/>，与分类页
+    /// 实际成员判定同源，避免签名覆盖集与实际产物不一致
+    /// </summary>
+    private static string BuildTaxonomyEntryText(
+        string nodeKey,
+        FrontMatter metadata,
+        IReadOnlyCollection<string> taxonomyNames)
+    {
+        var sb = new System.Text.StringBuilder(nodeKey.Length + 64);
+        sb.Append(nodeKey)
+            .Append('|').Append(metadata.Title)
+            .Append('|').Append(metadata.Slug)
+            .Append('|').Append(metadata.Date?.ToString("O", System.Globalization.CultureInfo.InvariantCulture))
+            .Append('|').Append(metadata.Draft);
+
+        foreach (var taxonomyName in taxonomyNames.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            sb.Append('|').Append(taxonomyName).Append('=');
+            var first = true;
+            foreach (var term in TaxonomyService.GetTermValues(metadata, taxonomyName)
+                         .Where(t => !string.IsNullOrWhiteSpace(t))
+                         .OrderBy(t => t, StringComparer.Ordinal))
+            {
+                if (!first)
+                {
+                    sb.Append(',');
+                }
+                sb.Append(term);
+                first = false;
+            }
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>

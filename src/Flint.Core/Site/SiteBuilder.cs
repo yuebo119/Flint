@@ -183,7 +183,10 @@ public sealed partial class SiteBuilder : ISiteBuilder
             var siteData = await LoadSiteDataAsync(options, config.ThemeNames, config, cancellationToken);
             var translations = Translations.Load(
                 options.SourcePath, config.ThemeNames, config.LanguageCode);
-            var taxonomySignature = _currentPageTree is null ? null : ComputeTaxonomySignature(_currentPageTree);
+            var taxonomySignature = _currentPageTree is null
+                ? null
+                : ComputeTaxonomySignature(
+                    _currentPageTree, TaxonomyService.FromConfigured(config.Taxonomies).Keys);
             var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations, taxonomySignature);
             Phase("7.站点上下文");
 

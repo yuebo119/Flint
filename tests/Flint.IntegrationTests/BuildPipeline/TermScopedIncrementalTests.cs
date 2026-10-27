@@ -152,4 +152,36 @@ public sealed class TermScopedIncrementalTests : IDisposable
             "模板变化时不得裁剪，未受内容影响的词条页也要按新模板重产");
         File.ReadAllText(beta).Should().Contain("term v2");
     }
+
+    [Fact]
+    public async Task 自定义taxonomy改值_触发分类页重产()
+    {
+        // 回归锁定：taxonomy 签名此前只聚合 tags/categories，改自定义分类
+        // （值在 front matter 的 Params 里）不改变签名 → 增量判定"分类页无需重产"
+        // → watch 下留旧产物。签名必须覆盖站点声明的全部分类
+        WriteSite();
+        var configPath = Path.Combine(_siteRoot, "Flint.toml");
+        File.WriteAllText(configPath,
+            "baseURL = \"http://localhost:1313/\"\ntitle = \"term-incr\"\n\n[taxonomies]\n  series = \"series\"\n");
+        File.WriteAllText(Path.Combine(_siteRoot, "content", "posts", "p1.md"),
+            "---\ntitle: \"P1\"\ndate: 2026-01-01T10:00:00+08:00\ntags: [alpha]\nseries: [s1]\n---\n\nBody P1\n");
+
+        var builder = TestSiteFactory.CreateBuilder(_siteRoot);
+        (await builder.BuildAsync(Options())).Success.Should().BeTrue();
+
+        var seriesPage = OutPath("series", "s1", "index.html");
+        File.Exists(seriesPage).Should().BeTrue("前置条件：自定义分类词条页已产出");
+
+        // p1 换到 s2：s1 与 s2 两个词条页都必须重产
+        File.WriteAllText(Path.Combine(_siteRoot, "content", "posts", "p1.md"),
+            "---\ntitle: \"P1\"\ndate: 2026-01-01T10:00:00+08:00\ntags: [alpha]\nseries: [s2]\n---\n\nBody P1\n");
+        var result = await builder.IncrementalBuildAsync(
+            Options(), [Path.Combine(_siteRoot, "content", "posts", "p1.md")]);
+        result.Success.Should().BeTrue();
+
+        File.Exists(OutPath("series", "s2", "index.html"))
+            .Should().BeTrue("新自定义词条必须产出页面（签名需覆盖自定义 taxonomy）");
+        File.ReadAllText(OutPath("series", "s2", "index.html")).Should().Contain("P1");
+        File.Exists(seriesPage).Should().BeTrue("旧词条页仍应存在（其他页面可能仍属于它）");
+    }
 }
