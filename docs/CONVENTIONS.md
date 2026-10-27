@@ -74,8 +74,8 @@ Flint.Core.Tests → Flint.Core
 
 | 配置项 | 值 | 说明 |
 |--------|---|------|
-| `TargetFramework` | `net11.0` | 单目标，**不多目标** |
-| `LangVersion` | `15.0` | 锁定语言版本，不随 SDK 漂移 |
+| `TargetFramework` | `net10.0` | 单目标，**不多目标** |
+| `LangVersion` | `14.0` | 锁定语言版本，不随 SDK 漂移 |
 | `Nullable` | `enable` | 全项目可空引用类型 |
 | `TreatWarningsAsErrors` | `true` | **零警告门禁** |
 | `AnalysisLevel` | `latest-all` | 启用所有最新分析器规则 |
