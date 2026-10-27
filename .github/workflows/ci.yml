@@ -80,7 +80,9 @@ jobs:
   # nightly：全量深检。单测连跑 3 轮抓偶发（SubpathAuxOutputTests ~3% 观察项），
   # 集成测试全量（1647 项，本地约 12 分钟），门禁复核
   nightly:
-    if: github.event_name == 'schedule'
+    # schedule 之外允许手动触发：验证 nightly 线本身（2026-10-27 修复
+    # shell 缺失后靠 dispatch 实跑确认，不必等次日 02:00）
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
