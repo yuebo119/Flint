@@ -1,7 +1,7 @@
 # Flint
 
 <p align="center">
-  <strong>🔥 High-performance static site generator · C# / .NET 10 · NativeAOT single file</strong>
+  <strong>🔥 High-performance static site generator · C# / .NET 10+ · NativeAOT single file</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
   <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
 </p>
 
-Flint is a static site generator built in C# / .NET 10: 10k-page sites build
+Flint is a static site generator built in C# / .NET 10+: 10k-page sites build
 in 3.5 seconds, incrementals take 75ms, the deliverable is a native single
 file — and it ships an AST-level automated migration toolchain for
 Hugo themes.
@@ -52,7 +52,7 @@ sensitivity than the reference (×1.4 vs ×1.6). Incrementals are
 dependency-graph driven: editing one article rebuilds only the affected
 pages.
 
-**Zero-dependency native deployment** — a .NET 10 NativeAOT single-file
+**Zero-dependency native deployment** — a .NET 10+ NativeAOT single-file
 app: no runtime, no node_modules, no JIT warmup. The deliverable is one exe.
 
 **The Hugo compatibility layer** — lookup order / render hooks / shortcode
@@ -441,7 +441,7 @@ and `.ai/perf-ledger.md`.
 
 | Dimension | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
-| Runtime | **C# / .NET 10, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
+| Runtime | **C# / .NET 10+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
 | Build performance (10k pages) | **3.5s (same-machine measured)** | 4.3s (same-machine measured) | not measured | not measured | not measured | not measured |
 | Incremental builds | **75ms** | supported | supported | supported | limited | supported |
@@ -507,7 +507,7 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 
 | Technology | Role |
 |------|------|
-| **.NET 10 LTS** | Long-term support line; NativeAOT compilation, single-file publish |
+| **.NET 10+** | LTS baseline and later; NativeAOT compilation, single-file publish |
 | **Scriban 7.5 + Fluid 3.0 beta** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
 | **Markdig 1.5** | CommonMark + GFM parsing |
 | **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |

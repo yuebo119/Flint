@@ -44,6 +44,6 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Company>Flint</Company>
     <Product>Flint Static Site Generator</Product>
-    <Description>高性能静态站点生成器，使用 .NET 10 和 Native AOT 构建</Description>
+    <Description>高性能静态站点生成器，使用 .NET 10+ 和 Native AOT 构建</Description>
   </PropertyGroup>
 </Project>
