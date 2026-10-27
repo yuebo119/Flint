@@ -36,10 +36,31 @@ public static partial class OutputDirectoryEnsurer
     private static readonly bool IsWindows = OperatingSystem.IsWindows();
 
     /// <summary>
+    /// 热重建快速路径开关（构建级）：输出根在本次构建开始时已存在且不做清理时置位。
+    /// 置位后页面写盘不再逐页预建目录，改由写入路径在
+    /// DirectoryNotFoundException 时补建重试——已存在目录的 CreateDirectory 在
+    /// NTFS + 过滤驱动下仍是完整一次系统调用（实测 70μs/次，空操作不便宜），
+    /// 而热重建里目录几乎必然已存在，预建等于每页白付一次系统调用。
+    /// 与 <see cref="KnownExisting"/> 同为进程级状态：同进程并发构建时可能互相覆盖，
+    /// 但两个取值都只改"先建目录还是先写文件"，缺目录一侧有补建兜底，正确性不受影响
+    /// </summary>
+    private static bool _preferWriteFirst;
+
+    /// <summary>热重建快速路径是否启用（见 <see cref="_preferWriteFirst"/>）</summary>
+    internal static bool PreferWriteFirst => _preferWriteFirst;
+
+    /// <summary>
     /// 重置缓存。必须在每次构建入口（CleanOutput 删目录之前）调用——
     /// 否则清理后的目录会被缓存命中跳过重建，写入阶段报目录不存在
     /// </summary>
-    public static void Reset() => KnownExisting.Clear();
+    /// <param name="preferWriteFirst">
+    /// 输出根已存在且本次不清理时传 true（热重建：写盘优先，缺目录再补建）
+    /// </param>
+    public static void Reset(bool preferWriteFirst = false)
+    {
+        KnownExisting.Clear();
+        _preferWriteFirst = preferWriteFirst;
+    }
 
     /// <summary>确保目录存在（不存在则创建整条链；已知存在则零系统调用返回）</summary>
     public static void Ensure(string? directory)

@@ -32,7 +32,9 @@ public sealed partial class SiteBuilder
 
         // 构建作用域：同 BuildAsync 入口（同步前缀开新实例，并行构建执行流隔离）
         BuildRenderStateAccess.BeginBuildScope();
-        OutputDirectoryEnsurer.Reset();
+        // 增量构建的产物目录是上一轮留下的：与 BuildAsync 同口径启用热重建快速路径
+        OutputDirectoryEnsurer.Reset(
+            preferWriteFirst: !options.CleanOutput && Directory.Exists(options.OutputPath));
         _writtenPaths.Clear();
         // 同 BuildAsync：taxonomy/term feed 上下文按构建重置，避免跨构建累积
         TaxonomyFeedContexts.Clear();

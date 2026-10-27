@@ -19,6 +19,9 @@
 | ToLogicalName GetFullPath 重复规范化 | 0.5-2µs/渲染 vs 模板渲染预算 15µs，3-13% 跨排除线 | 地毯审计 2026-10-11 估算；探针计数后可重开 |
 | PageStoreObject.Get 列表整拷贝 | n 通常小，无负载面证据 | 地毯审计 2026-10-11；随资源缓存修复重评估 |
 | Track 全局锁内 O(G) RemoveAll | G=每页生成资源数（几十级），临界区微小，无争用证据 | 地毯审计 2026-10-11 |
+| 预建全部输出目录再渲染 | 墙不消失只转移：目录预建后写盘线程时间 9.2s→59.5s（同在单一父目录建 14.6k 文件），且预建自身付同样的 3.9s | 10-27 消融：预建树后构建 3.93s vs 冷构建 4.40s（-11%）但预建不在构建内，净收益为负 |
+| Directory.Exists 替代 CreateDirectory | Exists 41μs vs CreateDirectory(已存在) 70μs，但冷构建每页多付一次 stat（14.6k×41μs≈0.6s FS 服务时间），跨场景互相抵消 | 10-27 微基准（14.6k 已有目录）：exists 顺序 603ms / 并行 798ms，createdir-existing 1023ms |
+| `--cache` 改为默认开启 | 重复构建 -59%（既有实测），但会向用户源目录写 `.flint-cache/`，属产品语义变更；已有显式开关 | 10-22 `--cache` 两半实测；触发器=产品决策变更 |
 
 ## 表 3 · 勿重开（实施后被证伪回退的项）
 
@@ -71,3 +74,53 @@
 | E9 | partial 页面上下文对共享对象原地写 | related/next 集合派生的页面对象是 CWT 跨渲染共享实例，并行渲染多线程同写 ScriptObject → Dictionary 损坏（stack 主题偶发 "Destination array is not long enough"，单跑不复现、21 主题全量负载下爆发） | **已修复**（ab42fba）：对 LazyPageObject 跳过冗余补齐（T6.2 委托化后自身解析完备）；矩阵 21/21 全对称复测通过 |
 
 **画像结论（下轮免重扫）**：扫描 IO 已从 33% 降到约 15%（14621 页）；渲染段主体是 Scriban 解释与写盘让出平衡（均无杠杆）；解析段主体是 Markdig（Flint 侧无可挖）。剩余杠杆区：Markdig/Scriban 两个第三方库内部与编译器级，无新触发条件不建议继续地毯扫描。本轮 A/B 全部同轮交错、轮前间隔压噪声（本机不加间隔可抖 2-3 倍），机器漂移只取比值。
+
+## 热重建写盘轮（2026-10-27，模式 PF / 深度 standard）
+
+### 平台墙实测（本轮新增，下轮免重测）
+
+量具：`scripts/probes/dir-create-cost-probe.cs`（复制到仓外运行，避开仓内 CPM）+ `FLINT_TRACE_PHASES` / `FLINT_TRACE_RENDER` 临时插桩（测毕已删）。形态：NativeAOT，Windows 10 x64，语料 `corpus-merged` 14,622 页（全部输出到单一父目录 `mdn/`）。
+
+| 操作 | 单次成本 | 依据 |
+| --- | --- | --- |
+| 目录创建（冷，单父目录） | **270-300μs** | 14.6k：dop 8=4051ms / 32=3880ms / 64=3976ms / 128=3824ms（并行度无感）；n=1000→277μs/个、5000→303μs/个，近线性 |
+| 目录创建（已存在） | **49-70μs** | 14.6k 重复 CreateDirectory：并行 1023ms；证明"空操作"也是完整一次系统调用 |
+| `Directory.Exists`（已存在） | **41μs 顺序 / 55μs 并行** | 14.6k：603ms / 798ms |
+| 文件写（20KB） | **92-101μs** | 1 文件/目录：1478ms/14622；生产写线程时间 7.2-9.2s |
+| 文件读（扫描段摊薄） | **66-73μs** | 阶段 2+3：14.6k = 1074/1068/1173ms（AOT 三轮） |
+| 目录枚举 | **23ms / 14.6k** | FileSystemEnumerable 缓冲区直取（E1 后） |
+| Markdown 解析（线程时间） | 261μs/页 | 3823ms/14622，32 线程 ≈ 119ms 墙 |
+| 模板渲染（线程时间） | 204μs/页 | 2987ms/14622 ≈ 93ms 墙 |
+| 内容诊断字符串扫描 | **0.5μs/页（总 7ms）** | 加固成本专项：远低于 5% 阈值，不优化 |
+| GC | 暂停 180ms、分配 3.06GB、gen2 5 次 | 同上插桩 |
+| AOT 启动 | **70-85ms**（`--version`） | hello-world AOT 31ms；Flint `Main` 内仅 2ms → 余量在 41MB 镜像运行时初始化 |
+
+判读：**冷构建 = mkdir 墙（2.8s/14.6k）+ 读墙（1.07s）**，写与渲染在其后重叠；热重建 = 读墙 + 写墙，mkdir 属可省的空操作。
+
+### 实施：热重建免空操作 mkdir
+
+落点：`OutputDirectoryEnsurer.Reset(preferWriteFirst)`、`SiteBuilder.Output.TryWriteRenderedPageNowAsync`、`WriteFileWithRetryAsync`（DNFE 补建重试）、`BuildAsync` / `IncrementalBuildAsync` 入口判据 `!CleanOutput && Directory.Exists(OutputPath)`。
+
+| 口径 | 基线 A | 改后 B | 结论 |
+| --- | --- | --- | --- |
+| 10k 热重建，10 对交错（AOT 端到端） | 中位 1824.5ms | 中位 1684.5ms | **-7.7%**，逐对 9/10 为负（中位 -6.9%） |
+| 同上·渲染段 | 1049.9ms | 917.6ms | **-12.6%** |
+| 14.6k 冷构建，6 vs 6 交错 | 中位 4704.8ms | 中位 4580.0ms | -2.7%（噪声内，**无回归**） |
+| perf gate（进程内 JIT） | 万页 1934.0 / 1000 页 227.9 / 复杂主题 258.8 | 1683.0 / 198.9 / 242.0 | -13.0% / -12.7% / -6.5%，9 项全 PASS |
+
+锁定测试：`WarmRebuildOutputTests` 3 项（新增页面目录未预建仍落盘 / 产物目录被外部删除后恢复 / `--clean` 仍全建）+ `OutputDirectoryEnsurerTests.Reset_热重建开关_按参数置位且默认为冷构建`。变异验证：给 DNFE 分支加永假 `when` 后 2 项红、冷构建用例仍绿。
+
+S3 反向验证：配对 A/B 的 A 臂即"移除改动"状态（旧二进制），-7.7% 随改动消失而复现。
+
+已知边界：判据是"输出根存在"的近似——输出根在但子目录被大面积外部删除时，每页走一次异常补建（正确，有异常开销）；同进程并发构建共用进程级开关，取值错误只影响性能，DNFE 兜底保证正确性。
+
+### 本轮不做（完整数据见表 2 新增三条）
+
+扫描与 mkdir 重叠（需扫描期预知 permalink，依赖 front matter，不安全）；渲染/解析 CPU 优化（AOT 口径被 IO 墙完全遮蔽，墙钟 ≈100ms 量级）；AOT 启动优化（70-85ms 中 Main 内 2ms，减启动只能减体积，与 `OptimizationPreference=Speed` 决策冲突）；诊断字符串扫描合并（7ms/14.6k）。
+
+### 未测与触发条件
+
+- Linux/ext4 未测（CI `perf-linux` nightly 仅 300 页 engine-ab）：本轮结论是 Windows + 过滤驱动的墙，Linux 上 mkdir 更便宜，热重建收益占比会变小。
+- `--cache` + 热重建组合未单测性能（缓存命中时本就跳过 Ensure，预期同向）。
+- 模板密集主题（blowfish/loveit 全量）未测：渲染 CPU 在这些站点权重更高，若出现"渲染段 > mkdir 段"的站点，重开渲染 CPU 优化。
+- Sass/esbuild 资产管线未测（本机无 sass/lightningcss/esbuild）。

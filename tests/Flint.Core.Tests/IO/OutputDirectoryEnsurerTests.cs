@@ -90,4 +90,16 @@ public class OutputDirectoryEnsurerTests : IDisposable
         Directory.Exists(d1).Should().BeTrue();
         Directory.Exists(d2).Should().BeTrue("共享父段缓存命中后，兄弟叶子仍须各自创建");
     }
+
+    [Fact]
+    public void Reset_热重建开关_按参数置位且默认为冷构建()
+    {
+        OutputDirectoryEnsurer.Reset(preferWriteFirst: true);
+        OutputDirectoryEnsurer.PreferWriteFirst.Should().BeTrue(
+            "输出根已存在且不清理时必须启用写优先快速路径");
+
+        OutputDirectoryEnsurer.Reset();
+        OutputDirectoryEnsurer.PreferWriteFirst.Should().BeFalse(
+            "默认 Reset 是冷构建语义（写前预建目录），不得被上一次构建的开关污染");
+    }
 }

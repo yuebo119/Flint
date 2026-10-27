@@ -520,7 +520,9 @@ public sealed partial class SiteBuilder
         }
 
         var dir = Path.GetDirectoryName(rendered.OutputPath);
-        if (!string.IsNullOrEmpty(dir))
+        // 热重建快速路径：目录大概率已存在，写优先；缺目录由写入路径补建重试。
+        // 冷构建（输出根不存在或被 --clean 清过）仍走预建，避免每页一次异常
+        if (!string.IsNullOrEmpty(dir) && !OutputDirectoryEnsurer.PreferWriteFirst)
         {
             OutputDirectoryEnsurer.Ensure(dir);
         }
@@ -606,6 +608,16 @@ public sealed partial class SiteBuilder
         {
             try
             {
+                File.WriteAllText(path, content);
+                return;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                // 热重建快速路径的兜底：该页目录未预建（新增页面/新建分区目录）。
+                // 缺目录是确定性状态而非暂态冲突——补建后立即重试一次，不进退避；
+                // 再失败直接抛出（DirectoryNotFoundException 派生自 IOException，
+                // 必须排在下面的暂态重试分支之前）
+                OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(path));
                 File.WriteAllText(path, content);
                 return;
             }

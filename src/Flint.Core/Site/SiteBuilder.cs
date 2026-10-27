@@ -103,8 +103,11 @@ public sealed partial class SiteBuilder : ISiteBuilder
         BuildRenderStateAccess.BeginBuildScope();
 
         // 输出目录缓存随构建重置：下方 CleanOutput 会删除输出目录，旧缓存
-        // 若命中会跳过重建导致写入阶段报"目录不存在"
-        OutputDirectoryEnsurer.Reset();
+        // 若命中会跳过重建导致写入阶段报"目录不存在"。
+        // 热重建（输出根已存在且不清理）：目录大概率都在，页面写盘改走
+        // "写优先、缺目录再补建"，省掉每页一次空操作 CreateDirectory
+        OutputDirectoryEnsurer.Reset(
+            preferWriteFirst: !options.CleanOutput && Directory.Exists(options.OutputPath));
         _writtenPaths.Clear();
         // taxonomy/term 的 feed 上下文同一构建内累积：serve 长驻进程里不清空的话，
         // 已删除词条的 index.xml 会一直重写、列表随编辑无限增长
