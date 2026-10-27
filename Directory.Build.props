@@ -39,7 +39,7 @@
 
   <!-- 版本信息 -->
   <PropertyGroup>
-    <Version>0.2.1</Version>
+    <Version>0.3.0</Version>
     <Authors>Flint Team</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <Company>Flint</Company>
