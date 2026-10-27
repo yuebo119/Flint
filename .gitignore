@@ -60,6 +60,9 @@ benchmarks/corpus/
 benchmarks/tools/
 .serena/
 
+# AI 质量工程系统：工作区根独立 git 库（双仓模式），只提交到 .ai 自己的仓库
+.ai/
+
 # 临时探测站与编译缓存
 temp-*/
 __pycache__/
