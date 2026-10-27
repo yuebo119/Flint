@@ -26,7 +26,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
@@ -62,7 +62,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
@@ -84,7 +84,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: 安装 Dart Sass（产品改为外部 CLI）
@@ -118,7 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
       - name: 发布 AOT CLI（linux-x64，生产形态）
@@ -128,7 +128,7 @@ jobs:
         # （JIT 0.727x vs AOT 0.548x，2026-10-22 Windows 实测）
         run: bash scripts/engine-ab.sh 300 3 "$PWD/tmp/aot-linux/Flint"
       - name: 上传性能基线产物（原始日志 + 汇总，保留 30 天）
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: perf-linux-baseline
           path: tmp/engine-ab/

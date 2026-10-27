@@ -12,10 +12,24 @@
     <PackageVersion Include="Fluid.Core" Version="3.0.0-beta.8" />
     <!-- Markdown 解析 -->
     <PackageVersion Include="Markdig" Version="1.5.0" />
-    <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线——
-         4.x 起 Six Labors Split License 在 Release 构建强制校验商业许可证，
-         商业用途需付费授权；3.1.12 为 Apache 2.0 的 3.x 线最新维护版，
-         4.1.3 复核仍为 Split License。升级前须重新评估授权，不得直接升 4.x） -->
+    <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线）。
+         实测事实（2026-10-27，仓库外探针 A/B）：
+         - 3.1.12 是最后一个「不强制构建期许可校验」的版本：包内只有
+           build/SixLabors.ImageSharp.props，Release/Debug 均可构建。
+         - 3.2.0 起加入 build/SixLabors.ImageSharp.targets + SixLabors.Licensing.dll，
+           Release 构建直接 error（"No Six Labors license found"）阻断，
+           Debug 仅降级为 warning 放行；4.1.3 同款校验。
+           即「4.x 才校验」的旧说法不成立，3.2.0 就已校验。
+         - 3.2.0/4.1.2 修复了 3.1.12 的 6 个安全公告（4 High + 2 Moderate，
+           集中在 TIFF 解码/编码、ICC CLUT、HistogramEqualization）。
+         - 缓解（2026-10-27）：ImageProcessor.LoadImageAsync 加了解码格式白名单
+           （仅 png/jpeg/gif/webp/bmp），把 TIFF/TGA/PBM/QOI 解码器排除在可达面
+           之外——6 个公告里 4 个在 TIFF 路径；另 2 个（ICC CLUT 需显式访问
+           IccProfile.Entries、HistogramEqualization 需调用该变换 API）Flint 均不触达。
+           该白名单由 ImageProcessorTests 的两条用例锁定（含变异验证）。
+         → 升级 3.2.0+ 需要用户先申请 Six Labors 许可（Community 免费但需审批，
+           开源项目按 Split License 条款可走 Apache 2.0，但构建仍需 key）。
+           未拿到 key 前不得升级，否则 Release 构建与 CI 全红。 -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- 配置解析：YAML 换 VYaml，TOML 换 Tommy。
          PerformanceCounter 走 .NET 10 GA 正式线（net10 分支对齐） -->
@@ -32,7 +46,8 @@
     <PackageVersion Include="FsCheck.Xunit.v3" Version="3.6.0" />
     <PackageVersion Include="coverlet.collector" Version="10.1.0" />
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
-    <!-- 性能测试框架（0.16 仅有预览，net10 分支保持稳定线 0.15.8） -->
+    <!-- 性能测试框架：0.16 仍是预览线（0.16.0-preview.2，2026-09-23），
+         正式版未出；稳定线 0.15.8 为当前最高稳定版，等 0.16.0 正式发布再升 -->
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
   </ItemGroup>
 </Project>

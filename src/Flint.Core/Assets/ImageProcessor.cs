@@ -7,6 +7,7 @@ using Flint.Core.Abstractions;
 using Flint.Core.Models;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats;
+using SixLabors.ImageSharp.Formats.Bmp;
 using SixLabors.ImageSharp.Formats.Gif;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Formats.Png;
@@ -182,12 +183,33 @@ public sealed class ImageProcessor : IImageProcessor
     /// <summary>
     /// 加载图像（T5.2：非泛型加载保留**源像素格式**——JPEG 解码为 L8/RGB24（1-3B/px），
     /// 此前恒定 Rgba32 全量物化 4B/px，R6 批次 4.1 实测图片语料内存 +68%）
+    ///
+    /// 解码前先按格式白名单过滤：ImageSharp 3.1.12 默认注册了 TIFF/TGA/PBM/QOI
+    /// 等 Flint 从不使用的解码器，而 3.1.12 的 6 个安全公告里有 4 个落在 TIFF
+    /// 路径（CCITT T4/T6 编码越界写、fax 瓦片堆越界写、BigTIFF 解码不进展循环）。
+    /// 剩余 2 个与本路径无关：ICC CLUT 在 v1-v3 需显式访问 IccProfile.Entries 才触发
+    /// （Image.Load 默认 ColorProfileHandling.Preserve 不解析），HistogramEqualization
+    /// 属图像变换 API，Flint 只做缩放、不调用。升级到修复版 3.2.0+ 会因 Six Labors
+    /// 构建期许可校验阻断 Release（见 Directory.Packages.props 注释），故在 3.1.12
+    /// 上以白名单把不可达解码器排除在攻击面之外。
+    /// 白名单与 AssetFile.GetAssetType 的图像扩展名一致（svg 是文本，不走此路径）。
     /// </summary>
     private static async Task<Image> LoadImageAsync(
         ReadOnlyMemory<byte> content,
         CancellationToken cancellationToken)
     {
         using var stream = new MemoryStream(content.ToArray());
+
+        // 格式探测：无法识别的内容 DetectFormat 会抛 UnknownImageFormatException，
+        // 与后续 LoadAsync 的失败语义一致，交由上层 FailOnProcessingError 策略处理
+        var format = Image.DetectFormat(stream);
+        if (format is not (PngFormat or JpegFormat or GifFormat or WebpFormat or BmpFormat))
+        {
+            throw new InvalidOperationException(
+                $"不支持的图像格式（仅允许 png/jpeg/gif/webp/bmp）：{format?.Name ?? "未知"}");
+        }
+
+        stream.Position = 0;
         return await Image.LoadAsync(stream, cancellationToken);
     }
 

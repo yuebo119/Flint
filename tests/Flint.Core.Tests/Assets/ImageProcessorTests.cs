@@ -472,4 +472,73 @@ public class ImageProcessorTests
     }
 
     #endregion
+
+    #region 解码格式白名单（安全缓解）
+
+    // ImageSharp 3.1.12 的 6 个安全公告里 4 个落在 TIFF 路径（CCITT T4/T6 编码
+    // 越界写、fax 瓦片堆越界写、BigTIFF 解码不进展循环），修复版 3.2.0+ 因
+    // Six Labors 构建期许可校验会阻断 Release，故以白名单把这些不可达解码器
+    // 排除（见 ImageProcessor.LoadImageAsync 注释）。
+    // 这两条用例锁定白名单本身：TIFF 必须被拒，且拒绝是显式异常而非静默降级。
+
+    [Fact]
+    public async Task ProcessAsync_TIFF图像应该被白名单拒绝()
+    {
+        // Arrange：用 ImageSharp 自身编码出合法 TIFF（确保不是靠坏字节偶然触发）
+        byte[] tiffBytes;
+        using (var image = new Image<Rgba32>(10, 10))
+        {
+            using var stream = new MemoryStream();
+            image.Save(stream, new SixLabors.ImageSharp.Formats.Tiff.TiffEncoder());
+            tiffBytes = stream.ToArray();
+        }
+
+        // 前置确认：这份字节确实是 TIFF，否则本用例会退化成"坏字节"测试
+        Assert.IsType<SixLabors.ImageSharp.Formats.Tiff.TiffFormat>(Image.DetectFormat(tiffBytes));
+
+        var asset = new AssetFile
+        {
+            SourcePath = "test.tiff",
+            MediaType = "image/tiff",
+            Content = tiffBytes,
+            ModifiedTime = DateTimeOffset.UtcNow
+        };
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _processor.ProcessAsync(asset, new ImageProcessingOptions()).ConfigureAwait(false));
+        Assert.Contains("不支持的图像格式", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ProcessAsync_白名单内的BMP应该正常处理()
+    {
+        // Arrange：BMP 在白名单内（AssetFile 未把它列为 Image，但解码路径允许），
+        // 用于证明白名单不是"只放行 png/jpeg"的过度收紧
+        byte[] bmpBytes;
+        using (var image = new Image<Rgba32>(20, 20))
+        {
+            image.Mutate(ctx => ctx.BackgroundColor(Color.Green));
+            using var stream = new MemoryStream();
+            image.Save(stream, new SixLabors.ImageSharp.Formats.Bmp.BmpEncoder());
+            bmpBytes = stream.ToArray();
+        }
+
+        var asset = new AssetFile
+        {
+            SourcePath = "test.bmp",
+            MediaType = "image/bmp",
+            Content = bmpBytes,
+            ModifiedTime = DateTimeOffset.UtcNow
+        };
+
+        // Act
+        var result = await _processor.ProcessAsync(asset, new ImageProcessingOptions { Quality = 85 });
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.True(result.Content.Length > 0);
+    }
+
+    #endregion
 }
