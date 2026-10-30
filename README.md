@@ -15,6 +15,8 @@
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
+---
+
 Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，NativeAOT 单文件交付。
 
 ---

@@ -15,6 +15,8 @@
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
+---
+
 Flint is a static site generator built with C# / .NET 10+. Cross-platform,
 delivered as a NativeAOT single file.
 
