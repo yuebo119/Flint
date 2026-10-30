@@ -9,19 +9,40 @@
 </p>
 
 <p align="center">
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt=".NET" src="https://img.shields.io/badge/.NET-10-purple">
+  <a href="https://github.com/yuebo119/Flint/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/yuebo119/Flint"></a>
   <img alt="NativeAOT" src="https://img.shields.io/badge/deploy-NativeAOT%20single--file-green">
-  <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
+  <a href="#-快速开始"><img alt="platform" src="https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macOS-blue"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器：万页站点 2.6 秒构建，
-增量构建 64ms，交付物是一个原生单文件——并内置 Hugo 主题的
-AST 级自动迁移工具链。
+Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，NativeAOT 单文件交付。
 
-| 万页构建                   | 增量构建     | 交付物          | 真实语料内存             |
-|:----------------------:|:--------:|:------------:|:------------------:|
-| **2.6s**（Hugo 的 0.51x） | **64ms** | **41MB** 单文件 | 比 Hugo 省（USS -38%） |
+---
+
+**万页冷构建矩阵（14 引擎，2026-10-30，全引擎最新版）**
+
+| 排名 | 引擎（版本）                 | 中位       | vs 最快   | 实现语言           |
+| ----:| ---------------------------- | ----------:| ---------:| ------------------ |
+| 1    | **Flint Fluid（0.3.0 AOT）** | **2717ms** | **1.00x** | C#（.NET 10）      |
+| 2    | Flint Scriban（0.3.0 AOT）   | 3069ms     | 1.13x     | C#（.NET 10）      |
+| 3    | Zola 0.23.6                  | 4405ms     | 1.62x     | Rust               |
+| 4    | Hugo 0.169.0（extended）     | 5691ms     | 2.09x     | Go                 |
+| 5    | Eleventy 3.1.7               | 10558ms    | 3.89x     | JavaScript（Node） |
+| 6    | Jekyll 4.4.1                 | 17245ms    | 6.35x     | Ruby               |
+| 7    | Pelican 4.12.0               | 18012ms    | 6.63x     | Python             |
+| 8    | Hexo 8.1.2                   | 34566ms    | 12.72x    | JavaScript（Node） |
+| 9    | VitePress 1.6.4              | 60687ms    | 22.34x    | TypeScript（Node） |
+| 10   | Gatsby 5.16.1                | 62651ms    | 23.06x    | JavaScript（Node） |
+| 11   | Astro 7.4.4                  | 68563ms    | 25.24x    | TypeScript（Node） |
+| 12   | VuePress 2.0.0-rc.31         | 94209ms    | 34.67x    | TypeScript（Node） |
+| 13   | Statiq 1.0.0（JIT，.NET 10） | 231107ms   | 85.06x    | C#（.NET 10）      |
+| 14   | MkDocs 1.6.1                 | 252975ms   | 93.11x    | Python             |
+
+统计范围：同内容语料，每臂 10,000 页，冷构建 3 轮中位（含进程启动），
+Windows 10 x64 单窗口，按最快臂归一化，跨机器只比排名。
+
+校验：产物对称（完整正文，无空壳），排名跨两窗口三轮复现。明细见
+[benchmarks/REPORT.md](benchmarks/REPORT.md)。
 
 ---
 
@@ -48,20 +69,21 @@ AST 级自动迁移工具链。
 Hugo 主题兼容；`engine = auto` 按模板扩展名自动路由，同一站点两种模板
 并存，纯 Liquid 站点不加载 Scriban。
 
-**构建性能** —— 万页冷构建 2.6 秒（Hugo 的 0.51 倍，14 款 SSG 同窗矩阵
-最快），增量构建 64ms、由依赖图驱动只重建受影响页面；`--cache` 持久
-内容缓存让重复构建总耗时再降 59%，产物逐字节一致。
+**构建性能** —— 万页冷构建 2.7 秒（Hugo 的 0.48 倍，14 款 SSG 同窗矩阵
+最快），增量构建 64ms（500 页站、单文件变更、进程内套件）、由依赖图驱动
+只重建受影响页面；`--cache` 持久内容缓存让重复构建总耗时再降 59%，产物
+逐字节一致。
 
 **Hugo 主题直接迁移** —— lookup order / 渲染钩子 / 短码 API / 命名空间
 函数全对齐；ThemeMigrator 以 AST 级转换 Go template，无法判定的语义亮
 `TODO-HUGO` 不静默错译，21 个真实主题已验证。
 
-**零依赖单文件交付** —— .NET 10 NativeAOT：无运行时、无 node_modules、
-无 JIT 预热，交付物是一个 exe；资产管线覆盖 CSS 压缩、TS 类型剥离、
-图片处理与指纹化。
+**无运行时单文件交付** —— .NET 10 NativeAOT：无运行时、无 node_modules、
+无 JIT 预热，交付物是一个 exe；资产管线覆盖 CSS 压缩、轻量 TS 类型剥离、
+图片处理与指纹化，CSS 压缩调用外部 lightningcss，缺省回退内置简化压缩。
 
-**毫秒级冷启动** —— NativeAOT 无 JIT 预热与运行时装配，进程启动到命令
-可用中位 106ms（2026-10-28 实测，win-x64 单文件，10 次中位，区间
+**毫秒级冷启动** —— NativeAOT 无 JIT 预热与运行时装配，`flint version`
+启动到输出中位 106ms（2026-10-28 实测，win-x64 单文件，10 次中位，区间
 89-117ms）。
 
 **Sass/SCSS 编译** —— 外部 Dart Sass CLI（`FLINT_SASS` 或 PATH 上的
@@ -237,13 +259,13 @@ Flint **不自动转义**模板输出——`page.title`、`page.content` 原样�
 页面用哪个模板由**页面特征**决定——`layouts/posts/single.html` 只对
 posts 生效，`layouts/blog/` 按 front matter `type` 路由：
 
-| 页面 kind | 候选顺序（靠前优先） |
-|---|---|
-| 普通页 | `{type}/{layout}` → `{type}/page` → `{type}/single` → `{section}/{layout}` → `{section}/page` → `{section}/single` → `{layout}` → `page` → `single` → `all` |
-| 首页 | `{type}/{layout}` → `{type}/home` → `{type}/index` → `{type}/list` → `{layout}` → `home` → `index` → `list` → `all` |
-| section | `{type}/{layout}` → `{type}/section` → `{type}/list` → `{section}/{layout}` → `{section}/section` → `{section}/list` → `section/{layout}` → `section/section` → `section/list` → `{layout}` → `section` → `list` → `all` |
-| taxonomy | `{taxonomy}/{layout}` → `{taxonomy}/terms` → `{taxonomy}/taxonomy` → `{taxonomy}/list` → `taxonomy/{layout}` → `taxonomy/terms` → `taxonomy/taxonomy` → `taxonomy/list` → `_default/terms` → `_default/taxonomy` → `taxonomy` → `list` → `all` |
-| term | `{taxonomy}/{layout}` → `{taxonomy}/term` → `{taxonomy}/list` → `term/{layout}` → `term/term` → `term/list` → `taxonomy/{layout}` → `taxonomy/term` → `_default/taxonomy` → `_default/term` → `term` → `list` → `all` |
+| 页面 kind | 候选顺序（靠前优先）                                                                                                                                                                                                                           |
+| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 普通页    | `{type}/{layout}` → `{type}/page` → `{type}/single` → `{section}/{layout}` → `{section}/page` → `{section}/single` → `{layout}` → `page` → `single` → `all`                                                                                    |
+| 首页      | `{type}/{layout}` → `{type}/home` → `{type}/index` → `{type}/list` → `{layout}` → `home` → `index` → `list` → `all`                                                                                                                            |
+| section   | `{type}/{layout}` → `{type}/section` → `{type}/list` → `{section}/{layout}` → `{section}/section` → `{section}/list` → `section/{layout}` → `section/section` → `section/list` → `{layout}` → `section` → `list` → `all`                       |
+| taxonomy  | `{taxonomy}/{layout}` → `{taxonomy}/terms` → `{taxonomy}/taxonomy` → `{taxonomy}/list` → `taxonomy/{layout}` → `taxonomy/terms` → `taxonomy/taxonomy` → `taxonomy/list` → `_default/terms` → `_default/taxonomy` → `taxonomy` → `list` → `all` |
+| term      | `{taxonomy}/{layout}` → `{taxonomy}/term` → `{taxonomy}/list` → `term/{layout}` → `term/term` → `term/list` → `taxonomy/{layout}` → `taxonomy/term` → `_default/taxonomy` → `_default/term` → `term` → `list` → `all`                          |
 
 三条约定：① 裸名（无斜杠）自动展开为 `_default/{name}` 在前、`{name}`
 在后两级；② 每级先查站点 `layouts/` 再查主题（同名站点赢）；③ `{type}`
@@ -305,14 +327,14 @@ enableGitInfo = true                # 启用 date: ":git"
 
 ### 命令参考
 
-| 命令                         | 说明                                |
-| -------------------------- | --------------------------------- |
-| `flint new site <name>`    | 创建新站点                             |
-| `flint new content <path>` | 创建内容（`--kind` 指定模板）               |
-| `flint new theme <name>`   | 创建主题骨架                            |
-| `flint build`              | 构建站点                              |
+| 命令                       | 说明                                     |
+| -------------------------- | ---------------------------------------- |
+| `flint new site <name>`    | 创建新站点                               |
+| `flint new content <path>` | 创建内容（`--kind` 指定模板）            |
+| `flint new theme <name>`   | 创建主题骨架                             |
+| `flint build`              | 构建站点                                 |
 | `flint serve`              | 启动开发服务器                           |
-| `flint mod <sub>`          | 模块管理（init/get/update/list/remove） |
+| `flint mod <sub>`          | 模块管理（init/get/update/list/remove）  |
 | `flint deploy <target>`    | 部署（s3://、gh-pages、netlify、vercel） |
 
 **gh-pages 部署的覆盖语义**：默认"能快进就推"，克隆失败时先用 `ls-remote` 区分
@@ -341,10 +363,10 @@ true）、`--livereload/-l`（默认 true）、`--drafts/-D`（默认 true）、
 
 ### 端到端构建
 
-| 语料                      | 页数     | Hugo   | **Flint Scriban** | **Flint Fluid**   |
-| ----------------------- | ------ | ------:| -----------------:| -----------------:|
+| 语料                          | 页数   | Hugo   | **Flint Scriban**   | **Flint Fluid**     |
+| ----------------------------- | ------ | ------:| -------------------:| -------------------:|
 | 万页合成（SsgBench）          | 10,000 | 5179ms | **2909ms（0.56x）** | **2620ms（0.51x）** |
-| MDN Web Docs（Hugo 迁移语料） | 14,621 | 8153ms | **4292ms（0.53x）** | —                 |
+| MDN Web Docs（Hugo 迁移语料） | 14,621 | 8153ms | **4292ms（0.53x）** | —                   |
 
 万页比值跨三晚复现于 0.50-0.56x 区间；MDN 真实语料 0.53x。Fluid 臂为
 万页合成语料的同内容 `.liquid` 孪生站，产物与 Scriban 臂逐字节一致
@@ -353,17 +375,17 @@ true）、`--livereload/-l`（默认 true）、`--drafts/-D`（默认 true）、
 
 ### 主题复杂度阶梯（1000 页 × L1/L2/L3）
 
-| 层级    | 主题内容                                     | Hugo   | **Flint** | 比值        |
-| ----- | ---------------------------------------- | ------ | --------- | --------- |
-| L1 基础 | 单页渲染                                     | 698ms  | **437ms** | **0.63x** |
-| L2 中等 | + 侧边栏 O(N) 全站循环                          | 983ms  | **593ms** | **0.60x** |
+| 层级    | 主题内容                                      | Hugo   | **Flint** | 比值      |
+| ------- | --------------------------------------------- | ------ | --------- | --------- |
+| L1 基础 | 单页渲染                                      | 698ms  | **437ms** | **0.63x** |
+| L2 中等 | + 侧边栏 O(N) 全站循环                        | 983ms  | **593ms** | **0.60x** |
 | L3 重度 | + 双 O(N) 循环 + 嵌套 partial + partialCached | 1265ms | **865ms** | **0.68x** |
 
 ### 内存峰值（构建进程，RSS / USS · MB）
 
-| 语料           | Hugo        | **Flint**     | USS 差异       |
-| ------------ | ----------- | ------------- | ------------ |
-| 万页合成         | 399 / 392   | **338 / 321** | **-18%（更省）** |
+| 语料          | Hugo        | **Flint**     | USS 差异         |
+| ------------- | ----------- | ------------- | ---------------- |
+| 万页合成      | 399 / 392   | **338 / 321** | **-18%（更省）** |
 | MDN 14,621 页 | 1427 / 1402 | **893 / 872** | **-38%（更省）** |
 
 ### 进程内套件（Release，12/12 全绿）
@@ -391,27 +413,26 @@ Markdown 解析 229k 文件/秒 · 模板渲染 Scriban 54k / Fluid 175k 页/秒
 
 ## 🆚 与主流 SSG 对比
 
-| 维度       | **Flint**                                   | Hugo                 | Astro                      | Eleventy                  | Jekyll                  | Hexo         |
-| -------- | ------------------------------------------- | -------------------- | -------------------------- | ------------------------- | ----------------------- | ------------ |
-| 实现与运行时   | **C# / .NET 10+，AOT 单文件应用**                 | Go 单二进制              | Node + 依赖树                 | Node + 依赖树                | Ruby + gems             | Node + 依赖树   |
-| 模板系统     | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限）    | UI 组件（React/Vue/Svelte…）   | 多引擎（Liquid/Nunjucks/EJS…） | Liquid                  | EJS / Pug 等  |
-| 构建性能（万页） | **1.00x（最快，2.6s）**                          | 1.60x                | 19.06x                     | 2.94x                     | 5.06x                   | 13.30x       |
-| 增量构建     | **64ms**                                    | 支持                   | 支持                         | 支持                        | 有限                      | 支持           |
-| 资产管线     | **进程内 Sass + TS 类型剥离 + minify + 指纹**        | Hugo Pipes（Extended） | Vite 工具链                   | 插件                        | 插件                      | 插件           |
-| 图片处理     | **resize/fit/fill/crop，响应式**                | 内置                   | sharp 生态                   | 插件                        | 插件                      | 插件           |
-| 内容模型     | **三格式 Front Matter + taxonomy + 短码**        | 同类                   | Content Collections（typed） | data cascade              | Front Matter + taxonomy | Front Matter |
-| 多语言      | **i18n 文件 + 主题回退**                          | 完整 i18n              | i18n 路由                    | 社区方案                      | 插件为主                    | 多语言          |
-| 主题系统     | **模块化 + 版本锁定 + 多主题叠加**                      | Hugo Modules         | npm / 复制安装                 | 无正式机制                     | gem 主题                  | npm 主题       |
-| 迁移工具     | **ThemeMigrator（AST 级主题转换）**                | 文章导入（jekyll）         | —                          | —                         | —                       | —            |
-| 质量保障     | **性能门禁 + 属性测试**                             | —                    | —                          | —                         | —                       | —            |
-| 控制台编码    | **强制 UTF-8**                                | Windows 下 GBK        | UTF-8                      | UTF-8                     | UTF-8                   | UTF-8        |
+| 维度             | **Flint**                                                | Hugo                    | Astro                        | Eleventy                       | Jekyll                  | Hexo          |
+| ---------------- | -------------------------------------------------------- | ----------------------- | ---------------------------- | ------------------------------ | ----------------------- | ------------- |
+| 实现与运行时     | **C# / .NET 10+，AOT 单文件应用**                        | Go 单二进制             | Node + 依赖树                | Node + 依赖树                  | Ruby + gems             | Node + 依赖树 |
+| 模板系统         | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid                  | EJS / Pug 等  |
+| 构建性能（万页） | **1.00x（最快，2.7s）**                                  | 2.09x                   | 25.24x                       | 3.89x                          | 6.35x                   | 12.72x        |
+| 增量构建         | **64ms（500 页）**                                       | 支持                    | 支持                         | 支持                           | 有限                    | 支持          |
+| 资产管线         | **Sass + TS 剥离 + minify + 指纹**                       | Hugo Pipes（Extended）  | Vite 工具链                  | 插件                           | 插件                    | 插件          |
+| 图片处理         | **resize/fit/fill/crop，响应式**                         | 内置                    | sharp 生态                   | 插件                           | 插件                    | 插件          |
+| 内容模型         | **三格式 Front Matter + taxonomy + 短码**                | 同类                    | Content Collections（typed） | data cascade                   | Front Matter + taxonomy | Front Matter  |
+| 多语言           | **i18n 文件 + 主题回退**                                 | 完整 i18n               | i18n 路由                    | 社区方案                       | 插件为主                | 多语言        |
+| 主题系统         | **模块化 + 版本锁定 + 多主题叠加**                       | Hugo Modules            | npm / 复制安装               | 无正式机制                     | gem 主题                | npm 主题      |
+| 迁移工具         | **ThemeMigrator（AST 级主题转换）**                      | 文章导入（jekyll）      | —                            | —                              | —                       | —             |
+| 质量保障         | **性能门禁 + 属性测试**                                  | —                       | —                            | —                              | —                       | —             |
+| 控制台编码       | **强制 UTF-8**                                           | Windows 下 GBK          | UTF-8                        | UTF-8                          | UTF-8                   | UTF-8         |
 
-> 构建性能行为 2026-10-27 十三引擎同窗矩阵实测（同机万页冷构建，比值按
-> 最快臂归一化：Flint+Liquid 3478ms = 1.00x；未入表的 Statiq 91.8x 与
-> MkDocs 84.6x 为全场最慢，Docusaurus 因超线性崩溃未入榜）；其余维度为
-> 公开结构性特征。Flint vs Hugo 的八个实测差异点全记录见
-> [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md)，主题兼容矩阵见
-> [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md)。
+> 构建性能行为 2026-10-30 十四引擎同窗矩阵实测（全部引擎当日最新稳定
+> 版，比值按最快臂归一化，完整矩阵见文首表格；Docusaurus 因规模超线性
+> 崩溃未入榜）；其余维度为公开结构性特征。Flint vs Hugo 的八个实测差异
+> 点全记录见 [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md)，主题兼容
+> 矩阵见 [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md)。
 
 ---
 
@@ -433,8 +454,20 @@ PATH 上的 `sass` → 仓库 `tools/dart-sass/` 顺序定位；产品不再内�
 Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 **fixit 主题构建很慢是正常的吗？**
-正常——它在 100 篇统一语料 + 全分类/标签分页下约 5.5 分钟（631 页），
-单站超时上限已放宽到 600s；其余主题均在秒级到分钟级。
+冷构建正常——它在 100 篇统一语料 + 全分类/标签分页下约 5.5 分钟
+（631 页），单站超时上限已放宽到 600s；其余主题均在秒级到分钟级。
+增量构建不受此限：改 front matter 标签的热重建约 3.8 秒。
+
+**重复构建还能更快吗？**
+`build --cache` 开启持久内容缓存：未变化文件免读盘、未变化产物免写盘，
+14.6k 页站重复构建总耗时再降 59%，产物逐字节一致；`--clean` 全量重建
+时自动绕过缓存。
+
+**该用 Fluid 还是 Scriban？**
+新站点默认 Fluid（Liquid 语法，渲染吞吐约为 Scriban 的 3 倍）；
+`engine = "auto"` 按模板扩展名自动路由（`.liquid` → Fluid，Hugo 迁移的
+`.html` → Scriban），两种模板可同站并存。迁入 Hugo 主题走 Scriban
+兼容层，ThemeMigrator 的产物即为此形态。
 
 ---
 
@@ -442,28 +475,32 @@ Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 ### 技术栈
 
-| 技术                                       | 说明                                                |
-| ---------------------------------------- | ------------------------------------------------- |
-| **.NET 10+**                             | LTS 基线及更新线，NativeAOT 原生编译，单文件发布                   |
-| **Scriban 7.5 + Fluid 3.0 beta**         | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
-| **Markdig 1.5**                          | CommonMark + GFM 解析                               |
-| **Dart Sass CLI**                        | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`）           |
-| **Lightning CSS**                        | CSS 压缩（外部 CLI，缺失回退内置简单压缩）                         |
-| **ImageSharp 3.1**                       | 图片处理（缩放/格式转换/响应式）                                 |
-| **Tommy / VYaml**                        | TOML 配置与 YAML Front Matter 解析                     |
-| **System.CommandLine 3.0 RC**            | CLI 命令行框架                                         |
-| **Kestrel**                              | 开发服务器（热重载）                                        |
-| **Server GC**                            | 多核并行回收（批处理吞吐）                                     |
-| **xunit.v3 / FsCheck / BenchmarkDotNet** | 测试与基准（测试侧依赖，不入产品）                                 |
+| 技术                                                 | 说明                                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------------- |
+| **.NET 10+**                                         | LTS 基线及更新线，NativeAOT 原生编译，单文件发布                          |
+| **Fluid 3.0.0-beta.8 + Scriban 7.5.3**               | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
+| **Markdig 1.5.0**                                    | CommonMark + GFM 解析                                                     |
+| **Dart Sass CLI**                                    | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`）                           |
+| **Lightning CSS**                                    | CSS 压缩（外部 CLI，缺失回退内置简单压缩）                                |
+| **ImageSharp 3.1.12**                                | 图片处理（缩放/格式转换/响应式；许可锁定版）                              |
+| **Tommy 3.1.2 / VYaml 1.5.0**                        | TOML 配置与 YAML Front Matter 解析                                        |
+| **System.CommandLine 3.0.0-rc.3**                    | CLI 命令行框架                                                            |
+| **Kestrel**                                          | 开发服务器（热重载）                                                      |
+| **Server GC**                                        | 多核并行回收（批处理吞吐）                                                |
+| **xunit.v3 4.0.2 / FsCheck 3.6.0 / BenchmarkDotNet** | 测试与基准（测试侧依赖，不入产品）                                        |
 
 ### 测试与基准
 
 ```bash
-dotnet run --project tests/Flint.Core.Tests -c Release        # Core 全量测试
-dotnet run --project tests/Flint.IntegrationTests -c Release  # 集成测试
-dotnet run --project tests/Flint.PerformanceTests -c Release  # 性能套件
+# 测试（五套件，根因定位与回归防护）
+dotnet run --project tests/Flint.Core.Tests -c Release          # 核心（单测+属性测试）
+dotnet run --project tests/Flint.IntegrationTests -c Release    # 集成（CLI 端到端）
+dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # 主题迁移器
+dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools/工具链
+dotnet run --project tests/Flint.PerformanceTests -c Release    # 性能套件（进程内）
 
-dotnet run --project src/Flint.DevTools -- bench ssg          # 万页 Flint vs Hugo
+# 基准（Flint vs Hugo 对照；十四引擎矩阵协议与结果见 benchmarks/REPORT.md）
+dotnet run --project src/Flint.DevTools -- bench ssg          # 万页冷构建
 dotnet run --project src/Flint.DevTools -- bench complexity   # 复杂度阶梯
 dotnet run --project src/Flint.DevTools -- bench memory       # 峰值内存采样
 dotnet run --project src/Flint.DevTools -- perf run           # 性能套件 + HTML 报告
@@ -481,7 +518,7 @@ Flint/
 │   ├── Flint.AiGate/            # AI 开发工作流门禁工具
 │   ├── Flint.DevTools/          # 开发运维工具集（bench/audit/corpus/release/perf/theme/demo）
 │   └── Flint.ThemeMigrator/     # Hugo 主题迁移（Go template → Scriban）
-├── tests/                       # Core / Integration / Performance 三套件
+├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance 五套件
 ├── demo-sites/                  # 案例站（21 主题 + 画廊 + 统一语料）
 ├── theme-migrator/              # 主题语料（themes/ 克隆源、candidates/）
 └── benchmarks/                  # 性能基准（语料/报告/门禁）

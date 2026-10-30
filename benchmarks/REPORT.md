@@ -142,15 +142,22 @@ USS=进程独占内存（不含共享库）。脚本：scripts/memory-bench.py�
 
 ## 10. 可复现命令
 
+> 原 Python 版 `scripts/ssg-bench.py` / `complexity-bench.py` /
+> `corpus-convert.py` 已迁移为 DevTools 子命令（bench / corpus），下列为
+> 现行命令。bench 对比走固定路径二进制 `benchmarks/tools/hugo.exe` 与
+> `benchmarks/tools/flint-aot/Flint.exe`（目录不入库，需自行放置：Hugo
+> 官方 Extended 版下载；Flint 用 `dotnet publish src/Flint.Cli -c Release
+> -r win-x64 -p:PublishAot=true -o ./publish` 产出后复制）。
+
 ```bash
-# 万页合成对比
-python scripts/ssg-bench.py --pages 10000 --runs 3
+# 万页合成对比（自生成语料）
+dotnet run --project src/Flint.DevTools -- bench ssg
 
 # 复杂度阶梯对照
-python scripts/complexity-bench.py --pages 1000 --runs 3
+dotnet run --project src/Flint.DevTools -- bench complexity
 
-# MDN 语料转换（需先克隆 mdn/content 到 benchmarks/corpus/mdn-content）
-python scripts/corpus-convert.py
+# MDN 语料转换（需先克隆 mdn/content）
+dotnet run --project src/Flint.DevTools -- corpus convert
 
 # 性能套件（进程内）
 dotnet run --project tests/Flint.PerformanceTests -c Release -- TestResults/report.html
@@ -250,3 +257,65 @@ dotnet run --project src/Flint.DevTools -- perf run           # 进程内套件 
 # Fluid 臂：benchmarks/corpus/ssg-bench/flint-liquid（同内容 .liquid 孪生站）
 #   flint build -s benchmarks/corpus/ssg-bench/flint-liquid -o <输出>（绝对路径）
 ```
+
+## 12. 2026-10-30 轮：十四引擎矩阵双跑（同日复现 + 全引擎最新版）
+
+背景：应要求对全部同类 SSG 统一复测，并在版本审计后将全部引擎升至
+当日最新版重跑。计时器为本机工作区 `tmp/ssg14.cs`（十四臂单进程交错，
+Statiq 由 §11.6 的独立锚臂并入主矩阵，消除跨脚本锚归一）。协议与
+§11.6 一致：万页同内容语料、删输出冷构建（含各引擎持久缓存）、预热
+1 + 3 轮中位、轮序轮转、外部计时含进程启动。
+
+### 12.1 同日复现轮（13:43–14:58，引擎版本与 10-27 轮相同）
+
+vsFastest = Flint+Liquid 2973ms = 1.00x：Flint+Scriban 1.19x、Zola
+1.64x、Hugo(v0.168.0) 2.08x、Eleventy 3.81x、Jekyll 6.20x、Pelican
+7.36x、Hexo 10.55x、VitePress 23.52x、Gatsby 24.96x、Astro 26.07x、
+VuePress 38.44x、Statiq 96.98x、MkDocs 108.50x。产物审计 14 臂
+10001–10007 html 与前轮逐臂一致。
+
+### 12.2 全引擎最新版轮（17:15–18:18）
+
+版本审计结论：仅 2 款需升级——Hugo v0.168.0→**v0.169.0**、Astro
+7.4.2→**7.4.4**；其余 12 款经 npm dist-tags / pip index / gem
+--remote / GitHub releases 核实已是最新（Zola 0.23.6、Eleventy 3.1.7、
+Jekyll 4.4.1、Pelican 4.12.0、VitePress 1.6.4 latest 稳定线、Hexo
+8.1.2、Gatsby 5.16.1、MkDocs 1.6.1、VuePress 2.0.0-rc.31 = next 线
+最新、Statiq 源码 = origin/main、Flint = 0.3.0 HEAD AOT）。升级臂单臂
+验证产物对称（各 10001 html）后入矩阵。
+
+| 排名 | 引擎（版本） | 中位 | vs 最快 |
+| --: | --- | --: | --: |
+| 1 | Flint Fluid（0.3.0 AOT） | 2717ms | 1.00x |
+| 2 | Flint Scriban（0.3.0 AOT） | 3069ms | 1.13x |
+| 3 | Zola 0.23.6 | 4405ms | 1.62x |
+| 4 | Hugo 0.169.0（extended） | 5691ms | 2.09x |
+| 5 | Eleventy 3.1.7 | 10558ms | 3.89x |
+| 6 | Jekyll 4.4.1 | 17245ms | 6.35x |
+| 7 | Pelican 4.12.0 | 18012ms | 6.63x |
+| 8 | Hexo 8.1.2 | 34566ms | 12.72x |
+| 9 | VitePress 1.6.4 | 60687ms | 22.34x |
+| 10 | Gatsby 5.16.1 | 62651ms | 23.06x |
+| 11 | Astro 7.4.4 | 68563ms | 25.24x |
+| 12 | VuePress 2.0.0-rc.31 | 94209ms | 34.67x |
+| 13 | Statiq 1.0.0（JIT，.NET 10） | 231107ms | 85.06x |
+| 14 | MkDocs 1.6.1 | 252975ms | 93.11x |
+
+### 12.3 结论
+
+1. **排名三轮全复现（14/14）**：Flint+Fluid 三轮全部第一；尾部两名
+   MkDocs/Statiq（~90x 档）远超其余，垫底归属在窗口间互换属波动。
+2. 升级无实质性能变化：Hugo 0.168→0.169 比值 2.08→2.09x；Astro
+   7.4.2→7.4.4 绝对快 11.5% 但同期 Flint 锚快 8.6%，净差约 3% 属窗口
+   漂移（[推断]）。
+3. 跨窗口锚漂移再次实证：Flint+Liquid 三窗口 3478→2973→2717ms，绝对值
+   只可同窗比较。
+4. Statiq 预热曾出现一次 `[CRIT] Regex engine timed out`（单臂复测正常，
+   判定负载相关偶发），计时器为该臂加了 Retries=1 保护，正式轮未触发。
+
+### 12.4 复现性现状声明
+
+本轮十四引擎矩阵的资产（计时器、13 款竞品的站点脚手架与依赖、语料
+生成器、各引擎运行时环境）均在本机 `tmp/` 工作区，**未入库**；仓库内
+可复现的对比仅 §11.8 的 `bench ssg`（Flint vs Hugo，自生成语料），
+Fluid 臂孪生站与各竞品矩阵需自行搭建。

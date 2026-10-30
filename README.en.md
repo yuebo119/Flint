@@ -9,20 +9,44 @@
 </p>
 
 <p align="center">
-  <img alt="license" src="https://img.shields.io/badge/license-MIT-blue">
-  <img alt=".NET" src="https://img.shields.io/badge/.NET-10-purple">
+  <a href="https://github.com/yuebo119/Flint/releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/yuebo119/Flint"></a>
   <img alt="NativeAOT" src="https://img.shields.io/badge/deploy-NativeAOT%20single--file-green">
-  <img alt="themes" src="https://img.shields.io/badge/themes-21%20verified-orange">
+  <a href="#-quick-start"><img alt="platform" src="https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macOS-blue"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-Flint is a static site generator built in C# / .NET 10+: 10k-page sites build
-in 2.6 seconds, incrementals take 64ms, the deliverable is a native single
-file — and it ships an AST-level automated migration toolchain for
-Hugo themes.
+Flint is a static site generator built with C# / .NET 10+. Cross-platform,
+delivered as a NativeAOT single file.
 
-| 10k-page build | Incremental | Deliverable | Real-corpus memory |
-|:---:|:---:|:---:|:---:|
-| **2.6s** (0.51x Hugo) | **64ms** | **41MB** single file | less than Hugo (USS -38%) |
+---
+
+**10k-page cold-build matrix (14 engines, 2026-10-30, all engines latest)**
+
+| Rank | Engine (version) | 10k cold-build median | vs fastest | Language |
+| --: | --- | ---: | ---: | --- |
+| 1 | **Flint Fluid (0.3.0 AOT)** | **2717ms** | **1.00x** | C# (.NET 10) |
+| 2 | Flint Scriban (0.3.0 AOT) | 3069ms | 1.13x | C# (.NET 10) |
+| 3 | Zola 0.23.6 | 4405ms | 1.62x | Rust |
+| 4 | Hugo 0.169.0 (extended) | 5691ms | 2.09x | Go |
+| 5 | Eleventy 3.1.7 | 10558ms | 3.89x | JavaScript (Node) |
+| 6 | Jekyll 4.4.1 | 17245ms | 6.35x | Ruby |
+| 7 | Pelican 4.12.0 | 18012ms | 6.63x | Python |
+| 8 | Hexo 8.1.2 | 34566ms | 12.72x | JavaScript (Node) |
+| 9 | VitePress 1.6.4 | 60687ms | 22.34x | TypeScript (Node) |
+| 10 | Gatsby 5.16.1 | 62651ms | 23.06x | JavaScript (Node) |
+| 11 | Astro 7.4.4 | 68563ms | 25.24x | TypeScript (Node) |
+| 12 | VuePress 2.0.0-rc.31 | 94209ms | 34.67x | TypeScript (Node) |
+| 13 | Statiq 1.0.0 (JIT, .NET 10) | 231107ms | 85.06x | C# (.NET 10) |
+| 14 | MkDocs 1.6.1 | 252975ms | 93.11x | Python |
+
+Scope: identical 10,000-page corpus per arm, cold builds, median of 3
+rounds including process startup, single-window run on Windows 10 x64,
+ratios normalized to the fastest arm; across machines only the ranking
+holds.
+
+Checks: output symmetry (complete bodies, no empty shells), ranking
+reproduced across three rounds in two windows. Per-round details in
+[benchmarks/REPORT.md](benchmarks/REPORT.md).
 
 ---
 
@@ -49,23 +73,25 @@ carries Hugo theme compatibility. `engine = auto` routes by template
 extension, both can coexist in one site, and pure-Liquid sites never load
 Scriban.
 
-**Build performance** — 10k-page cold builds in 2.6s (0.51x Hugo, fastest
-of 14 SSGs in the same-window matrix), 64ms dependency-graph incrementals
-rebuilding only affected pages; the `--cache` persistent content cache cuts
-repeat-build total time another 59% with byte-identical output.
+**Build performance** — 10k-page cold builds in 2.7s (0.48x Hugo, fastest
+of 14 SSGs in the same-window matrix); 64ms dependency-graph incrementals
+(500-page site, single-file change, in-process suite) rebuilding only
+affected pages; the `--cache` persistent content cache cuts repeat-build
+total time another 59% with byte-identical output.
 
 **Migrate Hugo themes directly** — lookup order / render hooks / shortcode
 API / namespace functions aligned; ThemeMigrator converts Go templates at
 the AST level, flagging indeterminable semantics with `TODO-HUGO` instead
 of silently mistranslating; 21 real themes verified.
 
-**Zero-dependency single-file delivery** — .NET 10 NativeAOT: no runtime,
+**No-runtime single-file delivery** — .NET 10 NativeAOT: no runtime,
 no node_modules, no JIT warmup — the deliverable is one exe; the asset
-pipeline covers CSS minification, TS type stripping, image processing, and
-fingerprinting.
+pipeline covers CSS minification, lightweight TS type stripping, image
+processing, and fingerprinting. CSS minification calls external
+lightningcss, falling back to built-in simplified minification.
 
 **Millisecond cold start** — NativeAOT means no JIT warmup and no runtime
-bootstrap: process start to a usable command at a 106ms median (measured
+bootstrap: `flint version` start to output at a 106ms median (measured
 2026-10-28, win-x64 single file, median of 10 runs spanning 89-117ms).
 
 **Sass/SCSS compilation** — external Dart Sass CLI (`FLINT_SASS` or `sass`
@@ -412,9 +438,9 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 |---|---|---|---|---|---|---|
 | Runtime | **C# / .NET 10+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
-| Build performance (10k pages) | **1.00x (fastest, 2.6s)** | 1.60x | 19.06x | 2.94x | 5.06x | 13.30x |
-| Incremental builds | **64ms** | supported | supported | supported | limited | supported |
-| Asset pipeline | **in-process Sass + TS type stripping + minify + fingerprint** | Hugo Pipes (Extended) | Vite toolchain | plugins | plugins | plugins |
+| Build performance (10k pages) | **1.00x (fastest, 2.7s)** | 2.09x | 25.24x | 3.89x | 6.35x | 12.72x |
+| Incremental builds | **64ms (500 pages)** | supported | supported | supported | limited | supported |
+| Asset pipeline | **Sass + TS type stripping + minify + fingerprint** | Hugo Pipes (Extended) | Vite toolchain | plugins | plugins | plugins |
 | Image processing | **resize/fit/fill/crop, responsive** | built-in | sharp ecosystem | plugins | plugins | plugins |
 | Content model | **three-format Front Matter + taxonomies + shortcodes** | comparable | Content Collections (typed) | data cascade | Front Matter + taxonomies | Front Matter |
 | Multilingual | **i18n files + theme fallback** | full i18n | i18n routing | community solutions | mostly plugins | multilingual |
@@ -423,13 +449,12 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 | Quality assurance | **perf gate + property testing** | — | — | — | — | — |
 | Console encoding | **forced UTF-8** | GBK on Windows | UTF-8 | UTF-8 | UTF-8 | UTF-8 |
 
-> Build-performance figures come from the thirteen-engine same-window matrix
-> measured 2026-10-27 (same-machine 10k-page cold builds, ratios normalized
-> to the fastest arm: Fluid+Liquid Flint at 3478ms = 1.00x; Statiq at 91.8x
-> and MkDocs at 84.6x — not shown in the table — are the slowest of all 14
-> engines measured, Docusaurus was excluded after superlinear collapse);
-> the remaining columns state public structural facts. The eight measured
-> Flint-vs-Hugo difference points are documented in
+> Build-performance figures come from the fourteen-engine same-window matrix
+> measured 2026-10-30 with every engine at its latest stable release that day
+> (same-machine 10k-page cold builds, ratios normalized to the fastest arm,
+> full matrix at the top of this document; Docusaurus was excluded after
+> superlinear collapse); the remaining columns state public structural facts.
+> The eight measured Flint-vs-Hugo difference points are documented in
 > [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md); the theme compatibility
 > matrix in [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md).
 
@@ -455,9 +480,24 @@ in this order: `FLINT_SASS` env var → `sass` on PATH → repo
 or point `FLINT_SASS` at the executable.
 
 **Is the fixit theme supposed to build slowly?**
-Yes — under the 100-article shared corpus with full taxonomy/tag pagination
-it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
-600s. All other themes build in seconds to low minutes.
+Cold builds — yes: under the 100-article shared corpus with full
+taxonomy/tag pagination it takes ~5.5 minutes (631 pages); the per-site
+timeout is already raised to 600s. All other themes build in seconds to
+low minutes. Incremental builds are unaffected: a front-matter tag edit
+rebuilds in ~3.8 seconds.
+
+**Can repeated builds go faster?**
+`build --cache` enables the persistent content cache: unchanged files skip
+re-reading, unchanged outputs skip writing — repeat builds of a 14.6k-page
+site drop another 59% with byte-identical output; `--clean` full rebuilds
+bypass the cache automatically.
+
+**Fluid or Scriban?**
+New sites default to Fluid (Liquid syntax, ~3x the render throughput of
+Scriban); `engine = "auto"` routes by template extension (`.liquid` →
+Fluid, Hugo-migrated `.html` → Scriban), and both can coexist in one
+site. Migrating Hugo themes goes through the Scriban compatibility layer
+— that is exactly what ThemeMigrator emits.
 
 ---
 
@@ -468,25 +508,30 @@ it takes ~5.5 minutes (631 pages); the per-site timeout is already raised to
 | Technology | Role |
 |------|------|
 | **.NET 10+** | LTS baseline and later; NativeAOT compilation, single-file publish |
-| **Scriban 7.5 + Fluid 3.0 beta** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
-| **Markdig 1.5** | CommonMark + GFM parsing |
+| **Scriban 7.5.3 + Fluid 3.0.0-beta.8** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
+| **Markdig 1.5.0** | CommonMark + GFM parsing |
 | **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |
 | **Lightning CSS** | CSS minification (external CLI, falls back to built-in simple minifier) |
-| **ImageSharp 3.1** | Image processing (resize/format conversion/responsive) |
-| **Tommy / VYaml** | TOML config and YAML Front Matter parsing |
-| **System.CommandLine 3.0 RC** | CLI framework |
+| **ImageSharp 3.1.12** | Image processing (resize/format conversion/responsive; license-pinned) |
+| **Tommy 3.1.2 / VYaml 1.5.0** | TOML config and YAML Front Matter parsing |
+| **System.CommandLine 3.0.0-rc.3** | CLI framework |
 | **Kestrel** | Dev server (hot reload) |
 | **Server GC** | Multi-core parallel collection (batch throughput) |
-| **xunit.v3 / FsCheck / BenchmarkDotNet** | Testing and benchmarking (test-side only; not in the product) |
+| **xunit.v3 4.0.2 / FsCheck 3.6.0 / BenchmarkDotNet** | Testing and benchmarking (test-side only; not in the product) |
 
 ### Tests and Benchmarks
 
 ```bash
-dotnet run --project tests/Flint.Core.Tests -c Release        # Full Core tests
-dotnet run --project tests/Flint.IntegrationTests -c Release  # Integration tests
-dotnet run --project tests/Flint.PerformanceTests -c Release  # Performance suite
+# Tests (five suites)
+dotnet run --project tests/Flint.Core.Tests -c Release          # Core (unit + property)
+dotnet run --project tests/Flint.IntegrationTests -c Release    # Integration (CLI e2e)
+dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # Theme migrator
+dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools / toolchain
+dotnet run --project tests/Flint.PerformanceTests -c Release    # Performance suite (in-process)
 
-dotnet run --project src/Flint.DevTools -- bench ssg          # 10k-page Flint vs Hugo
+# Benchmarks (Flint vs Hugo; the 14-engine matrix protocol and results
+# are documented in benchmarks/REPORT.md)
+dotnet run --project src/Flint.DevTools -- bench ssg          # 10k-page cold build
 dotnet run --project src/Flint.DevTools -- bench complexity   # Complexity ladder
 dotnet run --project src/Flint.DevTools -- bench memory       # Peak memory sampling
 dotnet run --project src/Flint.DevTools -- perf run           # Perf suite + HTML report
@@ -504,7 +549,7 @@ Flint/
 │   ├── Flint.AiGate/            # AI dev-workflow gate tooling
 │   ├── Flint.DevTools/          # Dev-ops toolset (bench/audit/corpus/release/perf/theme/demo)
 │   └── Flint.ThemeMigrator/     # Hugo theme migration (Go template → Scriban)
-├── tests/                       # Core / Integration / Performance suites
+├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance suites
 ├── demo-sites/                  # Demo sites (21 themes + gallery + shared corpus)
 ├── theme-migrator/              # Migration corpus (themes/ clones, candidates/)
 └── benchmarks/                  # Performance benchmarks (corpora/reports/gate)
