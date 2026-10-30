@@ -1,4 +1,4 @@
-# Flint
+<h1 align="center">Flint</h1>
 
 <p align="center">
   <strong>🔥 High-performance static site generator · C# / .NET 10+ · NativeAOT single file</strong>
@@ -54,11 +54,11 @@ reproduced across three rounds in two windows. Per-round details in
 
 - [Features](#-features)
 - [Quick Start](#-quick-start)
-- [Demo Sites](#-demo-sites)
 - [Usage](#-usage)
 - [Configuration and Commands](#️-configuration-and-commands)
 - [Performance](#-performance)
 - [SSG Comparison](#-ssg-comparison)
+- [Demo Sites](#-demo-sites)
 - [FAQ](#-faq)
 - [Development](#️-development)
 - [Contributing](#-contributing)
@@ -152,29 +152,6 @@ flint build --minify   # Outputs to public/, deploy anywhere
 Push `public/` to GitHub Pages / Netlify / Vercel / Cloudflare Pages or any
 web server; or `flint deploy <target>` (s3://, gh-pages, netlify, vercel —
 requires the corresponding CLI).
-
----
-
-## 🎨 Demo Sites
-
-The repo ships 21 Hugo-migrated theme demo sites (built from a shared
-100-article Chinese corpus) plus a theme gallery (card grid of preview
-screenshots, each linking to its demo site):
-
-```bash
-# Prerequisites: build the engine and migrator (DevTools looks them up at fixed paths)
-dotnet build src/Flint.Cli -c Release -r win-x64
-dotnet build src/Flint.ThemeMigrator
-
-dotnet run --project src/Flint.DevTools -- demo build --serve   # all themes + start servers
-dotnet run --project src/Flint.DevTools -- demo build narrow    # a single theme
-dotnet run --project src/Flint.DevTools -- demo gallery --serve # the gallery (port 8400)
-dotnet run --project src/Flint.DevTools -- demo stop            # stop servers
-```
-
-Gallery at `http://127.0.0.1:8400/`, themes at 8401-8421. Caveats (Sass
-resolution, fixit build time, directory locks) in
-[demo-sites/README.md](demo-sites/README.md).
 
 ---
 
@@ -372,11 +349,11 @@ true), `--source/-s` (`.`).
 
 ## 📊 Performance
 
-> Measured 2026-10-27 on one machine in one window (cold builds,
-> multi-run medians) · Windows 10 x64 · Hugo v0.168.0 vs Flint v0.3.0
-> NativeAOT. Absolute values drift across windows, so only same-window
-> ratios are compared. Methodology in [benchmarks/REPORT.md](benchmarks/REPORT.md);
-> reproduction commands under [Development](#️-development).
+> Same-machine, same-window measurement (cold builds, multi-run medians) ·
+> Windows 10 x64 · Hugo vs Flint NativeAOT. Absolute values drift across
+> windows, so only same-window ratios are compared. Methodology in
+> [benchmarks/REPORT.md](benchmarks/REPORT.md); reproduction commands under
+> [Development](#️-development).
 
 ### End-to-End Builds
 
@@ -457,6 +434,29 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 > The eight measured Flint-vs-Hugo difference points are documented in
 > [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md); the theme compatibility
 > matrix in [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md).
+
+---
+
+## 🎨 Demo Sites
+
+The repo ships 21 Hugo-migrated theme demo sites (built from a shared
+100-article Chinese corpus) plus a theme gallery (card grid of preview
+screenshots, each linking to its demo site):
+
+```bash
+# Prerequisites: build the engine and migrator (DevTools looks them up at fixed paths)
+dotnet build src/Flint.Cli -c Release -r win-x64
+dotnet build src/Flint.ThemeMigrator
+
+dotnet run --project src/Flint.DevTools -- demo build --serve   # all themes + start servers
+dotnet run --project src/Flint.DevTools -- demo build narrow    # a single theme
+dotnet run --project src/Flint.DevTools -- demo gallery --serve # the gallery (port 8400)
+dotnet run --project src/Flint.DevTools -- demo stop            # stop servers
+```
+
+Gallery at `http://127.0.0.1:8400/`, themes at 8401-8421. Caveats (Sass
+resolution, fixit build time, directory locks) in
+[demo-sites/README.md](demo-sites/README.md).
 
 ---
 

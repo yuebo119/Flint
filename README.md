@@ -1,4 +1,4 @@
-# Flint
+<h1 align="center">Flint</h1>
 
 <p align="center">
   <strong>🔥 高性能静态站点生成器 · C# / .NET 10+ · NativeAOT 单文件</strong>
@@ -50,11 +50,11 @@ Windows 10 x64 单窗口，按最快臂归一化，跨机器只比排名。
 
 - [特性](#-特性)
 - [快速开始](#-快速开始)
-- [案例站](#-案例站)
 - [使用](#-使用)
 - [配置与命令](#️-配置与命令)
 - [性能](#-性能)
 - [与主流 SSG 对比](#-与主流-ssg-对比)
+- [案例站](#-案例站)
 - [常见问题](#-常见问题)
 - [开发](#️-开发)
 - [贡献](#-贡献)
@@ -142,27 +142,6 @@ flint build --minify   # 输出到 public/，可直接部署
 `public/` 部署到 GitHub Pages / Netlify / Vercel / Cloudflare Pages 或任意
 Web 服务器；或 `flint deploy <target>`（s3://、gh-pages、netlify、vercel，
 依赖对应 CLI）。
-
----
-
-## 🎨 案例站
-
-仓库自带 21 个 Hugo 迁移主题的演示站（统一中文语料 100 篇长文）与一个
-主题画廊（预览图卡片网格，点击直达各演示站）：
-
-```bash
-# 前置：构建引擎与迁移器（DevTools 按固定路径查找）
-dotnet build src/Flint.Cli -c Release -r win-x64
-dotnet build src/Flint.ThemeMigrator
-
-dotnet run --project src/Flint.DevTools -- demo build --serve   # 全部主题 + 启动服务
-dotnet run --project src/Flint.DevTools -- demo build narrow    # 单主题
-dotnet run --project src/Flint.DevTools -- demo gallery --serve # 画廊（8400 端口）
-dotnet run --project src/Flint.DevTools -- demo stop            # 停止服务
-```
-
-画廊 `http://127.0.0.1:8400/`，各主题 8401-8421。注意事项（Sass 定位、
-fixit 构建时长、目录锁）见 [demo-sites/README.md](demo-sites/README.md)。
 
 ---
 
@@ -356,8 +335,8 @@ true）、`--livereload/-l`（默认 true）、`--drafts/-D`（默认 true）、
 
 ## 📊 性能
 
-> 2026-10-27 同机同窗实测（冷构建多轮中位）· Windows 10 x64 · Hugo
-> v0.168.0 vs Flint v0.3.0 NativeAOT。跨窗口绝对值漂移大，只取同窗
+> 同机同窗实测（冷构建多轮中位）· Windows 10 x64 · Hugo
+> vs Flint NativeAOT。跨窗口绝对值漂移大，只取同窗
 > 比值。方法论见 [benchmarks/REPORT.md](benchmarks/REPORT.md)，复现
 > 命令见[开发](#️-开发)一节。
 
@@ -433,6 +412,27 @@ Markdown 解析 229k 文件/秒 · 模板渲染 Scriban 54k / Fluid 175k 页/秒
 > 崩溃未入榜）；其余维度为公开结构性特征。Flint vs Hugo 的八个实测差异
 > 点全记录见 [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md)，主题兼容
 > 矩阵见 [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md)。
+
+---
+
+## 🎨 案例站
+
+仓库自带 21 个 Hugo 迁移主题的演示站（统一中文语料 100 篇长文）与一个
+主题画廊（预览图卡片网格，点击直达各演示站）：
+
+```bash
+# 前置：构建引擎与迁移器（DevTools 按固定路径查找）
+dotnet build src/Flint.Cli -c Release -r win-x64
+dotnet build src/Flint.ThemeMigrator
+
+dotnet run --project src/Flint.DevTools -- demo build --serve   # 全部主题 + 启动服务
+dotnet run --project src/Flint.DevTools -- demo build narrow    # 单主题
+dotnet run --project src/Flint.DevTools -- demo gallery --serve # 画廊（8400 端口）
+dotnet run --project src/Flint.DevTools -- demo stop            # 停止服务
+```
+
+画廊 `http://127.0.0.1:8400/`，各主题 8401-8421。注意事项（Sass 定位、
+fixit 构建时长、目录锁）见 [demo-sites/README.md](demo-sites/README.md)。
 
 ---
 
