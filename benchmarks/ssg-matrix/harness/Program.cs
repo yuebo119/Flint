@@ -25,6 +25,16 @@ try { Console.OutputEncoding = Encoding.UTF8; } catch { /* 重定向环境可能
 Console.WriteLine($"矩阵根: {root}");
 Console.WriteLine($"语料: {opt.Pages} 页/臂 · 轮数 {opt.Rounds} · 预热 {opt.Warmup}");
 
+if (opt.Clean || opt.CleanAll)
+{
+    var freed = Cleaner.Run(root, opt.CleanAll);
+    Console.WriteLine($"已删除 {freed.Files} 个文件，释放约 {freed.Bytes / 1048576.0:F0} MB");
+    Console.WriteLine(opt.CleanAll
+        ? "含依赖与构建缓存，下次运行需重新 npm install / dotnet build。"
+        : "依赖（node_modules、bin/obj）保留；语料下次运行会自动重建。");
+    return;
+}
+
 var corpora = new[]
 {
     new CorpusSpec("flint-scriban", "flint-scriban/content", "yaml", null),
@@ -128,6 +138,74 @@ sealed record Arm(string Name, string Exe, string[] Args, string Cwd, string Pub
 {
     public List<string> Missing { get; } = new();
     public bool Ready => Missing.Count == 0;
+}
+
+static class Cleaner
+{
+    // 语料、产出与各引擎持久缓存；node_modules 与 bin/obj 仅在 --clean-all 时删除
+    static readonly string[] Generated =
+    {
+        "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
+        "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
+        "vitepress/docs/posts", "vuepress/docs/posts", "gatsby/content",
+        "hexo/source/_posts", "mkdocs/docs", "pelican/content",
+        "zola/content/blog", "statiq/input/posts",
+        "_out",
+        "zola/public", "eleventy/_site", "astro/dist", "hexo/public", "hexo/db.json",
+        "gatsby/public", "gatsby/.cache",
+        "vitepress/docs/.vitepress/dist", "vitepress/docs/.vitepress/cache", "vitepress/docs/.vitepress/.temp",
+        "vuepress/docs/.vuepress/dist", "vuepress/docs/.vuepress/cache", "vuepress/docs/.vuepress/.temp",
+        "jekyll/.jekyll-cache", "jekyll/.jekyll-metadata",
+        "statiq/output", "statiq/cache", "statiq/temp",
+        "hugo/.hugo_build.lock",
+    };
+
+    static readonly string[] Dependencies =
+    {
+        "eleventy/node_modules", "hexo/node_modules", "vitepress/node_modules",
+        "astro/node_modules", "gatsby/node_modules", "vuepress/node_modules",
+        "statiq/bin", "statiq/obj", "harness/bin", "harness/obj",
+    };
+
+    public static (int Files, long Bytes) Run(string root, bool includeDeps)
+    {
+        var targets = Generated.Concat(includeDeps ? Dependencies : Array.Empty<string>())
+            .Select(rel => Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)))
+            .Where(p => Directory.Exists(p) || File.Exists(p))
+            .ToList();
+
+        long bytes = 0;
+        var files = 0;
+        foreach (var target in targets)
+        {
+            long size;
+            int count;
+            if (Directory.Exists(target))
+            {
+                var infos = Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)
+                    .Select(f => new FileInfo(f)).ToList();
+                size = infos.Sum(f => f.Length);
+                count = infos.Count;
+            }
+            else
+            {
+                size = new FileInfo(target).Length;
+                count = 1;
+            }
+
+            bytes += size;
+            files += count;
+            Console.WriteLine($"  删除 {Path.GetRelativePath(root, target),-38} {size / 1048576.0,8:F1} MB  ({count} 文件)");
+
+            if (!Paths.IsInside(target))
+                throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {target}");
+
+            if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+            else File.Delete(target);
+        }
+
+        return (files, bytes);
+    }
 }
 
 static class Paths
@@ -475,6 +553,8 @@ sealed class Cli
     public bool SkipGen;
     public bool Regen;
     public bool List;
+    public bool Clean;
+    public bool CleanAll;
     public string? Root;
     public string? Flint;
     public string? Hugo;
@@ -496,6 +576,8 @@ sealed class Cli
                 case "--skip-gen": c.SkipGen = true; break;
                 case "--regen": c.Regen = true; break;
                 case "--list": c.List = true; break;
+                case "--clean": c.Clean = true; break;
+                case "--clean-all": c.CleanAll = true; break;
                 case "--root": c.Root = args[++i]; break;
                 case "--flint": c.Flint = args[++i]; break;
                 case "--hugo": c.Hugo = args[++i]; break;
@@ -517,6 +599,8 @@ sealed class Cli
                           --warmup N     预热轮数（默认 1，不计入）
                           --only a,b     只跑指定臂
                           --list         只打印就绪状态
+                          --clean        清理语料、产出与各引擎缓存（保留依赖）
+                          --clean-all    清理上述内容加 node_modules 与 bin/obj
                           --skip-gen     跳过语料生成
                           --regen        强制重建语料
                           --root PATH    矩阵目录（默认 harness 的上级）

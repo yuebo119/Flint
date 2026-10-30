@@ -60,7 +60,23 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- \
 缺依赖的臂会标“缺: …”并跳过，不影响其余臂。
 
 常用参数：`--pages`、`--rounds`、`--warmup`、`--only a,b`、`--list`、`--skip-gen`、
-`--regen`、`--root`，以及 `--flint/--hugo/--zola/--node/--python` 显式指定可执行文件。
+`--regen`、`--root`、`--clean`、`--clean-all`，以及
+`--flint/--hugo/--zola/--node/--python` 显式指定可执行文件。
+
+## 清理
+
+生成的语料与产出很大（14 份语料约 11MB；MkDocs 万页产出可达 16GB），跑完可一次性清掉：
+
+```bash
+# 清理语料、产出与各引擎缓存，保留依赖（下次运行自动重建语料）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean
+
+# 连依赖一起清（node_modules 与 bin/obj 也删，下次需重新安装/构建）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
+```
+
+清理前会逐条打印路径与体积，删除目标限定在矩阵目录内（越界直接拒绝）。
+仓库内本目录只有配置与模板，语料与产出从不入库。
 
 ## 复现注意事项
 
