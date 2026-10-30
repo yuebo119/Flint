@@ -128,6 +128,11 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 10. `eleventy/package-lock.json` 已入库以锁定传递依赖；其余 Node 站点首次
     `npm install` 后如需完全可复现，可自行提交 lock 文件。
 
+## 原始日志
+
+`results/` 保存 2026-10-30 两轮实测的原始输出（同日复现轮、全引擎最新版轮），
+数字与 [REPORT.md](../REPORT.md) §12 对应，可用于核对。
+
 ## 目录结构
 
 ```
