@@ -12,6 +12,7 @@
 //   dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --flint <Flint.exe> --hugo <hugo.exe>
 
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -34,6 +35,9 @@ if (opt.Clean || opt.CleanAll)
         : "依赖（node_modules、bin/obj）保留；语料下次运行会自动重建。");
     return;
 }
+
+if (opt.Bootstrap)
+    Setup.Run(root, tools, opt.Only);
 
 var corpora = new[]
 {
@@ -205,6 +209,211 @@ static class Cleaner
         }
 
         return (files, bytes);
+    }
+}
+
+static class Setup
+{
+    const string HugoVersion = "0.169.0";
+    const string ZolaVersion = "0.23.6";
+
+    public static void Run(string root, string tools, HashSet<string>? only)
+    {
+        bool Want(string name) => only is null || only.Contains(name);
+
+        Console.WriteLine("\n--- 依赖装配（--bootstrap，已就绪的步骤自动跳过）---");
+        Directory.CreateDirectory(tools);
+
+        if (Want("hugo")) EnsureBinary(tools, "hugo", HugoBase(), HugoAsset(), HugoEntry());
+        if (Want("zola")) EnsureBinary(tools, "zola", ZolaBase(), ZolaAsset(), ZolaEntry());
+        if (Want("flint-scriban") || Want("flint-liquid")) EnsureFlint(root, tools);
+
+        foreach (var name in new[] { "astro", "eleventy", "hexo", "gatsby", "vitepress", "vuepress" })
+        {
+            if (!Want(name)) continue;
+            var site = Path.Combine(root, name);
+            if (Directory.Exists(Path.Combine(site, "node_modules"))) { Skip($"{name}/node_modules 已存在"); continue; }
+            var npm = Find("npm");
+            if (npm is null) { Fail($"{name}: 未找到 npm"); continue; }
+            Step($"{name}: npm install", () => Exec(npm, ["install", "--no-audit", "--no-fund"], site));
+        }
+
+        var python = Find("python") ?? Find("python3") ?? Find("py");
+        foreach (var module in new[] { "pelican", "mkdocs" })
+        {
+            if (!Want(module)) continue;
+            if (python is null) { Fail($"{module}: 未找到 python"); continue; }
+            if (Exec(python, ["-c", $"import {module}"], root) == 0) { Skip($"{module} 已安装"); continue; }
+            Step($"{module}: pip install", () => Exec(python, ["-m", "pip", "install", "--disable-pip-version-check", "-q", module], root));
+        }
+
+        if (Want("jekyll"))
+        {
+            var gem = Find("gem");
+            if (gem is null) Fail("jekyll: 未找到 gem（需先安装 Ruby）");
+            else if (Exec(gem, ["list", "-i", "jekyll"], root) == 0) Skip("jekyll 已安装");
+            else Step("jekyll: gem install", () => Exec(gem, ["install", "jekyll", "--no-document"], root));
+        }
+
+        Console.WriteLine("--- 装配结束 ---");
+    }
+
+    static void EnsureBinary(string tools, string name, string urlBase, string asset, string entry)
+    {
+        var dest = Path.Combine(tools, ExecutableName(name));
+        if (File.Exists(dest)) { Skip($"{name} 已存在: {Path.GetFileName(dest)}"); return; }
+
+        Step($"{name}: 下载 {asset}", () =>
+        {
+            var tmp = Path.Combine(Path.GetTempPath(), $"{name}-{Guid.NewGuid():N}{Path.GetExtension(asset).Replace(".gz", "")}");
+            using (var client = new HttpClient(HttpHandler(), disposeHandler: true) { Timeout = TimeSpan.FromMinutes(10) })
+            using (var stream = client.GetStreamAsync($"{urlBase}/{asset}").GetAwaiter().GetResult())
+            using (var file = File.Create(tmp))
+                stream.CopyTo(file);
+
+            Extract(tmp, entry, dest);
+            File.Delete(tmp);
+            return 0;
+        });
+    }
+
+    static HttpClientHandler HttpHandler()
+    {
+        var handler = new HttpClientHandler();
+        var proxy = Environment.GetEnvironmentVariable("HTTPS_PROXY")
+            ?? Environment.GetEnvironmentVariable("https_proxy")
+            ?? Environment.GetEnvironmentVariable("HTTP_PROXY")
+            ?? Environment.GetEnvironmentVariable("http_proxy");
+        if (!string.IsNullOrWhiteSpace(proxy)) handler.Proxy = new System.Net.WebProxy(proxy);
+        return handler;
+    }
+
+    static void Extract(string archive, string entry, string dest)
+    {
+        if (archive.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            using var zip = System.IO.Compression.ZipFile.OpenRead(archive);
+            var e = zip.Entries.First(x => x.Name.Equals(entry, StringComparison.OrdinalIgnoreCase));
+            e.ExtractToFile(dest, overwrite: true);
+            return;
+        }
+
+        using var file = File.OpenRead(archive);
+        using var gzip = new System.IO.Compression.GZipStream(file, System.IO.Compression.CompressionMode.Decompress);
+        using var tar = new System.Formats.Tar.TarReader(gzip);
+        while (tar.GetNextEntry() is { } e)
+        {
+            if (!e.Name.EndsWith(entry, StringComparison.OrdinalIgnoreCase)) continue;
+            using var output = File.Create(dest);
+            e.DataStream?.CopyTo(output);
+            return;
+        }
+
+        throw new InvalidOperationException($"归档中未找到 {entry}");
+    }
+
+    static void EnsureFlint(string root, string tools)
+    {
+        var dest = Path.Combine(tools, "flint-aot", ExecutableName("Flint"));
+        if (File.Exists(dest)) { Skip("Flint AOT 已存在"); return; }
+
+        Step("Flint: dotnet publish AOT（约 1-3 分钟）", () =>
+        {
+            var repoRoot = Path.GetFullPath(Path.Combine(root, "..", ".."));
+            var output = Path.Combine(tools, "flint-aot");
+            return Exec("dotnet",
+                ["publish", Path.Combine(repoRoot, "src", "Flint.Cli"), "-c", "Release", "-r", Rid(), "-p:PublishAot=true", "-o", output],
+                repoRoot);
+        });
+    }
+
+    static int Exec(string exe, string[] args, string cwd)
+    {
+        var psi = new ProcessStartInfo(exe)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = cwd,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+
+        using var p = Process.Start(psi) ?? throw new InvalidOperationException($"无法启动 {exe}");
+        var stdout = p.StandardOutput.ReadToEndAsync();
+        var stderr = p.StandardError.ReadToEndAsync();
+        p.WaitForExit();
+        var output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
+        if (p.ExitCode != 0) Console.WriteLine($"    {Tail(output)}");
+
+        return p.ExitCode;
+    }
+
+    static void Step(string label, Func<int> action)
+    {
+        Console.WriteLine($"  {label} …");
+        try
+        {
+            var code = action();
+            Console.WriteLine(code == 0 ? "    完成" : $"    失败（exit={code}），该引擎将跳过");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    失败: {ex.Message}");
+        }
+    }
+
+    static void Skip(string label) => Console.WriteLine($"  跳过 {label}");
+    static void Fail(string label) => Console.WriteLine($"  失败 {label}");
+    static string Tail(string s) => s.Length <= 600 ? s : s[^600..];
+
+    static string ExecutableName(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
+
+    static string Rid() => (OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture) switch
+    {
+        (true, _, System.Runtime.InteropServices.Architecture.Arm64) => "win-arm64",
+        (true, _, _) => "win-x64",
+        (_, true, System.Runtime.InteropServices.Architecture.Arm64) => "osx-arm64",
+        (_, true, _) => "osx-x64",
+        (_, _, System.Runtime.InteropServices.Architecture.Arm64) => "linux-arm64",
+        _ => "linux-x64",
+    };
+
+    static string HugoBase() => $"https://github.com/gohugoio/hugo/releases/download/v{HugoVersion}";
+    static string ZolaBase() => $"https://github.com/getzola/zola/releases/download/v{ZolaVersion}";
+
+    static string HugoAsset()
+    {
+        if (OperatingSystem.IsWindows()) return $"hugo_extended_{HugoVersion}_windows-amd64.zip";
+        if (OperatingSystem.IsMacOS()) return $"hugo_extended_{HugoVersion}_darwin-universal.tar.gz";
+        return $"hugo_extended_{HugoVersion}_linux-amd64.tar.gz";
+    }
+
+    static string HugoEntry() => OperatingSystem.IsWindows() ? "hugo.exe" : "hugo";
+
+    static string ZolaAsset()
+    {
+        if (OperatingSystem.IsWindows()) return $"zola-v{ZolaVersion}-x86_64-pc-windows-msvc.zip";
+        if (OperatingSystem.IsMacOS())
+            return System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64
+                ? $"zola-v{ZolaVersion}-aarch64-apple-darwin.tar.gz"
+                : $"zola-v{ZolaVersion}-x86_64-apple-darwin.tar.gz";
+        return $"zola-v{ZolaVersion}-x86_64-unknown-linux-gnu.tar.gz";
+    }
+
+    static string ZolaEntry() => OperatingSystem.IsWindows() ? "zola.exe" : "zola";
+
+    static string? Find(string name)
+    {
+        var exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat", "" } : new[] { "" };
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var ext in exts)
+            {
+                var candidate = Path.Combine(dir.Trim(), name + ext);
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+        return null;
     }
 }
 
@@ -452,7 +661,8 @@ static class Arms
         // --- Statiq：先构建 runner，再直接跑 dll（构建时间不计入） ---
         var statiqSite = P("statiq");
         var statiqDll = Path.Combine(statiqSite, "bin", "Release", "net10.0", "SsgMatrix.Statiq.dll");
-        if (!File.Exists(statiqDll))
+        var wantStatiq = opt.Only is null || opt.Only.Contains("statiq");
+        if (wantStatiq && !File.Exists(statiqDll))
         {
             Console.WriteLine("\n构建 Statiq runner（一次性，不计入计时）…");
             statiqDll = BuildStatiq(statiqSite) ?? statiqDll;
@@ -555,6 +765,7 @@ sealed class Cli
     public bool List;
     public bool Clean;
     public bool CleanAll;
+    public bool Bootstrap;
     public string? Root;
     public string? Flint;
     public string? Hugo;
@@ -578,6 +789,7 @@ sealed class Cli
                 case "--list": c.List = true; break;
                 case "--clean": c.Clean = true; break;
                 case "--clean-all": c.CleanAll = true; break;
+                case "--bootstrap": c.Bootstrap = true; break;
                 case "--root": c.Root = args[++i]; break;
                 case "--flint": c.Flint = args[++i]; break;
                 case "--hugo": c.Hugo = args[++i]; break;
@@ -601,6 +813,8 @@ sealed class Cli
                           --list         只打印就绪状态
                           --clean        清理语料、产出与各引擎缓存（保留依赖）
                           --clean-all    清理上述内容加 node_modules 与 bin/obj
+                          --bootstrap    自动装配依赖（下载 hugo/zola、构建 Flint AOT、
+                                         npm/pip/gem 安装），已就绪的步骤自动跳过
                           --skip-gen     跳过语料生成
                           --regen        强制重建语料
                           --root PATH    矩阵目录（默认 harness 的上级）

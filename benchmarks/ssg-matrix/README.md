@@ -42,6 +42,29 @@ README 与 [REPORT.md](../REPORT.md) §12 的十四引擎矩阵就由这套资�
 
 版本可用 `dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list` 自查就绪状态。
 
+## 一键装配
+
+拉库后先跑一次装配，把二进制、依赖与 Flint AOT 产物准备好；已就绪的步骤自动跳过：
+
+```bash
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap
+
+# 只装部分引擎（配合 --only 可只跑这部分）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap --only hugo,hexo
+```
+
+装配内容：
+
+| 步骤 | 做什么 | 需要 |
+| --- | --- | --- |
+| hugo / zola | 从 GitHub Release 下载对应平台资产并解压到 `benchmarks/tools/` | 网络 |
+| flint | `dotnet publish src/Flint.Cli -r <rid> -p:PublishAot=true` 到 `benchmarks/tools/flint-aot/` | .NET 10 SDK，1-3 分钟 |
+| 六个 npm 引擎 | 各站目录 `npm install` | Node，网络 |
+| pelican / mkdocs | `pip install`（已安装则跳过） | Python |
+| jekyll | `gem install jekyll`（已安装则跳过） | Ruby |
+
+装配完成后接 `--list` 可看就绪状态。任何一步失败只影响对应引擎，其余照常跑。
+
 ## 一键复现
 
 ```bash
