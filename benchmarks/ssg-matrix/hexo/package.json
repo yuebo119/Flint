@@ -1,0 +1,11 @@
+{
+  "name": "ssg-matrix-hexo",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "hexo": "8.1.2",
+    "hexo-generator-index": "4.0.0",
+    "hexo-renderer-ejs": "2.0.0",
+    "hexo-renderer-marked": "7.0.1"
+  }
+}

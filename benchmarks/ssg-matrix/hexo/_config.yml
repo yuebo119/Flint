@@ -1,0 +1,6 @@
+title: SSG Bench
+theme: minimal
+index_generator:
+  path: ''
+  per_page: 0
+  order_by: -date

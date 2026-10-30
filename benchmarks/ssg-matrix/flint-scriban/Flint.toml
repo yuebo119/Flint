@@ -1,0 +1,3 @@
+engine = "scriban"
+baseURL = "http://localhost:1313/"
+title = "SSG Bench"

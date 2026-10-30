@@ -1,0 +1,1 @@
+{% set blog = get_section(path="blog/_index.md") %}<h1>Home</h1><ul>{% for p in blog.pages %}<li>{{ p.title }}</li>{% endfor %}</ul>

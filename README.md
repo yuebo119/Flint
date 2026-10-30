@@ -501,12 +501,16 @@ dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # 主题迁移�
 dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools/工具链
 dotnet run --project tests/Flint.PerformanceTests -c Release    # 性能套件（进程内）
 
-# 基准（Flint vs Hugo 对照；十四引擎矩阵协议与结果见 benchmarks/REPORT.md）
+# 基准（Flint vs Hugo 对照；十四引擎矩阵见下）
 dotnet run --project src/Flint.DevTools -- bench ssg          # 万页冷构建
 dotnet run --project src/Flint.DevTools -- bench complexity   # 复杂度阶梯
 dotnet run --project src/Flint.DevTools -- bench memory       # 峰值内存采样
 dotnet run --project src/Flint.DevTools -- perf run           # 性能套件 + HTML 报告
 dotnet run --project src/Flint.DevTools -- perf gate          # 性能回归门禁
+
+# 十四引擎矩阵（README 矩阵表复现；安装与坑见 benchmarks/ssg-matrix/README.md）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release           # 全矩阵（默认万页 3 轮）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # 就绪自查
 ```
 
 ### 项目结构
@@ -523,7 +527,7 @@ Flint/
 ├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance 五套件
 ├── demo-sites/                  # 案例站（21 主题 + 画廊 + 统一语料）
 ├── theme-migrator/              # 主题语料（themes/ 克隆源、candidates/）
-└── benchmarks/                  # 性能基准（语料/报告/门禁）
+└── benchmarks/                  # 性能基准（语料/报告/门禁 + ssg-matrix 十四引擎矩阵）
 ```
 
 ---

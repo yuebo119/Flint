@@ -313,9 +313,19 @@ Jekyll 4.4.1、Pelican 4.12.0、VitePress 1.6.4 latest 稳定线、Hexo
 4. Statiq 预热曾出现一次 `[CRIT] Regex engine timed out`（单臂复测正常，
    判定负载相关偶发），计时器为该臂加了 Retries=1 保护，正式轮未触发。
 
-### 12.4 复现性现状声明
+### 12.4 复现
 
-本轮十四引擎矩阵的资产（计时器、13 款竞品的站点脚手架与依赖、语料
-生成器、各引擎运行时环境）均在本机 `tmp/` 工作区，**未入库**；仓库内
-可复现的对比仅 §11.8 的 `bench ssg`（Flint vs Hugo，自生成语料），
-Fluid 臂孪生站与各竞品矩阵需自行搭建。
+矩阵资产已入库 `benchmarks/ssg-matrix/`：14 个站点的脚手架（配置与模板、
+依赖版本锁定）、语料生成器、计时与内存峰值采样、产物审计，一条命令跑完。
+
+```bash
+dotnet run --project benchmarks/ssg-matrix/harness -c Release          # 默认 10000 页 / 3 轮
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # 就绪自查
+```
+
+版本清单、安装步骤与已知坑见 [ssg-matrix/README.md](ssg-matrix/README.md)。
+
+两处与实测轮的差异：① 早期轮次在 Windows 用 `py` / `cmd` 包装器启动
+Python 与 Jekyll 臂，仓库版改为直调（`python -m`、`ruby -S jekyll`），剥离
+包装器开销，三臂时间改善幅度均低于 2%，不影响排名；② Statiq 实测用源码
+main 构建，仓库版默认 NuGet 1.0.0-beta.60，该臂绝对时间会偏离实测行。

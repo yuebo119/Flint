@@ -531,13 +531,17 @@ dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # Theme migrator
 dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools / toolchain
 dotnet run --project tests/Flint.PerformanceTests -c Release    # Performance suite (in-process)
 
-# Benchmarks (Flint vs Hugo; the 14-engine matrix protocol and results
-# are documented in benchmarks/REPORT.md)
+# Benchmarks (Flint vs Hugo; the 14-engine matrix follows below)
 dotnet run --project src/Flint.DevTools -- bench ssg          # 10k-page cold build
 dotnet run --project src/Flint.DevTools -- bench complexity   # Complexity ladder
 dotnet run --project src/Flint.DevTools -- bench memory       # Peak memory sampling
 dotnet run --project src/Flint.DevTools -- perf run           # Perf suite + HTML report
 dotnet run --project src/Flint.DevTools -- perf gate          # Regression gate
+
+# 14-engine matrix (reproduces the matrix table; setup and caveats in
+# benchmarks/ssg-matrix/README.md)
+dotnet run --project benchmarks/ssg-matrix/harness -c Release           # full matrix (10k pages, 3 rounds)
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # readiness check
 ```
 
 ### Project Structure
@@ -554,7 +558,7 @@ Flint/
 ├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance suites
 ├── demo-sites/                  # Demo sites (21 themes + gallery + shared corpus)
 ├── theme-migrator/              # Migration corpus (themes/ clones, candidates/)
-└── benchmarks/                  # Performance benchmarks (corpora/reports/gate)
+└── benchmarks/                  # Performance benchmarks (corpora/reports/gate + the 14-engine ssg-matrix)
 ```
 
 ---

@@ -1,0 +1,3 @@
+engine = "fluid"
+baseURL = "http://localhost:1313/"
+title = "SSG Bench"

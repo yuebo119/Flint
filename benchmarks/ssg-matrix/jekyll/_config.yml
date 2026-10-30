@@ -1,0 +1,4 @@
+title: SSG Bench
+collections:
+  docs:
+    output: true

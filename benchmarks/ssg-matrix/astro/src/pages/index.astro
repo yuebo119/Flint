@@ -1,0 +1,4 @@
+---
+const posts = Object.entries(import.meta.glob('./posts/*.md', { eager: true }));
+---
+<h1>Home</h1><ul>{posts.map(([, p]) => <li>{p.frontmatter.title}</li>)}</ul>

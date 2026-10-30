@@ -1,0 +1,114 @@
+# SSG 万页矩阵（14 引擎）
+
+README 与 [REPORT.md](../REPORT.md) §12 的十四引擎矩阵就由这套资产复现：站点脚手架、
+语料生成器、计时与内存采样、产物审计都在本目录，一条命令跑完。
+
+## 测量口径
+
+- 同一份语料：10,000 页 Markdown，正文逐字一致（仅 front matter 格式随引擎变化）
+- 冷构建：每轮先删输出与各引擎持久缓存，再计时
+- 外部计时：含进程启动，不含删除与依赖安装
+- 预热 1 次（不计入），默认 3 轮取中位，轮序轮转
+- 内存：20ms 轮询采样峰值（RSS = `WorkingSet64`，USS 代理 = `PrivateMemorySize64`）
+- 产物审计：html 计数、零字节计数、正文特征抽样命中（防“数量对、内容空”）
+- 比值按最快臂归一化；跨机器只对照排名结构，绝对值不可比
+
+## 环境要求
+
+- .NET 10 SDK（跑 harness 与两臂 Flint）
+- 各引擎运行时按需（Node / Python / Ruby / Zola / Statiq），见下表
+- Windows 10 x64 为实测平台；Linux/macOS 口径相同，但绝对时间不可与实测表直比
+
+## 版本与安装
+
+实测轮（2026-10-30）全部引擎为当日最新稳定版。下表是本仓库脚手架锁定的版本，
+`npm install` / `pip install` 会按此安装。
+
+| 臂 | 版本 | 安装 |
+| --- | --- | --- |
+| flint-scriban / flint-liquid | 0.3.0（HEAD） | `dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish`，产物放 `benchmarks/tools/flint-aot/Flint.exe`，或 `--flint <path>` |
+| hugo | 0.169.0 extended | 官方 Release 下载，放 `benchmarks/tools/hugo.exe`，或 `--hugo <path>` / PATH |
+| zola | 0.23.6 | Release 二进制放 `benchmarks/tools/zola.exe`，或 `--zola <path>` / PATH |
+| eleventy | 3.1.7 | `cd benchmarks/ssg-matrix/eleventy && npm install` |
+| hexo | 8.1.2 | `cd benchmarks/ssg-matrix/hexo && npm install` |
+| vitepress | 1.6.4 | `cd benchmarks/ssg-matrix/vitepress && npm install` |
+| astro | 7.4.4 | `cd benchmarks/ssg-matrix/astro && npm install` |
+| gatsby | 5.16.1 | `cd benchmarks/ssg-matrix/gatsby && npm install` |
+| vuepress | 2.0.0-rc.31 | `cd benchmarks/ssg-matrix/vuepress && npm install` |
+| jekyll | 4.4.1 | `gem install jekyll`（Windows 需要 Ruby+Devkit，见 [windows-ruby-jekyll-setup-traps](../../docs/) 同族笔记） |
+| pelican | 4.12.0 | `pip install pelican` |
+| mkdocs | 1.6.1 | `pip install mkdocs` |
+| statiq | 1.0.0-beta.60（NuGet） | `cd benchmarks/ssg-matrix/statiq && dotnet build -c Release`，harness 首次运行会自动构建 |
+
+版本可用 `dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list` 自查就绪状态。
+
+## 一键复现
+
+```bash
+# 仓库根执行。默认 10000 页、预热 1 + 3 轮
+dotnet run --project benchmarks/ssg-matrix/harness -c Release
+
+# 快速自检（200 页 1 轮，几分钟）
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --pages 200 --rounds 1 --warmup 0
+
+# 只跑部分臂 / 指定工具路径
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- \
+  --only flint-liquid,hugo,zola --flint ./publish/Flint.exe --hugo "C:/tools/hugo.exe"
+```
+
+输出包含每臂中位时间、vs 最快比值、峰值 RSS、html 数、正文抽样命中与零字节数。
+缺依赖的臂会标“缺: …”并跳过，不影响其余臂。
+
+常用参数：`--pages`、`--rounds`、`--warmup`、`--only a,b`、`--list`、`--skip-gen`、
+`--regen`、`--root`，以及 `--flint/--hugo/--zola/--node/--python` 显式指定可执行文件。
+
+## 复现注意事项
+
+1. **Hugo 的 `-d` 是相对 `-s` 源目录解析，不是 CWD**。harness 已用绝对路径规避；
+   手工复验时写成相对路径会把产物落到站点目录下，表现为“0 个 html”。
+2. **Fluid 与 Scriban 是同一语料的两个孪生站**（`flint-liquid/`、`flint-scriban/`），
+   `engine` 字段不同，产物应逐字节一致（除引擎无关的空白差异）。
+3. **各引擎的持久缓存必须一起删**：Jekyll 的 `.jekyll-cache`、Gatsby 的 `.cache`、
+   Hexo 的 `db.json`、VitePress 的 `.vitepress/cache`、VuePress 的 `.cache/.temp`、
+   Statiq 的 `cache/temp`。漏删会把增量收益算进冷构建。
+4. **MkDocs 默认主题把全站导航内联进每一页**，万页时单页约 1.65MB、总写盘 16GB，
+   这是它的默认形态而非配置错误，也是其排在末位的主因之一。
+5. **Statiq 实测用的是源码 main 构建**（NuGet 最新为 1.0.0-beta.60）。默认包版本复现
+   的绝对时间与实测表不完全对应；要完全一致，传
+   `-p:StatiqWebProject=<Statiq 克隆>/src/extensions/Statiq.Web/Statiq.Web.csproj`。
+6. **Docusaurus 不在矩阵内**：4,000 页时每页成本从 16ms 涨到 62ms（超线性），
+   万页两种分页配置均失败（无产出 / V8 堆耗尽），排除有据。
+7. 语料只生成一次，之后复用；`--regen` 强制重建，`--skip-gen` 完全跳过生成。
+   生成的语料与各站输出都在 `.gitignore` 内，不入库。
+8. **不要用包装器启动引擎**：Windows 上 `py -m pelican`、`cmd /c jekyll.bat`
+   会让内存采样落在启动器而不是引擎进程（实测会得到 5-7MB 的假值）。harness 用
+   `python -m`、`ruby -S jekyll` 直调；手工复验时同理。
+9. `harness/` 关闭了分析器（`EnableNETAnalyzers=false`）：它继承仓库根
+   `Directory.Build.props` 的 `TreatWarningsAsErrors` 与 `latest-all` 规则，
+   否则 CA1303 之类的样式规则会让基准程序构建失败。
+10. `eleventy/package-lock.json` 已入库以锁定传递依赖；其余 Node 站点首次
+    `npm install` 后如需完全可复现，可自行提交 lock 文件。
+
+## 目录结构
+
+```
+benchmarks/ssg-matrix/
+├── harness/          计时器 + 语料生成器 + 产物审计（独立 csproj，关分析器）
+├── flint-scriban/    Flint + Scriban 孪生站（Flint.toml + layouts/）
+├── flint-liquid/     Flint + Fluid 孪生站
+├── hugo/             hugo.toml + layouts/
+├── zola/             config.toml + templates/ + content/blog/_index.md
+├── astro/            astro.config.mjs + src/{pages,layouts}
+├── eleventy/         eleventy.config.js + src/{index.njk,_includes}
+├── hexo/             _config.yml + run-hexo.js + themes/minimal
+├── jekyll/           _config.yml + _layouts + index.html
+├── vitepress/        docs/{index.md,.vitepress}
+├── vuepress/         docs/{index.md,.vuepress}
+├── gatsby/           gatsby-config.js + gatsby-node.js + src/
+├── mkdocs/           mkdocs.yml + docs/index.md
+├── pelican/          pelicanconf.py
+└── statiq/           SsgMatrix.Statiq.csproj + input/{index.md,_Layout.cshtml}
+```
+
+语料目录（各站的 `content/`、`docs/posts/`、`src/pages/posts/` 等）由 harness 生成后存在，
+不提交。

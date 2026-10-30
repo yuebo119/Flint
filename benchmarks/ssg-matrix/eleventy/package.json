@@ -1,0 +1,8 @@
+{
+  "name": "ssg-matrix-eleventy",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "@11ty/eleventy": "3.1.7"
+  }
+}

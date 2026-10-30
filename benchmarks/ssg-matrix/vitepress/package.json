@@ -1,0 +1,8 @@
+{
+  "name": "ssg-matrix-vitepress",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "vitepress": "1.6.4"
+  }
+}
