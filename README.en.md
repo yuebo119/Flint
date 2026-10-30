@@ -34,9 +34,9 @@ delivered as a NativeAOT single file.
 | 6 | Jekyll 4.4.1 | 17245ms | 6.35x | Ruby |
 | 7 | Pelican 4.12.0 | 18012ms | 6.63x | Python |
 | 8 | Hexo 8.1.2 | 34566ms | 12.72x | JavaScript (Node) |
-| 9 | VitePress 1.6.4 | 60687ms | 22.34x | TypeScript (Node) |
-| 10 | Gatsby 5.16.1 | 62651ms | 23.06x | JavaScript (Node) |
-| 11 | Astro 7.4.4 | 68563ms | 25.24x | TypeScript (Node) |
+| 9 | Gatsby 5.16.1 | 62651ms | 23.06x | JavaScript (Node) |
+| 10 | Astro 7.4.4 | 68563ms | 25.24x | TypeScript (Node) |
+| 11 | VitePress 1.6.4 | 81165ms | 29.87x | TypeScript (Node) |
 | 12 | VuePress 2.0.0-rc.31 | 94209ms | 34.67x | TypeScript (Node) |
 | 13 | Statiq 1.0.0 (JIT, .NET 10) | 231107ms | 85.06x | C# (.NET 10) |
 | 14 | MkDocs 1.6.1 | 252975ms | 93.11x | Python |
@@ -46,8 +46,9 @@ rounds including process startup, single-window run on Windows 10 x64,
 ratios normalized to the fastest arm; across machines only the ranking
 holds.
 
-Checks: output symmetry (complete bodies, no empty shells), ranking
-reproduced across three rounds in two windows. Per-round details in
+Checks: output symmetry (complete bodies, no empty shells); apart from the
+VitePress rank corrected by a cold-build re-measurement, the ranking holds
+across three rounds in two windows. Per-round details in
 [benchmarks/REPORT.md](benchmarks/REPORT.md).
 
 ---

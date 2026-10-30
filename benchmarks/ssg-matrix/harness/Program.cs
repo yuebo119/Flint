@@ -17,6 +17,11 @@ using System.Runtime.CompilerServices;
 using System.Text;
 
 var opt = Cli.Parse(args);
+if (opt.Fast)
+{
+    opt.Warmup = 0;
+    opt.Adaptive = true;
+}
 var root = Path.GetFullPath(opt.Root ?? Path.Combine(SourceDir(), ".."));
 var tools = Path.GetFullPath(Path.Combine(root, "..", "tools"));
 Paths.Root = root;
@@ -81,18 +86,25 @@ if (ready.Count == 0)
     return;
 }
 
+var builds = 0;
+
 if (opt.Warmup > 0)
 {
     Console.WriteLine($"\n--- 预热（{opt.Warmup} 轮，不计入）---");
     foreach (var a in ready)
     {
         var m = Run.Once(a);
+        builds++;
         Console.WriteLine($"{a.Name,-14} {m.Ms,9:F0} ms（预热）");
     }
 }
 
 var times = ready.Select(_ => new List<double>()).ToArray();
 var mems = ready.Select(_ => new List<long>()).ToArray();
+var discarded = new bool[ready.Count];
+var buildElapsed = TimeSpan.Zero;
+var deleteElapsed = TimeSpan.Zero;
+var total = Stopwatch.StartNew();
 
 for (var r = 0; r < opt.Rounds; r++)
 {
@@ -101,11 +113,27 @@ for (var r = 0; r < opt.Rounds; r++)
     foreach (var idx in order)
     {
         var m = Run.Once(ready[idx]);
+        builds++;
         times[idx].Add(m.Ms);
         mems[idx].Add(m.PeakRss);
-        Console.WriteLine($"{ready[idx].Name,-14} {m.Ms,9:F0} ms   峰值 RSS {m.PeakRss / 1048576.0,7:F0} MB");
+        buildElapsed += TimeSpan.FromMilliseconds(m.Ms);
+        deleteElapsed += TimeSpan.FromMilliseconds(m.DeleteMs);
+
+        // 自适应：慢臂首轮按预热处理并丢弃（首轮受机器漂移偏慢，直接计入会抬高慢臂）
+        var note = "";
+        if (opt.Adaptive && r == 0 && opt.Rounds >= 3 && m.Ms > opt.SlowThresholdMs)
+        {
+            times[idx].Clear();
+            mems[idx].Clear();
+            discarded[idx] = true;
+            note = "  （慢臂，首轮不计入）";
+        }
+
+        Console.WriteLine($"{ready[idx].Name,-14} {m.Ms,9:F0} ms   峰值 RSS {m.PeakRss / 1048576.0,7:F0} MB{note}");
     }
 }
+
+total.Stop();
 
 var medians = times.Select(Median).ToArray();
 var fastest = medians.Min();
@@ -125,6 +153,18 @@ if (skipped.Count > 0)
         Console.WriteLine($"{a.Name,-14} 缺: {string.Join(", ", a.Missing)}");
     Console.WriteLine("安装命令见 benchmarks/ssg-matrix/README.md");
 }
+
+var overhead = total.Elapsed - buildElapsed - deleteElapsed;
+var elapsed = total.Elapsed.TotalSeconds;
+string Pct(TimeSpan t) => elapsed > 0 ? $"{t.TotalSeconds / elapsed:P0}" : "0%";
+
+Console.WriteLine("\n--- 用时构成 ---");
+Console.WriteLine($"构建合计   {buildElapsed.TotalSeconds,7:F0}s  {Pct(buildElapsed),5}");
+Console.WriteLine($"删除输出   {deleteElapsed.TotalSeconds,7:F0}s  {Pct(deleteElapsed),5}");
+Console.WriteLine($"其他       {overhead.TotalSeconds,7:F0}s  {Pct(overhead),5}");
+Console.WriteLine($"总用时     {elapsed,7:F0}s  共 {builds} 次构建（{ready.Count} 臂）");
+if (discarded.Any(x => x))
+    Console.WriteLine($"自适应：{discarded.Count(x => x)} 个慢臂首轮按预热丢弃，用后 {opt.Rounds - 1} 个样本取中位");
 
 static double Median(List<double> xs)
 {
@@ -146,18 +186,23 @@ sealed record Arm(string Name, string Exe, string[] Args, string Cwd, string Pub
 
 static class Cleaner
 {
-    // 语料、产出与各引擎持久缓存；node_modules 与 bin/obj 仅在 --clean-all 时删除
-    static readonly string[] Generated =
+    // 语料目录只删生成的 page-*.md（目录内的 index.md / _index.md 是脚手架）
+    static readonly string[] CorpusDirs =
     {
         "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
         "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
         "vitepress/docs/posts", "vuepress/docs/posts", "gatsby/content",
         "hexo/source/_posts", "mkdocs/docs", "pelican/content",
         "zola/content/blog", "statiq/input/posts",
+    };
+
+    // 产出与各引擎持久缓存：整目录删除
+    static readonly string[] Outputs =
+    {
         "_out",
         "zola/public", "eleventy/_site", "astro/dist", "hexo/public", "hexo/db.json",
         "gatsby/public", "gatsby/.cache",
-        "vitepress/docs/.vitepress/dist", "vitepress/docs/.vitepress/cache", "vitepress/docs/.vitepress/.temp",
+        "vitepress/.vitepress/dist", "vitepress/.vitepress/cache", "vitepress/.vitepress/.temp",
         "vuepress/docs/.vuepress/dist", "vuepress/docs/.vuepress/cache", "vuepress/docs/.vuepress/.temp",
         "jekyll/.jekyll-cache", "jekyll/.jekyll-metadata",
         "statiq/output", "statiq/cache", "statiq/temp",
@@ -173,42 +218,50 @@ static class Cleaner
 
     public static (int Files, long Bytes) Run(string root, bool includeDeps)
     {
-        var targets = Generated.Concat(includeDeps ? Dependencies : Array.Empty<string>())
-            .Select(rel => Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)))
-            .Where(p => Directory.Exists(p) || File.Exists(p))
-            .ToList();
+        var files = new List<string>();
+        var dirs = new List<string>();
 
-        long bytes = 0;
-        var files = 0;
-        foreach (var target in targets)
+        // 语料：逐个删除 page-*.md
+        foreach (var rel in CorpusDirs)
         {
-            long size;
-            int count;
-            if (Directory.Exists(target))
-            {
-                var infos = Directory.EnumerateFiles(target, "*", SearchOption.AllDirectories)
-                    .Select(f => new FileInfo(f)).ToList();
-                size = infos.Sum(f => f.Length);
-                count = infos.Count;
-            }
-            else
-            {
-                size = new FileInfo(target).Length;
-                count = 1;
-            }
-
-            bytes += size;
-            files += count;
-            Console.WriteLine($"  删除 {Path.GetRelativePath(root, target),-38} {size / 1048576.0,8:F1} MB  ({count} 文件)");
-
-            if (!Paths.IsInside(target))
-                throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {target}");
-
-            if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
-            else File.Delete(target);
+            var dir = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(dir))
+                files.AddRange(Directory.EnumerateFiles(dir, "page-*.md", SearchOption.TopDirectoryOnly));
         }
 
-        return (files, bytes);
+        foreach (var rel in Outputs.Concat(includeDeps ? Dependencies : Array.Empty<string>()))
+        {
+            var path = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+            if (Directory.Exists(path)) dirs.Add(path);
+            else if (File.Exists(path)) files.Add(path);
+        }
+
+        long bytes = 0;
+        var count = 0;
+
+        foreach (var dir in dirs)
+        {
+            if (!Paths.IsInside(dir)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {dir}");
+            var infos = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+                .Select(f => new FileInfo(f)).ToList();
+            var size = infos.Sum(f => f.Length);
+            bytes += size;
+            count += infos.Count;
+            Console.WriteLine($"  删除 {Path.GetRelativePath(root, dir),-38} {size / 1048576.0,8:F1} MB  ({infos.Count} 文件)");
+            Directory.Delete(dir, recursive: true);
+        }
+
+        foreach (var file in files)
+        {
+            if (!Paths.IsInside(file)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {file}");
+            var size = new FileInfo(file).Length;
+            bytes += size;
+            count += 1;
+            File.Delete(file);
+        }
+
+        Console.WriteLine($"  删除生成语料 page-*.md {files.Count} 个文件");
+        return (count, bytes);
     }
 }
 
@@ -517,11 +570,13 @@ static class Audit
 
 static class Run
 {
-    public sealed record Measured(double Ms, long PeakRss);
+    public sealed record Measured(double Ms, long PeakRss, double DeleteMs);
 
     public static Measured Once(Arm a)
     {
+        var deleteSw = Stopwatch.StartNew();
         foreach (var p in a.Clean.Append(a.Pub)) Delete(p);
+        deleteSw.Stop();
 
         var psi = new ProcessStartInfo(a.Exe)
         {
@@ -557,7 +612,7 @@ static class Run
             throw new InvalidOperationException(
                 $"{a.Name} 构建失败 exit={p2.ExitCode}\n--- stdout ---\n{Tail(stdout)}\n--- stderr ---\n{Tail(stderr)}");
 
-        return new Measured(sw.Elapsed.TotalMilliseconds, rss);
+        return new Measured(sw.Elapsed.TotalMilliseconds, rss, deleteSw.Elapsed.TotalMilliseconds);
     }
 
     static string Tail(string s) => s.Length <= 1500 ? s : s[^1500..];
@@ -623,8 +678,8 @@ static class Arms
 
         var vitepress = P("vitepress");
         Add("vitepress", node, [Path.Combine(vitepress, "node_modules", "vitepress", "bin", "vitepress.js"), "build"],
-            vitepress, Path.Combine(vitepress, "docs", ".vitepress", "dist"),
-            [Path.Combine(vitepress, "docs", ".vitepress", "cache"), Path.Combine(vitepress, "docs", ".vitepress", ".temp")], "node");
+            vitepress, Path.Combine(vitepress, ".vitepress", "dist"),
+            [Path.Combine(vitepress, ".vitepress", "cache"), Path.Combine(vitepress, ".vitepress", ".temp")], "node");
         RequireDir(list, "vitepress", Path.Combine(vitepress, "node_modules", "vitepress"), "vitepress/node_modules（npm install）");
 
         var vuepress = P("vuepress");
@@ -766,6 +821,9 @@ sealed class Cli
     public bool Clean;
     public bool CleanAll;
     public bool Bootstrap;
+    public bool Fast;
+    public bool Adaptive;
+    public int SlowThresholdMs = 60000;
     public string? Root;
     public string? Flint;
     public string? Hugo;
@@ -790,6 +848,9 @@ sealed class Cli
                 case "--clean": c.Clean = true; break;
                 case "--clean-all": c.CleanAll = true; break;
                 case "--bootstrap": c.Bootstrap = true; break;
+                case "--fast": c.Fast = true; break;
+                case "--adaptive": c.Adaptive = true; break;
+                case "--slow-threshold": c.SlowThresholdMs = int.Parse(args[++i]); break;
                 case "--root": c.Root = args[++i]; break;
                 case "--flint": c.Flint = args[++i]; break;
                 case "--hugo": c.Hugo = args[++i]; break;
@@ -815,6 +876,9 @@ sealed class Cli
                           --clean-all    清理上述内容加 node_modules 与 bin/obj
                           --bootstrap    自动装配依赖（下载 hugo/zola、构建 Flint AOT、
                                          npm/pip/gem 安装），已就绪的步骤自动跳过
+                          --fast         提速模式 = 关闭预热 + 自适应轮数（慢臂少跑一轮）
+                          --adaptive     仅开自适应轮数（首轮超过 --slow-threshold 的臂减一轮）
+                          --slow-threshold N  自适应阈值，毫秒（默认 60000）
                           --skip-gen     跳过语料生成
                           --regen        强制重建语料
                           --root PATH    矩阵目录（默认 harness 的上级）

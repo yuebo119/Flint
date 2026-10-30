@@ -33,9 +33,9 @@ Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，Na
 | 6    | Jekyll 4.4.1                 | 17245ms    | 6.35x     | Ruby               |
 | 7    | Pelican 4.12.0               | 18012ms    | 6.63x     | Python             |
 | 8    | Hexo 8.1.2                   | 34566ms    | 12.72x    | JavaScript（Node） |
-| 9    | VitePress 1.6.4              | 60687ms    | 22.34x    | TypeScript（Node） |
-| 10   | Gatsby 5.16.1                | 62651ms    | 23.06x    | JavaScript（Node） |
-| 11   | Astro 7.4.4                  | 68563ms    | 25.24x    | TypeScript（Node） |
+| 9    | Gatsby 5.16.1                | 62651ms    | 23.06x    | JavaScript（Node） |
+| 10   | Astro 7.4.4                  | 68563ms    | 25.24x    | TypeScript（Node） |
+| 11   | VitePress 1.6.4              | 81165ms    | 29.87x    | TypeScript（Node） |
 | 12   | VuePress 2.0.0-rc.31         | 94209ms    | 34.67x    | TypeScript（Node） |
 | 13   | Statiq 1.0.0（JIT，.NET 10） | 231107ms   | 85.06x    | C#（.NET 10）      |
 | 14   | MkDocs 1.6.1                 | 252975ms   | 93.11x    | Python             |
@@ -43,8 +43,8 @@ Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，Na
 统计范围：同内容语料，每臂 10,000 页，冷构建 3 轮中位（含进程启动），
 Windows 10 x64 单窗口，按最快臂归一化，跨机器只比排名。
 
-校验：产物对称（完整正文，无空壳），排名跨两窗口三轮复现。明细见
-[benchmarks/REPORT.md](benchmarks/REPORT.md)。
+校验：产物对称（完整正文，无空壳）；除 VitePress 按冷构建复测更正名次外，
+排名跨两窗口三轮一致。明细见 [benchmarks/REPORT.md](benchmarks/REPORT.md)。
 
 ---
 

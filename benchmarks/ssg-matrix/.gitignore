@@ -1,4 +1,4 @@
-// 矩阵站点的生成物与语料不入库：只保留配置与模板，语料由 harness 生成
+# 矩阵站点的生成物与语料不入库：只保留配置与模板，语料由 harness 生成
 node_modules/
 bin/
 obj/
@@ -19,23 +19,9 @@ temp/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 docs/.vitepress/.temp/
-statiq/input/**/page-*.md
 
-# 生成的语料（首页与模板除外）
-flint-scriban/content/
-flint-liquid/content/
-hugo/content/
-astro/src/pages/posts/
-eleventy/src/posts/
-jekyll/_docs/
-vitepress/docs/posts/
-vuepress/docs/posts/
-gatsby/content/
-mkdocs/docs/
-pelican/content/
-zola/content/
-statiq/input/posts/
-hexo/source/_posts/
+# 生成的语料页（首页 index.md、分节 _index.md 等脚手架仍入库）
+page-*.md
 
 # 本地杂项
 *.log
