@@ -1,2 +1,4 @@
 baseURL = "http://localhost:1313/"
 title = "SSG Bench"
+# 最小产物口径：其余各臂默认不产分类/RSS/sitemap，保留这些属于单侧额外工作。
+disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT"]

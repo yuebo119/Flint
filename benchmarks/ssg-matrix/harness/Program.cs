@@ -63,7 +63,10 @@ if (!opt.SkipGen)
 {
     Console.WriteLine("\n--- 语料 ---");
     foreach (var c in corpora)
+    {
+        if (opt.Only is not null && !opt.Only.Contains(c.Arm)) continue;
         Corpus.Ensure(Path.Combine(root, c.Dir), opt.Pages, c.Kind, c.Layout, opt.Regen);
+    }
 }
 
 var all = Arms.Build(root, tools, opt);
@@ -85,6 +88,8 @@ if (ready.Count == 0)
 
 var builds = 0;
 var runStartedUtc = DateTime.UtcNow;
+var total = Stopwatch.StartNew();
+var warmupElapsed = TimeSpan.Zero;
 Preflight.Snapshot? snap = null;
 var gateFailures = new List<string>();
 
@@ -143,12 +148,15 @@ if (opt.Preflight)
 if (opt.Warmup > 0)
 {
     Console.WriteLine($"\n--- 预热（{opt.Warmup} 轮，不计入）---");
+    var warmupSw = Stopwatch.StartNew();
     foreach (var a in ready)
     {
         var m = Run.Once(a);
         builds++;
         Console.WriteLine($"{a.Name,-14} {m.Ms,9:F0} ms（预热）");
     }
+    warmupSw.Stop();
+    warmupElapsed = warmupSw.Elapsed;
 }
 
 var times = ready.Select(_ => new List<double>()).ToArray();
@@ -158,7 +166,6 @@ var discarded = new bool[ready.Count];
 var loads = new List<double>();
 var buildElapsed = TimeSpan.Zero;
 var deleteElapsed = TimeSpan.Zero;
-var total = Stopwatch.StartNew();
 
 for (var r = 0; r < opt.Rounds; r++)
 {
@@ -221,14 +228,17 @@ Console.WriteLine($"构建合计   {buildElapsed.TotalSeconds,7:F0}s  {Pct(build
 Console.WriteLine($"删除输出   {deleteElapsed.TotalSeconds,7:F0}s  {Pct(deleteElapsed),5}");
 Console.WriteLine($"其他       {overhead.TotalSeconds,7:F0}s  {Pct(overhead),5}");
 Console.WriteLine($"总用时     {elapsed,7:F0}s  共 {builds} 次构建（{ready.Count} 臂）");
+if (warmupElapsed > TimeSpan.Zero)
+    Console.WriteLine($"预热另计   {warmupElapsed.TotalSeconds,7:F0}s（含在上方总用时与构建次数里，不计入中位）");
 if (discarded.Any(x => x))
     Console.WriteLine($"自适应：{discarded.Count(x => x)} 个慢臂首轮按预热丢弃，用后 {opt.Rounds - 1} 个样本取中位");
 
 if (opt.Report)
 {
     var path = Path.Combine(root, "results", $"run-{DateTime.Now:yyyyMMdd-HHmmss}.md");
+    var timedBuilds = builds - (opt.Warmup > 0 ? ready.Count : 0);
     var written = Report.Write(path, opt, snap, gateFailures, ready, times, mems, audits, armStart, loads,
-        builds, buildElapsed.TotalSeconds, deleteElapsed.TotalSeconds, elapsed, runStartedUtc);
+        builds, timedBuilds, buildElapsed.TotalSeconds, deleteElapsed.TotalSeconds, warmupElapsed.TotalSeconds, elapsed, runStartedUtc);
     Console.WriteLine($"\n报告已写入 {written}");
 }
 
@@ -252,6 +262,7 @@ sealed record CorpusSpec(string Arm, string Dir, string Kind, string? Layout);
 
 sealed record Arm(string Name, string Exe, string[] Args, string Cwd, string Pub, string[] Clean)
 {
+    public Dictionary<string, string>? Env { get; init; }
     public List<string> Missing { get; } = new();
     public bool Ready => Missing.Count == 0;
 }
@@ -273,6 +284,7 @@ static class Cleaner
     {
         "_out",
         "zola/public", "eleventy/_site", "astro/dist", "hexo/public", "hexo/db.json",
+        "astro/node_modules/.astro",
         "gatsby/public", "gatsby/.cache",
         "vitepress/.vitepress/dist", "vitepress/.vitepress/cache", "vitepress/.vitepress/.temp",
         "jekyll/.jekyll-cache", "jekyll/.jekyll-metadata",
@@ -686,8 +698,10 @@ static class Report
         DateTime[] armStart,
         List<double> loads,
         int builds,
+        int timedBuilds,
         double buildSec,
         double deleteSec,
+        double warmupSec,
         double totalSec,
         DateTime startedUtc)
     {
@@ -738,7 +752,16 @@ static class Report
         sb.AppendLine();
         sb.AppendLine("## 用时构成");
         sb.AppendLine();
-        sb.AppendLine($"- 构建合计 {buildSec:F0}s，删除输出 {deleteSec:F0}s，总用时 {totalSec:F0}s");
+        sb.AppendLine($"- 构建合计 {buildSec:F0}s，删除输出 {deleteSec:F0}s，总用时 {totalSec:F0}s（含全部构建，计时口径见下）");
+        if (warmupSec > 0)
+            sb.AppendLine($"- 其中预热 {warmupSec:F0}s（不计入中位样本）；「构建合计」仅计 {timedBuilds} 次计时构建");
+        sb.AppendLine();
+        sb.AppendLine("## 每臂各轮明细");
+        sb.AppendLine();
+        sb.AppendLine("| 引擎 | 各轮(ms) | 中位(ms) |");
+        sb.AppendLine("| --- | --- | --: |");
+        for (var i = 0; i < arms.Count; i++)
+            sb.AppendLine($"| {arms[i].Name} | {string.Join(" / ", times[i].Select(t => t.ToString("F0")))} | {medians[i]:F0} |");
         sb.AppendLine();
         sb.AppendLine("## 产物校验说明");
         sb.AppendLine();
@@ -887,6 +910,8 @@ static class Run
             UseShellExecute = false,
             WorkingDirectory = a.Cwd,
         };
+        if (a.Env is not null)
+            foreach (var kv in a.Env) psi.EnvironmentVariables[kv.Key] = kv.Value;
         foreach (var x in a.Args) psi.ArgumentList.Add(x);
 
         var sw = Stopwatch.StartNew();
@@ -924,8 +949,28 @@ static class Run
         if (!Directory.Exists(path) && !File.Exists(path)) return;
         if (!Paths.IsInside(path)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {path}");
 
-        if (Directory.Exists(path)) Directory.Delete(path, true);
-        else File.Delete(path);
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+            return;
+        }
+
+        // 并行删文件再删空目录树：Directory.Delete(recursive) 逐文件串行，
+        // 万页产物 1 万+ 文件时删除占全矩阵总用时 16%。
+        // 2026-10-31 反向验证：串行/并行删除对紧随其后的 hexo/flint 构建计时无影响
+        //（hexo 串行 44.2s vs 并行 35.9s 中位，方向相反），非污染源，因子保留。
+        var files = Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).ToArray();
+        if (files.Length > 500)
+        {
+            Parallel.ForEach(files, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(16, Environment.ProcessorCount) },
+                f => { try { File.Delete(f); } catch (FileNotFoundException) { } catch (DirectoryNotFoundException) { } });
+        }
+        else
+        {
+            foreach (var f in files) File.Delete(f);
+        }
+
+        Directory.Delete(path, true);
     }
 }
 
@@ -960,11 +1005,11 @@ static class Arms
         // --- Node 系 ---
         var astro = P("astro");
         Add("astro", node, [Path.Combine(astro, "node_modules", "astro", "bin", "astro.mjs"), "build"],
-            astro, Path.Combine(astro, "dist"), [], "node");
+            astro, Path.Combine(astro, "dist"), [Path.Combine(astro, "node_modules", ".astro")], "node");
         RequireDir(list, "astro", Path.Combine(astro, "node_modules", "astro"), "astro/node_modules（npm install）");
 
         var eleventy = P("eleventy");
-        Add("eleventy", node, [Path.Combine(eleventy, "node_modules", "@11ty", "eleventy", "cmd.cjs")],
+        Add("eleventy", node, [Path.Combine(eleventy, "node_modules", "@11ty", "eleventy", "cmd.cjs"), "--quiet"],
             eleventy, Path.Combine(eleventy, "_site"), [], "node");
         RequireDir(list, "eleventy", Path.Combine(eleventy, "node_modules", "@11ty", "eleventy"), "eleventy/node_modules（npm install）");
 
@@ -974,8 +1019,11 @@ static class Arms
         RequireDir(list, "hexo", Path.Combine(hexo, "node_modules", "hexo"), "hexo/node_modules（npm install）");
 
         var gatsby = P("gatsby");
+        // GATSBY_CPU_COUNT：默认（核数-1）在 32 核机上 worker 抖动，实测 4 最快（81.7s→64.2s）；
+        // GATSBY_TELEMETRY_DISABLED 关闭构建期遥测网络调用
         Add("gatsby", node, [Path.Combine(gatsby, "node_modules", "gatsby", "dist", "bin", "gatsby.js"), "build"],
-            gatsby, Path.Combine(gatsby, "public"), [Path.Combine(gatsby, ".cache")], "node");
+            gatsby, Path.Combine(gatsby, "public"), [Path.Combine(gatsby, ".cache")], "node",
+            new Dictionary<string, string> { ["GATSBY_CPU_COUNT"] = "4", ["GATSBY_TELEMETRY_DISABLED"] = "1" });
         RequireDir(list, "gatsby", Path.Combine(gatsby, "node_modules", "gatsby"), "gatsby/node_modules（npm install）");
 
         var vitepress = P("vitepress");
@@ -1009,9 +1057,10 @@ static class Arms
 
         return list;
 
-        void Add(string name, string? exe, string[] a, string cwd, string pub, string[] clean, string need)
+        void Add(string name, string? exe, string[] a, string cwd, string pub, string[] clean, string need,
+            Dictionary<string, string>? env = null)
         {
-            var arm = new Arm(name, exe ?? "dotnet", a, cwd, pub, clean);
+            var arm = new Arm(name, exe ?? "dotnet", a, cwd, pub, clean) { Env = env };
             if (exe is null) arm.Missing.Add(need);
             list.Add(arm);
         }

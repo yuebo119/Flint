@@ -431,3 +431,92 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # 就绪
 Python 与 Jekyll 臂，仓库版改为直调（`python -m`、`ruby -S jekyll`），剥离
 包装器开销，三臂时间改善幅度均低于 2%，不影响排名；② Statiq 实测用源码
 main 构建，仓库版默认 NuGet 1.0.0-beta.60，该臂绝对时间会偏离实测行。
+### 12.8 2026-10-31 晚间轮：逐臂最优配置审计 + 计时链修正
+
+应要求对 11 臂逐一审计「是否最优配置/最佳实践」，并在保持真实反映性能的前提下
+缩短全矩阵总时长。方法：每臂列候选旋钮，万页、同窗口、harness 冷构建口径下
+A/B 实测；JS 臂单轮方差 ±10s（astro 同日观测 63.4–91.3s），单轮结果不下结论，
+采纳项至少 3 轮中位。
+
+#### 12.8.1 已采纳的配置（六臂）
+
+| 臂 | 改动 | A/B（万页 3 轮中位） | 依据 |
+| --- | --- | --- | --- |
+| astro | `build.concurrency: 8`（默认 1） | 78.1s → 64.0s（-18%） | 官方并发旋钮，万页纯 CPU 渲染串行是主瓶颈 |
+| gatsby | env `GATSBY_CPU_COUNT=4` + `GATSBY_TELEMETRY_DISABLED=1` | 81.7s → 64.2s（-22%） | 默认 worker 数（核数-1=31）抖动；阶段拆解：source and transform nodes（remark 转换）占 63%，SSR 仅 3.3s；4 < 8≈16 < 2≈1 |
+| vitepress | `vite.build.minify: false` | 69.5s → 66.8s（约 -4%，[推断]） | 3 样本中位对比单基线；产出字节数不变（62.4MB） |
+| mkdocs | `plugins: []`（关默认搜索） | 13.64s → 11.45s（-16%），产出 61.5→48.3MB | 其余 10 臂默认均不建搜索索引，保留属单侧惩罚 |
+| hugo | `disableKinds = ["taxonomy","term","RSS","sitemap","robotsTXT"]` | 5.22s → 4.77s（-9%），峰值 RSS 444→284MB | 最小产物口径；其余各臂默认不产分类/RSS/sitemap |
+| eleventy | harness 加 `--quiet` | 万页逐文件 Writing 日志省略；全量轮 11.55→10.63s（跨窗口，方向与预期一致） | hugo `--quiet`、hexo silent 已有，口径对齐 |
+
+harness 侧配套：`Arm` 新增 `Env` 字典承载 Gatsby 环境变量；Eleventy 参数加 `--quiet`。
+
+#### 12.8.2 审计后不动的臂（五臂）
+
+| 臂 | 结论 |
+| --- | --- |
+| flint-liquid / flint-scriban | 已是最优：AOT + Server GC（csproj 显式开启）+ 并行满核；`--cache` 按冷构建口径关闭。两臂差异（Fluid vs Scriban）即矩阵要测的引擎差异本身 |
+| zola | 配置即最小形态（无 sitemap 关闭开关）；无代码块时 syntect 不介入 |
+| hexo | highlight 管线在无代码块时短路（`hexo/dist/plugins/filter/before_post_render/backtick_code_block.js:80`），语料无代码块零成本；marked 为默认渲染器，不引入替代品改变语义 |
+| jekyll | 4 行配置即最小形态；`.jekyll-cache` 每轮冷清已覆盖 |
+| vitepress（其余项） | `posts.data.js` 数据加载器多扫一遍 1 万文件（实测约 3.8s），但它是 VitePress 列出全部文章的唯一正道，保留；`metaChunk` + `shouldPreload: false` 沿用 12.6 |
+
+#### 12.8.3 实测后否决的候选（防重探）
+
+- astro `experimental.parallelPrerender`：106.6s / 峰值 7.5GB（默认 78.3s / 2.4GB）——
+  31 个 worker 各自重建 Vite 模块图，负收益。
+- astro `compressHTML: false`：79.2s，比默认差。
+- astro 首页 `import.meta.glob(..., { import: 'frontmatter' })`：86.6s，比 eager 全量差；
+  首页 glob 本身成本约 15s（stub 对照 63.4s vs 78.3s），但在产物对称约束内无更优等价实现。
+- gatsby `GATSBY_CPU_COUNT=1/2`：SSR 阶段并行度跌水（3.0→6.1s），总时长回升到 73s。
+
+#### 12.8.4 harness 五项改动
+
+1. **删除并行化**：`Directory.Delete(recursive)` 逐文件串行，万页 1 万+ 文件使删除占
+   全矩阵 16%（旧 176s/33 次）。改为并行删文件再删空目录树，同口径 159s/44 次，
+   大产出臂单次约 5.3s→2.5s。反向验证：串行 vs 并行删除下 hexo/flint 构建计时方向
+   相反（44.2s vs 35.9s），非计时污染源。
+2. **墙钟口径修正**：旧「总用时」秒表在预热之后才启动（1,107s 只含 33 次计时构建，
+   真实墙钟约 25 分钟）。现提前到预热前，报告单列「预热另计」，并新增每臂各轮明细表。
+3. **语料生成随 `--only`**：旧版部分跑也生成全部 11 份语料（11 万文件）。
+4. **Astro 冷清缺口修复**：Astro 的 `cacheDir` 默认在 `node_modules/.astro`
+   （vite-sync 缓存），此前每轮冷清与 `--clean` 都不覆盖，现纳入。
+5. Gatsby 环境变量、Eleventy `--quiet`（见 12.8.1）。
+
+#### 12.8.5 新基线（同窗口全量复跑）
+
+运行 19:00–19:25，门禁 CPU 5.6%，运行中逐轮 4.1–5.1%，语料指纹
+5295e04953953f7b 与 12.6 基线一致，11 臂全部通过四项产物校验。
+原始报告 `results/run-20261031-192507.md`。
+
+| 排名 | 引擎 | 中位(ms) | vs 最快 | 产出(MB) | 峰值RSS(MB) | 12.6 基线比值 |
+| --: | --- | --: | --: | --: | --: | --: |
+| 1 | Flint Liquid | 2689 | 1.00x | 7.0 | 192 | 1.00x |
+| 2 | Flint Scriban | 2882 | 1.07x | 7.0 | 335 | 1.13x |
+| 3 | Zola 0.23.6 | 4518 | 1.68x | 7.0 | 136 | 1.82x |
+| 4 | Hugo 0.169.0 | 5029 | 1.87x | 7.0 | 282 | 2.03x |
+| 5 | Eleventy 3.1.7 | 10633 | 3.95x | 7.0 | 405 | 4.49x |
+| 6 | MkDocs 1.6.1 | 12128 | 4.51x | 48.3 | 77 | 5.30x |
+| 7 | Jekyll 4.4.1 | 17557 | 6.53x | 7.1 | 158 | 7.08x |
+| 8 | Hexo 8.1.2 | 35364 | 13.15x | 7.1 | 810 | 10.96x |
+| 9 | VitePress 1.6.4 | 67528 | 25.11x | 62.4 | 3068 | 27.90x |
+| 10 | Gatsby 5.16.1 | 67773 | 25.21x | 20.4 | 1549 | 29.24x |
+| 11 | Astro 7.4.4 | 68077 | 25.32x | 7.2 | 2498 | 29.42x |
+
+跨窗口对照说明：配置改动与窗口漂移混在同一差值里，不能把「新表 − 12.6 表」
+逐臂归因给配置。头部臂锚（flint 同窗 +4.5%、hugo/zola 反而更快）说明窗口本身
+不系统性偏慢；Astro/Gatsby/VitePress 在同窗口内对配置 A/B 的改善幅度（-18%/-22%/-4%）
+是一手证据。总用时：44 次构建 1,432s（含预热 335s），删除 159s。
+
+**Hexo 窗口敏感性观察**：同日 16:04 / 19:25 / 19:37 三个窗口 3 轮中位分别为
+28.2s / 35.4s / 44.2s，同期 flint 锚臂 2.57–2.69s 持平；已排除删除策略因素
+（12.8.4 第 1 条），根因未定位，标注 [观察]，该臂跨窗口只取同窗比值。
+
+#### 12.8.6 未覆盖声明
+
+- jekyll/zola/hexo/flint 未找到进一步旋钮，仅做了配置层审计，未做引擎内部剖析。
+- vitepress 的 `minify: false` 收益（约 -4%）弱于其他项，如需更强证据需补多窗口对照。
+- astro 首页 eager glob 的约 15s 在产物对称约束内无已验证的更优实现（content
+  collections 迁移会改 harness 语料路径，未纳入本轮）。
+- 2026-10-31 的全量轮只跑了 1 次；排名结构在 12.6/12.8 两轮间保持一致（前四名
+  与后三名次不变，中段 mkdocs/jekyll 互换属同窗内波动范围）。

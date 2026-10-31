@@ -4,3 +4,6 @@ site_url: http://localhost:1313/
 # 不配置 nav 时 MkDocs 会把整棵文件树导航渲染进每一页，万页单页约 1.65MB。
 nav:
   - Home: index.md
+# 关闭默认搜索插件：其余引擎默认不建搜索索引，保留搜索属单侧惩罚。
+# 万页搜索索引会对全部页面分词并写出 search_index.json。
+plugins: []
