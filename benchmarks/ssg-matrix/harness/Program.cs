@@ -199,12 +199,12 @@ var medians = times.Select(Median).ToArray();
 var fastest = medians.Min();
 
 Console.WriteLine($"\n=== {opt.Pages} 页冷构建（{opt.Rounds} 轮中位，外部计时含进程启动）===");
-Console.WriteLine($"{"臂",-14} {"中位(ms)",10} {"vs最快",8} {"峰值RSS(MB)",12} {"html",7} {"正文抽样",9} {"零字节",7} {"新生成",7}");
+Console.WriteLine($"{"臂",-14} {"中位(ms)",10} {"vs最快",8} {"峰值RSS(MB)",12} {"产出(MB)",10} {"html",7} {"正文抽样",9} {"零字节",7} {"新生成",7}");
 var audits = new Audit.Result[ready.Count];
 for (var i = 0; i < ready.Count; i++)
 {
     audits[i] = Audit.Scan(ready[i].Pub, armStart[i]);
-    Console.WriteLine($"{ready[i].Name,-14} {medians[i],10:F0} {medians[i] / fastest,7:F2}x {mems[i].Max() / 1048576.0,11:F0} {audits[i].Html,7} {audits[i].BodySample,9} {audits[i].Zero,7} {audits[i].Fresh,7}");
+    Console.WriteLine($"{ready[i].Name,-14} {medians[i],10:F0} {medians[i] / fastest,7:F2}x {mems[i].Max() / 1048576.0,11:F0} {audits[i].Bytes / 1048576.0,10:F1} {audits[i].Html,7} {audits[i].BodySample,9} {audits[i].Zero,7} {audits[i].Fresh,7}");
 }
 
 if (skipped.Count > 0)
@@ -728,8 +728,8 @@ static class Report
         sb.AppendLine();
         sb.AppendLine("## 结果");
         sb.AppendLine();
-        sb.AppendLine("| 排名 | 引擎 | 中位(ms) | vs 最快 | 峰值RSS(MB) | html | 正文抽样 | 零字节 | 本次新生成 | 判定 |");
-        sb.AppendLine("| --: | --- | --: | --: | --: | --: | --: | --: | --: | --- |");
+        sb.AppendLine("| 排名 | 引擎 | 中位(ms) | vs 最快 | 峰值RSS(MB) | 产出(MB) | html | 正文抽样 | 零字节 | 本次新生成 | 判定 |");
+        sb.AppendLine("| --: | --- | --: | --: | --: | --: | --: | --: | --: | --: | --- |");
 
         var order = Enumerable.Range(0, arms.Count).OrderBy(i => medians[i]).ToArray();
         for (var r = 0; r < order.Length; r++)
@@ -737,7 +737,7 @@ static class Report
             var i = order[r];
             var a = audits[i];
             var ok = a.Html > 0 && a.Zero == 0 && a.Fresh > 0 && a.BodySample.Split('/')[0] != "0";
-            sb.AppendLine($"| {r + 1} | {arms[i].Name} | {medians[i]:F0} | {medians[i] / fastest:F2}x | {mems[i].Max() / 1048576.0:F0} | {a.Html} | {a.BodySample} | {a.Zero} | {a.Fresh} | {(ok ? "通过" : "复核")} |");
+            sb.AppendLine($"| {r + 1} | {arms[i].Name} | {medians[i]:F0} | {medians[i] / fastest:F2}x | {mems[i].Max() / 1048576.0:F0} | {a.Bytes / 1048576.0:F1} | {a.Html} | {a.BodySample} | {a.Zero} | {a.Fresh} | {(ok ? "通过" : "复核")} |");
         }
 
         sb.AppendLine();
@@ -820,22 +820,25 @@ static class Corpus
 
 static class Audit
 {
-    public sealed record Result(int Html, int Zero, string BodySample, int Fresh, DateTime NewestUtc);
+    public sealed record Result(int Html, int Zero, string BodySample, int Fresh, DateTime NewestUtc, long Bytes);
 
     public static Result Scan(string pub, DateTime notBeforeUtc = default)
     {
-        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0", 0, default);
+        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0", 0, default, 0);
 
         var files = Directory.EnumerateFiles(pub, "*.html", SearchOption.AllDirectories).ToArray();
         var zero = files.Count(f => new FileInfo(f).Length == 0);
-        if (files.Length == 0) return new Result(0, zero, "0/0", 0, default);
+        if (files.Length == 0) return new Result(0, zero, "0/0", 0, default, 0);
 
         var cutoff = notBeforeUtc == default ? DateTime.MinValue : notBeforeUtc.AddSeconds(-2);
         var fresh = 0;
         var newest = DateTime.MinValue;
+        long bytes = 0;
         foreach (var f in files)
         {
-            var t = File.GetLastWriteTimeUtc(f);
+            var info = new FileInfo(f);
+            bytes += info.Length;
+            var t = info.LastWriteTimeUtc;
             if (t > newest) newest = t;
             if (t >= cutoff) fresh++;
         }
@@ -846,7 +849,7 @@ static class Audit
         for (var i = 0; i < files.Length && sample.Count < take; i += step) sample.Add(files[i]);
 
         var hit = sample.Count(HasBody);
-        return new Result(files.Length, zero, $"{hit}/{sample.Count}", fresh, newest);
+        return new Result(files.Length, zero, $"{hit}/{sample.Count}", fresh, newest, bytes);
     }
 
     static bool HasBody(string path)
