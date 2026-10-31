@@ -46,7 +46,8 @@ if (opt.Bootstrap)
 
 var corpora = MatrixCatalog.Corpora;
 
-if (!opt.SkipGen)
+// --list 只查就绪状态，不为它生成全量语料（冷启动自查应当秒回）
+if (!opt.SkipGen && !opt.List)
 {
     Console.WriteLine("\n--- 语料 ---");
     foreach (var c in corpora)
@@ -427,6 +428,26 @@ static class Setup
             ?? Environment.GetEnvironmentVariable("https_proxy")
             ?? Environment.GetEnvironmentVariable("HTTP_PROXY")
             ?? Environment.GetEnvironmentVariable("http_proxy");
+
+        // 常见冷启动形态：git 配了代理、shell 环境与系统代理都没配，
+        // HttpClient 直连 GitHub Release 会挂到超时；回退读 git 的代理配置
+        if (string.IsNullOrWhiteSpace(proxy))
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("git", "config --get http.proxy")
+                {
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                };
+                using var p = Process.Start(psi);
+                var line = p?.StandardOutput.ReadToEnd().Trim();
+                p?.WaitForExit(2000);
+                if (!string.IsNullOrWhiteSpace(line)) proxy = line;
+            }
+            catch { /* git 不存在或未配置则维持默认行为 */ }
+        }
+
         if (!string.IsNullOrWhiteSpace(proxy)) handler.Proxy = new System.Net.WebProxy(proxy);
         return handler;
     }

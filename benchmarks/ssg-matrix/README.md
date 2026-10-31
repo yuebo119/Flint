@@ -15,8 +15,13 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 
 ## 环境要求
 
-- .NET 10 SDK（跑 harness 与两臂 Flint）
+- .NET 10 SDK（跑 harness 与两臂 Flint）；Windows 上构建 Flint AOT 还需
+  VS C++ Build Tools（`Desktop development with C++` 工作负载），缺了只会
+  跳过 Flint 两臂，其余照常
 - 各引擎运行时按需（Node / Python / Ruby / Zola），见下表
+- 网络需能访问 GitHub Releases / npm / PyPI / RubyGems。代理只配在
+  git/npm 时，hugo/zola 下载会自动读 `git config http.proxy`；也可显式设
+  `HTTPS_PROXY` 环境变量
 - Windows 10 x64 为实测平台；Linux/macOS 口径相同，但绝对时间不可与实测表直比
 
 ## 版本与安装
@@ -34,7 +39,7 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 | vitepress | 1.6.4 | `cd benchmarks/ssg-matrix/vitepress && npm install` |
 | astro | 7.4.4 | `cd benchmarks/ssg-matrix/astro && npm install` |
 | gatsby | 5.16.1 | `cd benchmarks/ssg-matrix/gatsby && npm install` |
-| jekyll | 4.4.1 | `gem install jekyll`（Windows 需要 Ruby+Devkit，见 [windows-ruby-jekyll-setup-traps](../../docs/) 同族笔记） |
+| jekyll | 4.4.1 | `gem install jekyll`（Windows 需先装 Ruby + MSYS2/DevKit 工具链；gem 与 pacman 走代理） |
 | mkdocs | 1.6.1 | `pip install mkdocs` |
 
 版本可用 `dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list` 自查就绪状态。
