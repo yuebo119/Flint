@@ -420,11 +420,11 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 | Runtime | **C# / .NET 10+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
 | Build performance (10k pages) | **1.00x (fastest, 2.7s)** | 2.09x | 25.24x | 3.89x | 6.35x | 12.72x |
-| Incremental builds | **64ms (500 pages)** | supported | supported | supported | limited | supported |
+| Incremental builds | **64ms (500 pages)** | supported | supported | supported | limited | file-level skip |
 | Asset pipeline | **Sass + TS type stripping + minify + fingerprint** | Hugo Pipes (Extended) | Vite toolchain | plugins | plugins | plugins |
 | Image processing | **resize/fit/fill/crop, responsive** | built-in | sharp ecosystem | plugins | plugins | plugins |
 | Content model | **three-format Front Matter + taxonomies + shortcodes** | comparable | Content Collections (typed) | data cascade | Front Matter + taxonomies | Front Matter |
-| Multilingual | **i18n files + theme fallback** | full i18n | i18n routing | community solutions | mostly plugins | multilingual |
+| Multilingual | **i18n files + theme fallback** | full i18n | i18n routing | community solutions | mostly plugins | theme-strings i18n |
 | Theme system | **modular + version pinning + multi-theme stacking** | Hugo Modules | npm / copy install | no formal mechanism | gem themes | npm themes |
 | Migration tooling | **ThemeMigrator (AST-level theme conversion)** | post import (jekyll) | — | — | — | — |
 | Quality assurance | **perf gate + property testing** | — | — | — | — | — |

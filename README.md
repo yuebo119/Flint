@@ -401,11 +401,11 @@ Markdown 解析 229k 文件/秒 · 模板渲染 Scriban 54k / Fluid 175k 页/秒
 | 实现与运行时     | **C# / .NET 10+，AOT 单文件应用**                        | Go 单二进制             | Node + 依赖树                | Node + 依赖树                  | Ruby + gems             | Node + 依赖树 |
 | 模板系统         | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid                  | EJS / Pug 等  |
 | 构建性能（万页） | **1.00x（最快，2.7s）**                                  | 2.09x                   | 25.24x                       | 3.89x                          | 6.35x                   | 12.72x        |
-| 增量构建         | **64ms（500 页）**                                       | 支持                    | 支持                         | 支持                           | 有限                    | 支持          |
+| 增量构建         | **64ms（500 页）**                                       | 支持                    | 支持                         | 支持                           | 有限                    | 按文件跳过    |
 | 资产管线         | **Sass + TS 剥离 + minify + 指纹**                       | Hugo Pipes（Extended）  | Vite 工具链                  | 插件                           | 插件                    | 插件          |
 | 图片处理         | **resize/fit/fill/crop，响应式**                         | 内置                    | sharp 生态                   | 插件                           | 插件                    | 插件          |
 | 内容模型         | **三格式 Front Matter + taxonomy + 短码**                | 同类                    | Content Collections（typed） | data cascade                   | Front Matter + taxonomy | Front Matter  |
-| 多语言           | **i18n 文件 + 主题回退**                                 | 完整 i18n               | i18n 路由                    | 社区方案                       | 插件为主                | 多语言        |
+| 多语言           | **i18n 文件 + 主题回退**                                 | 完整 i18n               | i18n 路由                    | 社区方案                       | 插件为主                | 主题文案 i18n |
 | 主题系统         | **模块化 + 版本锁定 + 多主题叠加**                       | Hugo Modules            | npm / 复制安装               | 无正式机制                     | gem 主题                | npm 主题      |
 | 迁移工具         | **ThemeMigrator（AST 级主题转换）**                      | 文章导入（jekyll）      | —                            | —                              | —                       | —             |
 | 质量保障         | **性能门禁 + 属性测试**                                  | —                       | —                            | —                              | —                       | —             |

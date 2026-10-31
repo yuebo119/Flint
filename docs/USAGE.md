@@ -370,7 +370,7 @@ Flint build [选项]
 |------|------|--------|------|
 | `--source` | `-s` | `.` | 源目录 |
 | `--output` | `-o` | 站点 `publishDir`，未配置则 `public` | 输出目录 |
-| `--minify` | `-m` | false | 压缩 HTML/CSS/JS |
+| `--minify` | `-m` | false | 压缩 CSS 资产（HTML 与 JS 暂未接入） |
 | `--drafts` | `-D` | false | 包含草稿内容 |
 | `--future` | `-F` | false | 包含未来日期的内容 |
 | `--clean` | - | false | 构建前清理输出目录（拒绝与源内容目录重叠的输出目录） |

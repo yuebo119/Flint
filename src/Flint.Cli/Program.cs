@@ -118,7 +118,7 @@ internal static class Program
     private static void AddBuildCommand(RootCommand rootCommand, Option<bool> verboseOption)
     {
         var cmd = new Command("build", "构建静态站点");
-        var minifyOpt = new Option<bool>("--minify", "-m") { Description = "压缩 HTML、CSS 和 JavaScript 输出" };
+        var minifyOpt = new Option<bool>("--minify", "-m") { Description = "压缩 CSS 资产（HTML 与 JS 暂未接入）" };
         var draftsOpt = new Option<bool>("--drafts", "-D") { Description = "包含草稿内容" };
         var futureOpt = new Option<bool>("--future", "-F") { Description = "包含未来日期的内容" };
         var outputOpt = new Option<string?>("--output", "-o")
