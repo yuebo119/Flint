@@ -86,6 +86,26 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- \
 `--regen`、`--root`、`--clean`、`--clean-all`、`--bootstrap`、`--fast`、`--adaptive`、
 `--slow-threshold`，以及 `--flint/--hugo/--zola/--node/--python` 显式指定可执行文件。
 
+## 测试协议（一次跑完检查、测量、校验、清理、报告）
+
+```bash
+dotnet run --project benchmarks/ssg-matrix/harness -c Release -- \
+  --pages 10000 --preflight --report --clean-after
+```
+
+四个环节都由 harness 执行：
+
+1. **运行前检查**（`--preflight`）：采样 CPU 占用、列出各引擎版本、统计语料文件数与
+   指纹、核对所有选中臂的依赖。CPU 占用超过 `--max-load`（默认 15%）或任一臂缺依赖
+   时拒绝运行；确需在嘈杂环境跑用 `--force`，但结果不可对外发布。
+2. **运行中留痕**：每轮开始前再采样一次 CPU 占用并写入报告，运行被打扰时能从报告
+   里看出来。
+3. **产物校验**：每臂结束后统计 html 数、零字节文件数、正文抽样命中，以及输出目录中
+   修改时间晚于本轮运行开始的文件数（`本次新生成`）。最后一项用来排除命令空跑、
+   沿用上次残留产物的情形。任一臂不达标时报告判定为「复核」。
+4. **收尾**：`--report` 把环境、版本、协议参数、结果、用时构成、校验说明写到
+   `results/run-<时间戳>.md`；`--clean-after` 随后清掉语料与产出。
+
 ## 用时与提速
 
 全矩阵默认跑一遍约 75 分钟（14 臂 × 预热 1 + 3 轮 = 56 次构建）。实测用时构成：

@@ -87,6 +87,61 @@ if (ready.Count == 0)
 }
 
 var builds = 0;
+var runStartedUtc = DateTime.UtcNow;
+Preflight.Snapshot? snap = null;
+var gateFailures = new List<string>();
+
+if (opt.WaitQuiet > 0)
+{
+    var deadline = DateTime.UtcNow.AddMinutes(opt.WaitQuiet);
+    var quietStreak = 0;
+    Console.WriteLine($"\n--- 等待安静窗口（最多 {opt.WaitQuiet} 分钟，需连续 3 次采样低于 {opt.MaxLoad}%）---");
+    while (DateTime.UtcNow < deadline)
+    {
+        var l = Preflight.CpuPercent(Environment.ProcessorCount, 1000);
+        quietStreak = l <= opt.MaxLoad ? quietStreak + 1 : 0;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] CPU {l:F1}%  连续安静 {quietStreak}/3");
+        if (quietStreak >= 3) { Console.WriteLine("窗口已安静，进入门禁检查。"); break; }
+        Thread.Sleep(TimeSpan.FromSeconds(15));
+    }
+
+    if (quietStreak < 3 && !opt.Force)
+    {
+        Console.WriteLine($"等待 {opt.WaitQuiet} 分钟仍未出现安静窗口。稍后重试，或用 --force 在嘈杂环境跑（结果不可发布）。");
+        return;
+    }
+}
+
+if (opt.Preflight)
+{
+    var (s, failures) = Preflight.Check(root, ready, opt.Only);
+    snap = s;
+    gateFailures.AddRange(failures);
+
+    Console.WriteLine($"\n--- 运行前检查 ---");
+    Console.WriteLine($"机器: {s.Cores} 逻辑核 · 当前 CPU 占用 {s.LoadPercent:F1}%");
+    Console.WriteLine($"语料: {s.CorpusFiles} 个文件 · 指纹 {s.CorpusHash}");
+    foreach (var v in s.Versions) Console.WriteLine($"  {v}");
+
+    if (s.LoadPercent > opt.MaxLoad)
+        gateFailures.Add($"CPU 占用 {s.LoadPercent:F1}% 超过门限 {opt.MaxLoad}%");
+
+    if (gateFailures.Count > 0)
+    {
+        Console.WriteLine("\n门禁未通过:");
+        foreach (var f in gateFailures) Console.WriteLine($"  - {f}");
+        if (!opt.Force)
+        {
+            Console.WriteLine("请关闭占用进程后重试，或用 --force 跳过（跳过后数字不可用于对外发布）。");
+            return;
+        }
+        Console.WriteLine("已用 --force 继续，结果不可用于对外发布。");
+    }
+    else
+    {
+        Console.WriteLine("门禁通过。");
+    }
+}
 
 if (opt.Warmup > 0)
 {
@@ -101,19 +156,24 @@ if (opt.Warmup > 0)
 
 var times = ready.Select(_ => new List<double>()).ToArray();
 var mems = ready.Select(_ => new List<long>()).ToArray();
+var armStart = new DateTime[ready.Count];
 var discarded = new bool[ready.Count];
+var loads = new List<double>();
 var buildElapsed = TimeSpan.Zero;
 var deleteElapsed = TimeSpan.Zero;
 var total = Stopwatch.StartNew();
 
 for (var r = 0; r < opt.Rounds; r++)
 {
+    var roundLoad = Preflight.CpuPercent(Environment.ProcessorCount, 500);
+    loads.Add(roundLoad);
     var order = Enumerable.Range(0, ready.Count).Select(i => (i + r * 3) % ready.Count).ToArray();
-    Console.WriteLine($"\n--- 第 {r + 1}/{opt.Rounds} 轮（首臂 {ready[order[0]].Name}，{DateTime.Now:HH:mm:ss}）---");
+    Console.WriteLine($"\n--- 第 {r + 1}/{opt.Rounds} 轮（首臂 {ready[order[0]].Name}，{DateTime.Now:HH:mm:ss}，CPU 占用 {roundLoad:F1}%）---");
     foreach (var idx in order)
     {
         var m = Run.Once(ready[idx]);
         builds++;
+        if (armStart[idx] == default) armStart[idx] = m.StartedUtc;
         times[idx].Add(m.Ms);
         mems[idx].Add(m.PeakRss);
         buildElapsed += TimeSpan.FromMilliseconds(m.Ms);
@@ -139,11 +199,12 @@ var medians = times.Select(Median).ToArray();
 var fastest = medians.Min();
 
 Console.WriteLine($"\n=== {opt.Pages} 页冷构建（{opt.Rounds} 轮中位，外部计时含进程启动）===");
-Console.WriteLine($"{"臂",-14} {"中位(ms)",10} {"vs最快",8} {"峰值RSS(MB)",12} {"html",7} {"正文抽样",9} {"零字节",7}");
+Console.WriteLine($"{"臂",-14} {"中位(ms)",10} {"vs最快",8} {"峰值RSS(MB)",12} {"html",7} {"正文抽样",9} {"零字节",7} {"新生成",7}");
+var audits = new Audit.Result[ready.Count];
 for (var i = 0; i < ready.Count; i++)
 {
-    var audit = Audit.Scan(ready[i].Pub);
-    Console.WriteLine($"{ready[i].Name,-14} {medians[i],10:F0} {medians[i] / fastest,7:F2}x {mems[i].Max() / 1048576.0,11:F0} {audit.Html,7} {audit.BodySample,9} {audit.Zero,7}");
+    audits[i] = Audit.Scan(ready[i].Pub, armStart[i]);
+    Console.WriteLine($"{ready[i].Name,-14} {medians[i],10:F0} {medians[i] / fastest,7:F2}x {mems[i].Max() / 1048576.0,11:F0} {audits[i].Html,7} {audits[i].BodySample,9} {audits[i].Zero,7} {audits[i].Fresh,7}");
 }
 
 if (skipped.Count > 0)
@@ -165,6 +226,20 @@ Console.WriteLine($"其他       {overhead.TotalSeconds,7:F0}s  {Pct(overhead),5
 Console.WriteLine($"总用时     {elapsed,7:F0}s  共 {builds} 次构建（{ready.Count} 臂）");
 if (discarded.Any(x => x))
     Console.WriteLine($"自适应：{discarded.Count(x => x)} 个慢臂首轮按预热丢弃，用后 {opt.Rounds - 1} 个样本取中位");
+
+if (opt.Report)
+{
+    var path = Path.Combine(root, "results", $"run-{DateTime.Now:yyyyMMdd-HHmmss}.md");
+    var written = Report.Write(path, opt, snap, gateFailures, ready, times, mems, audits, armStart, loads,
+        builds, buildElapsed.TotalSeconds, deleteElapsed.TotalSeconds, elapsed, runStartedUtc);
+    Console.WriteLine($"\n报告已写入 {written}");
+}
+
+if (opt.CleanAfter)
+{
+    var freed = Cleaner.Run(root, includeDeps: false);
+    Console.WriteLine($"清理完成：删除 {freed.Files} 个文件，释放约 {freed.Bytes / 1048576.0:F0} MB");
+}
 
 static double Median(List<double> xs)
 {
@@ -470,6 +545,222 @@ static class Setup
     }
 }
 
+static class Preflight
+{
+    public sealed record Snapshot(int Cores, double LoadPercent, string CorpusHash, int CorpusFiles, List<string> Versions);
+
+    public static (Snapshot Snap, List<string> Failures) Check(string root, List<Arm> arms, HashSet<string>? only)
+    {
+        var cores = Environment.ProcessorCount;
+        var load = CpuPercent(cores, 1000);
+
+        var (hash, files) = CorpusHash(root, only);
+        var versions = Versions(root);
+
+        var failures = new List<string>();
+        if (files == 0) failures.Add("语料尚未生成（先跑一次不带 --preflight 的运行）");
+        for (var i = 0; i < arms.Count; i++)
+        {
+            if (arms[i].Ready) continue;
+            failures.Add($"{arms[i].Name} 缺依赖: {string.Join(", ", arms[i].Missing)}");
+        }
+
+        return (new Snapshot(cores, load, hash, files, versions), failures);
+    }
+
+    public static double CpuPercent(int cores, int ms)
+    {
+        var before = new Dictionary<int, TimeSpan>();
+        foreach (var p in Process.GetProcesses())
+        {
+            try { before[p.Id] = p.TotalProcessorTime; } catch { /* 权限不足的进程跳过 */ }
+            p.Dispose();
+        }
+
+        Thread.Sleep(ms);
+
+        double busyMs = 0;
+        foreach (var p in Process.GetProcesses())
+        {
+            try
+            {
+                if (before.TryGetValue(p.Id, out var t0))
+                    busyMs += Math.Max(0, (p.TotalProcessorTime - t0).TotalMilliseconds);
+            }
+            catch { /* 同上 */ }
+            p.Dispose();
+        }
+
+        return busyMs / (ms * (double)cores) * 100.0;
+    }
+
+    static (string Hash, int Files) CorpusHash(string root, HashSet<string>? only)
+    {
+        var dirs = new[]
+        {
+            "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
+            "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
+            "vitepress/docs/posts", "vuepress/docs/posts", "gatsby/content",
+            "hexo/source/_posts", "mkdocs/docs", "pelican/content",
+            "zola/content/blog", "statiq/input/posts",
+        };
+
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        using var stream = new MemoryStream();
+        var count = 0;
+
+        foreach (var rel in dirs)
+        {
+            var dir = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
+            if (!Directory.Exists(dir)) continue;
+
+            var filesInDir = Directory.EnumerateFiles(dir, "page-*.md").OrderBy(x => x, StringComparer.Ordinal).ToArray();
+            foreach (var f in filesInDir)
+            {
+                var name = Encoding.UTF8.GetBytes(Path.GetFileName(f) + "\n");
+                stream.Write(name, 0, name.Length);
+                using var fs = File.OpenRead(f);
+                fs.CopyTo(stream);
+                count++;
+            }
+        }
+
+        var digest = sha.ComputeHash(stream.ToArray());
+        return (Convert.ToHexString(digest)[..16].ToLowerInvariant(), count);
+    }
+
+    static List<string> Versions(string root)
+    {
+        var list = new List<string>();
+        var tools = Path.GetFullPath(Path.Combine(root, "..", "tools"));
+
+        void Probe(string label, string exe, string[] args, string cwd)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(exe)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    WorkingDirectory = cwd,
+                };
+                foreach (var a in args) psi.ArgumentList.Add(a);
+
+                using var p = Process.Start(psi);
+                if (p is null) { list.Add($"{label}: 不可用"); return; }
+                if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } list.Add($"{label}: 超时"); return; }
+                var text = (p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd()).Trim();
+                var first = text.Split('\n').FirstOrDefault()?.Trim() ?? "";
+                list.Add($"{label}: {(first.Length > 90 ? first[..90] : first)}");
+            }
+            catch (Exception ex)
+            {
+                list.Add($"{label}: {ex.Message}");
+            }
+        }
+
+        var hugo = Path.Combine(tools, OperatingSystem.IsWindows() ? "hugo.exe" : "hugo");
+        var zola = Path.Combine(tools, OperatingSystem.IsWindows() ? "zola.exe" : "zola");
+        var flint = Path.Combine(tools, "flint-aot", OperatingSystem.IsWindows() ? "Flint.exe" : "Flint");
+
+        if (File.Exists(hugo)) Probe("hugo", hugo, ["version"], tools);
+        if (File.Exists(zola)) Probe("zola", zola, ["--version"], tools);
+        if (File.Exists(flint)) Probe("flint", flint, ["--version"], tools);
+        Probe("node", "node", ["--version"], root);
+        Probe("dotnet", "dotnet", ["--version"], root);
+
+        return list;
+    }
+}
+
+static class Report
+{
+    public static string Write(
+        string path,
+        Cli opt,
+        Preflight.Snapshot? snap,
+        List<string> failures,
+        List<Arm> arms,
+        List<double>[] times,
+        List<long>[] mems,
+        Audit.Result[] audits,
+        DateTime[] armStart,
+        List<double> loads,
+        int builds,
+        double buildSec,
+        double deleteSec,
+        double totalSec,
+        DateTime startedUtc)
+    {
+        var sb = new StringBuilder();
+        var medians = times.Select(Median).ToArray();
+        var fastest = medians.Min();
+
+        sb.AppendLine("# SSG 万页矩阵性能测试报告");
+        sb.AppendLine();
+        sb.AppendLine($"- 生成时间：{DateTime.Now:yyyy-MM-dd HH:mm:ss}（运行开始 {startedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}）");
+        sb.AppendLine($"- 语料：每臂 {opt.Pages} 页；预热 {opt.Warmup} 轮；计时 {opt.Rounds} 轮取中位");
+        sb.AppendLine($"- 自适应：{(opt.Adaptive ? $"开（慢臂阈值 {opt.SlowThresholdMs}ms）" : "关")}；构建次数 {builds}");
+        if (snap is not null)
+        {
+            sb.AppendLine($"- 机器：{snap.Cores} 逻辑核，运行前 CPU 占用 {snap.LoadPercent:F1}%");
+            sb.AppendLine($"- 语料指纹：{snap.CorpusHash}（{snap.CorpusFiles} 个文件）");
+            if (loads.Count > 0)
+                sb.AppendLine($"- 运行中每轮 CPU 占用：{loads.Min():F1}% 到 {loads.Max():F1}%");
+            sb.AppendLine();
+            sb.AppendLine("## 环境版本");
+            sb.AppendLine();
+            foreach (var v in snap.Versions) sb.AppendLine($"- {v}");
+        }
+
+        if (failures.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("## 门禁告警");
+            sb.AppendLine();
+            foreach (var f in failures) sb.AppendLine($"- {f}");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("## 结果");
+        sb.AppendLine();
+        sb.AppendLine("| 排名 | 引擎 | 中位(ms) | vs 最快 | 峰值RSS(MB) | html | 正文抽样 | 零字节 | 本次新生成 | 判定 |");
+        sb.AppendLine("| --: | --- | --: | --: | --: | --: | --: | --: | --: | --- |");
+
+        var order = Enumerable.Range(0, arms.Count).OrderBy(i => medians[i]).ToArray();
+        for (var r = 0; r < order.Length; r++)
+        {
+            var i = order[r];
+            var a = audits[i];
+            var ok = a.Html > 0 && a.Zero == 0 && a.Fresh > 0 && a.BodySample.Split('/')[0] != "0";
+            sb.AppendLine($"| {r + 1} | {arms[i].Name} | {medians[i]:F0} | {medians[i] / fastest:F2}x | {mems[i].Max() / 1048576.0:F0} | {a.Html} | {a.BodySample} | {a.Zero} | {a.Fresh} | {(ok ? "通过" : "复核")} |");
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("## 用时构成");
+        sb.AppendLine();
+        sb.AppendLine($"- 构建合计 {buildSec:F0}s，删除输出 {deleteSec:F0}s，总用时 {totalSec:F0}s");
+        sb.AppendLine();
+        sb.AppendLine("## 产物校验说明");
+        sb.AppendLine();
+        sb.AppendLine("- 「本次新生成」统计输出目录中修改时间晚于本轮运行开始的文件数，用来排除沿用了上次运行残留产物的情况");
+        sb.AppendLine("- 「正文抽样」抽取至多 100 个页面，检查语料尾句是否出现在产物中，用来排除只产出空壳页面的情况");
+        sb.AppendLine("- 「零字节」为输出目录中 0 字节 html 的数量");
+        sb.AppendLine("- 判定「复核」表示上述任一项不达标，该臂数字不可直接采用");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
+        return path;
+    }
+
+    static double Median(List<double> xs)
+    {
+        var s = xs.OrderBy(x => x).ToList();
+        return s.Count == 0 ? 0 : s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2;
+    }
+}
+
 static class Paths
 {
     public static string Root = "";
@@ -526,15 +817,25 @@ static class Corpus
 
 static class Audit
 {
-    public sealed record Result(int Html, int Zero, string BodySample);
+    public sealed record Result(int Html, int Zero, string BodySample, int Fresh, DateTime NewestUtc);
 
-    public static Result Scan(string pub)
+    public static Result Scan(string pub, DateTime notBeforeUtc = default)
     {
-        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0");
+        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0", 0, default);
 
         var files = Directory.EnumerateFiles(pub, "*.html", SearchOption.AllDirectories).ToArray();
         var zero = files.Count(f => new FileInfo(f).Length == 0);
-        if (files.Length == 0) return new Result(0, zero, "0/0");
+        if (files.Length == 0) return new Result(0, zero, "0/0", 0, default);
+
+        var cutoff = notBeforeUtc == default ? DateTime.MinValue : notBeforeUtc.AddSeconds(-2);
+        var fresh = 0;
+        var newest = DateTime.MinValue;
+        foreach (var f in files)
+        {
+            var t = File.GetLastWriteTimeUtc(f);
+            if (t > newest) newest = t;
+            if (t >= cutoff) fresh++;
+        }
 
         var take = Math.Min(100, files.Length);
         var step = Math.Max(1, files.Length / take);
@@ -542,7 +843,7 @@ static class Audit
         for (var i = 0; i < files.Length && sample.Count < take; i += step) sample.Add(files[i]);
 
         var hit = sample.Count(HasBody);
-        return new Result(files.Length, zero, $"{hit}/{sample.Count}");
+        return new Result(files.Length, zero, $"{hit}/{sample.Count}", fresh, newest);
     }
 
     static bool HasBody(string path)
@@ -570,13 +871,14 @@ static class Audit
 
 static class Run
 {
-    public sealed record Measured(double Ms, long PeakRss, double DeleteMs);
+    public sealed record Measured(double Ms, long PeakRss, double DeleteMs, DateTime StartedUtc);
 
     public static Measured Once(Arm a)
     {
         var deleteSw = Stopwatch.StartNew();
         foreach (var p in a.Clean.Append(a.Pub)) Delete(p);
         deleteSw.Stop();
+        var startedUtc = DateTime.UtcNow;
 
         var psi = new ProcessStartInfo(a.Exe)
         {
@@ -612,7 +914,7 @@ static class Run
             throw new InvalidOperationException(
                 $"{a.Name} 构建失败 exit={p2.ExitCode}\n--- stdout ---\n{Tail(stdout)}\n--- stderr ---\n{Tail(stderr)}");
 
-        return new Measured(sw.Elapsed.TotalMilliseconds, rss, deleteSw.Elapsed.TotalMilliseconds);
+        return new Measured(sw.Elapsed.TotalMilliseconds, rss, deleteSw.Elapsed.TotalMilliseconds, startedUtc);
     }
 
     static string Tail(string s) => s.Length <= 1500 ? s : s[^1500..];
@@ -823,6 +1125,12 @@ sealed class Cli
     public bool Bootstrap;
     public bool Fast;
     public bool Adaptive;
+    public bool Preflight;
+    public bool Force;
+    public bool Report;
+    public bool CleanAfter;
+    public int WaitQuiet;
+    public int MaxLoad = 15;
     public int SlowThresholdMs = 60000;
     public string? Root;
     public string? Flint;
@@ -851,6 +1159,12 @@ sealed class Cli
                 case "--fast": c.Fast = true; break;
                 case "--adaptive": c.Adaptive = true; break;
                 case "--slow-threshold": c.SlowThresholdMs = int.Parse(args[++i]); break;
+                case "--preflight": c.Preflight = true; break;
+                case "--force": c.Force = true; break;
+                case "--max-load": c.MaxLoad = int.Parse(args[++i]); break;
+                case "--report": c.Report = true; break;
+                case "--clean-after": c.CleanAfter = true; break;
+                case "--wait-quiet": c.WaitQuiet = int.Parse(args[++i]); break;
                 case "--root": c.Root = args[++i]; break;
                 case "--flint": c.Flint = args[++i]; break;
                 case "--hugo": c.Hugo = args[++i]; break;
@@ -879,6 +1193,12 @@ sealed class Cli
                           --fast         提速模式 = 关闭预热 + 自适应轮数（慢臂少跑一轮）
                           --adaptive     仅开自适应轮数（首轮超过 --slow-threshold 的臂减一轮）
                           --slow-threshold N  自适应阈值，毫秒（默认 60000）
+                          --preflight    运行前检查：机器负载、语料指纹、版本、各臂就绪
+                          --max-load N   负载门限，百分比（默认 15）
+                          --force        门禁未通过时仍然运行（结果不可对外发布）
+                          --report       运行结束后写 markdown 报告到 results/
+                          --clean-after  报告写完后清理语料与产物
+                          --wait-quiet N 等待安静窗口，最多 N 分钟（连续 3 次采样低于 --max-load）
                           --skip-gen     跳过语料生成
                           --regen        强制重建语料
                           --root PATH    矩阵目录（默认 harness 的上级）
