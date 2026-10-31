@@ -329,10 +329,13 @@ static class Cleaner
         foreach (var file in files)
         {
             if (!Paths.IsInside(file)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {file}");
-            var size = new FileInfo(file).Length;
-            bytes += size;
+            try
+            {
+                bytes += new FileInfo(file).Length;
+                File.Delete(file);
+            }
+            catch (FileNotFoundException) { /* 并发运行可能已先删除 */ }
             count += 1;
-            File.Delete(file);
         }
 
         Console.WriteLine($"  删除生成语料 page-*.md {files.Count} 个文件");
