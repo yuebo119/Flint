@@ -36,8 +36,8 @@ if (opt.Clean || opt.CleanAll)
     var freed = Cleaner.Run(root, opt.CleanAll);
     Console.WriteLine($"已删除 {freed.Files} 个文件，释放约 {freed.Bytes / 1048576.0:F0} MB");
     Console.WriteLine(opt.CleanAll
-        ? "含依赖与构建缓存，下次运行需重新 npm install / dotnet build。"
-        : "依赖（node_modules、bin/obj）保留；语料下次运行会自动重建。");
+        ? "含依赖与二进制（node_modules、bin/obj、benchmarks/tools），下次运行需先 --bootstrap 重建。"
+        : "依赖（node_modules、bin/obj、benchmarks/tools）保留；语料下次运行会自动重建。");
     return;
 }
 
@@ -309,6 +309,15 @@ static class Cleaner
         var files = new List<string>();
         var dirs = new List<string>();
 
+        // 基准二进制（hugo/zola/flint-aot）在矩阵目录之外，Path.Combine(root, "..", "tools")
+        // 由 root 推导而来，不接受任何外部输入；它是唯一被放行的矩阵外目标
+        var tools = Path.GetFullPath(Path.Combine(root, "..", "tools"));
+        bool Allowed(string path)
+        {
+            var full = Path.GetFullPath(path);
+            return Paths.IsInside(full) || full.Equals(tools, StringComparison.OrdinalIgnoreCase);
+        }
+
         // 语料：逐个删除 page-*.md
         foreach (var rel in CorpusDirs)
         {
@@ -324,24 +333,52 @@ static class Cleaner
             else if (File.Exists(path)) files.Add(path);
         }
 
+        // 下载/构建出来的二进制也算依赖：--clean-all 一并清掉，下次由 --bootstrap 重建
+        if (includeDeps && Directory.Exists(tools)) dirs.Add(tools);
+
         long bytes = 0;
         var count = 0;
+        var skipped = new List<string>();
+        // 本次运行的进程目录（dotnet run 时为 harness/bin/Release/<tfm>/）删不掉：
+        // 加载中的 DLL 被锁。识别出来直接跳过并说明，不让一个锁住的目标中断整轮清理
+        var selfDir = Path.GetFullPath(AppContext.BaseDirectory);
+        bool IsSelf(string path) =>
+            selfDir.StartsWith(Path.GetFullPath(path) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
         foreach (var dir in dirs)
         {
-            if (!Paths.IsInside(dir)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {dir}");
+            if (!Allowed(dir)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {dir}");
             var infos = Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
                 .Select(f => new FileInfo(f)).ToList();
             var size = infos.Sum(f => f.Length);
+            var rel = Path.GetRelativePath(root, dir);
+
+            if (IsSelf(dir))
+            {
+                Console.WriteLine($"  跳过 {rel,-38} {size / 1048576.0,8:F1} MB  本次运行的进程目录，运行时被锁");
+                skipped.Add(rel);
+                continue;
+            }
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"  跳过 {rel,-38} {size / 1048576.0,8:F1} MB  被占用，未能删除（{ex.GetType().Name}）");
+                skipped.Add(rel);
+                continue;
+            }
+
             bytes += size;
             count += infos.Count;
-            Console.WriteLine($"  删除 {Path.GetRelativePath(root, dir),-38} {size / 1048576.0,8:F1} MB  ({infos.Count} 文件)");
-            Directory.Delete(dir, recursive: true);
+            Console.WriteLine($"  删除 {rel,-38} {size / 1048576.0,8:F1} MB  ({infos.Count} 文件)");
         }
 
         foreach (var file in files)
         {
-            if (!Paths.IsInside(file)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {file}");
+            if (!Allowed(file)) throw new InvalidOperationException($"拒绝删除矩阵目录之外的路径: {file}");
             try
             {
                 bytes += new FileInfo(file).Length;
@@ -352,6 +389,9 @@ static class Cleaner
         }
 
         Console.WriteLine($"  删除生成语料 page-*.md {files.Count} 个文件");
+        if (skipped.Count > 0)
+            Console.WriteLine($"  未删除：{string.Join("、", skipped)}（本次运行的进程目录，dotnet run 每次从它加载，"
+                + "需进程退出后手工删；用 dotnet publish 出的 exe 运行时不受影响）");
         return (count, bytes);
     }
 }
@@ -1336,8 +1376,9 @@ sealed class Cli
                           --warmup N     预热轮数（默认 1，不计入）
                           --only a,b     只跑指定臂
                           --list         只打印就绪状态
-                          --clean        清理语料、产出与各引擎缓存（保留依赖）
-                          --clean-all    清理上述内容加 node_modules 与 bin/obj
+                          --clean        清理语料、产出与各引擎缓存（保留依赖与二进制）
+                          --clean-all    清理上述内容加 node_modules、bin/obj 与
+                                         benchmarks/tools 里的引擎二进制（下次需 --bootstrap 重建）
                           --bootstrap    自动装配依赖（下载 hugo/zola、构建 Flint AOT、
                                          npm/pip/gem 安装），已就绪的步骤自动跳过；
                                          装配后自动继续跑全量矩阵

@@ -146,18 +146,21 @@ harness 内，拉库即得，无需手动设置。
 
 ## 清理
 
-生成的语料与产出很大（14 份语料约 11MB；MkDocs 万页产出可达 16GB），跑完可一次性清掉：
+生成的语料与产出很大（11 份语料约 11MB；未裁剪导航的 MkDocs 万页产出可达 16GB），
+跑完可一次性清掉：
 
 ```bash
-# 清理语料、产出与各引擎缓存，保留依赖（下次运行自动重建语料）
+# 清理语料、产出与各引擎缓存，保留依赖与二进制（下次运行自动重建语料）
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean
 
-# 连依赖一起清（node_modules 与 bin/obj 也删，下次需重新安装/构建）
+# 连依赖与二进制一起清（node_modules、bin/obj、benchmarks/tools 里的
+# hugo/zola/flint-aot 共约 1GB；下次运行需先 --bootstrap 重建）
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 ```
 
-清理前会逐条打印路径与体积，删除目标限定在矩阵目录内（越界直接拒绝）。
-仓库内本目录只有配置与模板，语料与产出从不入库。
+清理前会逐条打印路径与体积。删除目标只允许两类：矩阵目录内，以及由矩阵根推导出的
+`benchmarks/tools`（引擎二进制，是 `--clean-all` 唯一放行的矩阵外目标），其余越界直接拒绝。
+清理后仓库只剩配置与模板（约 1MB）。
 
 ## 复现注意事项
 
