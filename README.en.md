@@ -24,19 +24,19 @@ delivered as a NativeAOT single file.
 
 **10k-page cold-build matrix (11 engines, 2026-10-31, full-protocol run)**
 
-| Rank | Engine (version) | 10k cold-build median | vs fastest | Language |
-| --: | --- | ---: | ---: | --- |
-| 1 | **Flint Fluid (0.3.0 AOT)** | **2572ms** | **1.00x** | C# (.NET 10) |
-| 2 | Flint Scriban (0.3.0 AOT) | 2901ms | 1.13x | C# (.NET 10) |
-| 3 | Zola 0.23.6 | 4690ms | 1.82x | Rust |
-| 4 | Hugo 0.169.0 (extended) | 5217ms | 2.03x | Go |
-| 5 | Eleventy 3.1.7 | 11553ms | 4.49x | JavaScript (Node) |
-| 6 | MkDocs 1.6.1 (pruned nav) | 13638ms | 5.30x | Python |
-| 7 | Jekyll 4.4.1 | 18220ms | 7.08x | Ruby |
-| 8 | Hexo 8.1.2 | 28196ms | 10.96x | JavaScript (Node) |
-| 9 | VitePress 1.6.4 | 71747ms | 27.90x | TypeScript (Node) |
-| 10 | Gatsby 5.16.1 | 75194ms | 29.24x | JavaScript (Node) |
-| 11 | Astro 7.4.4 | 75651ms | 29.42x | TypeScript (Node) |
+| Rank | Engine (version) | 10k cold-build median | vs fastest | Language | Peak RSS (MB) |
+| --: | --- | ---: | ---: | --- | ---: |
+| 1 | **Flint Fluid (0.3.0 AOT)** | **2572ms** | **1.00x** | C# (.NET 10) | **194** |
+| 2 | Flint Scriban (0.3.0 AOT) | 2901ms | 1.13x | C# (.NET 10) | 341 |
+| 3 | Zola 0.23.6 | 4690ms | 1.82x | Rust | 134 |
+| 4 | Hugo 0.169.0 (extended) | 5217ms | 2.03x | Go | 444 |
+| 5 | Eleventy 3.1.7 | 11553ms | 4.49x | JavaScript (Node) | 434 |
+| 6 | MkDocs 1.6.1 (pruned nav) | 13638ms | 5.30x | Python | 92 |
+| 7 | Jekyll 4.4.1 | 18220ms | 7.08x | Ruby | 157 |
+| 8 | Hexo 8.1.2 | 28196ms | 10.96x | JavaScript (Node) | 811 |
+| 9 | VitePress 1.6.4 | 71747ms | 27.90x | TypeScript (Node) | 3060 |
+| 10 | Gatsby 5.16.1 | 75194ms | 29.24x | JavaScript (Node) | 1592 |
+| 11 | Astro 7.4.4 | 75651ms | 29.42x | TypeScript (Node) | 2473 |
 
 Scope: identical 10,000-page corpus per arm, cold builds, median of 3
 rounds including process startup, single-window run on Windows 10 x64,
