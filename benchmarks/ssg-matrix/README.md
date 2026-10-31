@@ -183,9 +183,9 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
     `npm install` 后如需完全可复现，可自行提交 lock 文件。
 11. **Astro 的构建缓存在 `node_modules/.astro`**（`cacheDir` 默认值，不在站点目录下），
     harness 已把它与 `dist` 一起纳入每轮冷清与 `--clean`；漏删会把内容层缓存算进冷构建。
-12. **Hexo 对机器状态敏感**：同日三个窗口观测 28.2s → 35.4s → 44.2s（3 轮中位，
-    flint 锚臂同期持平），已验证与删除策略无关（串行/并行删除下方向相反）。
-    跨窗口比较该臂只看同窗比值，不引用绝对值。
+12. **Hexo 对机器状态敏感**：同日四个窗口观测 28.2s → 35.4s → 44.2s → 33.5s
+    （3 轮中位，flint 锚臂同期持平甚至更快），已验证与删除策略无关
+    （串行/并行删除下方向相反）。跨窗口比较该臂只看同窗比值，不引用绝对值。
 
 ## 原始日志
 
