@@ -429,27 +429,47 @@ static class Setup
             ?? Environment.GetEnvironmentVariable("HTTP_PROXY")
             ?? Environment.GetEnvironmentVariable("http_proxy");
 
-        // 常见冷启动形态：git 配了代理、shell 环境与系统代理都没配，
-        // HttpClient 直连 GitHub Release 会挂到超时；回退读 git 的代理配置
+        // 显式环境变量优先，不做探测（用户设置即意图）
         if (string.IsNullOrWhiteSpace(proxy))
         {
-            try
-            {
-                var psi = new ProcessStartInfo("git", "config --get http.proxy")
-                {
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                };
-                using var p = Process.Start(psi);
-                var line = p?.StandardOutput.ReadToEnd().Trim();
-                p?.WaitForExit(2000);
-                if (!string.IsNullOrWhiteSpace(line)) proxy = line;
-            }
-            catch { /* git 不存在或未配置则维持默认行为 */ }
+            // 常见冷启动形态：git 配了代理、环境与系统代理都没配。代理可能已停，
+            // 死代理会让下载失败或挂起，所以先探活再采用；探活失败回退直连
+            var gitProxy = TryReadGitProxy();
+            if (gitProxy is not null && ProxyAlive(gitProxy)) proxy = gitProxy;
         }
 
         if (!string.IsNullOrWhiteSpace(proxy)) handler.Proxy = new System.Net.WebProxy(proxy);
         return handler;
+    }
+
+    static string? TryReadGitProxy()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("git", "config --get http.proxy")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+            };
+            using var p = Process.Start(psi);
+            var line = p?.StandardOutput.ReadToEnd().Trim();
+            p?.WaitForExit(2000);
+            return string.IsNullOrWhiteSpace(line) ? null : line;
+        }
+        catch { return null; }
+    }
+
+    static bool ProxyAlive(string proxyUrl)
+    {
+        try
+        {
+            var uri = new Uri(proxyUrl);
+            using var tcp = new System.Net.Sockets.TcpClient();
+            var connect = tcp.ConnectAsync(uri.Host, uri.Port);
+            connect.Wait(1500);
+            return connect.IsCompleted && tcp.Connected;
+        }
+        catch { return false; }
     }
 
     static void Extract(string archive, string entry, string dest)
