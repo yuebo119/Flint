@@ -1,4 +1,4 @@
-// SSG 十四引擎万页矩阵复现器（口径说明见 ../README.md）
+// SSG 十一引擎万页矩阵复现器（口径说明见 ../README.md）
 //
 // 计时：每轮删输出（含各引擎持久缓存）后冷构建，外部计时含进程启动；
 //       预热 1 次（不计入），N 轮取中位，轮序轮转。
@@ -44,20 +44,7 @@ if (opt.Clean || opt.CleanAll)
 if (opt.Bootstrap)
     Setup.Run(root, tools, opt.Only);
 
-var corpora = new[]
-{
-    new CorpusSpec("flint-scriban", "flint-scriban/content", "yaml", null),
-    new CorpusSpec("flint-liquid", "flint-liquid/content", "yaml", null),
-    new CorpusSpec("hugo", "hugo/content/posts", "yaml", null),
-    new CorpusSpec("astro", "astro/src/pages/posts", "yaml", "../../layouts/post.astro"),
-    new CorpusSpec("eleventy", "eleventy/src/posts", "yaml", "post.njk"),
-    new CorpusSpec("jekyll", "jekyll/_docs", "yaml", "default"),
-    new CorpusSpec("vitepress", "vitepress/docs/posts", "yaml", null),
-    new CorpusSpec("gatsby", "gatsby/content", "yaml", null),
-    new CorpusSpec("hexo", "hexo/source/_posts", "yaml", null),
-    new CorpusSpec("mkdocs", "mkdocs/docs", "yaml", null),
-    new CorpusSpec("zola", "zola/content/blog", "toml", null),
-};
+var corpora = MatrixCatalog.Corpora;
 
 if (!opt.SkipGen)
 {
@@ -116,7 +103,7 @@ if (opt.WaitQuiet > 0)
 
 if (opt.Preflight)
 {
-    var (s, failures) = Preflight.Check(root, ready, opt.Only);
+    var (s, failures) = Preflight.Check(root, ready);
     snap = s;
     gateFailures.AddRange(failures);
 
@@ -199,7 +186,7 @@ for (var r = 0; r < opt.Rounds; r++)
 
 total.Stop();
 
-var medians = times.Select(Median).ToArray();
+var medians = times.Select(Stats.Median).ToArray();
 var fastest = medians.Min();
 
 Console.WriteLine($"\n=== {opt.Pages} 页冷构建（{opt.Rounds} 轮中位，外部计时含进程启动）===");
@@ -248,17 +235,42 @@ if (opt.CleanAfter)
     Console.WriteLine($"清理完成：删除 {freed.Files} 个文件，释放约 {freed.Bytes / 1048576.0:F0} MB");
 }
 
-static double Median(List<double> xs)
-{
-    var s = xs.OrderBy(x => x).ToList();
-    return s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2;
-}
-
 static string SourceDir([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;
 
 // ---------------------------------------------------------------- 类型
 
+// 统计单一实现：主流程与报告共用
+static class Stats
+{
+    public static double Median(List<double> xs)
+    {
+        var s = xs.OrderBy(x => x).ToList();
+        return s.Count == 0 ? 0 : s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2;
+    }
+}
+
 sealed record CorpusSpec(string Arm, string Dir, string Kind, string? Layout);
+
+// 语料清单单一事实源：生成（Corpus）、指纹（Preflight）、清理（Cleaner）共用，杜绝三处硬编码漂移
+static class MatrixCatalog
+{
+    public static readonly CorpusSpec[] Corpora =
+    {
+        new("flint-scriban", "flint-scriban/content", "yaml", null),
+        new("flint-liquid", "flint-liquid/content", "yaml", null),
+        new("hugo", "hugo/content/posts", "yaml", null),
+        new("astro", "astro/src/pages/posts", "yaml", "../../layouts/post.astro"),
+        new("eleventy", "eleventy/src/posts", "yaml", "post.njk"),
+        new("jekyll", "jekyll/_docs", "yaml", "default"),
+        new("vitepress", "vitepress/docs/posts", "yaml", null),
+        new("gatsby", "gatsby/content", "yaml", null),
+        new("hexo", "hexo/source/_posts", "yaml", null),
+        new("mkdocs", "mkdocs/docs", "yaml", null),
+        new("zola", "zola/content/blog", "toml", null),
+    };
+
+    public static readonly string[] CorpusDirs = Corpora.Select(c => c.Dir).ToArray();
+}
 
 sealed record Arm(string Name, string Exe, string[] Args, string Cwd, string Pub, string[] Clean)
 {
@@ -270,14 +282,7 @@ sealed record Arm(string Name, string Exe, string[] Args, string Cwd, string Pub
 static class Cleaner
 {
     // 语料目录只删生成的 page-*.md（目录内的 index.md / _index.md 是脚手架）
-    static readonly string[] CorpusDirs =
-    {
-        "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
-        "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
-        "vitepress/docs/posts", "gatsby/content",
-        "hexo/source/_posts", "mkdocs/docs",
-        "zola/content/blog",
-    };
+    static readonly string[] CorpusDirs = MatrixCatalog.CorpusDirs;
 
     // 产出与各引擎持久缓存：整目录删除
     static readonly string[] Outputs =
@@ -398,7 +403,7 @@ static class Setup
 
     static void EnsureBinary(string tools, string name, string urlBase, string asset, string entry)
     {
-        var dest = Path.Combine(tools, ExecutableName(name));
+        var dest = Path.Combine(tools, ToolLocator.Exe(name));
         if (File.Exists(dest)) { Skip($"{name} 已存在: {Path.GetFileName(dest)}"); return; }
 
         Step($"{name}: 下载 {asset}", () =>
@@ -452,7 +457,7 @@ static class Setup
 
     static void EnsureFlint(string root, string tools)
     {
-        var dest = Path.Combine(tools, "flint-aot", ExecutableName("Flint"));
+        var dest = Path.Combine(tools, "flint-aot", ToolLocator.Exe("Flint"));
         if (File.Exists(dest)) { Skip("Flint AOT 已存在"); return; }
 
         Step("Flint: dotnet publish AOT（约 1-3 分钟）", () =>
@@ -504,8 +509,6 @@ static class Setup
     static void Fail(string label) => Console.WriteLine($"  失败 {label}");
     static string Tail(string s) => s.Length <= 600 ? s : s[^600..];
 
-    static string ExecutableName(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
-
     static string Rid() => (OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), System.Runtime.InteropServices.RuntimeInformation.OSArchitecture) switch
     {
         (true, _, System.Runtime.InteropServices.Architecture.Arm64) => "win-arm64",
@@ -540,31 +543,19 @@ static class Setup
 
     static string ZolaEntry() => OperatingSystem.IsWindows() ? "zola.exe" : "zola";
 
-    static string? Find(string name)
-    {
-        var exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat", "" } : new[] { "" };
-        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            foreach (var ext in exts)
-            {
-                var candidate = Path.Combine(dir.Trim(), name + ext);
-                if (File.Exists(candidate)) return candidate;
-            }
-        }
-        return null;
-    }
+    static string? Find(string name) => ToolLocator.Find(null, null, name);
 }
 
 static class Preflight
 {
     public sealed record Snapshot(int Cores, double LoadPercent, string CorpusHash, int CorpusFiles, List<string> Versions);
 
-    public static (Snapshot Snap, List<string> Failures) Check(string root, List<Arm> arms, HashSet<string>? only)
+    public static (Snapshot Snap, List<string> Failures) Check(string root, List<Arm> arms)
     {
         var cores = Environment.ProcessorCount;
         var load = CpuPercent(cores, 1000);
 
-        var (hash, files) = CorpusHash(root, only);
+        var (hash, files) = CorpusHash(root);
         var versions = Versions(root);
 
         var failures = new List<string>();
@@ -604,22 +595,13 @@ static class Preflight
         return busyMs / (ms * (double)cores) * 100.0;
     }
 
-    static (string Hash, int Files) CorpusHash(string root, HashSet<string>? only)
+    static (string Hash, int Files) CorpusHash(string root)
     {
-        var dirs = new[]
-        {
-            "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
-            "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
-            "vitepress/docs/posts", "gatsby/content",
-            "hexo/source/_posts", "mkdocs/docs",
-            "zola/content/blog",
-        };
-
         using var sha = System.Security.Cryptography.SHA256.Create();
         using var stream = new MemoryStream();
         var count = 0;
 
-        foreach (var rel in dirs)
+        foreach (var rel in MatrixCatalog.CorpusDirs)
         {
             var dir = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
             if (!Directory.Exists(dir)) continue;
@@ -706,7 +688,7 @@ static class Report
         DateTime startedUtc)
     {
         var sb = new StringBuilder();
-        var medians = times.Select(Median).ToArray();
+        var medians = times.Select(Stats.Median).ToArray();
         var fastest = medians.Min();
 
         sb.AppendLine("# SSG 万页矩阵性能测试报告");
@@ -774,12 +756,6 @@ static class Report
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
         return path;
     }
-
-    static double Median(List<double> xs)
-    {
-        var s = xs.OrderBy(x => x).ToList();
-        return s.Count == 0 ? 0 : s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2;
-    }
 }
 
 static class Paths
@@ -791,6 +767,33 @@ static class Paths
         var full = Path.GetFullPath(path);
         return full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
+}
+
+// 可执行文件定位单一事实源：Arms/Setup/Preflight 共用（原三处各有一份 PATH 搜索与 exe 名逻辑）
+static class ToolLocator
+{
+    public static string? Find(string? explicitPath, string? preferred, string name)
+    {
+        if (!string.IsNullOrWhiteSpace(explicitPath))
+            return File.Exists(explicitPath) ? Path.GetFullPath(explicitPath) : null;
+
+        if (preferred is not null && File.Exists(preferred))
+            return Path.GetFullPath(preferred);
+
+        var exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat", "" } : new[] { "" };
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var ext in exts)
+            {
+                var candidate = Path.Combine(dir.Trim(), name + ext);
+                if (File.Exists(candidate)) return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    public static string Exe(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
 }
 
 static class Corpus
@@ -837,27 +840,24 @@ static class Corpus
 
 static class Audit
 {
-    public sealed record Result(int Html, int Zero, string BodySample, int Fresh, DateTime NewestUtc, long Bytes);
+    public sealed record Result(int Html, int Zero, string BodySample, int Fresh, long Bytes);
 
     public static Result Scan(string pub, DateTime notBeforeUtc = default)
     {
-        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0", 0, default, 0);
+        if (!Directory.Exists(pub)) return new Result(0, 0, "0/0", 0, 0);
 
         var files = Directory.EnumerateFiles(pub, "*.html", SearchOption.AllDirectories).ToArray();
         var zero = files.Count(f => new FileInfo(f).Length == 0);
-        if (files.Length == 0) return new Result(0, zero, "0/0", 0, default, 0);
+        if (files.Length == 0) return new Result(0, zero, "0/0", 0, 0);
 
         var cutoff = notBeforeUtc == default ? DateTime.MinValue : notBeforeUtc.AddSeconds(-2);
         var fresh = 0;
-        var newest = DateTime.MinValue;
         long bytes = 0;
         foreach (var f in files)
         {
             var info = new FileInfo(f);
             bytes += info.Length;
-            var t = info.LastWriteTimeUtc;
-            if (t > newest) newest = t;
-            if (t >= cutoff) fresh++;
+            if (info.LastWriteTimeUtc >= cutoff) fresh++;
         }
 
         var take = Math.Min(100, files.Length);
@@ -866,7 +866,7 @@ static class Audit
         for (var i = 0; i < files.Length && sample.Count < take; i += step) sample.Add(files[i]);
 
         var hit = sample.Count(HasBody);
-        return new Result(files.Length, zero, $"{hit}/{sample.Count}", fresh, newest, bytes);
+        return new Result(files.Length, zero, $"{hit}/{sample.Count}", fresh, bytes);
     }
 
     static bool HasBody(string path)
@@ -980,12 +980,12 @@ static class Arms
     {
         var list = new List<Arm>();
 
-        var flint = Find(opt.Flint, Path.Combine(tools, "flint-aot", Exe("Flint")), "flint");
-        var hugo = Find(opt.Hugo, Path.Combine(tools, Exe("hugo")), "hugo");
-        var zola = Find(opt.Zola, Path.Combine(tools, Exe("zola")), "zola");
-        var node = Find(opt.Node, null, "node");
+        var flint = ToolLocator.Find(opt.Flint, Path.Combine(tools, "flint-aot", Exe("Flint")), "flint");
+        var hugo = ToolLocator.Find(opt.Hugo, Path.Combine(tools, Exe("hugo")), "hugo");
+        var zola = ToolLocator.Find(opt.Zola, Path.Combine(tools, Exe("zola")), "zola");
+        var node = ToolLocator.Find(opt.Node, null, "node");
         var python = opt.Python ?? DefaultPython();
-        var jekyll = Find(null, null, "jekyll");
+        var jekyll = ToolLocator.Find(null, null, "jekyll");
 
         string P(params string[] parts) => Path.Combine(new[] { root }.Concat(parts).ToArray());
         var outRoot = P("_out");
@@ -1043,7 +1043,7 @@ static class Arms
         var jekyllSite = P("jekyll");
         var jekyllOut = Path.Combine(outRoot, "jekyll");
         var jekyllClean = new[] { Path.Combine(jekyllSite, ".jekyll-cache"), Path.Combine(jekyllSite, ".jekyll-metadata") };
-        var ruby = Find(null, null, "ruby");
+        var ruby = ToolLocator.Find(null, null, "ruby");
         if (ruby is not null)
             Add("jekyll", ruby, ["-S", "jekyll", "build", "-s", jekyllSite, "-d", jekyllOut], jekyllSite, jekyllOut, jekyllClean,
                 "ruby（gem install jekyll）");
@@ -1073,36 +1073,15 @@ static class Arms
     }
 
 
-    static string? Find(string? explicitPath, string? preferred, string name)
-    {
-        if (!string.IsNullOrWhiteSpace(explicitPath))
-            return File.Exists(explicitPath) ? Path.GetFullPath(explicitPath) : null;
-
-        if (preferred is not null && File.Exists(preferred))
-            return Path.GetFullPath(preferred);
-
-        var exts = OperatingSystem.IsWindows() ? new[] { ".exe", ".cmd", ".bat", "" } : new[] { "" };
-        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            foreach (var ext in exts)
-            {
-                var candidate = Path.Combine(dir.Trim(), name + ext);
-                if (File.Exists(candidate)) return candidate;
-            }
-        }
-
-        return null;
-    }
-
-    static string Exe(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
+    static string Exe(string name) => ToolLocator.Exe(name);
 
     static string? DefaultPython()
     {
         // 优先真实解释器（python.exe 直接托管引擎进程）；py.exe 是启动器，
         // 内存采样会落在启动器上而不是引擎进程，只在必须时兜底
-        return Find(null, null, "python")
-            ?? Find(null, null, "python3")
-            ?? Find(null, null, "py");
+        return ToolLocator.Find(null, null, "python")
+            ?? ToolLocator.Find(null, null, "python3")
+            ?? ToolLocator.Find(null, null, "py");
     }
 }
 

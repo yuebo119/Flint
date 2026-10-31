@@ -417,8 +417,10 @@ VitePress 每页 14KB（200 页）到 426KB（万页）的来源是客户端路�
 
 ### 12.7 复现
 
-矩阵资产已入库 `benchmarks/ssg-matrix/`：14 个站点的脚手架（配置与模板、
-依赖版本锁定）、语料生成器、计时与内存峰值采样、产物审计，一条命令跑完。
+矩阵资产已入库 `benchmarks/ssg-matrix/`：11 个站点的脚手架（配置与模板、
+依赖版本锁定；12.6 清单调整时已移除 Pelican/VuePress/Statiq，历史脚手架
+可从 git 检出 982dad3 之前的提交找回）、语料生成器、计时与内存峰值采样、
+产物审计，一条命令跑完。
 
 ```bash
 dotnet run --project benchmarks/ssg-matrix/harness -c Release          # 默认 10000 页 / 3 轮

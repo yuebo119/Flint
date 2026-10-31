@@ -1,6 +1,6 @@
-# SSG 万页矩阵（14 引擎）
+# SSG 万页矩阵（11 引擎）
 
-README 与 [REPORT.md](../REPORT.md) §12 的十四引擎矩阵就由这套资产复现：站点脚手架、
+README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套资产复现：站点脚手架、
 语料生成器、计时与内存采样、产物审计都在本目录，一条命令跑完。
 
 ## 测量口径
@@ -189,9 +189,11 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 
 ## 原始日志
 
-`results/` 保存实测轮的原始输出与 markdown 报告（2026-10-30 两轮、2026-10-31
-十一臂基线与最优配置审计轮），数字与 [REPORT.md](../REPORT.md) §12 对应，
-可用于核对。
+`results/` 只保留对外数字对应的原始记录：2026-10-30 两轮（`ssg14-*.log`）、
+2026-10-31 十一臂基线（`run11.log` + `run-…-162947.md`）、最优配置审计轮
+（`run-…-192507.md`）与同配置复现轮（`run-…-202016.md`），外加 12.5 审计的
+eleventy 修复验证日志（`eleventy-remake.log`）。数字与 [REPORT.md](../REPORT.md)
+§12 对应，可用于核对；中间过程日志不入库。
 
 ## 目录结构
 
@@ -208,8 +210,7 @@ benchmarks/ssg-matrix/
 ├── jekyll/           _config.yml + _layouts + index.html
 ├── vitepress/        docs/{index.md,.vitepress}
 ├── gatsby/           gatsby-config.js + gatsby-node.js + src/
-├── mkdocs/           mkdocs.yml + docs/index.md
-└── （pelican/、vuepress/、statiq/ 目录保留，暂不纳入矩阵）
+└── mkdocs/           mkdocs.yml + docs/index.md
 ```
 
 语料目录（各站的 `content/`、`docs/posts/`、`src/pages/posts/` 等）由 harness 生成后存在，
