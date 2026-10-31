@@ -25,5 +25,7 @@ page-*.md
 
 # 本地杂项
 *.log
+!results/*.log
 _out/
 .hugo_build.lock
+_navtest/

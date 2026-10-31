@@ -132,10 +132,12 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 3. **各引擎的持久缓存必须一起删**：Jekyll 的 `.jekyll-cache`、Gatsby 的 `.cache`、
    Hexo 的 `db.json`、VitePress 的 `.vitepress/cache`、VuePress 的 `.cache/.temp`、
    Statiq 的 `cache/temp`。漏删会把增量收益算进冷构建。
-4. **MkDocs 默认主题把全站导航内联进每一页**：单页大小与站点页数线性相关（实测
-   200 页 41.7KB / 203 个链接，1000 页 178.5KB / 1003 个链接），万页时单页约
-   1.65MB、总写盘 16GB。这是无 `nav` 配置时的默认形态，不是配置错误，也是它排在
-   末位的主因之一。
+4. **MkDocs 默认主题把全站导航内联进每一页**：`nav` 未配置时由文件树自动生成，
+   默认主题会把整棵导航渲染进每页侧栏，因此单页大小与站点页数线性相关（实测
+   200 页 41.7KB / 203 个链接，1000 页 178.5KB / 1003 个链接）。导航可以裁剪：
+   把 `nav` 限定为少数条目后，同样 200 页的单页降到 6,450 字节、链接 2 个。
+   本矩阵保留默认形态，理由是各臂都取开箱默认配置，换用带导航剪枝的第三方主题
+   会破坏可比性；需要更接近真实运营站点时，给 `mkdocs/mkdocs.yml` 补 `nav` 即可。
 5. **VitePress 每页内联站点级路由哈希表**（`__VP_HASH_MAP__`）：1,000 页时占单页
    48KB 的 87%，万页时单页约 426KB、总产出 4.3GB，同样是 O(N²) 的默认设计。
    VitePress 的构建缓存在 `<站点>/.vitepress/cache`，配置必须放在站点根
