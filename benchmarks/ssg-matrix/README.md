@@ -46,7 +46,9 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 
 ## 一键装配
 
-拉库后先跑一次装配，把二进制、依赖与 Flint AOT 产物准备好；已就绪的步骤自动跳过：
+拉库后先跑一次装配，把二进制、依赖与 Flint AOT 产物准备好；已就绪的步骤自动跳过。
+装配完成后命令会继续自动跑一遍默认全量矩阵（万页 × 预热 1 + 3 轮），
+一条命令从零到报告，约 25 分钟：
 
 ```bash
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap

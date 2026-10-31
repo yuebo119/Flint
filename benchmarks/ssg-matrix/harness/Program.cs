@@ -1209,7 +1209,8 @@ sealed class Cli
                           --clean        清理语料、产出与各引擎缓存（保留依赖）
                           --clean-all    清理上述内容加 node_modules 与 bin/obj
                           --bootstrap    自动装配依赖（下载 hugo/zola、构建 Flint AOT、
-                                         npm/pip/gem 安装），已就绪的步骤自动跳过
+                                         npm/pip/gem 安装），已就绪的步骤自动跳过；
+                                         装配后自动继续跑全量矩阵
                           --fast         提速模式 = 关闭预热 + 自适应轮数（慢臂少跑一轮）
                           --adaptive     仅开自适应轮数（首轮超过 --slow-threshold 的臂减一轮）
                           --slow-threshold N  自适应阈值，毫秒（默认 60000）
