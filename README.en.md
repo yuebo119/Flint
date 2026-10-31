@@ -22,34 +22,35 @@ delivered as a NativeAOT single file.
 
 ---
 
-**10k-page cold-build matrix (14 engines, 2026-10-30, all engines latest)**
+**10k-page cold-build matrix (11 engines, 2026-10-31, full-protocol run)**
 
 | Rank | Engine (version) | 10k cold-build median | vs fastest | Language |
 | --: | --- | ---: | ---: | --- |
-| 1 | **Flint Fluid (0.3.0 AOT)** | **2717ms** | **1.00x** | C# (.NET 10) |
-| 2 | Flint Scriban (0.3.0 AOT) | 3069ms | 1.13x | C# (.NET 10) |
-| 3 | Zola 0.23.6 | 4405ms | 1.62x | Rust |
-| 4 | Hugo 0.169.0 (extended) | 5691ms | 2.09x | Go |
-| 5 | Eleventy 3.1.7 | 10558ms | 3.89x | JavaScript (Node) |
-| 6 | Jekyll 4.4.1 | 17245ms | 6.35x | Ruby |
-| 7 | Pelican 4.12.0 | 18012ms | 6.63x | Python |
-| 8 | Hexo 8.1.2 | 34566ms | 12.72x | JavaScript (Node) |
-| 9 | Gatsby 5.16.1 | 62651ms | 23.06x | JavaScript (Node) |
-| 10 | Astro 7.4.4 | 68563ms | 25.24x | TypeScript (Node) |
-| 11 | VitePress 1.6.4 | 81165ms | 29.87x | TypeScript (Node) |
-| 12 | VuePress 2.0.0-rc.31 | 94209ms | 34.67x | TypeScript (Node) |
-| 13 | Statiq 1.0.0 (JIT, .NET 10) | 231107ms | 85.06x | C# (.NET 10) |
-| 14 | MkDocs 1.6.1 | 252975ms | 93.11x | Python |
+| 1 | **Flint Fluid (0.3.0 AOT)** | **2572ms** | **1.00x** | C# (.NET 10) |
+| 2 | Flint Scriban (0.3.0 AOT) | 2901ms | 1.13x | C# (.NET 10) |
+| 3 | Zola 0.23.6 | 4690ms | 1.82x | Rust |
+| 4 | Hugo 0.169.0 (extended) | 5217ms | 2.03x | Go |
+| 5 | Eleventy 3.1.7 | 11553ms | 4.49x | JavaScript (Node) |
+| 6 | MkDocs 1.6.1 (pruned nav) | 13638ms | 5.30x | Python |
+| 7 | Jekyll 4.4.1 | 18220ms | 7.08x | Ruby |
+| 8 | Hexo 8.1.2 | 28196ms | 10.96x | JavaScript (Node) |
+| 9 | VitePress 1.6.4 | 71747ms | 27.90x | TypeScript (Node) |
+| 10 | Gatsby 5.16.1 | 75194ms | 29.24x | JavaScript (Node) |
+| 11 | Astro 7.4.4 | 75651ms | 29.42x | TypeScript (Node) |
 
 Scope: identical 10,000-page corpus per arm, cold builds, median of 3
 rounds including process startup, single-window run on Windows 10 x64,
 ratios normalized to the fastest arm; across machines only the ranking
 holds.
 
-Checks: output symmetry (complete bodies, no empty shells); apart from the
-VitePress rank corrected by a cold-build re-measurement, the ranking holds
-across three rounds in two windows. Per-round details in
+Checks: pre-run gate (13% CPU), per-round load recorded, every arm passed
+the "freshly generated" and body-sample checks. Per-round details in
 [benchmarks/REPORT.md](benchmarks/REPORT.md).
+
+Notes: MkDocs runs with a pruned nav (`nav` lists only the home page; all
+10k pages are still rendered); VitePress enables `metaChunk` and disables
+preload (output drops from 3.6GB to 62MB). The three long-tail engines
+(Pelican, VuePress, Statiq) are not part of this round.
 
 ---
 
@@ -429,7 +430,7 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 | Quality assurance | **perf gate + property testing** | — | — | — | — | — |
 | Console encoding | **forced UTF-8** | GBK on Windows | UTF-8 | UTF-8 | UTF-8 | UTF-8 |
 
-> Build-performance figures come from the fourteen-engine same-window matrix
+> Build-performance figures come from the eleven-engine same-window matrix
 > measured 2026-10-30 with every engine at its latest stable release that day
 > (same-machine 10k-page cold builds, ratios normalized to the fastest arm,
 > full matrix at the top of this document; Docusaurus was excluded after
@@ -532,14 +533,14 @@ dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # Theme migrator
 dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools / toolchain
 dotnet run --project tests/Flint.PerformanceTests -c Release    # Performance suite (in-process)
 
-# Benchmarks (Flint vs Hugo; the 14-engine matrix follows below)
+# Benchmarks (Flint vs Hugo; the 11-engine matrix follows below)
 dotnet run --project src/Flint.DevTools -- bench ssg          # 10k-page cold build
 dotnet run --project src/Flint.DevTools -- bench complexity   # Complexity ladder
 dotnet run --project src/Flint.DevTools -- bench memory       # Peak memory sampling
 dotnet run --project src/Flint.DevTools -- perf run           # Perf suite + HTML report
 dotnet run --project src/Flint.DevTools -- perf gate          # Regression gate
 
-# 14-engine matrix (reproduces the matrix table; setup and caveats in
+# 11-engine matrix (reproduces the matrix table; setup and caveats in
 # benchmarks/ssg-matrix/README.md)
 dotnet run --project benchmarks/ssg-matrix/harness -c Release           # full matrix (10k pages, 3 rounds)
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # readiness check
@@ -559,7 +560,7 @@ Flint/
 ├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance suites
 ├── demo-sites/                  # Demo sites (21 themes + gallery + shared corpus)
 ├── theme-migrator/              # Migration corpus (themes/ clones, candidates/)
-└── benchmarks/                  # Performance benchmarks (corpora/reports/gate + the 14-engine ssg-matrix)
+└── benchmarks/                  # Performance benchmarks (corpora/reports/gate + the 11-engine ssg-matrix)
 ```
 
 ---

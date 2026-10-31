@@ -53,13 +53,10 @@ var corpora = new[]
     new CorpusSpec("eleventy", "eleventy/src/posts", "yaml", "post.njk"),
     new CorpusSpec("jekyll", "jekyll/_docs", "yaml", "default"),
     new CorpusSpec("vitepress", "vitepress/docs/posts", "yaml", null),
-    new CorpusSpec("vuepress", "vuepress/docs/posts", "yaml", null),
     new CorpusSpec("gatsby", "gatsby/content", "yaml", null),
     new CorpusSpec("hexo", "hexo/source/_posts", "yaml", null),
     new CorpusSpec("mkdocs", "mkdocs/docs", "yaml", null),
-    new CorpusSpec("pelican", "pelican/content", "pelican", null),
     new CorpusSpec("zola", "zola/content/blog", "toml", null),
-    new CorpusSpec("statiq", "statiq/input/posts", "yaml", "/_Layout.cshtml"),
 };
 
 if (!opt.SkipGen)
@@ -266,9 +263,9 @@ static class Cleaner
     {
         "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
         "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
-        "vitepress/docs/posts", "vuepress/docs/posts", "gatsby/content",
-        "hexo/source/_posts", "mkdocs/docs", "pelican/content",
-        "zola/content/blog", "statiq/input/posts",
+        "vitepress/docs/posts", "gatsby/content",
+        "hexo/source/_posts", "mkdocs/docs",
+        "zola/content/blog",
     };
 
     // 产出与各引擎持久缓存：整目录删除
@@ -278,17 +275,15 @@ static class Cleaner
         "zola/public", "eleventy/_site", "astro/dist", "hexo/public", "hexo/db.json",
         "gatsby/public", "gatsby/.cache",
         "vitepress/.vitepress/dist", "vitepress/.vitepress/cache", "vitepress/.vitepress/.temp",
-        "vuepress/docs/.vuepress/dist", "vuepress/docs/.vuepress/cache", "vuepress/docs/.vuepress/.temp",
         "jekyll/.jekyll-cache", "jekyll/.jekyll-metadata",
-        "statiq/output", "statiq/cache", "statiq/temp",
         "hugo/.hugo_build.lock",
     };
 
     static readonly string[] Dependencies =
     {
         "eleventy/node_modules", "hexo/node_modules", "vitepress/node_modules",
-        "astro/node_modules", "gatsby/node_modules", "vuepress/node_modules",
-        "statiq/bin", "statiq/obj", "harness/bin", "harness/obj",
+        "astro/node_modules", "gatsby/node_modules",
+        "harness/bin", "harness/obj",
     };
 
     public static (int Files, long Bytes) Run(string root, bool includeDeps)
@@ -359,7 +354,7 @@ static class Setup
         if (Want("zola")) EnsureBinary(tools, "zola", ZolaBase(), ZolaAsset(), ZolaEntry());
         if (Want("flint-scriban") || Want("flint-liquid")) EnsureFlint(root, tools);
 
-        foreach (var name in new[] { "astro", "eleventy", "hexo", "gatsby", "vitepress", "vuepress" })
+        foreach (var name in new[] { "astro", "eleventy", "hexo", "gatsby", "vitepress" })
         {
             if (!Want(name)) continue;
             var site = Path.Combine(root, name);
@@ -370,7 +365,7 @@ static class Setup
         }
 
         var python = Find("python") ?? Find("python3") ?? Find("py");
-        foreach (var module in new[] { "pelican", "mkdocs" })
+        foreach (var module in new[] { "mkdocs" })
         {
             if (!Want(module)) continue;
             if (python is null) { Fail($"{module}: 未找到 python"); continue; }
@@ -603,9 +598,9 @@ static class Preflight
         {
             "flint-scriban/content", "flint-liquid/content", "hugo/content/posts",
             "astro/src/pages/posts", "eleventy/src/posts", "jekyll/_docs",
-            "vitepress/docs/posts", "vuepress/docs/posts", "gatsby/content",
-            "hexo/source/_posts", "mkdocs/docs", "pelican/content",
-            "zola/content/blog", "statiq/input/posts",
+            "vitepress/docs/posts", "gatsby/content",
+            "hexo/source/_posts", "mkdocs/docs",
+            "zola/content/blog",
         };
 
         using var sha = System.Security.Cryptography.SHA256.Create();
@@ -802,7 +797,6 @@ static class Corpus
             var text = kind switch
             {
                 "toml" => $"+++\ntitle = \"Page {i}\"\ndate = {d:yyyy-MM-dd}T10:00:00+08:00\n+++\n\n{Body}\n",
-                "pelican" => $"Title: Page {i}\nDate: {d:yyyy-MM-dd} 10:00:00\n\n{Body}\n",
                 _ => $"---\ntitle: \"Page {i}\"\n{(layout is null ? "" : $"layout: {layout}\n")}date: {d:yyyy-MM-dd}T10:00:00+08:00\n---\n\n{Body}\n",
             };
             File.WriteAllText(Path.Combine(dir, $"page-{i:D5}.md"), text, utf8);
@@ -990,16 +984,8 @@ static class Arms
             [Path.Combine(vitepress, ".vitepress", "cache"), Path.Combine(vitepress, ".vitepress", ".temp")], "node");
         RequireDir(list, "vitepress", Path.Combine(vitepress, "node_modules", "vitepress"), "vitepress/node_modules（npm install）");
 
-        var vuepress = P("vuepress");
-        Add("vuepress", node, [Path.Combine(vuepress, "node_modules", "vuepress", "bin", "vuepress.js"), "build", "docs"],
-            vuepress, Path.Combine(vuepress, "docs", ".vuepress", "dist"),
-            [Path.Combine(vuepress, "docs", ".vuepress", "cache"), Path.Combine(vuepress, "docs", ".vuepress", ".temp")], "node");
-        RequireDir(list, "vuepress", Path.Combine(vuepress, "node_modules", "vuepress"), "vuepress/node_modules（npm install）");
 
         // --- Python 系 ---
-        var pelican = P("pelican");
-        Add("pelican", python, ["-m", "pelican", "content", "-o", Path.Combine(outRoot, "pelican"), "-s", "pelicanconf.py"],
-            pelican, Path.Combine(outRoot, "pelican"), [], "python（--python）");
 
         var mkdocs = P("mkdocs");
         Add("mkdocs", python, ["-m", "mkdocs", "build", "-d", Path.Combine(outRoot, "mkdocs")],
@@ -1021,21 +1007,6 @@ static class Arms
             Add("jekyll", jekyll, ["build", "-s", jekyllSite, "-d", jekyllOut], jekyllSite, jekyllOut, jekyllClean,
                 "jekyll（gem install jekyll）");
 
-        // --- Statiq：先构建 runner，再直接跑 dll（构建时间不计入） ---
-        var statiqSite = P("statiq");
-        var statiqDll = Path.Combine(statiqSite, "bin", "Release", "net10.0", "SsgMatrix.Statiq.dll");
-        var wantStatiq = opt.Only is null || opt.Only.Contains("statiq");
-        if (wantStatiq && !File.Exists(statiqDll))
-        {
-            Console.WriteLine("\n构建 Statiq runner（一次性，不计入计时）…");
-            statiqDll = BuildStatiq(statiqSite) ?? statiqDll;
-        }
-        var dotnet = Find(null, null, "dotnet");
-        Add("statiq", File.Exists(statiqDll) ? dotnet : null,
-            [statiqDll, "--root", statiqSite], root, Path.Combine(statiqSite, "output"),
-            [Path.Combine(statiqSite, "cache"), Path.Combine(statiqSite, "temp")],
-            "dotnet SDK + Statiq runner 构建（见 README）");
-
         return list;
 
         void Add(string name, string? exe, string[] a, string cwd, string pub, string[] clean, string need)
@@ -1052,38 +1023,6 @@ static class Arms
         }
     }
 
-    static string? BuildStatiq(string site)
-    {
-        var psi = new ProcessStartInfo("dotnet")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            WorkingDirectory = site,
-        };
-        foreach (var x in new[] { "build", "-c", "Release", "--nologo", "-v", "q" }) psi.ArgumentList.Add(x);
-
-        try
-        {
-            using var p = Process.Start(psi);
-            if (p is null) return null;
-            var stdout = p.StandardOutput.ReadToEndAsync();
-            var stderr = p.StandardError.ReadToEndAsync();
-            p.WaitForExit();
-            if (p.ExitCode != 0)
-            {
-                Console.WriteLine($"Statiq runner 构建失败:\n{stdout.GetAwaiter().GetResult()}\n{stderr.GetAwaiter().GetResult()}");
-                return null;
-            }
-            var dll = Path.Combine(site, "bin", "Release", "net10.0", "SsgMatrix.Statiq.dll");
-            return File.Exists(dll) ? dll : null;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Statiq runner 构建异常: {ex.Message}");
-            return null;
-        }
-    }
 
     static string? Find(string? explicitPath, string? preferred, string name)
     {

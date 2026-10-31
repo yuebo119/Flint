@@ -6,4 +6,7 @@ export default defineConfig({
   title: 'SSG Bench',
   description: 'bench',
   srcDir: 'docs',
+  // 体积对照实验：把页面元数据合并成单个 chunk，并去掉每页的预加载链接
+  metaChunk: true,
+  shouldPreload: false,
 });

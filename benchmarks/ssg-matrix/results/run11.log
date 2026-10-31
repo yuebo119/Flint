@@ -1,0 +1,129 @@
+矩阵根: C:\ai\kiro\Flint\Flint\benchmarks\ssg-matrix
+语料: 10000 页/臂 · 轮数 3 · 预热 1
+
+--- 语料 ---
+  flint-scriban/content: 就绪（10000 页）
+  flint-liquid/content: 就绪（10000 页）
+  hugo/content/posts: 就绪（10000 页）
+  astro/src/pages/posts: 就绪（10000 页）
+  eleventy/src/posts: 就绪（10000 页）
+  jekyll/_docs: 就绪（10000 页）
+  vitepress/docs/posts: 就绪（10000 页）
+  gatsby/content: 就绪（10000 页）
+  hexo/source/_posts: 就绪（10000 页）
+  mkdocs/docs: 就绪（10000 页）
+  zola/content/blog: 就绪（10000 页）
+
+--- 就绪状态（11 臂）---
+flint-scriban  OK
+flint-liquid   OK
+hugo           OK
+zola           OK
+astro          OK
+eleventy       OK
+hexo           OK
+gatsby         OK
+vitepress      OK
+mkdocs         OK
+jekyll         OK
+
+--- 等待安静窗口（最多 20 分钟，需连续 3 次采样低于 15%）---
+[16:04:45] CPU 8.6%  连续安静 1/3
+[16:05:01] CPU 5.3%  连续安静 2/3
+[16:05:17] CPU 14.0%  连续安静 3/3
+窗口已安静，进入门禁检查。
+
+--- 运行前检查 ---
+机器: 32 逻辑核 · 当前 CPU 占用 13.0%
+语料: 110000 个文件 · 指纹 5295e04953953f7b
+  hugo: hugo v0.169.0-1da10fc44701c566b1669cdb2d12638f155138bd+extended windows/amd64 BuildDate=20
+  zola: zola 0.23.6
+  flint: 0.3.0+670fbfa67d84981a02f64af8c42ad01a25316d7d
+  node: v24.20.0
+  dotnet: 10.0.403
+门禁通过。
+
+--- 预热（1 轮，不计入）---
+flint-scriban       2773 ms（预热）
+flint-liquid        2678 ms（预热）
+hugo                5312 ms（预热）
+zola                4354 ms（预热）
+astro              80284 ms（预热）
+eleventy           12143 ms（预热）
+hexo               36836 ms（预热）
+gatsby             77272 ms（预热）
+vitepress          69450 ms（预热）
+mkdocs             16067 ms（预热）
+jekyll             19735 ms（预热）
+
+--- 第 1/3 轮（首臂 flint-scriban，16:11:00，CPU 占用 14.9%）---
+flint-scriban       3634 ms   峰值 RSS     341 MB
+flint-liquid        2572 ms   峰值 RSS     194 MB
+hugo                5645 ms   峰值 RSS     438 MB
+zola                4856 ms   峰值 RSS     133 MB
+astro              75651 ms   峰值 RSS    2473 MB
+eleventy           11553 ms   峰值 RSS     406 MB
+hexo               23720 ms   峰值 RSS     810 MB
+gatsby             75194 ms   峰值 RSS    1483 MB
+vitepress          71747 ms   峰值 RSS    3041 MB
+mkdocs             14543 ms   峰值 RSS      92 MB
+jekyll             18220 ms   峰值 RSS     153 MB
+
+--- 第 2/3 轮（首臂 zola，16:17:07，CPU 占用 8.2%）---
+zola                4690 ms   峰值 RSS     133 MB
+astro              78542 ms   峰值 RSS    2452 MB
+eleventy           11291 ms   峰值 RSS     405 MB
+hexo               32218 ms   峰值 RSS     811 MB
+gatsby             71167 ms   峰值 RSS    1501 MB
+vitepress          75155 ms   峰值 RSS    3060 MB
+mkdocs             13075 ms   峰值 RSS      86 MB
+jekyll             17955 ms   峰值 RSS     157 MB
+flint-scriban       2584 ms   峰值 RSS     327 MB
+flint-liquid        2271 ms   峰值 RSS     187 MB
+hugo                4972 ms   峰值 RSS     440 MB
+
+--- 第 3/3 轮（首臂 hexo，16:23:22，CPU 占用 2.6%）---
+hexo               28196 ms   峰值 RSS     802 MB
+gatsby             78736 ms   峰值 RSS    1592 MB
+vitepress          66218 ms   峰值 RSS    2485 MB
+mkdocs             13638 ms   峰值 RSS      88 MB
+jekyll             18593 ms   峰值 RSS     154 MB
+flint-scriban       2901 ms   峰值 RSS     339 MB
+flint-liquid        2838 ms   峰值 RSS     192 MB
+hugo                5217 ms   峰值 RSS     444 MB
+zola                4513 ms   峰值 RSS     134 MB
+astro              74231 ms   峰值 RSS    2412 MB
+eleventy           12804 ms   峰值 RSS     434 MB
+
+=== 10000 页冷构建（3 轮中位，外部计时含进程启动）===
+臂                  中位(ms)     vs最快    峰值RSS(MB)     产出(MB)    html      正文抽样     零字节     新生成
+flint-scriban        2901    1.13x         341        7.0   10001    99/100       0   10001
+flint-liquid         2572    1.00x         194        7.0   10001    99/100       0   10001
+hugo                 5217    2.03x         444        7.0   10001    99/100       0   10001
+zola                 4690    1.82x         134        7.0   10003    99/100       0   10003
+astro               75651   29.42x        2473        7.2   10001    99/100       0   10001
+eleventy            11553    4.49x         434        7.0   10001    99/100       0   10001
+hexo                28196   10.96x         811        7.1   10001    99/100       0   10001
+gatsby              75194   29.24x        1592       20.4   10002    99/100       0   10002
+vitepress           71747   27.90x        3060       62.4   10002    99/100       0   10002
+mkdocs              13638    5.30x          92       61.5   10002    99/100       0   10002
+jekyll              18220    7.08x         157        7.1   10001    99/100       0   10001
+
+--- 用时构成 ---
+构建合计       929s    84%
+删除输出       176s    16%
+其他             2s     0%
+总用时        1107s  共 44 次构建（11 臂）
+
+报告已写入 C:\ai\kiro\Flint\Flint\benchmarks\ssg-matrix\results\run-20261031-162947.md
+  删除 _out                                      122.7 MB  (50046 文件)
+  删除 zola\public                                 8.3 MB  (10005 文件)
+  删除 eleventy\_site                              7.0 MB  (10001 文件)
+  删除 astro\dist                                  7.2 MB  (10001 文件)
+  删除 hexo\public                                 7.1 MB  (10001 文件)
+  删除 gatsby\public                              30.8 MB  (20029 文件)
+  删除 gatsby\.cache                             171.3 MB  (365 文件)
+  删除 vitepress\.vitepress\dist                  88.2 MB  (30025 文件)
+  删除 jekyll\.jekyll-cache                        0.0 MB  (3 文件)
+  删除生成语料 page-*.md 110001 个文件
+清理完成：删除 250477 个文件，释放约 519 MB

@@ -21,30 +21,32 @@ Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，Na
 
 ---
 
-**万页冷构建矩阵（14 引擎，2026-10-30，全引擎最新版）**
+**万页冷构建矩阵（11 引擎，2026-10-31，完整协议实测）**
 
-| 排名 | 引擎（版本）                 | 中位       | vs 最快   | 实现语言           |
-| ----:| ---------------------------- | ----------:| ---------:| ------------------ |
-| 1    | **Flint Fluid（0.3.0 AOT）** | **2717ms** | **1.00x** | C#（.NET 10）      |
-| 2    | Flint Scriban（0.3.0 AOT）   | 3069ms     | 1.13x     | C#（.NET 10）      |
-| 3    | Zola 0.23.6                  | 4405ms     | 1.62x     | Rust               |
-| 4    | Hugo 0.169.0（extended）     | 5691ms     | 2.09x     | Go                 |
-| 5    | Eleventy 3.1.7               | 10558ms    | 3.89x     | JavaScript（Node） |
-| 6    | Jekyll 4.4.1                 | 17245ms    | 6.35x     | Ruby               |
-| 7    | Pelican 4.12.0               | 18012ms    | 6.63x     | Python             |
-| 8    | Hexo 8.1.2                   | 34566ms    | 12.72x    | JavaScript（Node） |
-| 9    | Gatsby 5.16.1                | 62651ms    | 23.06x    | JavaScript（Node） |
-| 10   | Astro 7.4.4                  | 68563ms    | 25.24x    | TypeScript（Node） |
-| 11   | VitePress 1.6.4              | 81165ms    | 29.87x    | TypeScript（Node） |
-| 12   | VuePress 2.0.0-rc.31         | 94209ms    | 34.67x    | TypeScript（Node） |
-| 13   | Statiq 1.0.0（JIT，.NET 10） | 231107ms   | 85.06x    | C#（.NET 10）      |
-| 14   | MkDocs 1.6.1                 | 252975ms   | 93.11x    | Python             |
+| 排名 | 引擎（版本）                       | 中位       | vs 最快   | 实现语言           |
+| ----:| ---------------------------------- | ----------:| ---------:| ------------------ |
+| 1    | **Flint Fluid（0.3.0 AOT）**       | **2572ms** | **1.00x** | C#（.NET 10）      |
+| 2    | Flint Scriban（0.3.0 AOT）         | 2901ms     | 1.13x     | C#（.NET 10）      |
+| 3    | Zola 0.23.6                        | 4690ms     | 1.82x     | Rust               |
+| 4    | Hugo 0.169.0（extended）           | 5217ms     | 2.03x     | Go                 |
+| 5    | Eleventy 3.1.7                     | 11553ms    | 4.49x     | JavaScript（Node） |
+| 6    | MkDocs 1.6.1（导航裁剪）           | 13638ms    | 5.30x     | Python             |
+| 7    | Jekyll 4.4.1                       | 18220ms    | 7.08x     | Ruby               |
+| 8    | Hexo 8.1.2                         | 28196ms    | 10.96x    | JavaScript（Node） |
+| 9    | VitePress 1.6.4                    | 71747ms    | 27.90x    | TypeScript（Node） |
+| 10   | Gatsby 5.16.1                      | 75194ms    | 29.24x    | JavaScript（Node） |
+| 11   | Astro 7.4.4                        | 75651ms    | 29.42x    | TypeScript（Node） |
 
 统计范围：同内容语料，每臂 10,000 页，冷构建 3 轮中位（含进程启动），
 Windows 10 x64 单窗口，按最快臂归一化，跨机器只比排名。
 
-校验：产物对称（完整正文，无空壳）；除 VitePress 按冷构建复测更正名次外，
-排名跨两窗口三轮一致。明细见 [benchmarks/REPORT.md](benchmarks/REPORT.md)。
+校验：运行前门禁（CPU 占用 13%）、运行中逐轮负载留痕、14 臂以外全部产物经
+“本次新生成”与正文抽样核验，无空壳、无残留。明细见
+[benchmarks/REPORT.md](benchmarks/REPORT.md)。
+
+口径说明：MkDocs 采用导航裁剪配置（`nav` 只列首页，万页仍全部渲染）；VitePress
+开启 `metaChunk` 并关闭预加载（产物 3.6GB 降到 62MB）。三个非 Go/Rust/C# 生态的
+长尾引擎（Pelican、VuePress、Statiq）未纳入本轮。
 
 ---
 
@@ -409,9 +411,8 @@ Markdown 解析 229k 文件/秒 · 模板渲染 Scriban 54k / Fluid 175k 页/秒
 | 质量保障         | **性能门禁 + 属性测试**                                  | —                       | —                            | —                              | —                       | —             |
 | 控制台编码       | **强制 UTF-8**                                           | Windows 下 GBK          | UTF-8                        | UTF-8                          | UTF-8                   | UTF-8         |
 
-> 构建性能行为 2026-10-30 十四引擎同窗矩阵实测（全部引擎当日最新稳定
-> 版，比值按最快臂归一化，完整矩阵见文首表格；Docusaurus 因规模超线性
-> 崩溃未入榜）；其余维度为公开结构性特征。Flint vs Hugo 的八个实测差异
+> 构建性能行为 2026-10-31 十一引擎同窗矩阵实测（比值按最快臂归一化，完整
+> 矩阵见文首表格）；其余维度为公开结构性特征。Flint vs Hugo 的八个实测差异
 > 点全记录见 [docs/FLINT-VS-HUGO.md](docs/FLINT-VS-HUGO.md)，主题兼容
 > 矩阵见 [docs/HUGO-COMPAT-MATRIX.md](docs/HUGO-COMPAT-MATRIX.md)。
 
@@ -501,14 +502,14 @@ dotnet run --project tests/Flint.ThemeMigrator.Tests -c Release # 主题迁移�
 dotnet run --project tests/Flint.Tools.Tests -c Release         # DevTools/工具链
 dotnet run --project tests/Flint.PerformanceTests -c Release    # 性能套件（进程内）
 
-# 基准（Flint vs Hugo 对照；十四引擎矩阵见下）
+# 基准（Flint vs Hugo 对照；十一引擎矩阵见下）
 dotnet run --project src/Flint.DevTools -- bench ssg          # 万页冷构建
 dotnet run --project src/Flint.DevTools -- bench complexity   # 复杂度阶梯
 dotnet run --project src/Flint.DevTools -- bench memory       # 峰值内存采样
 dotnet run --project src/Flint.DevTools -- perf run           # 性能套件 + HTML 报告
 dotnet run --project src/Flint.DevTools -- perf gate          # 性能回归门禁
 
-# 十四引擎矩阵（README 矩阵表复现；安装与坑见 benchmarks/ssg-matrix/README.md）
+# 十一引擎矩阵（README 矩阵表复现；安装与坑见 benchmarks/ssg-matrix/README.md）
 dotnet run --project benchmarks/ssg-matrix/harness -c Release           # 全矩阵（默认万页 3 轮）
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list # 就绪自查
 ```
@@ -527,7 +528,7 @@ Flint/
 ├── tests/                       # Core / Integration / ThemeMigrator / Tools / Performance 五套件
 ├── demo-sites/                  # 案例站（21 主题 + 画廊 + 统一语料）
 ├── theme-migrator/              # 主题语料（themes/ 克隆源、candidates/）
-└── benchmarks/                  # 性能基准（语料/报告/门禁 + ssg-matrix 十四引擎矩阵）
+└── benchmarks/                  # 性能基准（语料/报告/门禁 + ssg-matrix 十一引擎矩阵）
 ```
 
 ---

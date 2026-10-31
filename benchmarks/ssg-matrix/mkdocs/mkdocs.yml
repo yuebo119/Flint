@@ -1,2 +1,6 @@
 site_name: SSG Bench
 site_url: http://localhost:1313/
+# 导航裁剪版：nav 只列首页，其余 1 万页仍全部渲染，但不进入每页侧栏。
+# 不配置 nav 时 MkDocs 会把整棵文件树导航渲染进每一页，万页单页约 1.65MB。
+nav:
+  - Home: index.md

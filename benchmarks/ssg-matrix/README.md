@@ -16,7 +16,7 @@ README 与 [REPORT.md](../REPORT.md) §12 的十四引擎矩阵就由这套资�
 ## 环境要求
 
 - .NET 10 SDK（跑 harness 与两臂 Flint）
-- 各引擎运行时按需（Node / Python / Ruby / Zola / Statiq），见下表
+- 各引擎运行时按需（Node / Python / Ruby / Zola），见下表
 - Windows 10 x64 为实测平台；Linux/macOS 口径相同，但绝对时间不可与实测表直比
 
 ## 版本与安装
@@ -34,11 +34,8 @@ README 与 [REPORT.md](../REPORT.md) §12 的十四引擎矩阵就由这套资�
 | vitepress | 1.6.4 | `cd benchmarks/ssg-matrix/vitepress && npm install` |
 | astro | 7.4.4 | `cd benchmarks/ssg-matrix/astro && npm install` |
 | gatsby | 5.16.1 | `cd benchmarks/ssg-matrix/gatsby && npm install` |
-| vuepress | 2.0.0-rc.31 | `cd benchmarks/ssg-matrix/vuepress && npm install` |
 | jekyll | 4.4.1 | `gem install jekyll`（Windows 需要 Ruby+Devkit，见 [windows-ruby-jekyll-setup-traps](../../docs/) 同族笔记） |
-| pelican | 4.12.0 | `pip install pelican` |
 | mkdocs | 1.6.1 | `pip install mkdocs` |
-| statiq | 1.0.0-beta.60（NuGet） | `cd benchmarks/ssg-matrix/statiq && dotnet build -c Release`，harness 首次运行会自动构建 |
 
 版本可用 `dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --list` 自查就绪状态。
 
@@ -60,7 +57,7 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap --o
 | hugo / zola | 从 GitHub Release 下载对应平台资产并解压到 `benchmarks/tools/` | 网络 |
 | flint | `dotnet publish src/Flint.Cli -r <rid> -p:PublishAot=true` 到 `benchmarks/tools/flint-aot/` | .NET 10 SDK，1-3 分钟 |
 | 六个 npm 引擎 | 各站目录 `npm install` | Node，网络 |
-| pelican / mkdocs | `pip install`（已安装则跳过） | Python |
+| mkdocs | `pip install`（已安装则跳过） | Python |
 | jekyll | `gem install jekyll`（已安装则跳过） | Ruby |
 
 装配完成后接 `--list` 可看就绪状态。任何一步失败只影响对应引擎，其余照常跑。
@@ -108,16 +105,16 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- \
 
 ## 用时与提速
 
-全矩阵默认跑一遍约 75 分钟（14 臂 × 预热 1 + 3 轮 = 56 次构建）。实测用时构成：
-构建 77%、删除输出 20%、语料与进程杂项 3%。两个主要耗时段是 MkDocs（约 17 分钟）
-与 Statiq（约 15 分钟），合计占 43%。计时器每次结束会打印这三项构成。
+全矩阵默认跑一遍约 19 分钟（11 臂 × 预热 1 + 3 轮 = 44 次构建，2026-10-31 实测
+1,107 秒）。用时构成：构建 84%、删除输出 16%。耗时前两名是 Astro 与 Gatsby
+（各约 5 分钟），MkDocs 改导航裁剪后从 5.9 分钟降到 13.6 秒。
 
 | 模式 | 构建次数 | 预计用时 | 用途 |
 | --- | ---: | ---: | --- |
-| 默认（预热 1 + 3 轮） | 56 | 75 分钟 | 对外发布数据 |
-| `--fast` | 42 | 约 55 分钟 | 日常复测 |
-| `--fast --rounds 2` | 28 | 约 37 分钟 | 快速回归 |
-| `--fast --rounds 2 --pages 2000` | 28 | 约 8 分钟 | 改代码后的冒烟验证 |
+| 默认（预热 1 + 3 轮） | 44 | 约 19 分钟 | 对外发布数据 |
+| `--fast` | 33 | 约 15 分钟 | 日常复测 |
+| `--fast --rounds 2` | 22 | 约 10 分钟 | 快速回归 |
+| `--fast --rounds 2 --pages 2000` | 22 | 约 3 分钟 | 改代码后的冒烟验证 |
 
 `--fast` 的两条规则：
 
@@ -150,33 +147,27 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 2. **Fluid 与 Scriban 是同一语料的两个孪生站**（`flint-liquid/`、`flint-scriban/`），
    `engine` 字段不同，产物应逐字节一致（除引擎无关的空白差异）。
 3. **各引擎的持久缓存必须一起删**：Jekyll 的 `.jekyll-cache`、Gatsby 的 `.cache`、
-   Hexo 的 `db.json`、VitePress 的 `.vitepress/cache`、VuePress 的 `.cache/.temp`、
-   Statiq 的 `cache/temp`。漏删会把增量收益算进冷构建。
-4. **MkDocs 默认主题把全站导航内联进每一页**：`nav` 未配置时由文件树自动生成，
-   默认主题把整棵导航渲染进每页侧栏，单页大小与站点页数线性相关（200 页 41.7KB /
-   203 个链接，1000 页 178.5KB / 1003 个链接）。这项开销可以量化：万页下默认形态
-   252,975ms / 16.5GB，把 `nav` 限定为 1 个条目后是 14,020ms / 91MB。后一个数字
-   只用于说明导航成本，不反映真实站点。本矩阵保留默认形态，因为各臂都取开箱默认
-   配置；真实大规模站点通常改用带导航剪枝的第三方主题，性能会显著不同。
-5. **VitePress 每页内联站点级路由哈希表**（`__VP_HASH_MAP__`）：1,000 页时占单页
-   48KB 的 87%，万页时单页约 426KB、总产出 4.3GB，同样是 O(N²) 的默认设计。
-   VitePress 的构建缓存在 `<站点>/.vitepress/cache`，配置必须放在站点根
-   `.vitepress/config.js` 并用 `srcDir: 'docs'` 指向语料目录，放错位置会导致
-   config 不生效且冷构建失效。
-6. **Statiq 实测用的是源码 main 构建**（NuGet 最新为 1.0.0-beta.60）。默认包版本复现
-   的绝对时间与实测表不完全对应；要完全一致，传
-   `-p:StatiqWebProject=<Statiq 克隆>/src/extensions/Statiq.Web/Statiq.Web.csproj`。
-7. **Docusaurus 不在矩阵内**：4,000 页时每页成本从 16ms 涨到 62ms（超线性），
+   Hexo 的 `db.json`、VitePress 的 `.vitepress/cache`。漏删会把增量收益算进冷构建。
+4. **MkDocs 已改为导航裁剪配置**（`mkdocs.yml` 里 `nav` 只列首页）：1 万页仍全部
+   渲染，只是不再把整棵文件树导航塞进每页侧栏。裁剪前默认形态是 252,975ms /
+   16.5GB，裁剪后 13,638ms / 61.5MB。若改回不配 `nav`，单页会随页数线性膨胀
+   （200 页 41.7KB / 203 链接，1000 页 178.5KB / 1003 链接）。
+5. **VitePress 开启 `metaChunk` 并关闭 `shouldPreload`**：默认会把站点级路由哈希表
+   `__VP_HASH_MAP__` 内联进每一页（1,000 页时占单页 87%，万页单页约 426KB、
+   总产出 3.6GB）；开启后万页产出降到 62MB，耗时基本持平。它的构建缓存在
+   `<站点>/.vitepress/cache`，配置必须放在站点根 `.vitepress/config.js` 并用
+   `srcDir: 'docs'` 指向语料目录，放错位置会导致 config 不生效且冷构建失效。
+6. **Docusaurus 不在矩阵内**：4,000 页时每页成本从 16ms 涨到 62ms（超线性），
    万页两种分页配置均失败（无产出 / V8 堆耗尽），排除有据。
-8. 语料只生成一次，之后复用；`--regen` 强制重建，`--skip-gen` 完全跳过生成。
+7. 语料只生成一次，之后复用；`--regen` 强制重建，`--skip-gen` 完全跳过生成。
    生成的语料与各站输出都在 `.gitignore` 内，不入库。
-9. **不要用包装器启动引擎**：Windows 上 `py -m pelican`、`cmd /c jekyll.bat`
+8. **不要用包装器启动引擎**：Windows 上 `cmd /c jekyll.bat`
    会让内存采样落在启动器而不是引擎进程（实测会得到 5-7MB 的假值）。harness 用
    `python -m`、`ruby -S jekyll` 直调；手工复验时同理。
-10. `harness/` 关闭了分析器（`EnableNETAnalyzers=false`）：它继承仓库根
+9. `harness/` 关闭了分析器（`EnableNETAnalyzers=false`）：它继承仓库根
    `Directory.Build.props` 的 `TreatWarningsAsErrors` 与 `latest-all` 规则，
    否则 CA1303 之类的样式规则会让基准程序构建失败。
-11. `eleventy/package-lock.json` 已入库以锁定传递依赖；其余 Node 站点首次
+10. `eleventy/package-lock.json` 已入库以锁定传递依赖；其余 Node 站点首次
     `npm install` 后如需完全可复现，可自行提交 lock 文件。
 
 ## 原始日志
@@ -198,11 +189,9 @@ benchmarks/ssg-matrix/
 ├── hexo/             _config.yml + run-hexo.js + themes/minimal
 ├── jekyll/           _config.yml + _layouts + index.html
 ├── vitepress/        docs/{index.md,.vitepress}
-├── vuepress/         docs/{index.md,.vuepress}
 ├── gatsby/           gatsby-config.js + gatsby-node.js + src/
 ├── mkdocs/           mkdocs.yml + docs/index.md
-├── pelican/          pelicanconf.py
-└── statiq/           SsgMatrix.Statiq.csproj + input/{index.md,_Layout.cshtml}
+└── （pelican/、vuepress/、statiq/ 目录保留，暂不纳入矩阵）
 ```
 
 语料目录（各站的 `content/`、`docs/posts/`、`src/pages/posts/` 等）由 harness 生成后存在，
