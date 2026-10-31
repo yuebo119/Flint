@@ -525,7 +525,13 @@ static class Setup
         using var p = Process.Start(psi) ?? throw new InvalidOperationException($"无法启动 {exe}");
         var stdout = p.StandardOutput.ReadToEndAsync();
         var stderr = p.StandardError.ReadToEndAsync();
-        p.WaitForExit();
+        if (!p.WaitForExit(10 * 60_000))
+        {
+            // npm 的孙进程（postinstall 遥测走坏代理等）会长期握住 stdout 管道，
+            // 不设超时的一键装配会永久卡死；超时按装配失败处理，该引擎跳过
+            try { p.Kill(entireProcessTree: true); } catch { /* 进程已退出 */ }
+            return 124;
+        }
         var output = stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult();
         if (p.ExitCode != 0) Console.WriteLine($"    {Tail(output)}");
 
