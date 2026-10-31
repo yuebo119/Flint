@@ -47,8 +47,9 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 ## 一键装配
 
 拉库后先跑一次装配，把二进制、依赖与 Flint AOT 产物准备好；已就绪的步骤自动跳过。
-装配完成后命令会继续自动跑一遍默认全量矩阵（万页 × 预热 1 + 3 轮），
-一条命令从零到报告，约 25 分钟：
+命令开头会打印一节环境前置检查（.NET SDK / Node / Python / Ruby / C++ 工具链 / 磁盘 /
+代理，缺什么一次列全并附官方下载入口），再逐项装配。装配完成后命令会继续自动跑一遍
+默认全量矩阵（万页 × 预热 1 + 3 轮），一条命令从零到报告，约 25 分钟：
 
 ```bash
 dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap
@@ -63,7 +64,7 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap --o
 | --- | --- | --- |
 | hugo / zola | 从 GitHub Release 下载对应平台资产并解压到 `benchmarks/tools/` | 网络 |
 | flint | `dotnet publish src/Flint.Cli -r <rid> -p:PublishAot=true` 到 `benchmarks/tools/flint-aot/` | .NET 10 SDK，1-3 分钟 |
-| 六个 npm 引擎 | 各站目录 `npm install` | Node，网络 |
+| 五个 npm 引擎 | 各站目录 `npm install` | Node，网络 |
 | mkdocs | `pip install`（已安装则跳过） | Python |
 | jekyll | `gem install jekyll`（已安装则跳过） | Ruby |
 

@@ -356,6 +356,135 @@ static class Cleaner
     }
 }
 
+static class Prerequisites
+{
+    sealed record Item(string Name, bool Present, string Detail, string Install = "");
+
+    // --bootstrap 开头的环境前置汇总：缺什么一次列全并给官方入口。
+    // 冷启动仿真暴露的摩擦点：缺 Node 时逐个臂报"未找到 npm"，得自己反推缺哪个运行时。
+    public static void Report(string root)
+    {
+        var items = new List<Item> { Sdk(), Node(), Python(), Ruby(), CppTools() };
+
+        Console.WriteLine("\n  环境前置：");
+        foreach (var i in items)
+            Console.WriteLine($"    {(i.Present ? "OK " : "缺 ")} {Pad(i.Name, 22)} {i.Detail}");
+        Console.WriteLine($"        {Pad("磁盘可用", 22)} {FreeDisk(root)}");
+
+        var missing = items.Where(i => !i.Present).ToList();
+        Console.WriteLine($"        {Pad("代理", 22)} {Proxy()}");
+        if (missing.Count == 0) return;
+
+        Console.WriteLine("\n  缺失项安装指引（装好重跑本命令即可，已就绪的步骤会自动跳过）：");
+        foreach (var i in missing)
+            Console.WriteLine($"    {Pad(i.Name, 22)} {i.Install}");
+    }
+
+    // 中文按两列宽计，否则中英混排的列对不齐
+    static string Pad(string s, int width)
+    {
+        var w = s.Sum(c => IsWide(c) ? 2 : 1);
+        return w >= width ? s + " " : s + new string(' ', width - w);
+    }
+
+    static bool IsWide(char c) =>
+        c >= 0x1100 && (c <= 0x115F || (c >= 0x2E80 && c <= 0xA4CF) || (c >= 0xAC00 && c <= 0xD7A3)
+            || (c >= 0xF900 && c <= 0xFAFF) || (c >= 0xFE30 && c <= 0xFE6F)
+            || (c >= 0xFF00 && c <= 0xFF60) || (c >= 0xFFE0 && c <= 0xFFE6));
+
+    // 不 shell 出去查 dotnet --version：apphost 会把参数当未知选项退出（实测得到"未知"）
+    static Item Sdk() => new(".NET SDK", true, System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, "");
+
+    static Item Node()
+    {
+        var node = ToolLocator.Find(null, null, "node");
+        var npm = ToolLocator.Find(null, null, "npm");
+        if (node is null || npm is null)
+            return new("Node.js", false, "未在 PATH 找到 node/npm",
+                "装 LTS 版：https://nodejs.org/en/download  （影响 5 臂：astro/eleventy/hexo/gatsby/vitepress）");
+        return new("Node.js", true, $"{Probe(node, "--version")}（npm {Probe(npm, "--version")}）");
+    }
+
+    static Item Python()
+    {
+        var exe = ToolLocator.Find(null, null, "python") ?? ToolLocator.Find(null, null, "python3") ?? ToolLocator.Find(null, null, "py");
+        if (exe is null)
+            return new("Python 3", false, "未在 PATH 找到 python/python3/py",
+                "装 3.x：https://www.python.org/downloads/  （影响 mkdocs）");
+        return new("Python 3", true, $"{Probe(exe, "--version")}（{Path.GetFileName(exe)}）");
+    }
+
+    static Item Ruby()
+    {
+        var ruby = ToolLocator.Find(null, null, "ruby");
+        if (ruby is null || ToolLocator.Find(null, null, "gem") is null)
+            return new("Ruby + gem", false, "未在 PATH 找到 ruby/gem",
+                "Windows 装 RubyInstaller 带 DevKit：https://rubyinstaller.org/downloads/  （影响 jekyll）");
+        return new("Ruby + gem", true, Probe(ruby, "--version"));
+    }
+
+    static Item CppTools()
+    {
+        if (!OperatingSystem.IsWindows())
+            return new("C++ 工具链（AOT）", true, "非 Windows，用系统 cc/ld");
+
+        var vswhere = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            "Microsoft Visual Studio", "Installer", "vswhere.exe");
+        var where = File.Exists(vswhere)
+            ? Probe(vswhere, "-latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath")
+            : null;
+        if (string.IsNullOrWhiteSpace(where))
+            return new("C++ 工具链（AOT）", false, "未检测到 MSVC（只影响 Flint 两臂，缺了仍可跑其余 9 臂）",
+                "装 VS Build Tools 时勾 Desktop development with C++：https://aka.ms/vs/17/release/vs_BuildTools.exe");
+        return new("C++ 工具链（AOT）", true, where);
+    }
+
+    static string Proxy()
+    {
+        var env = Environment.GetEnvironmentVariable("HTTPS_PROXY") ?? Environment.GetEnvironmentVariable("https_proxy")
+            ?? Environment.GetEnvironmentVariable("HTTP_PROXY") ?? Environment.GetEnvironmentVariable("http_proxy");
+        if (!string.IsNullOrWhiteSpace(env)) return $"环境变量 {env}";
+
+        var git = Setup.TryReadGitProxy();
+        if (git is null) return "未检测到代理配置，下载走直连";
+        return Setup.ProxyAlive(git)
+            ? $"用 git config 的 {git}（探活通过）"
+            : $"git config 的 {git} 已连不上，下载将走直连";
+    }
+
+    static string FreeDisk(string root)
+    {
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(root))!);
+            return $"{drive.AvailableFreeSpace / 1073741824.0:F1} GB（全量约需 2 GB）";
+        }
+        catch { return "未知"; }
+    }
+
+    static string Probe(string exe, string args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            foreach (var a in args.Split(' ', StringSplitOptions.RemoveEmptyEntries)) psi.ArgumentList.Add(a);
+
+            using var p = Process.Start(psi);
+            if (p is null) return "未知";
+            var text = p.StandardOutput.ReadToEndAsync();
+            if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } return "超时"; }
+            var line = text.GetAwaiter().GetResult().Trim().Split('\n').FirstOrDefault()?.Trim() ?? "";
+            return string.IsNullOrWhiteSpace(line) ? "未知" : line;
+        }
+        catch { return "未知"; }
+    }
+}
+
 static class Setup
 {
     const string HugoVersion = "0.169.0";
@@ -366,6 +495,7 @@ static class Setup
         bool Want(string name) => only is null || only.Contains(name);
 
         Console.WriteLine("\n--- 依赖装配（--bootstrap，已就绪的步骤自动跳过）---");
+        Prerequisites.Report(root);
         Directory.CreateDirectory(tools);
 
         if (Want("hugo")) EnsureBinary(tools, "hugo", HugoBase(), HugoAsset(), HugoEntry());
@@ -442,7 +572,7 @@ static class Setup
         return handler;
     }
 
-    static string? TryReadGitProxy()
+    internal static string? TryReadGitProxy()
     {
         try
         {
@@ -459,7 +589,7 @@ static class Setup
         catch { return null; }
     }
 
-    static bool ProxyAlive(string proxyUrl)
+    internal static bool ProxyAlive(string proxyUrl)
     {
         try
         {
