@@ -1,0 +1,80 @@
+语料: 10000 页 x 14 臂（正文对各引擎逐字一致；同机同时窗口；Statiq=JIT net10.0）
+开始: 17:15:28
+--- 第 1 轮（首臂 Flint+Scriban，17:31:29）---
+Flint+Scriban: 3000ms
+Flint+Liquid: 2716ms
+Hugo        : 5805ms
+Zola        : 4505ms
+Eleventy    : 10826ms
+Jekyll      : 17835ms
+Pelican     : 18943ms
+VitePress   : 61483ms
+Astro       : 70289ms
+Hexo        : 34566ms
+Gatsby      : 62651ms
+MkDocs      : 281893ms
+VuePress    : 105236ms
+Statiq      : 217134ms
+--- 第 2 轮（首臂 Jekyll，17:47:34）---
+Jekyll      : 17245ms
+Pelican     : 17564ms
+VitePress   : 59472ms
+Astro       : 66268ms
+Hexo        : 43587ms
+Gatsby      : 66799ms
+MkDocs      : 252929ms
+VuePress    : 94209ms
+Statiq      : 231107ms
+Flint+Scriban: 3069ms
+Flint+Liquid: 2717ms
+Hugo        : 5691ms
+Zola        : 4405ms
+Eleventy    : 10558ms
+--- 第 3 轮（首臂 Hugo，18:03:09）---
+Hugo        : 4264ms
+Zola        : 3939ms
+Eleventy    : 8924ms
+Jekyll      : 15754ms
+Pelican     : 18012ms
+VitePress   : 60687ms
+Astro       : 68563ms
+Hexo        : 23747ms
+Gatsby      : 61466ms
+MkDocs      : 252975ms
+VuePress    : 84104ms
+Statiq      : 236362ms
+Flint+Scriban: 3200ms
+Flint+Liquid: 2747ms
+
+=== 10000 页冷构建（3 次中位数，外部计时含进程启动）===
+Flint+Scriban: r1=3000 r2=3069 r3=3200  median=3069ms  vsFastest=1.13x
+Flint+Liquid: r1=2716 r2=2717 r3=2747  median=2717ms  vsFastest=1.00x
+Hugo        : r1=5805 r2=5691 r3=4264  median=5691ms  vsFastest=2.09x
+Zola        : r1=4505 r2=4405 r3=3939  median=4405ms  vsFastest=1.62x
+Eleventy    : r1=10826 r2=10558 r3=8924  median=10558ms  vsFastest=3.89x
+Jekyll      : r1=17835 r2=17245 r3=15754  median=17245ms  vsFastest=6.35x
+Pelican     : r1=18943 r2=17564 r3=18012  median=18012ms  vsFastest=6.63x
+VitePress   : r1=61483 r2=59472 r3=60687  median=60687ms  vsFastest=22.34x
+Astro       : r1=70289 r2=66268 r3=68563  median=68563ms  vsFastest=25.24x
+Hexo        : r1=34566 r2=43587 r3=23747  median=34566ms  vsFastest=12.72x
+Gatsby      : r1=62651 r2=66799 r3=61466  median=62651ms  vsFastest=23.06x
+MkDocs      : r1=281893 r2=252929 r3=252975  median=252975ms  vsFastest=93.11x
+VuePress    : r1=105236 r2=94209 r3=84104  median=94209ms  vsFastest=34.67x
+Statiq      : r1=217134 r2=231107 r3=236362  median=231107ms  vsFastest=85.06x
+
+--- 产物审计 ---
+Flint+Scriban: 10001 html / 10005 files
+Flint+Liquid: 10001 html / 10005 files
+Hugo        : 10001 html / 10006 files
+Zola        : 10003 html / 10005 files
+Eleventy    : 10001 html / 10001 files
+Jekyll      : 10001 html / 10001 files
+Pelican     : 10007 html / 10007 files
+VitePress   : 10002 html / 30024 files
+Astro       : 10001 html / 10001 files
+Hexo        : 10001 html / 10001 files
+Gatsby      : 10002 html / 20029 files
+MkDocs      : 10002 html / 10029 files
+VuePress    : 10002 html / 20006 files
+Statiq      : 10001 html / 10002 files
+结束: 18:18:24
