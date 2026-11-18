@@ -45,6 +45,13 @@ public sealed partial class MarkdownParser : IMarkdownParser
     private static readonly MarkdownPipeline LightweightPipeline = CreateLightweightPipeline();
 
     /// <summary>
+    /// 默认管道（静态复用）：此前每次构造 MarkdownParser 都重建一次，
+    /// 而 Build/解析管道是扩展链路装配（Build 时逐扩展 Setup），有实打实的
+    /// 一次性开销；MarkdownPipeline 构建后不可变且线程安全，可跨实例共享
+    /// </summary>
+    private static readonly MarkdownPipeline DefaultPipeline = CreateDefaultPipeline();
+
+    /// <summary>
     /// 完整管道（懒加载，按需创建）
     /// </summary>
     private static readonly Lazy<MarkdownPipeline> FullPipeline = new(CreateFullPipeline);
@@ -62,7 +69,7 @@ public sealed partial class MarkdownParser : IMarkdownParser
     /// <summary>
     /// 创建 Markdown 解析器实例
     /// </summary>
-    public MarkdownParser() : this(CreateDefaultPipeline(), autoSelectPipeline: true)
+    public MarkdownParser() : this(DefaultPipeline, autoSelectPipeline: true)
     {
     }
 
@@ -71,7 +78,7 @@ public sealed partial class MarkdownParser : IMarkdownParser
     /// </summary>
     /// <param name="useLightweight">是否使用轻量级管道</param>
     public MarkdownParser(bool useLightweight)
-        : this(useLightweight ? LightweightPipeline : CreateDefaultPipeline(), autoSelectPipeline: false)
+        : this(useLightweight ? LightweightPipeline : DefaultPipeline, autoSelectPipeline: false)
     {
     }
 
@@ -93,7 +100,7 @@ public sealed partial class MarkdownParser : IMarkdownParser
     /// </remarks>
     /// <param name="renderHooks">渲染钩子集合（HasAny 为 true）</param>
     public MarkdownParser(RenderHooks renderHooks)
-        : this(CreateDefaultPipeline(), autoSelectPipeline: false)
+        : this(DefaultPipeline, autoSelectPipeline: false)
     {
         _renderHooks = renderHooks ?? throw new ArgumentNullException(nameof(renderHooks));
     }
