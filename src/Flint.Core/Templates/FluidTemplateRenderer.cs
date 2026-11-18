@@ -173,9 +173,10 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
     /// </summary>
     private TemplateOptions BuildOptions(ITemplateResourceProvider? resources)
     {
-        var builder = new TemplateOptionsBuilder()
+        var builder = new FlintTemplateOptionsBuilder()
             // snake_case 成员映射（page.word_count → WordCount）+ 默认大小写不敏感：
-            // FlintMemberAccessStrategy 覆写 GetAccessor 做归一
+            // FlintMemberAccessStrategy 覆写 GetAccessor 做归一；归一后的名字命中
+            // 下方 FlintTemplateOptionsBuilder 的 [FluidRegister] 生成访问器
             .WithMemberAccessStrategy<FlintMemberAccessStrategy>()
             .ConfigureMemberAccess(ConfigureMemberAccessors)
             // 模型名比较器：OrdinalIgnoreCase（Fluid 默认值，显式声明契约）

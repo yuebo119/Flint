@@ -11,6 +11,10 @@
          新站点为 Fluid 原生（Liquid 内置兜底），Scriban 长期做 Hugo 兼容 -->
     <PackageVersion Include="Scriban" Version="7.6.1" />
     <PackageVersion Include="Fluid.Core" Version="3.0.0" />
+    <!-- Fluid 3.0 的模型访问器 source generator：把模板成员读取编译成直接属性访问，
+         消除反射（NativeAOT 下不再依赖 DynamicDependency 保活），渲染热路径更快。
+         编译期依赖，不随产物发布 -->
+    <PackageVersion Include="Fluid.SourceGenerator" Version="3.0.0" />
     <!-- Markdown 解析 -->
     <PackageVersion Include="Markdig" Version="1.6.0" />
     <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线）。

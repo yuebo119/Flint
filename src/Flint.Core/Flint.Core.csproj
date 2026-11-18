@@ -34,6 +34,12 @@
     <!-- 模板引擎：Scriban 默认 + Fluid 备用 -->
     <PackageReference Include="Scriban" />
     <PackageReference Include="Fluid.Core" />
+    <!-- 模型访问器生成器（Fluid 3.0）：编译期把 [FluidRegister] 标记的类型
+         生成无反射访问器，渲染热路径更快且移除反射保活依赖 -->
+    <PackageReference Include="Fluid.SourceGenerator">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
 
     <!-- Markdown 解析 -->
     <PackageReference Include="Markdig" />

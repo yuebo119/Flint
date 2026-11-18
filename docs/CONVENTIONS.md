@@ -348,6 +348,18 @@ Liquid 版函数/短代码/render hooks）禁止出现：
 承载物：装配验证测试（Fluid 渲染路径不得引用 Scriban 程序集）+
 运行期装配探针（P6-3）。新增 Fluid 侧代码先对照本表再动手。
 
+#### 8.4.3 模板模型访问器生成（Fluid 3.0 source generator，2026-11-19 起）`[机械]`
+
+`FluidTemplateRenderer` 用 `FlintTemplateOptionsBuilder`（partial class 继承
+`TemplateOptionsBuilder`，标注 `[FluidRegister]`）在编译期生成模型成员访问器，
+运行期不再走反射。实测：渲染吞吐 +10.8%（182,964 → 202,811 页/秒，性能套件
+双引擎对拍），AOT 单文件 53.63 → 51.31 MB（-4.3%）。
+
+规则：**新增模板可见的模型类型时必须同步登记 `[FluidRegister]`**，否则该类型
+回退到反射路径（功能正常但慢，且 AOT 下需 `DynamicDependency` 保活）。
+snake_case 归一由 `FlintMemberAccessStrategy.GetAccessor` 在查表前完成，
+与生成器注册可叠加，两条路径都保留是有意设计。
+
 ---
 
 ## 9. 文档规范
