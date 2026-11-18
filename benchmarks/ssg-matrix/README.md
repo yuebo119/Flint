@@ -15,7 +15,7 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 
 ## 环境要求
 
-- .NET 10 SDK（跑 harness 与两臂 Flint）；Windows 上构建 Flint AOT 还需
+- .NET 11 SDK（跑 harness 与两臂 Flint）；Windows 上构建 Flint AOT 还需
   VS C++ Build Tools（`Desktop development with C++` 工作负载），缺了只会
   跳过 Flint 两臂，其余照常
 - 各引擎运行时按需（Node / Python / Ruby / Zola），见下表
@@ -63,7 +63,7 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --bootstrap --o
 | 步骤 | 做什么 | 需要 |
 | --- | --- | --- |
 | hugo / zola | 从 GitHub Release 下载对应平台资产并解压到 `benchmarks/tools/` | 网络 |
-| flint | `dotnet publish src/Flint.Cli -r <rid> -p:PublishAot=true` 到 `benchmarks/tools/flint-aot/` | .NET 10 SDK，1-3 分钟 |
+| flint | `dotnet publish src/Flint.Cli -r <rid> -p:PublishAot=true` 到 `benchmarks/tools/flint-aot/` | .NET 11 SDK，1-3 分钟 |
 | 五个 npm 引擎 | 各站目录 `npm install` | Node，网络 |
 | mkdocs | `pip install`（已安装则跳过） | Python |
 | jekyll | `gem install jekyll`（已安装则跳过） | Ruby |

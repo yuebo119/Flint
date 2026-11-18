@@ -161,7 +161,7 @@ SiteBuilder 不认识具体引擎。
 | `apply` | `$seq \| apply: 'upcase'` | 逐元素应用指定名过滤器 |
 | `seq` | `5 \| seq: first: 2, step: 2` | 整数序列（Hugo seq 语义） |
 | `shuffle` | `$items \| shuffle` | 随机乱序（Random.Shared） |
-| `find_re` / `replace_re` | 正则查找/替换 | **pattern 的反斜杠须双写**（见 §4） |
+| `find_re` / `replace_re` | 正则查找/替换 | **pattern 反斜杠单写**（Fluid 3.0 起不再转义，见 §4） |
 | `i18n` / `T` | 翻译表查键，缺键空串 | 站点 i18n/ 经 AmbientValues 传入 |
 | `safe_html` 等 6 个 | 恒等透传 | Flint 默认不转义 |
 
@@ -203,9 +203,12 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
    成员），Fluid 侧是语言码字符串本身——内置模板的 locale 链已按此对齐。
 7. **复数规则**：`singularize` 是 Flint 既有简化规则（`boxes → boxe`，
    不过滤 `-es`），非完整 Hugo 变形表。
-8. **正则 pattern 的反斜杠**：Liquid 单引号串把 `\` 当转义符，`'\w'` 直接
-   解析失败（"End of tag '}}' was expected"）——pattern 里的反斜杠须
-   **双写**（`'(\\w+)'` 才是一个 `\w`；`find_re`/`replace_re` 实测陷阱）。
+8. **正则 pattern 的反斜杠**：Fluid 3.0（Parlot 2.0 迁移）起单引号串
+   **不再做 C 风格转义**，反斜杠原样保留——pattern 写**单反斜杠**即可
+   （`'(\w+)'`，与 Shopify Liquid 标准一致）。3.0 之前的旧版本须双写
+   （`'(\\w+)'`），该写法在 3.0 下会变成两个字面反斜杠、正则按字面
+   匹配反斜杠而不命中，属**升级时须迁移的模板**（`find_re`/`replace_re`
+   实测陷阱，FluidResourceTransformTests 双向锁定）。
 9. **`css_sass`/`js_build` 的选项形态**：Liquid 无对象字面量，Scriban 侧的
    dict 选项在 Liquid 用**命名实参**表达（`css_sass: vars: '$primary: #333;'`
    的 vars 是 SCSS 变量前导文本而非键值映射——同一用例的 Liquid 原生形态；

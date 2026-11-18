@@ -61,9 +61,9 @@ public class FlintInfoTests
     }
 
     [Fact]
-    public void Runtime_应该是NET10()
+    public void Runtime_应该是NET11()
     {
         // Assert
-        FlintInfo.Runtime.Should().Contain(".NET 10");
+        FlintInfo.Runtime.Should().Contain(".NET 11");
     }
 }

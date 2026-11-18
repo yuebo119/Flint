@@ -851,7 +851,7 @@ internal static class ProbeTemplateCommand
                 "<Project Sdk=\"Microsoft.NET.Sdk\">\n" +
                 "  <PropertyGroup>\n" +
                 "    <OutputType>Exe</OutputType>\n" +
-                "    <TargetFramework>net10.0</TargetFramework>\n" +
+                "    <TargetFramework>net11.0</TargetFramework>\n" +
                 "    <Nullable>enable</Nullable>\n" +
                 "    <ImplicitUsings>enable</ImplicitUsings>\n" +
                 "    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>\n" +

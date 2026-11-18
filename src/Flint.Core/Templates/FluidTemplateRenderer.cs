@@ -163,72 +163,95 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
             AllowParentheses = true
         });
 
-        // page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
-        // FluidValue.Create 会把 TimeSpan 转成 DateTimeValue（纪元+时长），
-        // 使 reading_time.total_minutes 取空（探针 + AOT 冒烟实证）——
-        // 注册访问器优先于反射，返回保真视图
-        var memberStrategy = new FlintMemberAccessStrategy();
+        _options = BuildOptions(resources);
+    }
+
+    /// <summary>
+    /// 构建 Fluid 渲染选项。Fluid 3.0 起 <see cref="TemplateOptions"/> 不可变
+    /// （构造后全部属性只读），配置一律经 <see cref="TemplateOptionsBuilder"/>；
+    /// builder 是单线程短生命周期对象，构造期 Build 一次即可
+    /// </summary>
+    private TemplateOptions BuildOptions(ITemplateResourceProvider? resources)
+    {
+        var builder = new TemplateOptionsBuilder()
+            // snake_case 成员映射（page.word_count → WordCount）+ 默认大小写不敏感：
+            // FlintMemberAccessStrategy 覆写 GetAccessor 做归一
+            .WithMemberAccessStrategy<FlintMemberAccessStrategy>()
+            .ConfigureMemberAccess(ConfigureMemberAccessors)
+            // 模型名比较器：OrdinalIgnoreCase（Fluid 默认值，显式声明契约）
+            .WithModelNamesComparer(StringComparer.OrdinalIgnoreCase)
+            // include/render 的模板解析委派 Flint 模板加载器（根序 + partials 形态 +
+            // 内置回退），不用 Fluid 的文件系统提供者
+            .WithFileProvider(new DelegateTemplateFileProvider(ResolveIncludeAsync))
+            // include/render 的模板缓存（2026-10-21 性能优化：TemplateLoader 在
+            // TemplateCache==null 时每次 include 执行都重新 parser.TryParse——
+            // 1000 页 × 5 include = 5000+ 次重复解析。接入 ITemplateCache 后
+            // 解析结果按路径缓存，mtime 不符即失效）
+            .WithTemplateCache(_includeTemplateCache)
+            // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开步数限制）；
+            // 递归深度必须有限：0 在 Fluid 语义里等于不限制（TemplateContext 判
+            // `MaxRecursion > 0` 才生效），自 include / A→B→A 会直坠不可捕获的
+            // StackOverflow 让进程消失。500 层足以覆盖正常嵌套 partial
+            .WithMaxRecursion(500)
+            .WithMaxSteps(0);
+
+        // 过滤器族注册（builder 内集合可写，Build 时拷贝为只读）
+        builder.ConfigureFilters(filters =>
+        {
+            // URL 过滤器家族（abs_url/rel_url）：Hugo 内置 partial（twitter_cards）
+            // 与 Liquid 模板依赖；语义对齐 Scriban 侧 BuiltinTemplateFunctions。
+            // baseUrl 每渲染经 AmbientValues 传入（不用静态——并行多站点竞态）
+            FluidTemplateFilters.Register(filters);
+            // Hugo 名过滤器族（P4-2）：titleize/humanize/markdownify/delimit/
+            // union/i18n 等 Fluid 内置 72 个之外的新站点高频名
+            FluidHugoFilters.Register(filters);
+            // resources.Get/Match/ByType 的过滤器形态（P4-3 只读档）
+            FluidResourceFilters.Register(filters, resources);
+        });
+
+        return builder.Build();
+    }
+
+    /// <summary>
+    /// 成员访问器注册（builder 每次 Build 期间应用一次）。
+    /// <para>
+    /// page.reading_time 注册 ReadingTimeView 访问器：Fluid 的
+    /// FluidValue.Create 会把 TimeSpan 转成 DateTimeValue（纪元+时长），
+    /// 使 reading_time.total_minutes 取空（探针 + AOT 冒烟实证）——
+    /// 注册访问器优先于反射，返回保真视图。
+    /// </para>
+    /// </summary>
+    private static void ConfigureMemberAccessors(MemberAccessStrategy strategy)
+    {
         MemberAccessStrategyExtensions.Register<PageContext, ReadingTimeView>(
-            memberStrategy, "ReadingTime", static (page, _) => new ReadingTimeView(page.ReadingTime));
+            strategy, "ReadingTime", static (page, _) => new ReadingTimeView(page.ReadingTime));
         // paginator.total_number_of_elements 别名（2026-10-21：Hugo 分页器
         // 字段名是 TotalNumberOfElements，Flint 暴露 total_items——
         // 注册别名访问器让 Hugo 模板的两种写法都命中）
         MemberAccessStrategyExtensions.Register<PaginatorView, int>(
-            memberStrategy, "TotalNumberOfElements", static (p, _) => p.TotalItems);
+            strategy, "TotalNumberOfElements", static (p, _) => p.TotalItems);
         // page.next / page.prev 别名（2026-10-21：Hugo 模板用 .Next/.Prev，
         // Flint 暴露 next_page/prev_page——ToPascalCase 不会把 next 映射到
         // NextPage，注册别名让 Hugo 惯用名命中）
         MemberAccessStrategyExtensions.Register<PageContext, object>(
-            memberStrategy, "Next", static (page, _) => page.NextPage ?? (object)"");
+            strategy, "Next", static (page, _) => page.NextPage ?? (object)"");
         MemberAccessStrategyExtensions.Register<PageContext, object>(
-            memberStrategy, "Prev", static (page, _) => page.PrevPage ?? (object)"");
+            strategy, "Prev", static (page, _) => page.PrevPage ?? (object)"");
         // site.menus.main / site.taxonomies.categories：C# 索引器不能经 Fluid
         // 成员语法访问，注册类型级访问器把成员名路由到索引器（缺失键空集合，
         // 与 Scriban 的 ScriptObject 键查找同语义）
-        MemberAccessStrategyExtensions.Register<MenuCollection>(memberStrategy, new IndexerMemberAccessor(
+        MemberAccessStrategyExtensions.Register<MenuCollection>(strategy, new IndexerMemberAccessor(
             static (inst, name) => ((MenuCollection)inst)[name]));
-        MemberAccessStrategyExtensions.Register<TaxonomyCollection>(memberStrategy, new IndexerMemberAccessor(
+        MemberAccessStrategyExtensions.Register<TaxonomyCollection>(strategy, new IndexerMemberAccessor(
             static (inst, name) => ((TaxonomyCollection)inst)[name]));
         // page.params / site.params：上游 Params 字典多为 Ordinal，模板写
         // params.Foo / params.foo 两种形态都应命中——注册访问器返回
         // OrdinalIgnoreCase 副本（Fluid 的字典成员访问走字典自身比较器，
         // ModelNamesComparer 管不了 CLR 字典）
-        MemberAccessStrategyExtensions.Register<PageContext, object>(memberStrategy, "Params",
+        MemberAccessStrategyExtensions.Register<PageContext, object>(strategy, "Params",
             static (page, _) => CaseInsensitiveCopy(page.Params));
-        MemberAccessStrategyExtensions.Register<SiteContext, object>(memberStrategy, "Params",
+        MemberAccessStrategyExtensions.Register<SiteContext, object>(strategy, "Params",
             static (site, _) => CaseInsensitiveCopy(site.Params));
-
-        _options = new TemplateOptions
-        {
-            // snake_case 成员映射（page.word_count → WordCount）+ 默认大小写不敏感
-            MemberAccessStrategy = memberStrategy,
-            // 模型名比较器：OrdinalIgnoreCase（Fluid 默认值，显式声明契约）
-            ModelNamesComparer = StringComparer.OrdinalIgnoreCase,
-            // include/render 的模板解析委派 Flint 模板加载器（根序 + partials 形态 +
-            // 内置回退），不用 Fluid 的文件系统提供者
-            FileProvider = new DelegateTemplateFileProvider(ResolveIncludeAsync),
-            // include/render 的模板缓存（2026-10-21 性能优化：Fluid beta.8 的
-            // TemplateLoader 在 TemplateCache==null 时每次 include 执行都重新
-            // parser.TryParse——1000 页 × 5 include = 5000+ 次重复解析。
-            // 接入 ITemplateCache 后解析结果按路径缓存，mtime 不符即失效）
-            TemplateCache = _includeTemplateCache,
-            // 万页站点的列表/taxonomy 循环（与 Scriban 侧同口径放开步数限制）；
-            // 递归深度必须有限：0 在 Fluid 语义里等于不限制（TemplateContext 判
-            // `MaxRecursion > 0` 才生效），自 include / A→B→A 会直坠不可捕获的
-            // StackOverflow 让进程消失。500 层足以覆盖正常嵌套 partial
-            MaxRecursion = 500,
-            MaxSteps = 0
-        };
-
-        // URL 过滤器家族（abs_url/rel_url）：Hugo 内置 partial（twitter_cards）
-        // 与 Liquid 模板依赖；语义对齐 Scriban 侧 BuiltinTemplateFunctions。
-        // baseUrl 每渲染经 AmbientValues 传入（不用静态——并行多站点竞态）
-        FluidTemplateFilters.Register(_options);
-        // Hugo 名过滤器族（P4-2）：titleize/humanize/markdownify/delimit/
-        // union/i18n 等 Fluid 内置 72 个之外的新站点高频名
-        FluidHugoFilters.Register(_options);
-        // resources.Get/Match/ByType 的过滤器形态（P4-3 只读档）
-        FluidResourceFilters.Register(_options, resources);
     }
 
     /// <summary>

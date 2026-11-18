@@ -185,12 +185,17 @@ public sealed class FluidResourceTransformTests : IDisposable
     public async Task find_re_replace_re_正则过滤器()
     {
         var found = await RenderAsync("{{ '<h1>标题</h1>' | find_re: '<[^>]+>' | join: '|' }}");
-        // Liquid 单引号串把 \ 当转义——正则 pattern 的反斜杠须双写
-        // （'\\w' 在模板里才是一个 \w；Fluid 解析器对单 \w 直接报解析错误）
-        var replaced = await RenderAsync("{{ 'hello world' | replace_re: '(\\\\w+)\\\\s(\\\\w+)', '$2 $1' }}");
+        // Fluid 3.0（Parlot 2.0 迁移）起单引号串不再做 C 风格转义：模板里的
+        // 反斜杠原样保留，正则 pattern 写单反斜杠即可（beta.8 及更早须双写，
+        // 单写会解析失败；该旧契约已随升级废止，见 docs/LIQUID-GUIDE.md §4）
+        var replaced = await RenderAsync("{{ 'hello world' | replace_re: '(\\w+)\\s(\\w+)', '$2 $1' }}");
+        // 双写形态在 3.0 下是两个字面反斜杠，正则按字面匹配反斜杠——
+        // 锁定这条语义，防止升级回退时静默改变
+        var doubled = await RenderAsync("{{ 'hello world' | replace_re: '(\\\\w+)\\\\s(\\\\w+)', '$2 $1' }}");
 
         Assert.Equal("<h1>|</h1>", found);
         Assert.Equal("world hello", replaced);
+        Assert.Equal("hello world", doubled);
     }
 
     [Fact]

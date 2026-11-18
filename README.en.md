@@ -1,7 +1,7 @@
 <h1 align="center">Flint</h1>
 
 <p align="center">
-  <strong>🔥 High-performance static site generator · C# / .NET 10+ · NativeAOT single file</strong>
+  <strong>🔥 High-performance static site generator · C# / .NET 11+ · NativeAOT single file</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ---
 
-Flint is a static site generator built with C# / .NET 10+. Cross-platform,
+Flint is a static site generator built with C# / .NET 11+. Cross-platform,
 delivered as a NativeAOT single file.
 
 ---
@@ -88,7 +88,7 @@ API / namespace functions aligned; ThemeMigrator converts Go templates at
 the AST level, flagging indeterminable semantics with `TODO-HUGO` instead
 of silently mistranslating; 21 real themes verified.
 
-**No-runtime single-file delivery** — .NET 10 NativeAOT: no runtime,
+**No-runtime single-file delivery** — .NET 11 NativeAOT: no runtime,
 no node_modules, no JIT warmup — the deliverable is one exe; the asset
 pipeline covers CSS minification, lightweight TS type stripping, image
 processing, and fingerprinting. CSS minification calls external
@@ -110,7 +110,7 @@ files, immune to system code-page mojibake.
 
 ### Prerequisites
 
-- .NET SDK 10.0.401 or later (only for building Flint itself; the published
+- .NET SDK 11.0.100 or later (only for building Flint itself; the published
   exe has zero runtime dependencies)
 - Git
 
@@ -417,7 +417,7 @@ Optimization ledger and tooling: `docs/PERFORMANCE-OPTIMIZATION.md` and
 
 | Dimension | **Flint** | Hugo | Astro | Eleventy | Jekyll | Hexo |
 |---|---|---|---|---|---|---|
-| Runtime | **C# / .NET 10+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
+| Runtime | **C# / .NET 11+, AOT single-file app** | Go single binary | Node + dep tree | Node + dep tree | Ruby + gems | Node + dep tree |
 | Template system | **Fluid/Liquid (primary for new sites) + Scriban (Hugo theme compatibility)** | Go template (deliberately restricted) | UI components (React/Vue/Svelte…) | Multi-engine (Liquid/Nunjucks/EJS…) | Liquid | EJS / Pug etc. |
 | Build performance (10k pages) | **1.00x (fastest, 2.7s)** | 2.09x | 25.24x | 3.89x | 6.35x | 12.72x |
 | Incremental builds | **64ms (500 pages)** | supported | supported | supported | limited | file-level skip |
@@ -511,8 +511,8 @@ site. Migrating Hugo themes goes through the Scriban compatibility layer
 
 | Technology | Role |
 |------|------|
-| **.NET 10+** | LTS baseline and later; NativeAOT compilation, single-file publish |
-| **Scriban 7.5.3 + Fluid 3.0.0-beta.8** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
+| **.NET 11+** | Modern baseline and later; NativeAOT compilation, single-file publish |
+| **Scriban 7.6.1 + Fluid 3.0.0** | Dual template engines: Fluid (Liquid) primary (default for new sites), Scriban as the Hugo theme compatibility layer |
 | **Markdig 1.5.0** | CommonMark + GFM parsing |
 | **Dart Sass CLI** | External Sass compilation (`FLINT_SASS`/PATH provides `sass`) |
 | **Lightning CSS** | CSS minification (external CLI, falls back to built-in simple minifier) |

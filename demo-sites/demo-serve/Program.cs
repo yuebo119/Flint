@@ -1,4 +1,4 @@
-// 单进程多端口静态服务——demo-sites.sh 的服务端（.NET 10 实现，
+// 单进程多端口静态服务——demo-sites.sh 的服务端（.NET 实现，
 // 2026-09-25 起全面替代 python 版 demo-serve.py，行为逐项对齐）。
 //
 // 动机沿革：21 主题 + 画廊曾用 22 个独立 python http.server（490MB 工作集），

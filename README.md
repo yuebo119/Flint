@@ -1,7 +1,7 @@
 <h1 align="center">Flint</h1>
 
 <p align="center">
-  <strong>🔥 高性能静态站点生成器 · C# / .NET 10+ · NativeAOT 单文件</strong>
+  <strong>🔥 高性能静态站点生成器 · C# / .NET 11+ · NativeAOT 单文件</strong>
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ---
 
-Flint 是一个用 C# / .NET 10+ 实现的静态站点生成器。跨平台，NativeAOT 单文件交付。
+Flint 是一个用 C# / .NET 11+ 实现的静态站点生成器。跨平台，NativeAOT 单文件交付。
 
 ---
 
@@ -82,7 +82,7 @@ Hugo 主题兼容；`engine = auto` 按模板扩展名自动路由，同一站�
 函数全对齐；ThemeMigrator 以 AST 级转换 Go template，无法判定的语义亮
 `TODO-HUGO` 不静默错译，21 个真实主题已验证。
 
-**无运行时单文件交付** —— .NET 10 NativeAOT：无运行时、无 node_modules、
+**无运行时单文件交付** —— .NET 11 NativeAOT：无运行时、无 node_modules、
 无 JIT 预热，交付物是一个 exe；资产管线覆盖 CSS 压缩、轻量 TS 类型剥离、
 图片处理与指纹化，CSS 压缩调用外部 lightningcss，缺省回退内置简化压缩。
 
@@ -101,7 +101,7 @@ Hugo 主题兼容；`engine = auto` 按模板扩展名自动路由，同一站�
 
 ### 环境要求
 
-- .NET SDK 10.0.401 或更高（仅构建 Flint 本体时需要；产出的 exe 无任何运行时依赖）
+- .NET SDK 11.0.100 或更高（仅构建 Flint 本体时需要；产出的 exe 无任何运行时依赖）
 - Git
 
 ### 安装
@@ -398,7 +398,7 @@ Markdown 解析 229k 文件/秒 · 模板渲染 Scriban 54k / Fluid 175k 页/秒
 
 | 维度             | **Flint**                                                | Hugo                    | Astro                        | Eleventy                       | Jekyll                  | Hexo          |
 | ---------------- | -------------------------------------------------------- | ----------------------- | ---------------------------- | ------------------------------ | ----------------------- | ------------- |
-| 实现与运行时     | **C# / .NET 10+，AOT 单文件应用**                        | Go 单二进制             | Node + 依赖树                | Node + 依赖树                  | Ruby + gems             | Node + 依赖树 |
+| 实现与运行时     | **C# / .NET 11+，AOT 单文件应用**                        | Go 单二进制             | Node + 依赖树                | Node + 依赖树                  | Ruby + gems             | Node + 依赖树 |
 | 模板系统         | **Fluid/Liquid（新站点主力）+ Scriban（Hugo 主题兼容）** | Go template（刻意受限） | UI 组件（React/Vue/Svelte…） | 多引擎（Liquid/Nunjucks/EJS…） | Liquid                  | EJS / Pug 等  |
 | 构建性能（万页） | **1.00x（最快，2.7s）**                                  | 2.09x                   | 25.24x                       | 3.89x                          | 6.35x                   | 12.72x        |
 | 增量构建         | **64ms（500 页）**                                       | 支持                    | 支持                         | 支持                           | 有限                    | 按文件跳过    |
@@ -480,7 +480,7 @@ Dart Sass，装好 sass 或设 `FLINT_SASS` 指向可执行文件。
 
 | 技术                                                 | 说明                                                                      |
 | ---------------------------------------------------- | ------------------------------------------------------------------------- |
-| **.NET 10+**                                         | LTS 基线及更新线，NativeAOT 原生编译，单文件发布                          |
+| **.NET 11+**                                         | 现代基线，NativeAOT 原生编译，单文件发布                          |
 | **Fluid 3.0.0-beta.8 + Scriban 7.5.3**               | 双模板引擎：Fluid（Liquid）主力（新站点默认），Scriban 作 Hugo 主题兼容层 |
 | **Markdig 1.5.0**                                    | CommonMark + GFM 解析                                                     |
 | **Dart Sass CLI**                                    | 外部 Sass 编译（`FLINT_SASS`/PATH 提供 `sass`）                           |

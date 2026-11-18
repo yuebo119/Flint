@@ -37,9 +37,9 @@ internal static class FluidHugoFilters
     private static Func<FluidValue, FilterArguments, TemplateContext, ValueTask<FluidValue>>? _builtinWhere;
 
     /// <summary>注册全部 Hugo 名过滤器（渲染器构造时调用一次）</summary>
-    public static void Register(TemplateOptions options)
+    public static void Register(FilterCollection filters)
     {
-        var f = options.Filters;
+        var f = filters;
         // ---- where 运算符包装（2026-10-21：Fluid 内置 where 只支持两形态，
         // Hugo 的三参运算符形态 !=/>/</in/not in 会被静默当作相等比较——注册
         // 包装拦截三参+已知运算符，按 Hugo 语义求值，否则委托内置）----

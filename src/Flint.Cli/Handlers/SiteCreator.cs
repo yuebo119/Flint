@@ -811,7 +811,7 @@ internal static class SiteCreator
 
             本站使用 [Flint](https://github.com/yuebo119/Flint) 静态站点生成器构建。
 
-            Flint 是一个使用 .NET 10 开发的高性能静态站点生成器，具有以下特点：
+            Flint 是一个使用 .NET 11 开发的高性能静态站点生成器，具有以下特点：
 
             - 🚀 极速构建 - 比 Hugo 快 3-5 倍
             - 🔒 类型安全 - 编译时错误检查

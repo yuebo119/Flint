@@ -18,17 +18,17 @@ namespace Flint.Core.Templates;
 internal static class FluidTemplateFilters
 {
     /// <summary>注册全部 Liquid 过滤器（渲染器构造时调用一次）</summary>
-    public static void Register(TemplateOptions options)
+    public static void Register(FilterCollection filters)
     {
-        options.Filters.AddFilter("abs_url", AbsUrl);
-        options.Filters.AddFilter("absURL", AbsUrl);
-        options.Filters.AddFilter("absurl", AbsUrl);
-        options.Filters.AddFilter("rel_url", RelUrl);
-        options.Filters.AddFilter("relURL", RelUrl);
-        options.Filters.AddFilter("relurl", RelUrl);
-        // Money 过滤器（2026-10-21：Fluid beta.8 的 TemplateOptions 构造函数
-        // 不自动注册 Money 4 个过滤器，需显式调用 WithMoneyFilters）
-        options.Filters.WithMoneyFilters();
+        filters.AddFilter("abs_url", AbsUrl);
+        filters.AddFilter("absURL", AbsUrl);
+        filters.AddFilter("absurl", AbsUrl);
+        filters.AddFilter("rel_url", RelUrl);
+        filters.AddFilter("relURL", RelUrl);
+        filters.AddFilter("relurl", RelUrl);
+        // Money 过滤器（Fluid 3.0：内置集不含 Money 4 个过滤器，
+        // 需显式 WithMoneyFilters 挂到收集上）
+        filters.WithMoneyFilters();
     }
 
     private static ValueTask<FluidValue> AbsUrl(FluidValue input, FilterArguments args, TemplateContext ctx) =>

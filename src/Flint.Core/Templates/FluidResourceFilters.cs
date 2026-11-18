@@ -36,32 +36,32 @@ internal static class FluidResourceFilters
     internal const string GeneratedKey = "__flint_fluid_generated";
 
     /// <summary>注册资源与资产变换过滤器（渲染器构造时调用；provider 可为 null）</summary>
-    public static void Register(TemplateOptions options, ITemplateResourceProvider? provider)
+    public static void Register(FilterCollection filters, ITemplateResourceProvider? provider)
     {
         // ---- 只读档 ----
-        options.Filters.AddFilter("resource", (input, args, ctx) => Get(input, args, ctx, provider));
-        options.Filters.AddFilter("resources_get", (input, args, ctx) => Get(input, args, ctx, provider));
-        options.Filters.AddFilter("resources_match", (input, args, ctx) => Match(input, args, ctx, provider));
-        options.Filters.AddFilter("resources_by_type", (input, args, ctx) => ByType(input, args, ctx, provider));
-        options.Filters.AddFilter("resources_bytype", (input, args, ctx) => ByType(input, args, ctx, provider));
+        filters.AddFilter("resource", (input, args, ctx) => Get(input, args, ctx, provider));
+        filters.AddFilter("resources_get", (input, args, ctx) => Get(input, args, ctx, provider));
+        filters.AddFilter("resources_match", (input, args, ctx) => Match(input, args, ctx, provider));
+        filters.AddFilter("resources_by_type", (input, args, ctx) => ByType(input, args, ctx, provider));
+        filters.AddFilter("resources_bytype", (input, args, ctx) => ByType(input, args, ctx, provider));
 
         // ---- 产物型（P4-3 全量）----
-        options.Filters.AddFilter("resource_concat", Concat);
-        options.Filters.AddFilter("resources_concat", Concat);
-        options.Filters.AddFilter("resource_copy", Copy);
-        options.Filters.AddFilter("resources_copy", Copy);
-        options.Filters.AddFilter("resource_fingerprint", Fingerprint);
-        options.Filters.AddFilter("resources_fingerprint", Fingerprint);
-        options.Filters.AddFilter("resource_from_string", FromString);
-        options.Filters.AddFilter("resources_from_string", FromString);
-        options.Filters.AddFilter("resource_minify", Minify);
+        filters.AddFilter("resource_concat", Concat);
+        filters.AddFilter("resources_concat", Concat);
+        filters.AddFilter("resource_copy", Copy);
+        filters.AddFilter("resources_copy", Copy);
+        filters.AddFilter("resource_fingerprint", Fingerprint);
+        filters.AddFilter("resources_fingerprint", Fingerprint);
+        filters.AddFilter("resource_from_string", FromString);
+        filters.AddFilter("resources_from_string", FromString);
+        filters.AddFilter("resource_minify", Minify);
 
         // ---- 资产变换（P4-4 服务化）----
-        options.Filters.AddFilter("css_sass", CssSass);
-        options.Filters.AddFilter("sass", CssSass);
-        options.Filters.AddFilter("to_css", CssSass);
-        options.Filters.AddFilter("css_build", CssBuild);
-        options.Filters.AddFilter("js_build", JsBuild);
+        filters.AddFilter("css_sass", CssSass);
+        filters.AddFilter("sass", CssSass);
+        filters.AddFilter("to_css", CssSass);
+        filters.AddFilter("css_build", CssBuild);
+        filters.AddFilter("js_build", JsBuild);
     }
 
     // ---- 只读档 ----

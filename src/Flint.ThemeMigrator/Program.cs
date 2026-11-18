@@ -200,10 +200,14 @@ return 0;
 
 static string? DetectFlintExe()
 {
-    // 相对本程序探测 Flint CLI（源码树布局）
+    // 相对本程序探测 Flint CLI（源码树布局）；TFM 目录按新旧顺序回退，
+    // 升级 TFM 后旧目录不再产出，保留候选只为兼容未重建的工作树
     var baseDir = AppContext.BaseDirectory;
     var candidates = new[]
     {
+        Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Release", "net11.0", "win-x64", "Flint.exe"),
+        Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Release", "net11.0", "Flint.exe"),
+        Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Debug", "net11.0", "Flint.exe"),
         Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Release", "net10.0", "win-x64", "Flint.exe"),
         Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Release", "net10.0", "Flint.exe"),
         Path.Combine(baseDir, "..", "..", "..", "..", "Flint.Cli", "bin", "Debug", "net10.0", "Flint.exe")

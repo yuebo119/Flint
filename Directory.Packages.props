@@ -5,14 +5,14 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
   <ItemGroup>
-    <!-- CLI 框架（3.0 RC：减少反射、支持裁剪/AOT，API 有破坏性变化） -->
-    <PackageVersion Include="System.CommandLine" Version="3.0.0-rc.3.26522.148" />
+    <!-- CLI 框架（3.0 正式版：.NET 11 同期 GA，较 rc.3 无 API 迁移成本） -->
+    <PackageVersion Include="System.CommandLine" Version="3.0.0" />
     <!-- 模板引擎：双引擎 auto 路由（.liquid→Fluid、Hugo .html→Scriban）；
          新站点为 Fluid 原生（Liquid 内置兜底），Scriban 长期做 Hugo 兼容 -->
-    <PackageVersion Include="Scriban" Version="7.5.3" />
-    <PackageVersion Include="Fluid.Core" Version="3.0.0-beta.8" />
+    <PackageVersion Include="Scriban" Version="7.6.1" />
+    <PackageVersion Include="Fluid.Core" Version="3.0.0" />
     <!-- Markdown 解析 -->
-    <PackageVersion Include="Markdig" Version="1.5.0" />
+    <PackageVersion Include="Markdig" Version="1.6.0" />
     <!-- 图像处理（2026-09-24 用户裁决：不采用付费版本，锁定开源线）。
          实测事实（2026-10-27，仓库外探针 A/B）：
          - 3.1.12 是最后一个「不强制构建期许可校验」的版本：包内只有
@@ -33,19 +33,19 @@
            未拿到 key 前不得升级，否则 Release 构建与 CI 全红。 -->
     <PackageVersion Include="SixLabors.ImageSharp" Version="3.1.12" />
     <!-- 配置解析：YAML 换 VYaml，TOML 换 Tommy。
-         PerformanceCounter 走 .NET 10 GA 正式线（net10 分支对齐） -->
-    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="10.0.14" />
+         PerformanceCounter 走 .NET 11 GA 正式线（与 TFM 对齐） -->
+    <PackageVersion Include="System.Diagnostics.PerformanceCounter" Version="11.0.0" />
     <PackageVersion Include="Tommy" Version="3.1.2" />
-    <PackageVersion Include="VYaml" Version="1.5.0" />
+    <PackageVersion Include="VYaml" Version="1.6.1" />
     <!-- Sass/SCSS：统一外部原生 Dart Sass CLI，不再引用 DartSass.Native -->
     <!-- HTML/CSS/JS 压缩：CSS 走外部 Lightning CSS，移除 NUglify -->
     <!-- 测试框架 -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
-    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageVersion Include="xunit.v3" Version="4.0.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageVersion Include="FsCheck" Version="3.6.0" />
     <PackageVersion Include="FsCheck.Xunit.v3" Version="3.6.0" />
-    <PackageVersion Include="coverlet.collector" Version="10.1.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.1.1" />
     <PackageVersion Include="AwesomeAssertions" Version="9.6.0" />
     <!-- 性能测试框架：0.16 仍是预览线（0.16.0-preview.2，2026-09-23），
          正式版未出；稳定线 0.15.8 为当前最高稳定版，等 0.16.0 正式发布再升 -->

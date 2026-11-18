@@ -74,8 +74,8 @@ Flint.Core.Tests → Flint.Core
 
 | 配置项 | 值 | 说明 |
 |--------|---|------|
-| `TargetFramework` | `net10.0` | 单目标，**不多目标** |
-| `LangVersion` | `14.0` | 锁定语言版本，不随 SDK 漂移 |
+| `TargetFramework` | `net11.0` | 单目标，**不多目标** |
+| `LangVersion` | `15.0` | 锁定语言版本，不随 SDK 漂移 |
 | `Nullable` | `enable` | 全项目可空引用类型 |
 | `TreatWarningsAsErrors` | `true` | **零警告门禁** |
 | `AnalysisLevel` | `latest-all` | 启用所有最新分析器规则 |
@@ -226,7 +226,7 @@ Flint 的处理对象是**全站页面 × 页面成员**的规模（700+ 页/站
 |------|------|------|
 | 构建/演示编排 | bash | Git Bash 可跑；`set -u`；端口/路径集中头部变量 |
 | 数据处理 | python | 仅数据生成/校验（corpus、bench），不碰引擎 |
-| 单进程服务 | .NET 10 | `demo-sites/demo-serve`（TcpListener，零依赖） |
+| 单进程服务 | .NET 11 | `demo-sites/demo-serve`（TcpListener，零依赖） |
 
 **铁律** `[P0]`：不用脚本（sed/perl/heredoc）批量改写**既有** `.cs` 源码或
 配置文件——绕过 Read 前置且无可审查差异。改动一律逐处 Edit。脚本只允许
@@ -504,7 +504,7 @@ http://127.0.0.1:8421/   yinyang
 - **每主题独立端口**（用户裁决 2026-09-23）：SSG 主题是站点级能力，曾经尝试的
   单端口子路径归并方案因根命名空间撞车/同源存储共享被否决，实现保留在
   git 历史（`2c8fc81..ead327f`），教训登记于 cortex 决策记忆
-- **服务是单进程**（`demo-sites/demo-serve/`，.NET 10 TcpListener 手写最小 HTTP，
+- **服务是单进程**（`demo-sites/demo-serve/`，.NET 11 TcpListener 手写最小 HTTP，
   直启 apphost 实测 22 端口 **22MB**，与 python 版持平）——2026-09-25 全面替代
   python 版：22 个解释器 490MB → 单 python 进程 21MB → .NET 单进程 22MB；
   教训：经 `dotnet run` 启动会多挂 ~160MB 宿主父进程（曾误测为 145MB），
@@ -594,7 +594,7 @@ dotnet run --project src/Flint.DevTools -- demo build      # 至少 blast radius
 
 | 层 | 形态 | 判定 | 示例 |
 |---|---|---|---|
-| 一次性脚本 | **.NET 10 文件型应用**：单 `.cs` 文件，`#:package` 引包，`dotnet run x.cs` 直接跑，无 csproj | 任务结束即弃、不值得进工程 | 语料格式探测、一次性数据对拍、临时报告生成 |
+| 一次性脚本 | **.NET 11 文件型应用**：单 `.cs` 文件，`#:package` 引包，`dotnet run x.cs` 直接跑，无 csproj | 任务结束即弃、不值得进工程 | 语料格式探测、一次性数据对拍、临时报告生成 |
 | 常驻工具 | 进 `src/Flint.DevTools`（开发运维：bench/audit/corpus/release/perf/theme/demo）或 `src/Flint.AiGate`（质量门禁），子命令形态 | 反复调用、要进提交前流程或 CI | 基准测试、门禁扫描、发布工具 |
 | 交互排查 | `csi`（SDK 自带 Roslyn REPL） | 边写边试的探索 | 正则调参、模板行为验证 |
 
