@@ -161,8 +161,12 @@ SiteBuilder 不认识具体引擎。
 | `apply` | `$seq \| apply: 'upcase'` | 逐元素应用指定名过滤器 |
 | `seq` | `5 \| seq: first: 2, step: 2` | 整数序列（Hugo seq 语义） |
 | `shuffle` | `$items \| shuffle` | 随机乱序（Random.Shared） |
-| `find_re` / `replace_re` | 正则查找/替换 | **pattern 反斜杠单写**（Fluid 3.0 起不再转义，见 §4） |
+| `find_re` / `replace_re` | 正则查找/替换 | **pattern 反斜杠单写**（Fluid 3.0 起不再转义，见 §4）；统一 2 秒超时（2026-11-20 R1 加固） |
 | `i18n` / `T` | 翻译表查键，缺键空串 | 站点 i18n/ 经 AmbientValues 传入 |
+| `qr` / `images_qr` | `'文本' \| qr` 生成 QR 资源 | 与 Scriban 共用 CreateQrResource 单一事实源（fb086f1） |
+| `resize` / `fit` / `fill` / `crop` | 真像素图像变换（等比/contain/cover/中心裁剪） | spec 支持 webp/png/jpg/gif 转码，产物内容指纹命名，构建内同参缓存；`resource_`/`resources_` 双别名（feb5e4a） |
+| `srcset` | 一键响应式 `<img>` 直出 | srcset/sizes/alt/lazy/async，档位自动过滤超原图宽（feb5e4a） |
+| `related` | 相关内容推荐 | 零配置（keywords/date/tags/categories 评分与 Scriban .Related 同源），limit/min_score 可调（feb5e4a） |
 | `safe_html` 等 6 个 | 恒等透传 | Flint 默认不转义 |
 
 产物型变换（concat/copy/fingerprint/from_string/minify/sass/build）的结果经
@@ -215,6 +219,11 @@ P4-4 资产变换含 vars/format/params 选项的 Liquid 形态）。**T2 递延
    `js_build: format: 'esm', params: '<json>'` 与 Scriban 同义）。
    `group` 返回二元组列表 `[key, items]`（Liquid 无对象字面量，
    Scriban 侧返回 dict）。
+10. **未定义 filter 静默透传**（Liquid 生态约定，2026-11-20 R2 审计登记）：
+    Liquid 的 `{{ x | 不存在的filter }}` 不报错、原值透传（Jekyll/Shopify
+    同款语义）；Hugo 与 Scriban 兼容层则在编译/解析期报错。从 Hugo 主题
+    移植模板到 Liquid 时注意：拼错的 filter 名不会在构建期暴露，产出
+    为原值。需要编译期报错的场景走 Scriban 兼容引擎。
 
 ## 5. 性能与验证口径
 
