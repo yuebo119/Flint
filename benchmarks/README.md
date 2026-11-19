@@ -15,7 +15,7 @@
 
 | 资料 | 位置 | 再生方式 |
 | ---- | ---- | -------- |
-| Hugo v0.165.0 Extended | `tools/hugo.exe` | GitHub release `hugo_extended_0.165.0_windows-amd64.zip` 解压 |
+| Hugo v0.170.1 | `tools/hugo.exe` | GitHub release `hugo_0.170.1_windows-amd64.zip` 解压（v0.170.0 起 extended 已并入单一版本） |
 | 万页合成语料 | `corpus/ssg-bench/` | `python scripts/ssg-bench.py --pages 10000` |
 | MDN 源仓库与转换语料 | `corpus/mdn-content/`、`corpus/corpus-merged/` | 克隆 mdn/content（depth 1），再 `python scripts/corpus-convert.py` |
 | k8s 源仓库与转换语料 | `corpus/k8s-website/`（含于 corpus-merged） | 同上 |
