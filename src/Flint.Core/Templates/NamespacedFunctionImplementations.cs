@@ -45,6 +45,18 @@ public sealed partial class BuiltinTemplateFunctions
         Add("chomp", (string? s) => s?.TrimEnd('\r', '\n') ?? "");
         Add("first_upper", (string? s) =>
             string.IsNullOrEmpty(s) ? "" : char.ToUpperInvariant(s[0]) + s[1..]);
+        // first_lower（strings.FirstLower）：首字母小写，first_upper 的镜像
+        Add("first_lower", (string? s) =>
+            string.IsNullOrEmpty(s) ? "" : char.ToLowerInvariant(s[0]) + s[1..]);
+        // count_substr（strings.Count SUBSTRING STRING）：子串出现次数（Go strings.Count 语义；
+        // 空子串按 Go 返回 utf8.RuneCountInString+1，这里给 0——空模式对主题无意义）
+        Add("count_substr", (string? substr, string? s) =>
+            string.IsNullOrEmpty(substr) || string.IsNullOrEmpty(s)
+                ? 0
+                : System.Text.RegularExpressions.Regex.Matches(s,
+                    System.Text.RegularExpressions.Regex.Escape(substr)).Count);
+        // contains_non_space（strings.ContainsNonSpace STRING）：是否含非空白字符
+        Add("contains_non_space", (string? s) => s?.Any(ch => !char.IsWhiteSpace(ch)) ?? false);
         // slicestr STRING START [END]：end 可省（Hugo 两参形态），
         // 严格三参形参会把 `slicestr $name 2` 打成参数数错误（even 主题 37 处实测）
         Add("slicestr", (params object?[] a) =>

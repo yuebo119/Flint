@@ -586,12 +586,14 @@ public sealed partial class BuiltinTemplateFunctions
             return dt?.ToUnixTimeSeconds() ?? 0;
         });
 
-        // duration - 时间间隔
+        // duration - 时间间隔。TimeSpan.TryParse 之外再试 Go 的 ParseDuration 形态
+        //（"72h" / "2h45m" / "300ms"：全序列求和，TryParse 只认 "12:30:00" 首段即止）。
+        // Hugo 的 time.Duration 兼容由此承接（迁移器把 time.Duration 改写到 duration）
         obj.Import("duration", (string? s) =>
         {
             if (TimeSpan.TryParse(s, out var result))
                 return result;
-            return TimeSpan.Zero;
+            return ParseGoDuration(s);
         });
 
         // add_date - 添加日期

@@ -62,6 +62,55 @@ internal static class FluidResourceFilters
         filters.AddFilter("to_css", CssSass);
         filters.AddFilter("css_build", CssBuild);
         filters.AddFilter("js_build", JsBuild);
+
+        // ---- QR（Hugo images.QR 的 Liquid 形态；生成核心与 Scriban 侧共用）----
+        filters.AddFilter("qr", Qr);
+        filters.AddFilter("images_qr", Qr);
+    }
+
+    /// <summary>
+    /// {{ '文本' | qr }} / {{ '文本' | qr: 8, level: 'high', fg_color: '#111', bg_color: '#eee' }}：
+    /// Hugo images.QR（v0.141+）的 Liquid 过滤器形态，产出 SVG 资源。
+    /// 生成走 CreateQrResource（与 Scriban 侧 images.QR 同一事实源）
+    /// </summary>
+    private static ValueTask<FluidValue> Qr(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var text = ToString(input, ctx);
+        var scale = 4;
+        var level = "medium";
+        var targetDir = "";
+        var fg = "#000000";
+        var bg = "#ffffff";
+        // 位置参数 0 是 scale；其余走命名参数（snake 与 camel 双形态）
+        string? Named(params string[] names)
+        {
+            foreach (var n in names)
+            {
+                var v = args[n];
+                if (!v.IsNil())
+                {
+                    return ToString(v, ctx);
+                }
+            }
+            return null;
+        }
+        if (args.Count > 0 && !args.At(0).IsNil() &&
+            int.TryParse(ToString(args.At(0), ctx), out var s0))
+        {
+            scale = s0;
+        }
+        if (int.TryParse(Named("scale"), out var sn))
+        {
+            scale = sn;
+        }
+        level = Named("level") ?? level;
+        targetDir = Named("target_dir", "targetDir") ?? "";
+        fg = Named("fg_color", "fgColor") ?? fg;
+        bg = Named("bg_color", "bgColor") ?? bg;
+        var result = BuiltinTemplateFunctions.CreateQrResource(
+            text, scale, level, targetDir, fg, bg, BaseUrlOf(ctx));
+        Register(ctx, result);
+        return new(FluidValue.Create(result, ctx.Options));
     }
 
     // ---- 只读档 ----

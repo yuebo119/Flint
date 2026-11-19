@@ -99,7 +99,7 @@ public sealed class NamespaceLayerTests
     {
         var root = Build();
         var hugo = (Scriban.Runtime.ScriptObject)root["hugo"]!;
-        Assert.Equal("0.166.0", hugo["Version"]);
+        Assert.Equal("0.170.1", hugo["Version"]);
         Assert.Equal(true, hugo["IsProduction"]);
         Assert.Equal(false, hugo["IsServer"]);
         Assert.True(hugo.ContainsKey("Environment"));

@@ -197,7 +197,7 @@ public sealed class FluidHugoFilterTests : IDisposable
             "[{{ hugo.version }}][{{ hugo.is_production }}][{{ hugo.environment }}]",
             CreateContext());
 
-        Assert.Equal("[0.146.0][true][production]", result);
+        Assert.Equal("[0.170.1][true][production]", result);
     }
 
     // ---- Hugo urls/collections/compare 过滤器（2026-10-21 补齐）----

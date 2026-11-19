@@ -17,7 +17,7 @@ namespace Flint.Core.Templates;
 public sealed record TemplateEnvironmentInfo
 {
     /// <summary>Hugo 兼容版本号（主题常做 min_version 校验）</summary>
-    public string Version { get; init; } = "0.166.0";
+    public string Version { get; init; } = "0.170.1";
 
     /// <summary>环境名：production / development</summary>
     public string Environment { get; init; } = "production";
@@ -118,30 +118,83 @@ public sealed partial class BuiltinTemplateFunctions
         root.TrySetValue(null, default, "hugo", hugo, readOnly: true);
 
 
-        // time.*：Scriban 内置 time 对象已提供 now/format 等；
-        // 补 Hugo 的 AsTime / In / ParseDuration 别名（不覆盖内置成员）
-        if (root.TryGetValue(null, default, "time", out var timeValue) && timeValue is ScriptObject timeObj)
-        {
-            if (!timeObj.ContainsKey("AsTime"))
-            {
-                timeObj.TrySetValue(null, default, "AsTime", (object? v) => v, readOnly: true);
-            }
-            if (!timeObj.ContainsKey("In"))
-            {
-                timeObj.TrySetValue(null, default, "In", (object? v, string? tz) => v, readOnly: true);
-            }
-            if (!timeObj.ContainsKey("ParseDuration"))
-            {
-                timeObj.TrySetValue(null, default, "ParseDuration", (string? s) => s ?? "", readOnly: true);
-            }
+        // time.*：Hugo 的 time 兼有裸函数（`time .Date`，github-style 实测）与命名空间
+        //（time.Format/Duration/Now，0.146+ 官方形态）两种身份。Scriban 引擎层无法二合一：
+        // 实测（tmp/qr-verify 探针，2026-11）实现 IScriptCustomFunction 的对象在任何
+        // 求值位置都会被劫持为函数调用（连裸 `{{ obj }}` 打印都报"0 参调用"），而
+        // RegisterDateFunctions 注册的 ScriptFunction 无成员语义——`time.Format` 会
+        // 回落成调用 time 本身报 "Invalid number of arguments 0 passed to time"。
+        // 结论：time 命名空间（AsTime/In/ParseDuration/Format/Duration/Now）的兼容
+        // 由**迁移器**承担（time.Format → date.to_string 已实现，共用 FormatHugoDate；
+        // time.Duration → duration）。本方法不再触碰 root["time"]；
+        // Go 时长语义的增强落在全局 duration（见 RegisterDateFunctions）
+    }
 
-            // 注：`time` 在这里是**函数**（Hugo 的裸 `time` 解析函数，github-style 与 clarity
-            // 的 `time .Date` 实测用到），不是 Scriban 的 `time` 对象——故 Hugo 的
-            // `time.Format` 不能落成 `time.format`（成员查不到会去调用 `time` 本身，
-            // 报 "Invalid number of arguments 0 passed to time"）。
-            // 它由迁移器改写成 `date.to_string`（值在前、布局在后，与 Scriban 管道注入
-            // 首参的方向一致；直接调用形态由迁移器换序，见 ScribanConverter）
+    /// <summary>Go 的 ParseDuration 简易解析："2h45m"、"-1.5h"、"300ms"；
+    /// 非法串返回 Zero（与全局 duration 的失败语义一致）</summary>
+    private static TimeSpan ParseGoDuration(string? s)
+    {
+        if (string.IsNullOrEmpty(s))
+        {
+            return TimeSpan.Zero;
         }
+        var rest = s.AsSpan().Trim();
+        var neg = false;
+        if (rest.Length > 0 && (rest[0] == '+' || rest[0] == '-'))
+        {
+            neg = rest[0] == '-';
+            rest = rest[1..];
+        }
+        double total = 0;
+        var any = false;
+        while (rest.Length > 0)
+        {
+            // 数字部分（可含小数）
+            var numEnd = 0;
+            while (numEnd < rest.Length && (char.IsDigit(rest[numEnd]) || rest[numEnd] == '.'))
+            {
+                numEnd++;
+            }
+            if (numEnd == 0 || !double.TryParse(rest[..numEnd], NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var n))
+            {
+                return TimeSpan.Zero;
+            }
+            rest = rest[numEnd..];
+            // 单位部分
+            var unit = "";
+            foreach (var u in new[] { "ns", "us", "µs", "ms", "s", "m", "h" })
+            {
+                if (rest.StartsWith(u, StringComparison.Ordinal))
+                {
+                    unit = u;
+                    break;
+                }
+            }
+            // 注意 "ms" 已在 "s" 之前匹配；但 "m" 会让 "ms" 截半——按长度排序的
+            // 表已保证 "ms" 先于 "m"/"s" 试探
+            if (unit.Length == 0)
+            {
+                return TimeSpan.Zero;
+            }
+            rest = rest[unit.Length..];
+            total += unit switch
+            {
+                "ns" => n / 100,
+                "us" or "µs" => n / 10_000,
+                "ms" => n / 1000,
+                "s" => n,
+                "m" => n * 60,
+                "h" => n * 3600,
+                _ => 0
+            };
+            any = true;
+        }
+        if (!any)
+        {
+            return TimeSpan.Zero;
+        }
+        return neg ? TimeSpan.FromSeconds(-total) : TimeSpan.FromSeconds(total);
     }
 }
 

@@ -347,6 +347,36 @@ public sealed class FluidSequenceFilterTests : IDisposable
 
         Assert.Equal("5", result);
     }
+
+    // ---- QR（Hugo images.QR 的 Liquid 形态，2026-11-19 批次）----
+
+    [Fact]
+    public async Task qr_filter_成员可访问且颜色参数生效()
+    {
+        var o = await RenderAsync(
+            "{% assign q = 'fluid-qr' | qr: 8, level: 'high', fg_color: '#123456', bg_color: '#abcdef' %}" +
+            "{{ q.name }}|{{ q.width }}|{{ q.height }}");
+        var parts = o.Split('|');
+        Assert.True(parts[0].StartsWith("qr_") && parts[0].EndsWith(".svg"), $"name={parts[0]}");
+        Assert.Equal(parts[1], parts[2]);
+        // 双引擎同源：Fluid 工厂产物与 CreateQrResource 直呼一致
+        var direct = BuiltinTemplateFunctions.CreateQrResource(
+            "fluid-qr", 8, "high", "", "#123456", "#abcdef", "https://example.com");
+        Assert.Equal(direct.Name, parts[0]);
+        Assert.Equal(direct.Width.ToString(), parts[1]);
+        Assert.Contains("#123456", direct.Content);
+        Assert.Contains("#abcdef", direct.Content);
+    }
+
+    [Fact]
+    public async Task qr_filter_内容与工厂直呼逐字一致()
+    {
+        var direct = BuiltinTemplateFunctions.CreateQrResource(
+            "parity", 4, "medium", "", "#000000", "#ffffff", "https://example.com");
+        var o = await RenderAsync(
+            "{% assign q = 'parity' | qr %}{{ q.content }}");
+        Assert.Equal(direct.Content, o);
+    }
 }
 
 /// <summary>disableShortcodes 配置测试（P5-3）</summary>

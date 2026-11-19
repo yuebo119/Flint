@@ -130,8 +130,10 @@ public sealed class HugoInfoView
     /// <summary>共享单例（值全部编译期常量）</summary>
     public static HugoInfoView Instance { get; } = new();
 
-    /// <summary>Hugo 兼容版本号（Flint 声明兼容的 Hugo 版本）</summary>
-    public string Version => "0.146.0";
+    /// <summary>Hugo 兼容版本号（Flint 声明兼容的 Hugo 版本；与 Scriban 侧
+    /// TemplateEnvironmentInfo.Default.Version 同步——2026-11-19 前本处停在
+    /// 0.146.0 而 Scriban 侧 0.166.0，双引擎版本声明不一致）</summary>
+    public string Version => "0.170.1";
 
     /// <summary>是否生产环境（Flint build 命令恒 true；serve 为 false）</summary>
     public bool IsProduction => true;

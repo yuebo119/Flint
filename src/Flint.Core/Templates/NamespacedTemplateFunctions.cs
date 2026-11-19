@@ -25,6 +25,8 @@ public sealed partial class BuiltinTemplateFunctions
         ("strings",
         [
             ("ToUpper", "upper"), ("ToLower", "lower"), ("Title", "title"),
+            ("FirstLower", "first_lower"), ("Count", "count_substr"),
+            ("ContainsNonSpace", "contains_non_space"),
             // strings.Trim 是 (CUTSET, STRING)，与全局 trim(s) 不同
             ("Trim", "strings_trim"), ("TrimLeft", "trim_left"), ("TrimRight", "trim_right"),
             ("TrimPrefix", "trim_prefix"), ("TrimSuffix", "trim_suffix"), ("TrimSpace", "trim_space"),
@@ -51,6 +53,8 @@ public sealed partial class BuiltinTemplateFunctions
             // collections.Slice 是 Hugo 的可变参数构造器（非切片），独立实现
             ("Slice", "collections_slice"), ("Sort", "sort"), ("SymDiff", "symdiff"),
             ("Union", "union"), ("Uniq", "uniq"), ("Where", "where"), ("D", "d"),
+            // NewScratch：全局 new_scratch 的命名空间形态（Hugo collections.NewScratch）
+            ("NewScratch", "new_scratch"),
         ]),
         ("compare",
         [

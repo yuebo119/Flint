@@ -18,6 +18,9 @@
 using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Scriban.Runtime;
 
@@ -678,9 +681,291 @@ public sealed partial class BuiltinTemplateFunctions
                 obj.Import(opName.ToLowerInvariant(),
                     (object? spec) => ApplyImageOp(resource, opName, spec as string));
             }
+            // $img.Filter $filters：Hugo 0.147+ 的资源成员级滤镜组合
+            //（参数是 filter 对象/数组，与几何 op 的 spec 字符串不同，单独注册）
+            obj.Import("Filter", (object? filters) => ApplyFiltersOnResource(resource, filters));
+            obj.Import("filter", (object? filters) => ApplyFiltersOnResource(resource, filters));
         };
 
-        images.Import("Config", () => new ScriptObject());
+        // resources.PostProcess：Hugo 把资源标记为"所有页面渲染完后再处理"，
+        // 用于跨页 dedupe（指纹/压缩只在产出最终形态时执行一次）。Flint 的
+        // 变换全部在构建期完成，无后置阶段——**恒等返回**是语义近似（资源
+        // 已经处理完毕，调用无害），主题管道不因缺它而断链
+        res.Import("PostProcess", (object? value) =>
+        {
+            var r = ToResource(value);
+            if (r is null)
+            {
+                return null;
+            }
+            Track(r);
+            return r.ToScriptObject();
+        });
+
+        RegisterImageFunctions(images);
+    }
+
+    /// <summary>
+    /// 注册 images.* 命名空间（对齐 Hugo 0.170.1 官方 25 函数）：
+    /// 21 个滤镜工厂返回 filter 描述对象（记 op 与参数），由 images.Filter /
+    /// <c>$img.Filter</c> 消费——与 Resize/Fit 同策略：登记确定性命名 + 原图
+    /// 直通，像素处理在构建期 assets 管线（Flint 的离线确定性构建架构）。
+    /// 例外：QR 为纯生成（无输入图像），走自写编码器 + SVG 真实现；
+    /// Config 读字节探测真实尺寸；Text 需字体系统（SixLabors.Fonts 未依赖，
+    /// 引新依赖的代价大于收益——返回 filter 描述保证模板不断链，文字渲染
+    /// 为已登记缺口）
+    /// </summary>
+    private void RegisterImageFunctions(ScriptObject images)
+    {
+        // ---- 滤镜工厂（参数形态即 Hugo 签名：亮度/饱和度百分比、半径像素等）----
+        foreach (var op in FilterOps)
+        {
+            var opName = op;
+            images.Import(opName, (params object?[] args) => FilterSpec(opName, args));
+            images.Import(char.ToLowerInvariant(opName[0]) + opName[1..],
+                (params object?[] args) => FilterSpec(opName, args));
+        }
+
+        // ---- images.Filter FILTERS IMAGE：组合滤镜并产出登记资源 ----
+        images.Import("Filter", (params object?[] args) =>
+        {
+            var (spec, r) = SeparateFilters(args);
+            return spec is null || r is null ? r?.ToScriptObject() : ApplyImageOp(r, "filter", spec);
+        });
+
+        // ---- images.Process IMAGE SPEC：命名空间级几何/格式处理（此前只有资源成员级）----
+        images.Import("Process", (object? value, string? spec) =>
+            ApplyImageOp(ToResource(value), "Process", spec));
+
+        // ---- images.Config IMAGE：图像元数据（Width/Height；SVG 等文本图像返回空对象）----
+        images.Import("Config", (object? value) =>
+        {
+            var r = ToResource(value);
+            if (r is null)
+            {
+                return null;
+            }
+            // 位图资源装载期不读文本（Content 为空），经 provider 读原始字节探测
+            var bytes = r.Content.Length > 0 ? null : _resources?.ReadBytes(r.Name);
+            if (bytes is null || bytes.Value.Length == 0)
+            {
+                return new ScriptObject();
+            }
+            try
+            {
+                var info = SixLabors.ImageSharp.Image.Identify(bytes.Value.Span);
+                if (info is null)
+                {
+                    return new ScriptObject();
+                }
+                return new ScriptObject
+                {
+                    ["Width"] = info.Width, ["width"] = info.Width,
+                    ["Height"] = info.Height, ["height"] = info.Height
+                };
+            }
+            catch (SixLabors.ImageSharp.UnknownImageFormatException)
+            {
+                // 非白名单位图（含 SVG 走文本路径到不了这里、损坏文件）：
+                // 降级空对象（Hugo 对 SVG 的 Config 同样无位图尺寸）
+                return new ScriptObject();
+            }
+        });
+
+        // ---- images.QR TEXT [OPTIONS]（v0.141+；fgColor/bgColor 为 0.170.1 新增，
+        // 官方函数页标注 v0.171.0、GitHub release notes 归入 v0.170.1——以
+        // release notes 为准）。产出 SVG 资源（矢量无损，免 PNG 编码依赖）----
+        images.Import("QR", (params object?[] args) =>
+        {
+            // images.QR TEXT [OPTIONS]：OPTIONS 可省（Hugo 签名第二参可选）
+            var text = args.Length > 0 ? args[0]?.ToString() : null;
+            var options = args.Length > 1 && args[1] is ScriptObject optObj ? optObj : null;
+            if (string.IsNullOrEmpty(text))
+            {
+                // 对齐 Hugo：空 TEXT 构建失败（不静默产出空资源）
+                throw new InvalidOperationException("images.QR: TEXT 不能为空");
+            }
+            var scale = 4;
+            var level = "medium";
+            var targetDir = "";
+            var fg = "#000000";
+            var bg = "#ffffff";
+            if (options is not null)
+            {
+                string? Opt(string pascal, string lower)
+                {
+                    if (options.TryGetValue(null, default, pascal, out var pv) && pv is not null)
+                    {
+                        return pv.ToString();
+                    }
+                    return options.TryGetValue(null, default, lower, out var sv) && sv is not null
+                        ? sv.ToString()
+                        : null;
+                }
+                if (int.TryParse(Opt("Scale", "scale"), NumberStyles.Integer,
+                        CultureInfo.InvariantCulture, out var s))
+                {
+                    scale = s;
+                }
+                level = Opt("Level", "level") ?? level;
+                targetDir = Opt("TargetDir", "targetDir") ?? "";
+                fg = Opt("FgColor", "fgColor") ?? fg;
+                bg = Opt("BgColor", "bgColor") ?? bg;
+            }
+            var res = CreateQrResource(text, scale, level, targetDir, fg, bg,
+                _resources?.BaseUrl ?? "");
+            Track(res);
+            return res.ToScriptObject();
+        });
+    }
+
+    /// <summary>
+    /// QR 资源构造（双引擎共用工厂：Scriban 的 images.QR 与 Liquid 的 qr filter）。
+    /// scale 低于 2 抬到 2（Hugo 下限）；产出 SVG 资源（矢量无损，免 PNG 编码依赖），
+    /// 名称为内容指纹（确定性构建）
+    /// </summary>
+    internal static TemplateResource CreateQrResource(
+        string text, int scale, string level, string targetDir, string fg, string bg, string baseUrl)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            throw new InvalidOperationException("QR TEXT 不能为空");
+        }
+        if (scale < 2)
+        {
+            scale = 2;
+        }
+        var matrix = QrCodeGenerator.Encode(
+            Encoding.UTF8.GetBytes(text), QrCodeGenerator.LevelIndex(level));
+        var svg = QrCodeGenerator.ToSvg(matrix, scale, NormalizeCssColor(fg), NormalizeCssColor(bg));
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(svg));
+        var name = (string.IsNullOrWhiteSpace(targetDir) ? "" : targetDir.Trim().Trim('/') + "/")
+            + "qr_" + Convert.ToHexString(hash)[..8].ToLowerInvariant() + ".svg";
+        var created = TemplateResource.Create(name, svg, baseUrl);
+        var side = (matrix.Length + 8) * scale;
+        return new TemplateResource
+        {
+            Name = created.Name,
+            Title = created.Title,
+            ResourceType = created.ResourceType,
+            MediaType = created.MediaType,
+            Content = svg,
+            RelPermalink = created.RelPermalink,
+            Permalink = created.Permalink,
+            Width = side,
+            Height = side
+        };
+    }
+
+    /// <summary>images.* 滤镜工厂名（Hugo 官方 21 个；Process/QR/Config/Filter 另行注册）</summary>
+    private static readonly string[] FilterOps =
+    [
+        "AutoOrient", "Brightness", "ColorBalance", "Colorize", "Contrast", "Dither",
+        "Gamma", "GaussianBlur", "Grayscale", "Hue", "Invert", "Mask", "Opacity",
+        "Overlay", "Padding", "Pixelate", "Saturation", "Sepia", "Sigmoid", "Text",
+        "UnsharpMask"
+    ];
+
+    /// <summary>滤镜描述对象：images.GaussianBlur 6 → { op, args }，由 Filter 消费</summary>
+    private static ScriptObject FilterSpec(string op, object?[] args)
+    {
+        var arr = new ScriptArray();
+        foreach (var a in args)
+        {
+            arr.Add(a ?? "");
+        }
+        return new ScriptObject
+        {
+            ["__flint_filter_op__"] = op,
+            ["__flint_filter_args__"] = arr
+        };
+    }
+
+    /// <summary>
+    /// 从 images.Filter 的参数表分离滤镜描述与图像资源：
+    /// 含 __flint_filter_op__ 的对象与（嵌套）数组收集为规格串（op1_a_b__op2），
+    /// 第一个可解析为资源的参数作为图像
+    /// </summary>
+    private static (string? Spec, TemplateResource? Resource) SeparateFilters(object?[] args)
+    {
+        var ops = new List<string>();
+        TemplateResource? r = null;
+        void Walk(object? a)
+        {
+            switch (a)
+            {
+                case ScriptObject so when so.ContainsKey("__flint_filter_op__"):
+                    var spec = so["__flint_filter_op__"]?.ToString() ?? "";
+                    if (so["__flint_filter_args__"] is ScriptArray arr)
+                    {
+                        foreach (var item in arr)
+                        {
+                            var s = item?.ToString();
+                            if (!string.IsNullOrEmpty(s))
+                            {
+                                spec += "_" + s;
+                            }
+                        }
+                    }
+                    ops.Add(spec);
+                    break;
+                case ScriptArray sa:
+                    foreach (var item in sa)
+                    {
+                        Walk(item);
+                    }
+                    break;
+                case not null when r is null:
+                    r = TemplateResourceScribanAdapter.FromScriptObject(a);
+                    break;
+            }
+        }
+        foreach (var a in args)
+        {
+            Walk(a);
+        }
+        return (ops.Count > 0 ? string.Join("__", ops) : null, r);
+    }
+
+    /// <summary>$img.Filter 的资源成员级实现（滤镜组合落在固定资源上）</summary>
+    private object? ApplyFiltersOnResource(TemplateResource resource, object? filters)
+    {
+        var (spec, _) = SeparateFilters([filters]);
+        return spec is null ? resource.ToScriptObject() : ApplyImageOp(resource, "filter", spec);
+    }
+
+    /// <summary>
+    /// Hugo 颜色参数归一：允许省 # 的 3/4/6/8 位 hex 补 #；
+    /// alpha 00 视为透明（返回空串——SVG 端不画背景）
+    /// </summary>
+    internal static string NormalizeCssColor(string? color)
+    {
+        var c = (color ?? "").Trim();
+        if (c.Length == 0)
+        {
+            return "";
+        }
+        if (!c.StartsWith('#') && c.Length is 3 or 4 or 6 or 8 && IsHexAll(c))
+        {
+            c = "#" + c;
+        }
+        if (c.Length == 9 && c.EndsWith("00", StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+        return c;
+
+        static bool IsHexAll(string s)
+        {
+            foreach (var ch in s)
+            {
+                if (!Uri.IsHexDigit(ch))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
 
     /// <summary>Hugo 的图像尺寸变换方法名（命名空间级与资源成员级共用）</summary>

@@ -3274,7 +3274,7 @@ public sealed partial class ScribanTemplateRenderer
         [":time_short"] = "h:mm tt"
     };
 
-    private static DateTimeOffset? ConvertToDateTimeOffset(object? value)
+    internal static DateTimeOffset? ConvertToDateTimeOffset(object? value)
     {
         return value switch
         {
