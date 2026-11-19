@@ -392,7 +392,7 @@ public sealed partial class SiteBuilder
                     }
                     // 与全量路径一致的写入重试：dev server 下文件可能被占用，
                     // 单资产失败不应放大为整个增量失败
-                    await WriteBytesWithRetryAsync(outputPath, processed.Content.ToArray(), cancellationToken);
+                    await WriteBytesWithRetryAsync(outputPath, processed.Content, cancellationToken);
 
                     assetsProcessed++;
                 }
