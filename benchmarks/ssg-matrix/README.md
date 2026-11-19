@@ -202,7 +202,9 @@ dotnet run --project benchmarks/ssg-matrix/harness -c Release -- --clean-all
 
 `results/` 只保留对外数字对应的原始记录：2026-10-30 两轮（`ssg14-*.log`）、
 2026-10-31 十一臂基线（`run11.log` + `run-…-162947.md`）、最优配置审计轮
-（`run-…-192507.md`）与同配置复现轮（`run-…-202016.md`），外加 12.5 审计的
+（`run-…-192507.md`）与同配置复现轮（`run-…-202016.md`）、2026-11-19 全引擎
+升级复测轮（`run-20261119-220358.md`，全部引擎升至最新稳定版 + 全臂生产配置
+口径：vitepress 默认 minify、jekyll JEKYLL_ENV=production），外加 12.5 审计的
 eleventy 修复验证日志（`eleventy-remake.log`）。数字与 [REPORT.md](../REPORT.md)
 §12 对应，可用于核对；中间过程日志不入库。
 
