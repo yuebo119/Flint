@@ -191,6 +191,15 @@ public sealed partial class BuiltinTemplateFunctions
     }
 
     /// <summary>
+    /// 用户可控 pattern 的正则统一超时（ReDoS 防线）：Hugo 同名函数走 Go RE2
+    /// 线性时间无回溯风险，Flint 的 .NET 默认 InfiniteMatchTimeout 会让病态
+    /// pattern（如 <c>(a+)+$</c>）单线程长时间回溯挂死构建；统一 2 秒超时，
+    /// 超时抛 RegexMatchTimeoutException 按模板错误收编（fail loud 不静默）。
+    /// replaceRE/findRE 双引擎四个执行点共用本值
+    /// </summary>
+    internal static readonly TimeSpan UserPatternRegexTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
     /// 有界正则替换（Hugo 的 <c>replaceRE ... LIMIT</c> 语义：最多替换 LIMIT 次）。
     /// 用 MatchEvaluator 计数并复用 <see cref="Match.Result"/>，
     /// 以便替换串里的 <c>$1</c> 反向引用与 Regex.Replace 保持同一套语义
@@ -206,7 +215,7 @@ public sealed partial class BuiltinTemplateFunctions
             }
             done++;
             return m.Result(replacement);
-        });
+        }, RegexOptions.None, UserPatternRegexTimeout);
     }
 
     #region 字符串函数 (20+)
@@ -317,7 +326,9 @@ public sealed partial class BuiltinTemplateFunctions
                 return s ?? "";
             var repl = replacement ?? "";
             var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
-            return limit > 0 ? ReplaceWithLimit(s, pattern, repl, limit) : Regex.Replace(s, pattern, repl);
+            return limit > 0
+                ? ReplaceWithLimit(s, pattern, repl, limit)
+                : Regex.Replace(s, pattern, repl, RegexOptions.None, UserPatternRegexTimeout);
         });
         obj.Import("replaceRE", (string? pattern, string? replacement, string? s, params object?[] rest) =>
         {
@@ -325,7 +336,9 @@ public sealed partial class BuiltinTemplateFunctions
                 return s ?? "";
             var repl = replacement ?? "";
             var limit = rest.Length > 0 ? ToLimitOrZero(rest[0]) : 0;
-            return limit > 0 ? ReplaceWithLimit(s, pattern, repl, limit) : Regex.Replace(s, pattern, repl);
+            return limit > 0
+                ? ReplaceWithLimit(s, pattern, repl, limit)
+                : Regex.Replace(s, pattern, repl, RegexOptions.None, UserPatternRegexTimeout);
         });
 
         // split - 分割字符串

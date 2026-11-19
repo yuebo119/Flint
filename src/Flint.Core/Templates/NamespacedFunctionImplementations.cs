@@ -86,7 +86,7 @@ public sealed partial class BuiltinTemplateFunctions
             try
             {
                 var arr = new ScriptArray();
-                foreach (var m in Regex.Matches(input, pattern).Take(limit > 0 ? limit : 100))
+                foreach (var m in Regex.Matches(input, pattern, RegexOptions.None, UserPatternRegexTimeout).Take(limit > 0 ? limit : 100))
                 {
                     arr.Add(m.ToString());
                 }
@@ -107,7 +107,7 @@ public sealed partial class BuiltinTemplateFunctions
             try
             {
                 var arr = new ScriptArray();
-                foreach (Match m in Regex.Matches(input, pattern).Take(limit > 0 ? limit : 100))
+                foreach (Match m in Regex.Matches(input, pattern, RegexOptions.None, UserPatternRegexTimeout).Take(limit > 0 ? limit : 100))
                 {
                     var groups = new ScriptArray();
                     foreach (var g in m.Groups.Cast<Group>())

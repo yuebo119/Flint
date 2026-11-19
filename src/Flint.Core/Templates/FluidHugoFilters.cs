@@ -553,7 +553,9 @@ internal static class FluidHugoFilters
         }
         try
         {
-            var matches = System.Text.RegularExpressions.Regex.Matches(text, pattern)
+            var matches = System.Text.RegularExpressions.Regex.Matches(
+                    text, pattern, System.Text.RegularExpressions.RegexOptions.None,
+                    BuiltinTemplateFunctions.UserPatternRegexTimeout)
                 .Select(m => m.Value).ToList();
             return new(FluidValue.Create(matches, ctx.Options));
         }
@@ -577,7 +579,9 @@ internal static class FluidHugoFilters
         try
         {
             return new(FluidValue.Create(
-                System.Text.RegularExpressions.Regex.Replace(text, pattern, replacement), ctx.Options));
+                System.Text.RegularExpressions.Regex.Replace(text, pattern, replacement,
+                    System.Text.RegularExpressions.RegexOptions.None,
+                    BuiltinTemplateFunctions.UserPatternRegexTimeout), ctx.Options));
         }
         catch (System.Text.RegularExpressions.RegexParseException)
         {
