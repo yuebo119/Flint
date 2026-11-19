@@ -35,13 +35,16 @@ public static class TocRenderer
     ///
     /// <paramref name="startLevel"/> 小于文档实际最小标题级别时，为每个缺失层级补一层
     /// 无锚点的 <c>&lt;li&gt;</c> 包裹（Hugo <c>.Fragments.ToHTML 1 6</c> 实测行为）。
-    /// 区间内无标题时返回空串（对齐 Hugo：空串而非空 nav）
+    /// 区间内无标题时返回空串（对齐 Hugo：空串而非空 nav）。
+    /// <paramref name="cssClass"/> 给定时输出 class 属性（Liquid 的 toc 过滤器用；
+    /// Scriban 侧 ToHTML 不传，id 形态不变）
     /// </summary>
     public static string Render(
         IReadOnlyList<MarkdownHeading> headings,
         int startLevel,
         int endLevel,
-        bool ordered)
+        bool ordered,
+        string? cssClass = null)
     {
         if (headings.Count == 0)
         {
@@ -67,7 +70,12 @@ public static class TocRenderer
         }
 
         var sb = new StringBuilder();
-        sb.Append("<nav id=\"TableOfContents\">\n");
+        sb.Append("<nav id=\"TableOfContents\"");
+        if (!string.IsNullOrEmpty(cssClass))
+        {
+            sb.Append(" class=\"").Append(cssClass).Append('"');
+        }
+        sb.Append(">\n");
         RenderLevel(sb, roots, 2, ordered);
         sb.Append("</nav>\n");
         return sb.ToString();

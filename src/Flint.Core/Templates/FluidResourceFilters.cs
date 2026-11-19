@@ -66,6 +66,157 @@ internal static class FluidResourceFilters
         // ---- QR（Hugo images.QR 的 Liquid 形态；生成核心与 Scriban 侧共用）----
         filters.AddFilter("qr", Qr);
         filters.AddFilter("images_qr", Qr);
+
+        // ---- 图像几何变换（真像素处理，TemplateAssetTransforms 单一事实源；
+        //      与 Scriban 侧登记直通有意分流——Liquid 新站点产物尺寸真实）----
+        foreach (var op in ImageOpNames)
+        {
+            var opName = op;
+            filters.AddFilter(opName, (input, args, ctx) => ImageOp(input, args, ctx, provider, opName));
+            filters.AddFilter("resource_" + opName,
+                (input, args, ctx) => ImageOp(input, args, ctx, provider, opName));
+            filters.AddFilter("resources_" + opName,
+                (input, args, ctx) => ImageOp(input, args, ctx, provider, opName));
+        }
+
+        // ---- srcset：一键响应式图像（Hugo 无对应；11ty 靠 image 插件异步缓存）----
+        filters.AddFilter("srcset", (input, args, ctx) => Srcset(input, args, ctx, provider));
+    }
+
+    /// <summary>图像几何变换名（CA1861：数组提字段）</summary>
+    private static readonly string[] ImageOpNames = ["resize", "fit", "fill", "crop"];
+
+    /// <summary>srcset 默认宽度阶梯（构建期响应式管线同款）</summary>
+    private static readonly int[] SrcsetDefaultWidths = [320, 640, 768, 1024, 1280, 1920];
+
+    /// <summary>
+    /// {{ img | resize: '300x200 webp' }}（fit/fill/crop 同型）：
+    /// 真像素变换（等比/contain/cover/中心裁剪），产物内容指纹命名并登记落盘
+    /// </summary>
+    private static ValueTask<FluidValue> ImageOp(
+        FluidValue input, FilterArguments args, TemplateContext ctx,
+        ITemplateResourceProvider? provider, string opName)
+    {
+        var resource = ToResource(input, ctx);
+        if (resource is null)
+        {
+            return new(FluidValue.Create(null, ctx.Options));
+        }
+        var spec = args.Count > 0 ? ToString(args.At(0), ctx) : null;
+        var result = TemplateAssetTransforms.TransformImage(
+            resource, opName, spec, BaseUrlOf(ctx), path => provider?.ReadBytes(path));
+        if (result is null)
+        {
+            return new(FluidValue.Create(null, ctx.Options));
+        }
+        Register(ctx, result);
+        return new(FluidValue.Create(result, ctx.Options));
+    }
+
+    /// <summary>
+    /// {{ img | srcset: '480,800,1200', sizes: '(max-width:768px) 100vw, 50vw', alt: '描述' }}：
+    /// 直出完整 <c>&lt;img src srcset sizes alt&gt;</c>。宽度档位过滤到不超过原图宽
+    ///（放大变体浪费带宽）；SVG 直出原图 img。src 用原图（回退形态）
+    /// </summary>
+    private static ValueTask<FluidValue> Srcset(
+        FluidValue input, FilterArguments args, TemplateContext ctx,
+        ITemplateResourceProvider? provider)
+    {
+        var resource = ToResource(input, ctx);
+        if (resource is null)
+        {
+            return new(FluidValue.Create(null, ctx.Options));
+        }
+        Register(ctx, resource);
+
+        // 文本图像（svg）：无像素档位，直出 img
+        if (resource.Content.Length > 0)
+        {
+            var fallback = RenderImg(resource.RelPermalink, [], null, Named(args, ctx, "alt"));
+            return new(FluidValue.Create(fallback, ctx.Options));
+        }
+
+        var probed = TemplateAssetTransforms.ProbeImageSize(resource, path => provider?.ReadBytes(path));
+        if (probed is null)
+        {
+            var fallback = RenderImg(resource.RelPermalink, [], null, Named(args, ctx, "alt"));
+            return new(FluidValue.Create(fallback, ctx.Options));
+        }
+        var origW = probed.Value.Width;
+
+        // 宽度档位：参数（逗号分隔）或默认阶梯；过滤超原图宽与去重
+        var widthsArg = Named(args, ctx, "widths") ?? (args.Count > 0 && !args.At(0).IsNil()
+            ? ToString(args.At(0), ctx)
+            : null);
+        var widths = (widthsArg is { Length: > 0 } widthsToken
+                ? widthsToken.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(s => int.TryParse(s.Trim(), out var n) ? n : 0).Where(n => n > 0)
+                : SrcsetDefaultWidths)
+            .Where(n => n <= origW)
+            .Distinct()
+            .OrderBy(n => n)
+            .ToList();
+        if (widths.Count == 0)
+        {
+            widths = [origW];
+        }
+
+        var entries = new List<(string Url, int W)>(widths.Count);
+        foreach (var w in widths)
+        {
+            var variant = TemplateAssetTransforms.TransformImage(
+                resource, "resize", w + "x", BaseUrlOf(ctx), path => provider?.ReadBytes(path));
+            if (variant is not null)
+            {
+                Register(ctx, variant);
+                entries.Add((variant.RelPermalink, variant.Width > 0 ? variant.Width : w));
+            }
+        }
+        var html = RenderImg(resource.RelPermalink, entries, Named(args, ctx, "sizes"), Named(args, ctx, "alt"));
+        return new(FluidValue.Create(html, ctx.Options));
+    }
+
+    /// <summary>&lt;img&gt; 属性拼装（srcset/sizes/alt 可选；lazy + async 解码内置）</summary>
+    private static string RenderImg(string src, List<(string Url, int W)> entries, string? sizes, string? alt)
+    {
+        var sb = new System.Text.StringBuilder("<img src=\"").Append(src).Append('"');
+        if (entries.Count > 0)
+        {
+            sb.Append(" srcset=\"");
+            for (var i = 0; i < entries.Count; i++)
+            {
+                if (i > 0)
+                {
+                    sb.Append(", ");
+                }
+                sb.Append(entries[i].Url).Append(' ').Append(entries[i].W).Append('w');
+            }
+            sb.Append('"');
+        }
+        if (!string.IsNullOrEmpty(sizes))
+        {
+            sb.Append(" sizes=\"").Append(sizes).Append('"');
+        }
+        if (!string.IsNullOrEmpty(alt))
+        {
+            sb.Append(" alt=\"").Append(alt.Replace("\"", "&quot;", StringComparison.Ordinal)).Append('"');
+        }
+        sb.Append(" loading=\"lazy\" decoding=\"async\">");
+        return sb.ToString();
+    }
+
+    /// <summary>命名参数取值（多形态名），未给返回 null</summary>
+    private static string? Named(FilterArguments args, TemplateContext ctx, params string[] names)
+    {
+        foreach (var n in names)
+        {
+            var v = args[n];
+            if (!v.IsNil())
+            {
+                return ToString(v, ctx);
+            }
+        }
+        return null;
     }
 
     /// <summary>

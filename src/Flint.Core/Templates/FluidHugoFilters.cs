@@ -14,6 +14,8 @@ using System.Runtime.InteropServices;
 using Flint.Core.Content;
 using Fluid;
 using Fluid.Values;
+using PageContext = Flint.Core.Abstractions.PageContext;
+using SiteContext = Flint.Core.Abstractions.SiteContext;
 
 namespace Flint.Core.Templates;
 
@@ -116,6 +118,81 @@ internal static class FluidHugoFilters
         f.AddFilter("symdiff", SymDiff);
         f.AddFilter("cond", Cond);
         f.AddFilter("param", Param);
+
+        // ---- 内容智能（2026-11-20：Related 相关内容 + TOC 目录，评分/渲染核心
+        //      与 Scriban 侧单一事实源）----
+        f.AddFilter("related", Related);
+        f.AddFilter("toc", Toc);
+    }
+
+    /// <summary>
+    /// {{ page | related }} / {{ page | related: 5, min_score: 30 }}：
+    /// 相关内容推荐（零配置，评分与 Scriban 侧 .Related 同源：keywords 100 /
+    /// date 100 / tags 80 / categories 80）。候选集 = 当前页所属站点的
+    /// regular_pages；位置参数 0 为数量上限（缺省全部），min_score 在调用点
+    /// 过滤弱相关（Hugo 的 threshold 是配置文件级全局值，这里是逐调用点可调）
+    /// </summary>
+    private static ValueTask<FluidValue> Related(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var page = input.ToObjectValue(ctx) as PageContext;
+        if (page is null || ctx.AmbientValues.TryGetValue(SiteKey, out var siteObj) is false ||
+            siteObj is not SiteContext site)
+        {
+            return new(NilValue.Instance);
+        }
+        var limit = args.Count > 0 && !args.At(0).IsNil() ? (int)ToNumber(args.At(0), ctx) : 0;
+        var minScore = 0;
+        var ms = args["min_score"];
+        if (!ms.IsNil())
+        {
+            minScore = (int)ToNumber(ms, ctx);
+        }
+
+        var scored = new List<(PageContext Page, int Score)>();
+        foreach (var candidate in site.RegularPages)
+        {
+            if (ReferenceEquals(candidate, page) ||
+                string.Equals(candidate.Permalink, page.Permalink, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            var score = PagesRelatedFunction.Score(candidate, page);
+            if (score > 0 && score >= minScore)
+            {
+                scored.Add((candidate, score));
+            }
+        }
+        var ordered = scored
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => x.Page.Date)
+            .Select(x => x.Page);
+        if (limit > 0)
+        {
+            ordered = ordered.Take(limit);
+        }
+        return new(FluidValue.Create(ordered.ToList(), ctx.Options));
+    }
+
+    /// <summary>
+    /// {{ page | toc }} / {{ page | toc: 2, 3, class: 'my-toc' }}：
+    /// 文章目录。锚点 id 复用 Markdown 管线 Headings 单源（与正文锚点天然一致），
+    /// 渲染核心与 Scriban 侧 .Fragments.ToHTML 同源（TocRenderer）；class 参数
+    /// 是 Hugo 硬编码 markup 之外的可定制出口
+    /// </summary>
+    private static ValueTask<FluidValue> Toc(FluidValue input, FilterArguments args, TemplateContext ctx)
+    {
+        var page = input.ToObjectValue(ctx) as PageContext;
+        if (page is null)
+        {
+            return new(FluidValue.Create("", ctx.Options));
+        }
+        var min = args.Count > 0 && !args.At(0).IsNil() ? (int)ToNumber(args.At(0), ctx) : 2;
+        var max = args.Count > 1 && !args.At(1).IsNil() ? (int)ToNumber(args.At(1), ctx) : 3;
+        var cssClass = args["class"];
+        var html = Flint.Core.Content.TocRenderer.Render(
+            page.Headings, min, max, ordered: false,
+            cssClass: cssClass.IsNil() ? null : ToString(cssClass, ctx));
+        return new(FluidValue.Create(html, ctx.Options));
     }
 
     // ---- 文本族 ----
@@ -555,6 +632,9 @@ internal static class FluidHugoFilters
 
     /// <summary>AmbientValues 键：当前页面的 RelPermalink（paginate 过滤器用）</summary>
     internal const string CurrentPageRelPermalinkKey = "__flint_fluid_current_page_rel";
+
+    /// <summary>AmbientValues 键：站点上下文（related 过滤器取 regular_pages 候选集）</summary>
+    internal const string SiteKey = "__flint_fluid_site";
 
     /// <summary>异步 PageContext 列表化（paginate 过滤器用，替代 sync-over-async）</summary>
     private static async ValueTask<List<Flint.Core.Abstractions.PageContext>> ToPageContextListAsync(FluidValue value, TemplateContext ctx)

@@ -938,6 +938,19 @@ public sealed partial class SiteBuilder
             OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(robotsOutput)!);
             await File.WriteAllTextAsync(robotsOutput, txt, cancellationToken);
         }
+        else
+        {
+            // 无模板时的零配置默认（超越点：Hugo 需 enableRobotsTXT 配置 + 模板）：
+            // 全量允许 + sitemap 指向行（sitemap 被 disableKinds 禁用时省略 Sitemap 行）
+            var sitemapOn = !config.DisableKinds.Contains("sitemap", StringComparer.OrdinalIgnoreCase);
+            var robotsRel = Templates.TemplateResource.BasePathOf(config.BaseURL) + "/robots.txt";
+            var defaultRobots = sitemapOn
+                ? $"User-agent: *\nAllow: /\n\nSitemap: {config.BaseURL.TrimEnd('/')}/sitemap.xml\n"
+                : "User-agent: *\nAllow: /\n";
+            var defaultOutput = GetFileFormOutputPath(robotsRel, options.OutputPath);
+            OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(defaultOutput)!);
+            await File.WriteAllTextAsync(defaultOutput, defaultRobots, cancellationToken);
+        }
     }
 
     /// <summary>

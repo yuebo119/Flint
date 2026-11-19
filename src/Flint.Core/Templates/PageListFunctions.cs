@@ -204,8 +204,9 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
             .Select(x => x.Page));
     }
 
-    /// <summary>Hugo related 默认评分：keywords 100 / date 100 / tags 80 / categories 80</summary>
-    private static int Score(FlintPageContext a, FlintPageContext b)
+    /// <summary>Hugo related 默认评分：keywords 100 / date 100 / tags 80 / categories 80。
+    /// internal 供 Fluid 侧 related 过滤器共用（单一事实源）</summary>
+    internal static int Score(FlintPageContext a, FlintPageContext b)
     {
         var score = 0;
 
@@ -228,7 +229,7 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
         return score;
     }
 
-    private static IReadOnlyList<string> ParamList(FlintPageContext p, string key)
+    internal static IReadOnlyList<string> ParamList(FlintPageContext p, string key)
     {
         if (!p.Params.TryGetValue(key, out var v) || v is null)
         {
@@ -245,7 +246,7 @@ public sealed class PagesRelatedFunction(IReadOnlyList<FlintPageContext> pages) 
         return [v.ToString() ?? ""];
     }
 
-    private static int IntersectCount(IReadOnlyList<string> a, IReadOnlyList<string> b)
+    internal static int IntersectCount(IReadOnlyList<string> a, IReadOnlyList<string> b)
     {
         if (a.Count == 0 || b.Count == 0)
         {
