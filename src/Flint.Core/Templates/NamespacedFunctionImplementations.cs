@@ -496,20 +496,28 @@ public sealed partial class BuiltinTemplateFunctions
         Add("debug_visualize_spaces", (string? s) => s?.Replace(" ", "·") ?? "");
 
         // ---- os ----
+        // 安全护栏（对齐 Hugo os.ReadFile/os.ReadDir 的 workingDir 安全策略）：
+        // WorkingDir 已配置时，os 系文件函数锚定站点根——相对路径拼根、绝对路径
+        // 必须落在根内，逃逸一律按"不存在"处理（与缺文件同语义，不引入新异常路径）。
+        // WorkingDir 未配置（独立使用/测试）保持宽松。getenv 维持开放（Hugo 同语义）。
         Add("getenv", (string? name) => Environment.GetEnvironmentVariable(name ?? "") ?? "");
-        Add("file_exists", (string? p) => FileExistsCached(p));
+        Add("file_exists", (string? p) => FileExistsWithinRoot(p));
         // Hugo 的全局 camelCase 形态（主题直接写 fileExists，不经 os. 命名空间）
-        Add("fileExists", (string? p) => FileExistsCached(p));
+        Add("fileExists", (string? p) => FileExistsWithinRoot(p));
         Add("read_file", (string? p) =>
-            !string.IsNullOrEmpty(p) && File.Exists(p) ? File.ReadAllText(p) : "");
+        {
+            var resolved = ResolveWithinWorkingDir(p);
+            return resolved is not null && File.Exists(resolved) ? File.ReadAllText(resolved) : "";
+        });
         Add("read_dir", (string? p) =>
         {
             var arr = new ScriptArray();
-            if (string.IsNullOrEmpty(p) || !Directory.Exists(p))
+            var resolved = ResolveWithinWorkingDir(p);
+            if (resolved is null || !Directory.Exists(resolved))
             {
                 return arr;
             }
-            foreach (var f in Directory.EnumerateFileSystemEntries(p).OrderBy(x => x, StringComparer.Ordinal))
+            foreach (var f in Directory.EnumerateFileSystemEntries(resolved).OrderBy(x => x, StringComparer.Ordinal))
             {
                 arr.Add(Path.GetFileName(f));
             }
@@ -518,12 +526,13 @@ public sealed partial class BuiltinTemplateFunctions
         Add("file_stat", (string? p) =>
         {
             var o = new ScriptObject();
-            if (string.IsNullOrEmpty(p) || !File.Exists(p))
+            var resolved = ResolveWithinWorkingDir(p);
+            if (resolved is null || !File.Exists(resolved))
             {
                 o["exists"] = false;
                 return o;
             }
-            var fi = new FileInfo(p);
+            var fi = new FileInfo(resolved);
             o["exists"] = true;
             o["name"] = fi.Name;
             o["size"] = fi.Length;
@@ -563,6 +572,38 @@ public sealed partial class BuiltinTemplateFunctions
         Add("can_highlight", (string? lang) => !string.IsNullOrWhiteSpace(lang));
         Add("highlight_code_block", (object? codeBlock, params object[] opts) =>
             BuildHighlightCodeBlock(codeBlock, OptsFlag(opts, "noClasses", false)));
+    }
+
+    /// <summary>
+    /// os 系文件函数的站点根护栏（对齐 Hugo os.ReadFile/os.ReadDir 的 workingDir 安全策略）：
+    /// WorkingDir 未配置时宽松放行（独立使用/测试场景，保持既有行为）；
+    /// 配置后相对路径锚定到根、绝对路径必须落在根内，逃逸返回 null（按"不存在"处理）。
+    /// 前缀比较补尾分隔符，防兄弟目录前缀误判（同 SiteBuilder.Output 的输出根护栏口径）
+    /// </summary>
+    private string? ResolveWithinWorkingDir(string? p)
+    {
+        if (string.IsNullOrEmpty(p))
+        {
+            return null;
+        }
+        var root = _environment.WorkingDir;
+        if (string.IsNullOrEmpty(root))
+        {
+            return p;
+        }
+        var fullRoot = Path.GetFullPath(root);
+        var full = Path.GetFullPath(Path.IsPathRooted(p) ? p : Path.Combine(root, p));
+        return full.Equals(fullRoot, StringComparison.OrdinalIgnoreCase)
+            || full.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            ? full
+            : null;
+    }
+
+    /// <summary>file_exists/fileExists 的根约束包装：逃逸路径直接 false（不进存在性缓存）</summary>
+    private bool FileExistsWithinRoot(string? p)
+    {
+        var resolved = ResolveWithinWorkingDir(p);
+        return resolved is not null && FileExistsCached(resolved);
     }
 
     /// <summary>
