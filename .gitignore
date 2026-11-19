@@ -80,6 +80,10 @@ __pycache__/
 /demo-sites/*/content/
 /demo-sites/*/layouts/
 /demo-sites/*/static/
+/demo-sites/*/archetypes/
+/demo-sites/*/assets/
+/demo-sites/*/data/
+/demo-sites/*/i18n/
 /demo-sites/*/hugo.toml
 /demo-sites/*/Flint.toml
 /demo-sites/gallery/public/
@@ -87,6 +91,8 @@ __pycache__/
 !/demo-sites/gallery-source/**
 !/demo-sites/gallery/static/
 !/demo-sites/gallery/static/**
+# Flint 持久内容缓存（--cache 在源目录生成，任何站点层级）
+.flint-cache/
 matrix20/
 theme-verify/
 /tmp/
