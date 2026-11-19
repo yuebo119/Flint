@@ -6,10 +6,8 @@ export default defineConfig({
   title: 'SSG Bench',
   description: 'bench',
   srcDir: 'docs',
-  // 体积对照实验：把页面元数据合并成单个 chunk，并去掉每页的预加载链接
+  // 体积治理（生产合理）：把站点级路由哈希表合并成单个 chunk，并去掉每页预加载链接。
+  // minify 保持默认开启（生产压缩），2026-11-19 起「minify off 换速度」的调优已移除。
   metaChunk: true,
   shouldPreload: false,
-  vite: {
-    build: { minify: false },
-  },
 });

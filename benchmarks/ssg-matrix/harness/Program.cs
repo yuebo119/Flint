@@ -1262,16 +1262,19 @@ static class Arms
         var jekyllOut = Path.Combine(outRoot, "jekyll");
         var jekyllClean = new[] { Path.Combine(jekyllSite, ".jekyll-cache"), Path.Combine(jekyllSite, ".jekyll-metadata") };
         var ruby = ToolLocator.Find(null, null, "ruby");
+        // JEKYLL_ENV=production：jekyll build 默认是 development 环境（调试输出、sass 不压缩），
+        // 生产部署必须显式指定，否则测的是非生产配置
+        var jekyllEnv = new Dictionary<string, string> { ["JEKYLL_ENV"] = "production" };
         if (ruby is not null)
             Add("jekyll", ruby, ["-S", "jekyll", "build", "-s", jekyllSite, "-d", jekyllOut], jekyllSite, jekyllOut, jekyllClean,
-                "ruby（gem install jekyll）");
+                "ruby（gem install jekyll）", jekyllEnv);
         else if (OperatingSystem.IsWindows())
             Add("jekyll", jekyll is null ? null : "cmd.exe",
                 ["/c", "jekyll", "build", "-s", jekyllSite, "-d", jekyllOut], jekyllSite, jekyllOut, jekyllClean,
-                "jekyll（gem install jekyll）");
+                "jekyll（gem install jekyll）", jekyllEnv);
         else
             Add("jekyll", jekyll, ["build", "-s", jekyllSite, "-d", jekyllOut], jekyllSite, jekyllOut, jekyllClean,
-                "jekyll（gem install jekyll）");
+                "jekyll（gem install jekyll）", jekyllEnv);
 
         return list;
 
