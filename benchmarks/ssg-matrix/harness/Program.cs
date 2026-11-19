@@ -527,7 +527,7 @@ static class Prerequisites
 
 static class Setup
 {
-    const string HugoVersion = "0.169.0";
+    const string HugoVersion = "0.170.1";
     const string ZolaVersion = "0.23.6";
 
     public static void Run(string root, string tools, HashSet<string>? only)
@@ -741,9 +741,10 @@ static class Setup
 
     static string HugoAsset()
     {
-        if (OperatingSystem.IsWindows()) return $"hugo_extended_{HugoVersion}_windows-amd64.zip";
-        if (OperatingSystem.IsMacOS()) return $"hugo_extended_{HugoVersion}_darwin-universal.tar.gz";
-        return $"hugo_extended_{HugoVersion}_linux-amd64.tar.gz";
+        // v0.170.0 起 extended 并入单一版本，资产名不再带 hugo_extended_ 前缀
+        if (OperatingSystem.IsWindows()) return $"hugo_{HugoVersion}_windows-amd64.zip";
+        if (OperatingSystem.IsMacOS()) return $"hugo_{HugoVersion}_darwin-universal.tar.gz";
+        return $"hugo_{HugoVersion}_linux-amd64.tar.gz";
     }
 
     static string HugoEntry() => OperatingSystem.IsWindows() ? "hugo.exe" : "hugo";

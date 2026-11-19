@@ -32,12 +32,12 @@ README 与 [REPORT.md](../REPORT.md) §12.6 起的十一引擎矩阵就由这套
 | 臂 | 版本 | 安装 |
 | --- | --- | --- |
 | flint-scriban / flint-liquid | 0.3.0（HEAD） | `dotnet publish src/Flint.Cli -c Release -r win-x64 -p:PublishAot=true -o ./publish`，产物放 `benchmarks/tools/flint-aot/Flint.exe`，或 `--flint <path>` |
-| hugo | 0.169.0 extended | 官方 Release 下载，放 `benchmarks/tools/hugo.exe`，或 `--hugo <path>` / PATH |
+| hugo | 0.170.1 | 官方 Release 下载，放 `benchmarks/tools/hugo.exe`，或 `--hugo <path>` / PATH（v0.170.0 起 extended 并入单一版本） |
 | zola | 0.23.6 | Release 二进制放 `benchmarks/tools/zola.exe`，或 `--zola <path>` / PATH |
-| eleventy | 3.1.7 | `cd benchmarks/ssg-matrix/eleventy && npm install` |
+| eleventy | 3.1.8 | `cd benchmarks/ssg-matrix/eleventy && npm install` |
 | hexo | 8.1.2 | `cd benchmarks/ssg-matrix/hexo && npm install` |
 | vitepress | 1.6.4 | `cd benchmarks/ssg-matrix/vitepress && npm install` |
-| astro | 7.4.4 | `cd benchmarks/ssg-matrix/astro && npm install` |
+| astro | 7.4.13 | `cd benchmarks/ssg-matrix/astro && npm install` |
 | gatsby | 5.16.1 | `cd benchmarks/ssg-matrix/gatsby && npm install` |
 | jekyll | 4.4.1 | `gem install jekyll`（Windows 需先装 Ruby + MSYS2/DevKit 工具链；gem 与 pacman 走代理） |
 | mkdocs | 1.6.1 | `pip install mkdocs` |
