@@ -161,5 +161,26 @@ public class ModuleManagerTests : IDisposable
             () => _manager.UpdateAsync("nonexistent").AsTask());
     }
 
+    [Fact]
+    public async Task UpdateAsync_本地安装模块应报明确指引而非空仓库格式错误()
+    {
+        // Arrange：本地目录安装（lockfile 记 version=local，无远端源）
+        var srcDir = Path.Combine(_testDir, "src-theme");
+        Directory.CreateDirectory(srcDir);
+        await File.WriteAllTextAsync(Path.Combine(srcDir, "theme.toml"),
+            "name = \"local-theme\"\nversion = \"0.1.0\"\n");
+        await _manager.GetAsync(srcDir);
+
+        // Act
+        var ex = await Record.ExceptionAsync(() => _manager.UpdateAsync("local-theme").AsTask());
+
+        // Assert：错误必须点名本地安装并给出 remove/get 指引（回归锚：曾报
+        // "无效的仓库格式（应为 owner/repo）: "——冒号后空白、无原因说明）
+        Assert.NotNull(ex);
+        Assert.IsType<InvalidOperationException>(ex);
+        Assert.Contains("本地路径安装", ex.Message);
+        Assert.Contains("mod remove", ex.Message);
+    }
+
     #endregion
 }

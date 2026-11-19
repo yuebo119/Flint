@@ -315,11 +315,20 @@ public sealed partial class ModuleManager : IDisposable
         if (!Directory.Exists(modulePath))
             throw new InvalidOperationException($"模块未安装: {moduleName}");
         var descriptor = await ReadModuleDescriptorAsync(modulePath, cancellationToken);
-        var (owner, repo) = ParseRepository(descriptor.Repository);
 
         // 已安装版本以 lockfile 为准（theme.toml 里的是主题自述版本，不是安装版本）
-        version ??= await GetLatestVersionAsync(owner, repo, cancellationToken);
         var installedVersion = await GetLockVersionAsync(moduleName, cancellationToken);
+
+        // 本地路径安装（lockfile 记 version=local）没有远端源可拉取：给出明确指引，
+        // 不让 ParseRepository 对空 repository 报"无效的仓库格式"（信息截断且无原因说明）
+        if (installedVersion is "local")
+        {
+            throw new InvalidOperationException(
+                $"模块 {moduleName} 为本地路径安装，无远端源，不支持 update。请先 mod remove {moduleName} 再用 mod get <新本地路径> 重新安装");
+        }
+
+        var (owner, repo) = ParseRepository(descriptor.Repository);
+        version ??= await GetLatestVersionAsync(owner, repo, cancellationToken);
         if (version == installedVersion)
         {
             return;
