@@ -14,15 +14,36 @@
          并只把审计类警告从"错误"降回"警告"——TreatWarningsAsErrors=true 下
          若不降级，未来任何新公告都会直接阻断构建（官方推荐形态：
          WarningsNotAsErrors 而非 NoWarn，警告仍打印可见）。
-         已知项：ImageSharp 3.1.12 的 6 条公告为许可死结下的显式接受（详见
-         Directory.Packages.props 该包注释与解码白名单缓解）；具体 GHSA 编号
-         与 NuGetAuditSuppress 条目待构建机可访问 nuget.org 漏洞源时补登记
-         （本机 api.nuget.org 当前不可达，无法在线核对编号）。 -->
+         注意：审计要真正产出报告，还须在 nuget.config 显式配置 auditSources
+         （未配置时回落到 packageSources 且 NU1905 被抑制，实测静默无报告）。 -->
     <NuGetAudit>true</NuGetAudit>
     <NuGetAuditMode>all</NuGetAuditMode>
     <NuGetAuditLevel>moderate</NuGetAuditLevel>
     <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904;NU1905</WarningsNotAsErrors>
   </PropertyGroup>
+
+  <!-- NuGet 审计的公告压制（R1 审计 HYG-I1，2026-11-21）。
+       适用对象：SixLabors.ImageSharp 锁定 3.1.12（许可死结下的既定裁决，
+       见 Directory.Packages.props 该包注释）。
+       压制理由：6 条公告集中在 TIFF 解码/编码、ICC CLUT、HistogramEqualization；
+       Flint 的解码白名单只允许 PNG/JPEG/GIF/WebP/BMP（见 ImageProcessor 的格式
+       校验），TIFF 路径不可达；ICC/直方图链未在 Flint 的图像处理路径触达。
+       编号来源：dotnet list package 的 vulnerable 查询与 restore 的 NU1902/NU1903
+       输出一手核对（2026-11-21，两处 URL 完全一致）。
+       按要求，压制属最后手段——它对该公告是全局压制（共享同一公告的其他包也
+       不再报）。复核触发：ImageSharp 许可方案变更、或升级到 3.2.x/4.x 时，
+       连同本 ItemGroup 一起移除。
+       未压制的公告（未来新增）仍会以 NU1902/NU1903 警告出现，不阻断构建。 -->
+  <ItemGroup>
+    <!-- High -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j3p4-wp97-rph4" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-j9gm-c75j-xc9q" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-jjfr-hcj7-qf5w" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-v76p-62qx-wwq2" />
+    <!-- Moderate -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-gwg2-r3hj-4w44" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-wmxv-xphr-5c9g" />
+  </ItemGroup>
 
   <!-- Native AOT 配置（T1.11 澄清，2026-10-11）：对 Release 生效于全部项目——
        DevTools/AiGate/ThemeMigrator 无覆盖即真 AOT 发布；唯一例外是 Flint.Cli
