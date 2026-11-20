@@ -383,8 +383,16 @@ public sealed partial class SiteBuilder
 
                     var processed = await _assetPipeline.ProcessAsync(asset, cancellationToken);
 
-                    // 写入处理后的资源
+                    // 写入处理后的资源（根内护栏：与全量路径的 GetFileFormOutputPath
+                    // 同口径——当前 processed.OutputPath 源自文件枚举不可达 ..，此为
+                    // 防御纵深，防未来数据源引入用户可控段后成为写盘逃逸，B3 R1 审计）
                     var outputPath = Path.Combine(options.OutputPath, processed.OutputPath.TrimStart('/'));
+                    if (!Path.GetFullPath(outputPath).StartsWith(
+                            Path.GetFullPath(options.OutputPath) + Path.DirectorySeparatorChar,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
                     var dir = Path.GetDirectoryName(outputPath);
                     if (!string.IsNullOrEmpty(dir))
                     {

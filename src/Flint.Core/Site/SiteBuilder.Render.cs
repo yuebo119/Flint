@@ -653,13 +653,17 @@ public sealed partial class SiteBuilder
     /// 分页跳转页内容：Hugo 对 <c>/page/1/</c> 的产出形态（canonical + meta refresh
     /// 指向列表页本体），用于把分页 URL 归并到规范 URL
     /// </summary>
-    private static string BuildPaginationRedirectPage(string canonicalUrl) =>
-        "<!DOCTYPE html>\n<html>\n\t<head>\n" +
-        $"\t\t<title>{canonicalUrl}</title>\n" +
-        $"\t\t<link rel=\"canonical\" href=\"{canonicalUrl}\">\n" +
-        "\t\t<meta charset=\"utf-8\">\n" +
-        $"\t\t<meta http-equiv=\"refresh\" content=\"0; url={canonicalUrl}\">\n" +
-        "\t</head>\n</html>\n";
+    internal static string BuildPaginationRedirectPage(string canonicalUrl)
+    {
+        // canonicalUrl 经 permalink/slug（用户可控）：属性与文本编码（B2，R1 审计 HYG-B2）
+        var enc = System.Net.WebUtility.HtmlEncode(canonicalUrl);
+        return "<!DOCTYPE html>\n<html>\n\t<head>\n" +
+            $"\t\t<title>{enc}</title>\n" +
+            $"\t\t<link rel=\"canonical\" href=\"{enc}\">\n" +
+            "\t\t<meta charset=\"utf-8\">\n" +
+            $"\t\t<meta http-equiv=\"refresh\" content=\"0; url={enc}\">\n" +
+            "\t</head>\n</html>\n";
+    }
 
     private async Task<RenderedPage?> GenerateHomePageAsync(
         SiteContext siteContext,

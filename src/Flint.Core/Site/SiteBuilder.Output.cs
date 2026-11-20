@@ -877,11 +877,14 @@ public sealed partial class SiteBuilder
                     continue;
                 }
                 OutputDirectoryEnsurer.Ensure(Path.GetDirectoryName(aliasOutput)!);
+                // permalink 源自 front matter slug（用户可控）：属性与文本都编码，
+                // 防 slug 含引号/尖括号时逃逸出属性（B2，R1 审计 HYG-B2）
+                var encPermalink = System.Net.WebUtility.HtmlEncode(page.Permalink);
                 var redirect = "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">" +
                     $"<title>{System.Net.WebUtility.HtmlEncode(page.Title)}</title>" +
-                    $"<link rel=\"canonical\" href=\"{page.Permalink}\">" +
-                    $"<meta http-equiv=\"refresh\" content=\"0; url={page.Permalink}\">" +
-                    $"</head><body>Redirecting to <a href=\"{page.Permalink}\">{page.Permalink}</a></body></html>\n";
+                    $"<link rel=\"canonical\" href=\"{encPermalink}\">" +
+                    $"<meta http-equiv=\"refresh\" content=\"0; url={encPermalink}\">" +
+                    $"</head><body>Redirecting to <a href=\"{encPermalink}\">{encPermalink}</a></body></html>\n";
                 aliasTasks.Add(File.WriteAllTextAsync(aliasOutput, redirect, cancellationToken));
             }
         }
