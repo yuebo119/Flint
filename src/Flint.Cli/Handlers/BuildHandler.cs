@@ -2,6 +2,7 @@
 // Build 命令处理器
 
 using System.Diagnostics;
+using Flint.Core.Abstractions;
 using Flint.Core.Assets;
 using Flint.Core.Configuration;
 using Flint.Core.Content;
@@ -199,6 +200,9 @@ internal static class BuildHandler
             var assetPipeline = new AssetPipeline(new AssetPipelineOptions
             {
                 MinifyCss = minify,
+                // --minify 的 JS 层（0.4.0 三层接线）：此前 DefaultBundleOptions.Minify
+                // 无任何赋值通路（配置段也不通），JS 压缩完全不可达
+                DefaultBundleOptions = new BundleOptions { Minify = minify },
                 SourceDirectory = sourcePath,
                 OutputDirectory = outputPath
             },

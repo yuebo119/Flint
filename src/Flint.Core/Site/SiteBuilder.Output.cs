@@ -7,6 +7,7 @@ using Flint.Core.Configuration;
 using Flint.Core.Content;
 using Flint.Core.IO;
 using Flint.Core.Models;
+using Flint.Core.Templates;
 
 namespace Flint.Core.Site;
 
@@ -495,9 +496,15 @@ public sealed partial class SiteBuilder
         }
 
         // html 产物对齐 Go html/template 的 void 元素序列化（/> 剥斜杠）
-        var content = rendered.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
-            ? HtmlOutputNormalizer.Normalize(rendered.Content)
-            : rendered.Content;
+        var isHtml = rendered.OutputPath.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+        var content = isHtml ? HtmlOutputNormalizer.Normalize(rendered.Content) : rendered.Content;
+        // --minify 的 HTML 层：Normalize 后、输出缓存哈希前——minify 进哈希，
+        // 未变化跳写盘的判定与真实落盘内容保持一致。保护版 MinifyHtml 不动
+        // pre/textarea/script/style 内部空白（模板函数路径 minify 同源受益）
+        if (isHtml && _minifyHtml)
+        {
+            content = BuiltinTemplateFunctions.MinifyHtml(content);
+        }
 
         // 输出写盘跳过：哈希与上轮一致且产物仍在 → 免写（含免建目录）。
         // File.Exists 只在这一跳（本要写盘的分支）付一次 stat，全变更构建

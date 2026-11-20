@@ -4284,9 +4284,28 @@ public sealed partial class BuiltinTemplateFunctions
         {
             return "";
         }
-        var s = Regex.Replace(html, @">\s+<", "><");
+        // 空白敏感块（pre/textarea）与 script/style 整体抽出再压：
+        // 简版正则会把 <pre> 缩进与 JS/CSs 字符串字面量里的连续空格一并折叠
+        // （pre 内容直接损坏；script 命中 ASI/字符串语义风险）。
+        // 占位符用 NUL 字符——合法 HTML 不会出现，还原无歧义
+        var placeholders = new List<string>();
+        var skeleton = Regex.Replace(
+            html,
+            @"<(pre|textarea|script|style)\b[^>]*>.*?</\1\s*>",
+            m =>
+            {
+                placeholders.Add(m.Value);
+                return $"\u0000{placeholders.Count - 1}\u0000";
+            },
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        var s = Regex.Replace(skeleton, @">\s+<", "><");
         s = Regex.Replace(s, @"\s{2,}", " ");
-        return s.Trim();
+        s = s.Trim();
+        for (var i = 0; i < placeholders.Count; i++)
+        {
+            s = s.Replace($"\u0000{i}\u0000", placeholders[i]);
+        }
+        return s;
     }
 }
 

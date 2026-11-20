@@ -40,6 +40,13 @@ public sealed partial class SiteBuilder : ISiteBuilder
     // 当前构建周期的页面树（T2.3 增量构建做 section 级精确替换的查询基础）
     private PageTree? _currentPageTree;
     private bool _templatesPrecompiled;
+
+    /// <summary>
+    /// --minify 的 HTML 层开关（0.4.0 三层接线）。BuildOptions.Minify 此前在
+    /// CLI 赋值后无任何消费点（死旗标），本字段让渲染即写盘路径真实消费它；
+    /// serve 长驻实例每轮构建在渲染开始前重设，无竞态
+    /// </summary>
+    private bool _minifyHtml;
     // taxonomy 签名的节点级条目缓存（key = 树节点 key）：条目以 128-bit FNV 哈希
     // 形态缓存，聚合用 XOR（顺序无关）——增量前后的全站遍历从"格式化全部条目
     // + 全量排序 + 大字符串拼接 + SHA256"降为"拼缓存哈希 + XOR"（#3：
@@ -109,6 +116,7 @@ public sealed partial class SiteBuilder : ISiteBuilder
         OutputDirectoryEnsurer.Reset(
             preferWriteFirst: !options.CleanOutput && Directory.Exists(options.OutputPath));
         _writtenPaths.Clear();
+        _minifyHtml = options.Minify;
         // taxonomy/term 的 feed 上下文同一构建内累积：serve 长驻进程里不清空的话，
         // 已删除词条的 index.xml 会一直重写、列表随编辑无限增长
         TaxonomyFeedContexts.Clear();
