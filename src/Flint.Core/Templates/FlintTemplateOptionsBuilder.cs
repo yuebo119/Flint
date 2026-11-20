@@ -35,6 +35,7 @@ namespace Flint.Core.Templates;
 [FluidRegister(typeof(MarkdownHeading))]
 [FluidRegister(typeof(ReadingTimeView))]
 [FluidRegister(typeof(HugoInfoView))]
+[FluidRegister(typeof(TranslationLink))] // 0.4.0 多语言：page.translations 元素（AOT 下反射元数据被裁剪致 permalink 空）
 public partial class FlintTemplateOptionsBuilder : TemplateOptionsBuilder
 {
 }
