@@ -239,7 +239,9 @@ public sealed partial class TaxonomyService
         // 移除首尾的连字符
         slug = slug.Trim('-');
 
-        return slug;
+        // Windows 保留名规避（R1 审计 HYG-B1）：词条 "con"/"nul" 等
+        // 在白名单字符集内原样通过，直落会截断构建——与页面 slug 同口径处理
+        return PermalinkEngine.SanitizeWindowsReservedName(slug);
     }
 
     /// <summary>

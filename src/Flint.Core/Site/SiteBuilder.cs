@@ -301,6 +301,22 @@ public sealed partial class SiteBuilder : ISiteBuilder
             }
             Phase("12.5模板错误汇聚");
 
+            // 未登记 FluidRegister 的模型类型（R1 审计 HYG-C2 证据通道）：
+            // 访问器生成器清单漏登记时功能仍正确（反射回退），但封闭化前
+            // 必须确认为空。以构建警告形式暴露，不静默。
+            if (!FlintMemberAccessStrategy.UnregisteredModelAccesses.IsEmpty)
+            {
+                warnings.Add(new BuildWarning
+                {
+                    WarningCode = "FLUID001",
+                    Message = "模板访问了未登记 [FluidRegister] 的模型类型："
+                        + string.Join(", ", FlintMemberAccessStrategy.UnregisteredModelAccesses.Keys
+                            .Select(t => t.FullName).OrderBy(n => n, StringComparer.Ordinal))
+                        + "——功能正常（反射回退），但应在 FlintTemplateOptionsBuilder 补登记"
+                });
+                FlintMemberAccessStrategy.UnregisteredModelAccesses.Clear();
+            }
+
             stopwatch.Stop();
 
             if (tracePhases)

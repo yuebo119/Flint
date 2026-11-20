@@ -9,9 +9,19 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <AnalysisLevel>latest-all</AnalysisLevel>
     
-    <!-- 禁用 NuGet 安全漏洞审计（避免第三方包漏洞导致构建失败） -->
-    <!-- 注意：生产环境应定期检查并更新有漏洞的包 -->
-    <NuGetAudit>false</NuGetAudit>
+    <!-- NuGet 安全漏洞审计（R1 审计 HYG-I1，2026-11-21 开启）：
+         此前 NuGetAudit=false 让构建期完全看不到第三方包公告。现开启审计，
+         并只把审计类警告从"错误"降回"警告"——TreatWarningsAsErrors=true 下
+         若不降级，未来任何新公告都会直接阻断构建（官方推荐形态：
+         WarningsNotAsErrors 而非 NoWarn，警告仍打印可见）。
+         已知项：ImageSharp 3.1.12 的 6 条公告为许可死结下的显式接受（详见
+         Directory.Packages.props 该包注释与解码白名单缓解）；具体 GHSA 编号
+         与 NuGetAuditSuppress 条目待构建机可访问 nuget.org 漏洞源时补登记
+         （本机 api.nuget.org 当前不可达，无法在线核对编号）。 -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>moderate</NuGetAuditLevel>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902;NU1903;NU1904;NU1905</WarningsNotAsErrors>
   </PropertyGroup>
 
   <!-- Native AOT 配置（T1.11 澄清，2026-10-11）：对 Release 生效于全部项目——

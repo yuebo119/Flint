@@ -233,8 +233,18 @@ public sealed class FileSystemResourceProvider : ITemplateResourceProvider
 
     /// <summary>Hugo glob → 正则（** 跨目录，* 限单段，? 单字符）；按模式缓存
     ///（Match 每调用重建解释型正则，地毯审计 #5）</summary>
-    internal static Regex GlobToRegex(string pattern) =>
-        GlobRegexCache.GetOrAdd(pattern, static p => BuildGlobRegex(p));
+    internal static Regex GlobToRegex(string pattern)
+    {
+        // 有条数上界（R1 审计 HYG-J03）：模板 glob pattern 互异时缓存可无界增长；
+        // 超限整体清空（正常站点 pattern 数远低于上界，正确性无损）
+        if (GlobRegexCache.Count >= MaxGlobCacheEntries)
+        {
+            GlobRegexCache.Clear();
+        }
+        return GlobRegexCache.GetOrAdd(pattern, static p => BuildGlobRegex(p));
+    }
+
+    private const int MaxGlobCacheEntries = 1024;
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> GlobRegexCache =
         new(StringComparer.OrdinalIgnoreCase);

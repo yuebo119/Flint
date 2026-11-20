@@ -382,7 +382,17 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
         {
             // cmd /c 引号规则：/c 后首尾引号会被 cmd 剥除，参数含空格时
             // exe 路径在首个空格处被截断——整体再包一层外引号，
-            // 形成 cmd 标准的 "/c ""exe" args"" 双层引号形态
+            // 形成 cmd 标准的 "/c ""exe" args"" 双层引号形态。
+            // 参数含引号时 fail loud（cmd 无安全的简单转义，且 Windows
+            // 路径与包名不允许引号）——R1 审计 HYG-E04
+            foreach (var a in args)
+            {
+                if (a.Contains('"', StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"esbuild 参数含双引号，无法安全传递到 cmd.exe：{a}");
+                }
+            }
             var quotedArgs = string.Join(' ', args.Select(a => a.Contains(' ') ? $"\"{a}\"" : a));
             psi.Arguments = $"/c \"\"{exePath}\" {quotedArgs}\"";
         }

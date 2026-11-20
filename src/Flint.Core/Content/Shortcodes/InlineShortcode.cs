@@ -26,8 +26,13 @@ namespace Flint.Core.Content.Shortcodes;
 /// </summary>
 public sealed class InlineShortcode : IShortcodeProcessor
 {
-    /// <summary>解析缓存：同一内容片段在列表页/单页多次渲染时复用模板（键为模板源）</summary>
+    /// <summary>解析缓存：同一内容片段在列表页/单页多次渲染时复用模板（键为模板源）。
+    /// 有条数上界（R1 审计 HYG-J03）：恶意/异常站点用大量互异内联正文可无限撑大
+    /// 进程内存；超限整体清空（粗粒度但正确性无损，正常站点远达不到上界）</summary>
     private static readonly ConcurrentDictionary<string, TemplateShortcode> Cache = new(StringComparer.Ordinal);
+
+    /// <summary>缓存条数上界（超过即清空重建）</summary>
+    private const int MaxCacheEntries = 2048;
 
     private readonly TemplateShortcode _inner;
 
@@ -60,8 +65,17 @@ public sealed class InlineShortcode : IShortcodeProcessor
         {
             return null;
         }
-        var inner = Cache.GetOrAdd(innerContent, body => new TemplateShortcode(name, body));
+        var inner = Cache.Count >= MaxCacheEntries
+            ? AddAfterReset(name, innerContent)
+            : Cache.GetOrAdd(innerContent, body => new TemplateShortcode(name, body));
         return new InlineShortcode(name, inner);
+    }
+
+    /// <summary>超限路径：清空后重新加入（并发下可能多次清空，正确性无损）</summary>
+    private static TemplateShortcode AddAfterReset(string name, string body)
+    {
+        Cache.Clear();
+        return Cache.GetOrAdd(body, b => new TemplateShortcode(name, b));
     }
 
     /// <inheritdoc />

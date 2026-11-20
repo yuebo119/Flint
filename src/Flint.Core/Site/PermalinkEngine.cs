@@ -212,6 +212,39 @@ internal static class PermalinkEngine
             slug = slug.ToLowerInvariant();
         }
 
-        return slug;
+        return SanitizeWindowsReservedName(slug);
     }
+
+    /// <summary>
+    /// Windows 设备保留名规避（R1 审计 HYG-B1）：CON/PRN/AUX/NUL/COM1-9/LPT1-9
+    /// （含 CON.txt 这类带扩展形态）在 Windows 上无法作为文件名/目录名，
+    /// 直落会抛 IOException 并把构建截断成 BUILD001。追加 "-" 后缀使产物文件名
+    /// 合法且 URL 可访问；非 Windows 平台同样处理，保证跨平台产物一致。
+    /// 保留名判断忽略大小写与扩展名（Win32 语义：con.txt 等价于设备 CON）
+    /// </summary>
+    internal static string SanitizeWindowsReservedName(string segment)
+    {
+        if (string.IsNullOrEmpty(segment))
+        {
+            return segment;
+        }
+        // 段内不允许再出现目录分隔符——调用方传入的应是单段
+        var dot = segment.IndexOf('.', StringComparison.Ordinal);
+        var stem = dot > 0 ? segment[..dot] : segment;
+        if (!IsWindowsReservedStem(stem))
+        {
+            return segment;
+        }
+        return stem + "-" + (dot > 0 ? segment[dot..] : "");
+    }
+
+    private static bool IsWindowsReservedStem(string stem) =>
+        stem.Equals("con", StringComparison.OrdinalIgnoreCase) ||
+        stem.Equals("prn", StringComparison.OrdinalIgnoreCase) ||
+        stem.Equals("aux", StringComparison.OrdinalIgnoreCase) ||
+        stem.Equals("nul", StringComparison.OrdinalIgnoreCase) ||
+        (stem.Length == 4 &&
+         (stem.StartsWith("com", StringComparison.OrdinalIgnoreCase) ||
+          stem.StartsWith("lpt", StringComparison.OrdinalIgnoreCase)) &&
+         stem[3] is >= '1' and <= '9');
 }

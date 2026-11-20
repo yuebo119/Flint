@@ -18,14 +18,47 @@ namespace Flint.Core.Templates;
 public sealed class FlintMemberAccessStrategy : DefaultMemberAccessStrategy
 {
     /// <summary>
+    /// 运行时观测到的"未登记 FluidRegister 的 Flint 模型类型"（R1 审计 HYG-C2）。
+    /// 访问器生成器清单（FlintTemplateOptionsBuilder 的 [FluidRegister]）漏登记时，
+    /// 该类型仍靠反射工作（功能正确），但封闭化改造前必须先确认清单完整——
+    /// 本集合是证据通道：真实站点构建后为空，才可安全改为封闭式策略。
+    /// 键为类型，值仅占位（ConcurrentDictionary 无 Set）
+    /// </summary>
+    internal static readonly ConcurrentDictionary<Type, byte> UnregisteredModelAccesses = new();
+
+    /// <summary>
     /// 取成员访问器：snake_case 名先归一为 PascalCase 再走默认反射查找。
     /// 无下划线的名（含已是 PascalCase 的）原样透传——默认比较器已覆盖大小写。
-    /// 未命中成员时基类返回 null（Fluid 的"未定义成员"信号，模板取空值）
+    /// <para>
+    /// **封闭式策略**（R1 审计 HYG-C2 修复）：Flint 自有命名空间的模型类型只有在
+    /// <see cref="FlintTemplateOptionsBuilder.RegisteredTypes"/> 登记后才允许成员访问，
+    /// 未登记返回 null（Fluid 的"未定义成员"信号，模板取空值）并记入
+    /// <see cref="UnregisteredModelAccesses"/>，构建收尾以 FLUID001 警告暴露。
+    /// 封闭依据：19 个真实主题站全量构建零未登记访问（2026-11-21 取证），
+    /// 登记清单已覆盖实际用法；未来新增模型类型漏登记会以警告形式出现，
+    /// 而不是退回"默认放开的反射"（失效安全而非失效放开）。
+    /// BCL 与 Fluid 自身类型不受此约束（字符串 .size、数组 .first 等继续工作）。
+    /// </para>
     /// </summary>
-    public override MemberAccessor GetAccessor(Type type, string name, StringComparer stringComparer)
+    public override MemberAccessor? GetAccessor(Type type, string name, StringComparer stringComparer)
     {
         var normalized = ToPascalCaseCached(name);
-        return base.GetAccessor(type, normalized, stringComparer);
+        var accessor = base.GetAccessor(type, normalized, stringComparer);
+        if (accessor is null)
+        {
+            return null;
+        }
+
+        if (type.Namespace is { } ns
+            && ns.StartsWith("Flint.", StringComparison.Ordinal)
+            && !FlintTemplateOptionsBuilder.RegisteredTypes.Contains(type))
+        {
+            // 未登记的 Flint 模型类型：拒绝访问（封闭），并留证据
+            UnregisteredModelAccesses.TryAdd(type, 0);
+            return null;
+        }
+
+        return accessor;
     }
 
     /// <summary>

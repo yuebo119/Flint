@@ -273,8 +273,17 @@ internal static class GitHelper
             return 1;
         }
 
-        p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
+        // 两管并发排水 + 超时（R1 审计 HYG-E05）：此前只读 stdout、stderr 从不读，
+        // git 输出体量大时 stderr 写满管道缓冲即双向阻塞，门禁挂死
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit(GitCommandTimeoutMs))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* 可能已退出 */ }
+            throw new InvalidOperationException(
+                $"git {string.Join(' ', args)} 超过 {GitCommandTimeoutMs / 1000} 秒未退出，已终止");
+        }
+        Task.WaitAll([stdoutTask, stderrTask], CancellationToken.None);
         return p.ExitCode;
     }
 
@@ -298,10 +307,21 @@ internal static class GitHelper
             return string.Empty;
         }
 
-        var stdout = p.StandardOutput.ReadToEnd();
-        p.WaitForExit();
-        return stdout;
+        // 两管并发排水 + 超时（同 Run；R1 审计 HYG-E05）
+        var stdoutTask = p.StandardOutput.ReadToEndAsync();
+        var stderrTask = p.StandardError.ReadToEndAsync();
+        if (!p.WaitForExit(GitCommandTimeoutMs))
+        {
+            try { p.Kill(entireProcessTree: true); } catch { /* 可能已退出 */ }
+            throw new InvalidOperationException(
+                $"git {string.Join(' ', args)} 超过 {GitCommandTimeoutMs / 1000} 秒未退出，已终止");
+        }
+        Task.WaitAll([stdoutTask, stderrTask], CancellationToken.None);
+        return stdoutTask.GetAwaiter().GetResult();
     }
+
+    /// <summary>git 子进程超时（门禁场景的仓库状态查询，30 秒远超正常耗时）</summary>
+    private const int GitCommandTimeoutMs = 30_000;
 }
 
 /// <summary>

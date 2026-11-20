@@ -253,8 +253,20 @@ public sealed class SassCompiler : ISassCompiler, IDisposable
         return process;
     }
 
-    private static string QuoteArgument(string arg) =>
-        arg.Contains(' ') ? "\"" + arg + "\"" : arg;
+    /// <summary>
+    /// cmd /c 单串形态的参数转义。cmd 的引号语义无法用简单拼接安全表达
+    /// （内层引号与 ^ 转义规则交织），而 Windows 路径本身不允许引号——故
+    /// 检测到引号即 fail loud，不用半正确的转义静默放行（R1 审计 HYG-E04）
+    /// </summary>
+    private static string QuoteArgument(string arg)
+    {
+        if (arg.Contains('"', StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"sass 参数含双引号，无法安全传递到 cmd.exe：{arg}");
+        }
+        return arg.Contains(' ', StringComparison.Ordinal) ? "\"" + arg + "\"" : arg;
+    }
 
     /// <summary>
     /// 判断类 Unix 启动器是否为 shell 脚本（shebang 含 sh）：DartSass.Native

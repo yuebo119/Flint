@@ -36,6 +36,31 @@ namespace Flint.Core.Templates;
 [FluidRegister(typeof(ReadingTimeView))]
 [FluidRegister(typeof(HugoInfoView))]
 [FluidRegister(typeof(TranslationLink))] // 0.4.0 多语言：page.translations 元素（AOT 下反射元数据被裁剪致 permalink 空）
+[FluidRegister(typeof(TemplateResource))] // resources.*/qr/resize/srcset 产物（封闭化后 6 项新功能测试抓出漏登记）
 public partial class FlintTemplateOptionsBuilder : TemplateOptionsBuilder
 {
+    /// <summary>
+    /// 已登记类型的集合形态（与上方 [FluidRegister] 清单**必须同步**）。
+    /// 用途：FlintMemberAccessStrategy 判定"模板访问了未登记的 Flint 模型类型"
+    /// （R1 审计 HYG-C2 的证据通道）。新增登记时两处一起改。
+    /// </summary>
+    internal static readonly HashSet<Type> RegisteredTypes =
+    [
+        typeof(PageContext),
+        typeof(SiteContext),
+        typeof(SiteConfig),
+        typeof(PaginatorView),
+        typeof(PaginatorPageGroup),
+        typeof(PaginatorGroupBoundary),
+        typeof(TaxonomyCollection),
+        typeof(TaxonomyTerm),
+        typeof(MenuCollection),
+        typeof(MenuItem),
+        typeof(MenuItemConfig),
+        typeof(MarkdownHeading),
+        typeof(ReadingTimeView),
+        typeof(HugoInfoView),
+        typeof(TranslationLink),
+        typeof(TemplateResource),
+    ];
 }
