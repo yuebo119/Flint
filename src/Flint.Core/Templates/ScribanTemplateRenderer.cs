@@ -141,19 +141,6 @@ public sealed partial class ScribanTemplateRenderer : ITemplateRenderer, IShortc
         return list;
     }
 
-    /// <summary>测试专用构造：时间源可注入</summary>
-    public ScribanTemplateRenderer(string templatesPath, string baseUrl, TimeProvider timeProvider, params string[] themeTemplatePaths)
-    {
-        _templatesPath = templatesPath;
-        _themeTemplatePaths = themeTemplatePaths.Where(p => !string.IsNullOrEmpty(p)).ToArray();
-        _builtinFunctions = new BuiltinTemplateFunctions(baseUrl);
-        _builtins = ScribanBuiltinTemplateProvider.Default;
-        _templateLoader = new FileTemplateLoader(templatesPath, _builtins, themeTemplatePaths);
-        _timeProvider = timeProvider;
-        _builtinFunctions.TemplateExistsProbe = ProbeTemplateExists;
-        InstallShortcodeContext();
-    }
-
     /// <summary>
     /// 构造含 partial 家族的 globals（供短代码等"无页面上下文"的渲染路径使用）。
     /// 注意 partial 的上下文参数（dict 等）由此正常传递；partial 内访问 page 时
