@@ -38,11 +38,9 @@ public static class CssMinifier
         {
             File.WriteAllText(inputFile, css, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
-            var args = $"--minify \"{inputFile}\" -o \"{outputFile}\"";
             var psi = new ProcessStartInfo
             {
                 FileName = executable,
-                Arguments = args,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -50,12 +48,19 @@ public static class CssMinifier
                 StandardErrorEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
                 CreateNoWindow = true
             };
+            // ArgumentList 逐项传递（R1 审计 HYG-E01）：单串拼接不转义内嵌引号，
+            // 路径含引号时逃逸参数边界；.cmd/.bat shim 经 cmd /c 逐项转交
+            psi.ArgumentList.Add("--minify");
+            psi.ArgumentList.Add(inputFile);
+            psi.ArgumentList.Add("-o");
+            psi.ArgumentList.Add(outputFile);
 
             if (executable.EndsWith(".cmd", StringComparison.OrdinalIgnoreCase) ||
                 executable.EndsWith(".bat", StringComparison.OrdinalIgnoreCase))
             {
                 psi.FileName = "cmd.exe";
-                psi.Arguments = "/c \"\"" + executable + "\" " + args + "\"";
+                psi.ArgumentList.Insert(0, "/c");
+                psi.ArgumentList.Insert(1, executable);
             }
 
             using var process = Process.Start(psi);

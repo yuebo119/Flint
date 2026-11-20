@@ -1298,10 +1298,13 @@ public sealed partial class BuiltinTemplateFunctions
         try
         {
             // .sass 缩进语法必须显式 --indented（stdin 模式无扩展名可推断，
-            // 默认按 SCSS 解析会报 "expected ;"——clarity 的 main.sass 实测）
-            var args = indented
-                ? "--no-source-map --quiet --indented --stdin"
-                : "--no-source-map --quiet --stdin";
+            // 默认按 SCSS 解析会报 "expected ;"——clarity 的 main.sass 实测）。
+            // 参数逐项累积（R1 审计 HYG-E02）：单串拼接不转义内嵌引号，
+            // loadPath 含引号时逃逸参数边界
+            var sassArgs = new List<string>();
+            sassArgs.AddRange(indented
+                ? ["--no-source-map", "--quiet", "--indented", "--stdin"]
+                : ["--no-source-map", "--quiet", "--stdin"]);
 
             // **tab 规范化的镜像目录**：被 @import 的磁盘文件（clarity 的
             // _components.sass）里的 tab 同样会让 sass CLI 报错。stdin 只覆盖
@@ -1336,7 +1339,7 @@ public sealed partial class BuiltinTemplateFunctions
 
             if (!string.IsNullOrEmpty(loadPath))
             {
-                args += " --load-path=\"" + loadPath + "\"";
+                sassArgs.Add("--load-path=" + loadPath);
             }
 
             var isCmdShim = sass.EndsWith(".bat", StringComparison.OrdinalIgnoreCase) ||
@@ -1352,7 +1355,6 @@ public sealed partial class BuiltinTemplateFunctions
             var psi = new ProcessStartInfo
             {
                 FileName = isCmdShim ? "cmd.exe" : isShellScript ? "/bin/sh" : sass,
-                Arguments = args,
                 UseShellExecute = false,
                 RedirectStandardInput = true,
                 RedirectStandardOutput = true,
@@ -1360,14 +1362,23 @@ public sealed partial class BuiltinTemplateFunctions
                 CreateNoWindow = true,
                 WorkingDirectory = loadPath ?? ""
             };
-            // .bat 必须经 cmd 解析（直接 spawn .bat 在部分 .NET 版本被禁）
             if (isCmdShim)
             {
-                psi.Arguments = "/c \"\"" + sass + "\" " + args + "\"";
+                // .bat/.cmd 必须经 cmd 解析（直接 spawn 在部分 .NET 版本被禁），
+                // 逐项转交替代手工双层引号包裹
+                psi.ArgumentList.Add("/c");
+                psi.ArgumentList.Add(sass);
             }
             else if (isShellScript)
             {
-                psi.Arguments = "\"" + sass + "\" " + args;
+                // sh -c 需要单字符串命令行：sass 路径来自 FLINT_SASS/进程目录/PATH
+                // （不含站点可控内容），仅此处保留手工拼接
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add(sass);
+            }
+            foreach (var a in sassArgs)
+            {
+                psi.ArgumentList.Add(a);
             }
 
             string stdout, stderr;

@@ -401,13 +401,25 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
         var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
         var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
+        // 主执行超时（R1 审计 HYG-E03）：此前仅外部取消 token 无时限，挂起的
+        // esbuild 会让构建无限期阻塞（对照 SassCompiler 的 120s 口径）
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
+
         try
         {
-            await process.WaitForExitAsync(cancellationToken);
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            { process.Kill(entireProcessTree: true); }
+            catch { /* 进程可能已退出 */ }
+            throw new TimeoutException("esbuild 执行超过 120 秒已终止（打包输入过大或进程挂起）");
         }
         catch (OperationCanceledException)
         {
-            // 取消时终止子进程，避免遗留孤儿 esbuild 进程
+            // 外部取消：终止子进程，避免遗留孤儿 esbuild 进程
             try
             { process.Kill(entireProcessTree: true); }
             catch { /* 进程可能已退出 */ }
@@ -430,16 +442,19 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
     /// </summary>
     private static string? FindEsbuild()
     {
-        // 检查常见位置
+        // 检查常见位置。裸相对名（esbuild/esbuild.exe）不在 CWD 直判直执行——
+        // File.Exists 相对名解析于当前目录，站点目录被种植同名 exe 即被执行
+        // （R1 审计 HYG-E03）；相对名只做 PATH 目录解析，命中转绝对路径再试
         var possiblePaths = new[]
         {
-            "esbuild",
-            "esbuild.exe",
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "esbuild.cmd"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "esbuild"),
             "/usr/local/bin/esbuild",
             "/usr/bin/esbuild"
         };
+
+        var searchDirs = (Environment.GetEnvironmentVariable("PATH") ?? "")
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         foreach (var path in possiblePaths)
         {
@@ -447,39 +462,17 @@ public sealed class JavaScriptBundler : IJavaScriptBundler
             {
                 return path;
             }
+        }
 
-            // 尝试在 PATH 中查找
-            try
+        foreach (var dir in searchDirs)
+        {
+            foreach (var name in new[] { "esbuild.exe", "esbuild.cmd", "esbuild" })
             {
-                var psi = new ProcessStartInfo
+                var candidate = Path.Combine(dir, name);
+                if (File.Exists(candidate))
                 {
-                    FileName = path,
-                    Arguments = "--version",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-
-                using var process = Process.Start(psi);
-                if (process != null)
-                {
-                    // 探测超时：结束进程避免遗留孤儿；超时后读 ExitCode 会抛 InvalidOperationException
-                    if (!process.WaitForExit(1000))
-                    {
-                        try { process.Kill(entireProcessTree: true); }
-                        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
-                        continue;
-                    }
-                    if (process.ExitCode == 0)
-                    {
-                        return path;
-                    }
+                    return candidate;
                 }
-            }
-            catch
-            {
-                // 忽略错误，继续尝试下一个路径
             }
         }
 
