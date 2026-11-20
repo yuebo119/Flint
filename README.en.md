@@ -375,6 +375,12 @@ the synthetic corpus whose output is byte-identical to the Scriban arm
 (10,005 files, all hashes equal); MDN is a Hugo-migrated corpus
 (`.html` templates) with no Fluid arm.
 
+The three-night figures above come from the 2026-10 collection window
+(Hugo 0.169.0). The matrix at the top of this section is the 2026-11-20
+same-window rerun across 11 engines (Hugo 0.170.1), where the same 10k
+corpus measures 4155ms / 2568ms / 2350ms. Ratios are quoted within their
+own window.
+
 ### Theme Complexity Ladder (1000 pages × L1/L2/L3)
 
 | Level | Theme content | Hugo | **Flint** | Ratio |
