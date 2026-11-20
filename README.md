@@ -21,28 +21,30 @@ Flint 是一个用 C# / .NET 11+ 实现的静态站点生成器。跨平台，Na
 
 ---
 
-**万页冷构建矩阵（11 引擎，2026-10-31，完整协议实测）**
+**万页冷构建矩阵（11 引擎，2026-11-20，完整协议实测）**
 
 | 排名 | 引擎（版本）                       | 中位       | vs 最快   | 实现语言           | 峰值内存(MB) |
 | ----:| ---------------------------------- | ----------:| ---------:| ------------------ | ------------:|
-| 1    | **Flint Fluid（0.3.0 AOT）**       | **2572ms** | **1.00x** | C#（.NET 10）      | **194**      |
-| 2    | Flint Scriban（0.3.0 AOT）         | 2901ms     | 1.13x     | C#（.NET 10）      | 341          |
-| 3    | Zola 0.23.6                        | 4690ms     | 1.82x     | Rust               | 134          |
-| 4    | Hugo 0.169.0（extended）           | 5217ms     | 2.03x     | Go                 | 444          |
-| 5    | Eleventy 3.1.7                     | 11553ms    | 4.49x     | JavaScript（Node） | 434          |
-| 6    | MkDocs 1.6.1（导航裁剪）           | 13638ms    | 5.30x     | Python             | 92           |
-| 7    | Jekyll 4.4.1                       | 18220ms    | 7.08x     | Ruby               | 157          |
-| 8    | Hexo 8.1.2                         | 28196ms    | 10.96x    | JavaScript（Node） | 811          |
-| 9    | VitePress 1.6.4                    | 71747ms    | 27.90x    | TypeScript（Node） | 3060         |
-| 10   | Gatsby 5.16.1                      | 75194ms    | 29.24x    | JavaScript（Node） | 1592         |
-| 11   | Astro 7.4.4                        | 75651ms    | 29.42x    | TypeScript（Node） | 2473         |
+| 1    | **Flint Fluid（0.4.0 AOT）**       | **2350ms** | **1.00x** | C#（.NET 11）      | **185**      |
+| 2    | Flint Scriban（0.4.0 AOT）         | 2568ms     | 1.09x     | C#（.NET 11）      | 339          |
+| 3    | Zola 0.23.6                        | 4090ms     | 1.74x     | Rust               | 136          |
+| 4    | Hugo 0.170.1                       | 4155ms     | 1.77x     | Go                 | 278          |
+| 5    | Eleventy 3.1.8                     | 10144ms    | 4.32x     | JavaScript（Node） | 338          |
+| 6    | MkDocs 1.6.1（导航裁剪）           | 11867ms    | 5.05x     | Python             | 78           |
+| 7    | Jekyll 4.4.1                       | 14540ms    | 6.19x     | Ruby               | 163          |
+| 8    | Hexo 8.1.2                         | 29798ms    | 12.68x    | JavaScript（Node） | 801          |
+| 9    | Astro 7.4.13                       | 50316ms    | 21.41x    | TypeScript（Node） | 2291         |
+| 10   | VitePress 1.6.4                    | 52595ms    | 22.38x    | TypeScript（Node） | 2998         |
+| 11   | Gatsby 5.16.1                      | 68358ms    | 29.09x    | TypeScript（Node） | 1552         |
 
 统计范围：同内容语料，每臂 10,000 页，冷构建 3 轮中位（含进程启动），
-Windows 10 x64 单窗口，按最快臂归一化，跨机器只比排名。
+Windows 10 x64 单窗口（运行前 CPU 占用 0.3%），按最快臂归一化，跨机器只比排名。
+Hugo 0.170.0 起 extended 并入单一版本。Hexo 臂窗口敏感，同配置跨轮在 15.4s 到 29.8s
+之间波动，其名次只作量级参考。
 
-校验：运行前门禁（CPU 占用 13%）、运行中逐轮负载留痕、11 臂全部产物经
-“本次新生成”与正文抽样核验，无空壳、无残留。明细见
-[benchmarks/REPORT.md](benchmarks/REPORT.md)。
+校验：运行中逐轮负载留痕、11 臂全部产物经“本次新生成”与正文抽样核验，零字节
+文件 0 个，无空壳、无残留。明细见
+[benchmarks/REPORT.md](benchmarks/REPORT.md) 与 [本轮报告](benchmarks/ssg-matrix/results/run-20261120-171609.md)。
 
 口径说明：MkDocs 采用导航裁剪配置（`nav` 只列首页，万页仍全部渲染）；VitePress
 开启 `metaChunk` 并关闭预加载（产物 3.6GB 降到 62MB）。三个非 Go/Rust/C# 生态的
