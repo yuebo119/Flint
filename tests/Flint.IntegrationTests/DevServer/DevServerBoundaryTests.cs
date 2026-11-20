@@ -3,6 +3,7 @@
 // 验证边界条件和异常场景
 
 using System.Net;
+using System.Net.Sockets;
 using Flint.Core.Abstractions;
 using Flint.Core.Assets;
 using Flint.Core.Configuration;
@@ -504,6 +505,50 @@ public class DevServerBoundaryTests : IAsyncLifetime
 
         // Assert
         // HEAD 请求应该返回成功或 404
+        (response.IsSuccess || response.StatusCode == HttpStatusCode.NotFound).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// 首选端口被占用时必须换端口启动，而不是绑定失败。
+    ///
+    /// 覆盖 IsPortAvailable 的真实试绑语义。Windows 上存在一类端口：没有监听者，
+    /// 但 bind 会被系统拒绝（Hyper-V / WSL 预留的排除端口段，WSAEACCES 10013）。
+    /// 旧实现用 GetActiveTcpListeners 判断，"无人监听"即判可用，随后 Kestrel
+    /// 绑定直接抛异常。CI nightly 曾因此单点失败：1667 项里
+    /// HeadRequest_ReturnsHeaders 报
+    /// "An attempt was made to access a socket in a way forbidden by its access permissions"。
+    /// </summary>
+    [Fact]
+    public async Task StartAsync_PreferredPortOccupied_FallsBackToAnotherPort()
+    {
+        // Arrange：在低段找第一个能占住的端口（避开系统临时端口高段与 65400 以上的边界）
+        TcpListener? blocker = null;
+        var busyPort = 0;
+        for (var candidate = 20000; candidate < 20100 && blocker is null; candidate++)
+        {
+            try
+            {
+                var listener = new TcpListener(IPAddress.Loopback, candidate);
+                listener.Start();
+                blocker = listener;
+                busyPort = candidate;
+            }
+            catch (SocketException)
+            {
+                // 该端口不可用，继续试下一个
+            }
+        }
+
+        using var blockerScope = blocker;
+        blocker.Should().NotBeNull("20000-20100 全段不可用说明测试环境异常");
+
+        // Act
+        var (server, client) = await StartServerAsync(busyPort);
+
+        // Assert：不能绑到被占端口上，且服务要真的可用
+        server.ServerUrl.Should().NotBeNull();
+        new Uri(server.ServerUrl!).Port.Should().NotBe(busyPort);
+        var response = await client.GetAsync("/");
         (response.IsSuccess || response.StatusCode == HttpStatusCode.NotFound).Should().BeTrue();
     }
 

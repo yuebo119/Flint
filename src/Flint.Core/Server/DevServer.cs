@@ -3,7 +3,7 @@
 
 using System.Diagnostics;
 using System.Net;
-using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -65,7 +65,7 @@ public sealed class DevServer : IDevServer, IDisposable
             // 初始构建（可能耗时数秒）
             await InitialBuildAsync(options, cts.Token);
 
-            var port = FindAvailablePort(options.Port);
+            var port = FindAvailablePort(options.Port, options.BindAddress);
             // 端口探测必须紧贴 Kestrel 绑定：探测与绑定之间隔整个初始构建的话，
             // 并行 server（测试/多实例）会互相抢到同一端口（TOCTOU 窗口 = 构建时长）
             ServerUrl = $"{protocol}://{options.BindAddress}:{port}";
@@ -673,23 +673,52 @@ public sealed class DevServer : IDevServer, IDisposable
         _ => "application/octet-stream"
     };
 
-    private static int FindAvailablePort(int preferredPort)
+    private static int FindAvailablePort(int preferredPort, string? bindAddress)
     {
-        if (IsPortAvailable(preferredPort))
+        var address = ResolveBindAddress(bindAddress);
+        if (IsPortAvailable(address, preferredPort))
             return preferredPort;
         for (var port = preferredPort + 1; port < preferredPort + 100; port++)
         {
-            if (IsPortAvailable(port))
+            if (IsPortAvailable(address, port))
                 return port;
         }
         throw new InvalidOperationException($"无法找到可用端口（从 {preferredPort} 开始）");
     }
 
-    private static bool IsPortAvailable(int port)
+    /// <summary>
+    /// 把 BindAddress 解析成探测用地址，规则与 Kestrel 绑定处一致（<c>localhost</c> 按 127.0.0.1）。
+    /// 两边解析不一致时探测的地址和实际绑定的地址就不是同一个，探测结论失去意义。
+    /// </summary>
+    private static IPAddress ResolveBindAddress(string? bindAddress)
     {
-        var ipProperties = IPGlobalProperties.GetIPGlobalProperties();
-        var tcpEndPoints = ipProperties.GetActiveTcpListeners();
-        return !tcpEndPoints.Any(ep => ep.Port == port);
+        if (string.IsNullOrEmpty(bindAddress) || bindAddress == "localhost")
+            return IPAddress.Loopback;
+        return IPAddress.TryParse(bindAddress, out var parsed) ? parsed : IPAddress.Loopback;
+    }
+
+    /// <summary>
+    /// 通过真实试绑判断端口可用性。
+    ///
+    /// 不能用 GetActiveTcpListeners：它只能发现已有进程在监听的端口，查不到 Windows
+    /// 的排除端口段（Hyper-V / WSL / Docker 预留的动态范围）。那些端口没有监听者，
+    /// 但 bind 会抛 WSAEACCES 10013，旧实现因此把它们误判为可用，随后 Kestrel 绑定
+    /// 直接失败。GitHub Actions windows-latest 上实测撞到过：nightly 集成测试
+    /// 1667 项里 HeadRequest_ReturnsHeaders 单点失败，异常为
+    /// "An attempt was made to access a socket in a way forbidden by its access permissions"。
+    /// </summary>
+    private static bool IsPortAvailable(IPAddress address, int port)
+    {
+        try
+        {
+            using var listener = new TcpListener(address, port);
+            listener.Start();
+            return true;
+        }
+        catch (SocketException)
+        {
+            return false;
+        }
     }
 
     private static void OpenBrowser(string url)
