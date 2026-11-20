@@ -554,3 +554,7 @@ Flint/
 ## 📄 许可证
 
 本项目基于 [MIT License](LICENSE) 开源。
+
+第三方组件的许可与归属见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+其中 Six Labors.ImageSharp 采用 Six Labors Split License 1.0，Flint 依据其开源
+资格条款按 Apache License 2.0 使用（全文见 [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt)）。

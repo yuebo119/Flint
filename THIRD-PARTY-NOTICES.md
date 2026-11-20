@@ -25,16 +25,70 @@ Flint 本体以 MIT 许可发布（见 `LICENSE`）。本文档对应 0.4.0（20
 
 ## Six Labors.ImageSharp 特别说明
 
-ImageSharp 自 3.0 起采用 **Six Labors Split License 1.0**（非 OSI 认证许可）：
-满足其资格条款的使用者可按 Apache License 2.0 使用；不满足者需商业许可。
-完整条款见 NuGet 包内 `LICENSE` 或 https://sixlabors.com/pricing/。
+ImageSharp 自 3.0 起采用 **Six Labors Split License 1.0**（2022-06，非 OSI 认证许可）。
+该许可把作品"分许可"：符合资格条款者按 **Apache License, Version 2.0** 使用，
+其余场景需购买 Six Labors Commercial Use License（https://sixlabors.com/pricing/）。
+完整条款见 NuGet 包内 `LICENSE`。
 
-- **Flint 的立场**：以开源项目方式使用（符合 Split License 的开源资格条款），
-  同时锁定 3.1.12 版本（3.2.0 起 Release 构建强制许可校验，见
-  `Directory.Packages.props` 中该包的说明）。
-- **下游提示**：若你以商业方式再分发 Flint 的二进制产物，请自行核对
-  Split License 条款是否覆盖你的使用场景。
-- **归属**：ImageSharp 版权归 Six Labors 所有。
+### Flint 依据的资格条款
+
+Split License 1.0 第 2 条规定四类可适用 Apache 2.0 的情形。Flint 依据的是第一条：
+
+> "You are consuming the Work in for use in software licensed under an Open Source
+> or Source Available license."
+
+Flint 本体以 MIT 许可发布（见 `LICENSE`），属于 Open Source license，因此
+**Flint 对 ImageSharp 的使用依据 Apache License, Version 2.0**。
+这一声明是许可条款的硬性要求（"Once granted, You must reference the granted
+license only in all documentation"）。
+
+### 下游使用者的适用条款
+
+下载并使用 Flint 发布产物（AOT 单文件或框架依赖包）的使用者，对 ImageSharp 而言
+属于 Split License 定义的 **Transitive Package Dependency**（"installed indirectly
+by a third party dependency unrelated to Six Labors"），适用第 2 条第二款，
+同样依据 Apache License 2.0。
+
+需要自行核对的例外：若你把 Flint 作为**直接依赖**使用（例如 Fork 源码后在企业内部
+构建自有产品）且属于年总营收 1M USD 以上的营利实体，则需按第三条自行确认资格，
+必要时向 Six Labors 购买商业许可。
+
+### 专利
+
+Split License 1.0 正文不含独立专利条款，但它把授权指向 Apache License 2.0，
+而 Apache 2.0 第 3 条包含明确的专利授权（贡献者向使用者授予实施其贡献所需的专利
+许可，并含专利诉讼时的授权终止条款）。因此走 Apache 2.0 路径时，专利风险由
+Apache 2.0 第 3 条覆盖。
+
+### 再分发义务
+
+依据 Apache License 2.0 再分发 Flint 产物时，需保留版权声明、许可副本，并在
+分发物中提供本文件（或等效的第三方许可声明）。Apache License 2.0 全文已随仓库
+提供于 `LICENSES/Apache-2.0.txt`（取自 https://www.apache.org/licenses/LICENSE-2.0.txt，
+SHA-256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`）。
+
+Flint 的 AOT 单文件把 ImageSharp 以 Object form 编入，属 Apache 2.0 允许的
+分发形态（"Object" form 明确包含 compiled object code）。
+
+### 风险触发点
+
+出现以下任一情形时，本声明失效，需重新评估并可能购买商业许可：
+
+1. Flint 改为非开源（或非 Source Available）许可发布
+2. 把 Flint 作为直接依赖并入闭源商业产品，且实体年营收达到 1M USD 以上
+
+### 版本选择说明
+
+Flint 锁定 3.1.12，因为 3.2.0 起的 Release 构建会强制校验商业许可 key
+（3.1.12 是最后一个不校验的版本）。这一锁定同时使 Flint 停留在含 6 条安全公告的
+版本上，缓解措施见下节。
+
+### 归属
+
+ImageSharp 版权归 Six Labors 所有（"Copyright (c) Six Labors"）。
+
+> 本文件是工程侧许可合规说明，不构成法律意见。正式商用或再分发前，
+> 请按自身情形核对 Split License 原文或咨询法律顾问。
 
 ## 安全公告状态
 
