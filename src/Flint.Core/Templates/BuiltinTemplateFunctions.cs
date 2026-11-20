@@ -2339,10 +2339,6 @@ public sealed partial class BuiltinTemplateFunctions
         _ => null
     };
 
-    private static bool IsNumericValue(object? v) =>
-        v is bool or int or long or double or float or decimal or short or byte or sbyte
-            or uint or ulong or ushort;
-
     /// <summary>数值比较：与 <see cref="CompareHugo"/> 同口径（Hugo 的比较语义只有一套）</summary>
     private static int CompareNumeric(object? a, object? b) => CompareHugo(a, b);
 

@@ -193,16 +193,6 @@ public sealed class PageTree
         });
     }
 
-    /// <summary>内部 raw 遍历（DeletePrefix 用）</summary>
-    private void WalkPrefixRaw(string prefix, Action<string, PageTreeNode> visit)
-    {
-        _tree.WalkPrefix(prefix, (key, node) =>
-        {
-            visit(key, node);
-            return false;
-        });
-    }
-
     /// <summary>
     /// 规范化树 key：小写、Unix 斜杠、剥内容扩展名、前导 /、无尾 /；
     /// 空串与 "/" 都是 home（对齐 Hugo cleanTreeKey 约定）

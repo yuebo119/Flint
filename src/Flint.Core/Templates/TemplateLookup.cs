@@ -300,25 +300,6 @@ public sealed class TemplateLookup
         return best?.PhysicalPath;
     }
 
-    /// <summary>枚举全部描述符（诊断/对比用）</summary>
-    public IReadOnlyList<TemplateDescriptor> DescribeAll()
-    {
-        var list = new List<TemplateDescriptor>();
-        for (var i = 0; i < _roots.Length; i++)
-        {
-            var root = _roots[i];
-            if (!Directory.Exists(root))
-            {
-                continue;
-            }
-            foreach (var file in Directory.EnumerateFiles(root, "*." + _extension, SearchOption.AllDirectories))
-            {
-                list.Add(Describe(Path.GetRelativePath(root, file).Replace('\\', '/'), file, i));
-            }
-        }
-        return list;
-    }
-
     /// <summary>
     /// "{name}.{format}.html" → (baseName="name", format)；"name.html"/"name" → (name, null)。
     /// 只切最后一个双段（a/b/single.json.html → base=a/b/single、format=json）

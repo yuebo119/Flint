@@ -2995,20 +2995,6 @@ public sealed partial class BuiltinTemplateFunctions
             return s.Length;
         }
 
-        /// <summary>提取全部 import specifier（模块图加载用，含 type-only）</summary>
-        private static List<string> ExtractImportSpecifiers(string content)
-        {
-            var result = new List<string>();
-            foreach (var stmt in ScanModuleStatements(content))
-            {
-                if (stmt.Kind == StmtKind.Import && stmt.Specifier is not null)
-                {
-                    result.Add(stmt.Specifier);
-                }
-            }
-            return result;
-        }
-
         /// <summary>
         /// 提取全部依赖 specifier：import + **再导出**（`export { a } from './x'` /
         /// `export * from './x'`）。barrel 文件靠再导出聚合模块，漏掉再导出
@@ -4186,17 +4172,9 @@ public sealed partial class BuiltinTemplateFunctions
         return defaultValue;
     }
 
-    internal static string MinifyCss(string css)
-    {
-        if (string.IsNullOrEmpty(css))
-        {
-            return "";
-        }
-        var s = Regex.Replace(css, @"/\*.*?\*/", "", RegexOptions.Singleline);
-        s = Regex.Replace(s, @"\s+", " ");
-        s = Regex.Replace(s, @"\s*([{};:,>])\s*", "$1");
-        return s.Trim();
-    }
+    /// <summary>CSS 压缩：单一事实源在 TemplateAssetTransforms（2026-11-21 精炼归并，
+    /// 两条正则曾逐字重复）；此处保留 internal 形态供本文件两处既有调用点使用</summary>
+    internal static string MinifyCss(string css) => TemplateAssetTransforms.MinifyCss(css);
 
     internal static string MinifyJs(string js)
     {

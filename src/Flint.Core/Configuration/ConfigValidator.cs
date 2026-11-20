@@ -21,10 +21,6 @@ public sealed partial class ConfigValidator : IConfigValidator
     [GeneratedRegex(@"^[a-zA-Z]{2,3}(-[A-Z][a-z]{3})?(-([A-Z]{2}|\d{3}))?$", RegexOptions.IgnoreCase)]
     private static partial Regex LanguageCodeRegex();
 
-    // 路径验证正则表达式（不允许绝对路径或父目录引用）
-    [GeneratedRegex(@"^(?!/)(?!.*\.\.)[\w\-./]+$", RegexOptions.None)]
-    private static partial Regex SafePathRegex();
-
     /// <inheritdoc />
     public ValidationResult Validate(SiteConfig config)
     {

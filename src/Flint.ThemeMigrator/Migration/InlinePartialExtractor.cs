@@ -167,11 +167,4 @@ internal static partial class InlinePartialExtractor
         ActionPart a => "{{" + (a.TrimLeft ? "- " : " ") + a.Raw + (a.TrimRight ? " -" : " ") + "}}",
         _ => ""
     };
-
-    /// <summary>是否为可提取的内联 partial 定义（供诊断）</summary>
-    public static bool IsInlinePartialDefinition(string templatePart) =>
-        InlineDefineRegex().IsMatch(templatePart);
-
-    [GeneratedRegex(@"\{\{-?\s*define\s+""[^""]*/[^""]*""\s*-?\}\}", RegexOptions.CultureInvariant)]
-    private static partial Regex InlineDefineRegex();
 }
