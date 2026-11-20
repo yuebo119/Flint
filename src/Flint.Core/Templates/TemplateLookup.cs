@@ -300,6 +300,27 @@ public sealed class TemplateLookup
         return best?.PhysicalPath;
     }
 
+    /// <summary>枚举全部描述符（诊断/对比用）。仓库内当前无调用方，
+    /// 但作为 public 诊断 API 保留——供模板诊断/对比工具与外部消费者使用，
+    /// 不因"仓库内零调用"判定为死代码而删除（2026-11-21 复查更正）</summary>
+    public IReadOnlyList<TemplateDescriptor> DescribeAll()
+    {
+        var list = new List<TemplateDescriptor>();
+        for (var i = 0; i < _roots.Length; i++)
+        {
+            var root = _roots[i];
+            if (!Directory.Exists(root))
+            {
+                continue;
+            }
+            foreach (var file in Directory.EnumerateFiles(root, "*." + _extension, SearchOption.AllDirectories))
+            {
+                list.Add(Describe(Path.GetRelativePath(root, file).Replace('\\', '/'), file, i));
+            }
+        }
+        return list;
+    }
+
     /// <summary>
     /// "{name}.{format}.html" → (baseName="name", format)；"name.html"/"name" → (name, null)。
     /// 只切最后一个双段（a/b/single.json.html → base=a/b/single、format=json）
