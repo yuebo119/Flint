@@ -239,7 +239,8 @@ public sealed partial class SiteBuilder
         TaxonomyCollection taxonomies,
         IReadOnlyDictionary<string, object>? siteData = null,
         IReadOnlyDictionary<string, string>? translations = null,
-        string? taxonomySignature = null)
+        string? taxonomySignature = null,
+        IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>>? translationsByLanguage = null)
     {
         // 分类/词条查找注册表：词条页在第 9 阶段才渲染，而列表模板（loveit 的
         // summary 按 "/categories/xxx" 查词条页拿链接）在第 8 阶段执行。用
@@ -378,9 +379,19 @@ public sealed partial class SiteBuilder
             Params = config.Params,
             BuildDate = DateTimeOffset.Now,
             LastChange = lastChange,
-            IsMultiLingual = false,
-            Languages = [config.LanguageCode],
+            // 多语言真实化（0.4.0）：IsMultiLingual/Languages 此前固定单语言。
+            // Languages 按 weight 升序（同 weight 键序）；无 languages 配置时
+            // 保持 [LanguageCode] 的既有形态（单语言站点零回归）
+            IsMultiLingual = config.Languages.Count > 1,
+            Languages = config.Languages.Count == 0
+                ? [config.LanguageCode]
+                : config.Languages
+                    .OrderBy(kv => kv.Value.Weight)
+                    .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => kv.Key)
+                    .ToArray(),
             Translations = translations ?? new Dictionary<string, string>(),
+            TranslationsByLanguage = translationsByLanguage ?? new Dictionary<string, IReadOnlyDictionary<string, string>>(),
             PaginatorPages = regularPages.Take(Math.Max(1, config.Paginate)).ToList(),
             PaginatorTotalPages = Math.Max(1, (int)Math.Ceiling(regularPages.Count / (double)Math.Max(1, config.Paginate))),
             PaginatorPageNumber = 1,

@@ -237,6 +237,7 @@ public sealed partial class ScribanTemplateRenderer
         private object? _fileObject;
         private object? _pageData;
         private object? _languageObject;
+        private object? _translationsArray;
         private object? _outputFormats;
         private object? _altOutputFormats;
         private object? _plainWords;
@@ -918,6 +919,22 @@ public sealed partial class ScribanTemplateRenderer
                     }
 
                     value = _languageObject;
+                    return true;
+
+                // .Translations / .IsTranslated（0.4.0 多语言配对）：翻译副本链接数组
+                case "translations" or "Translations":
+                    if (_translationsArray is null)
+                    {
+                        lock (_lazyGate)
+                        {
+                            _translationsArray ??= BuildTranslationsArray(_page);
+                        }
+                    }
+
+                    value = _translationsArray;
+                    return true;
+                case "is_translated" or "IsTranslated":
+                    value = _page.IsTranslated;
                     return true;
 
                 // .OutputFormats / .AlternativeOutputFormats（hugo-book html-head）
@@ -1802,6 +1819,30 @@ public sealed partial class ScribanTemplateRenderer
     /// Hugo 的 `.OutputFormats.Get "RSS"` 返回格式对象（含 RelPermalink），
     /// 未命中返回 null（主题用 with 包裹）
     /// </summary>
+    /// <summary>
+    /// 翻译副本数组（Hugo .Page.Translations 元素形态）：每项含语言码（lang/
+    /// language_code）、显示名（language_name）、链接（permalink/rel_permalink）
+    /// </summary>
+    private static ScriptArray BuildTranslationsArray(FlintPageContext page)
+    {
+        var arr = new ScriptArray();
+        foreach (var link in page.Translations)
+        {
+            arr.Add(new ScriptObject
+            {
+                ["lang"] = link.Language,
+                ["Lang"] = link.Language,
+                ["language_code"] = link.Language,
+                ["LanguageCode"] = link.Language,
+                ["language_name"] = link.LanguageName,
+                ["LanguageName"] = link.LanguageName,
+                ["permalink"] = link.Permalink,
+                ["Permalink"] = link.Permalink,
+            });
+        }
+        return arr;
+    }
+
     private static ScriptObject BuildOutputFormatsObject(FlintPageContext page)
     {
         // **kind 默认输出格式**（Hugo 探针）：home/section/taxonomy/term 未在

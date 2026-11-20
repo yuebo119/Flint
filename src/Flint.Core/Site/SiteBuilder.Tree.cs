@@ -756,7 +756,73 @@ public sealed partial class SiteBuilder
             result.Add(assembled.TryGetValue(key, out var assembledPage) ? assembledPage : page);
         }
 
+        // 多语言翻译配对（0.4.0）：同逻辑路径（剥离语言前缀后的 relPermalink）、
+        // 不同语言的页面互为翻译副本（Hugo .Page.Translations/.IsTranslated）。
+        // 单语言站点零分组直接返回；PageContext 是 init-only，配对经 WithTranslations 复制
+        if (config.Languages.Count > 1)
+        {
+            LinkTranslations(result, config);
+        }
+
         return result;
+    }
+
+    /// <summary>
+    /// 翻译副本配对：按"去语言前缀的 RelPermalink"分组，组内每页的 Translations =
+    /// 其余各语言的链接（Hugo 语义：不含自身语言；组内同语言多页时取首个——
+    /// 语言目录内的路径冲突本就属于站点结构错误，不在此扩权处理）
+    /// </summary>
+    internal static void LinkTranslations(List<PageContext> pages, SiteConfig config)
+    {
+        var defaultLanguage = LanguageResolver.DefaultLanguage(config.Languages, config.LanguageCode);
+        var groups = new Dictionary<string, List<PageContext>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var page in pages)
+        {
+            var langPrefix = LanguageResolver.LanguagePrefix(page.Language ?? defaultLanguage, defaultLanguage);
+            var logical = string.IsNullOrEmpty(langPrefix) || !page.RelPermalink.StartsWith(langPrefix + "/", StringComparison.OrdinalIgnoreCase)
+                ? page.RelPermalink
+                : page.RelPermalink[langPrefix.Length..];
+            if (!groups.TryGetValue(logical, out var bucket))
+            {
+                bucket = [];
+                groups[logical] = bucket;
+            }
+            bucket.Add(page);
+        }
+
+        foreach (var bucket in groups.Values)
+        {
+            if (bucket.Count < 2)
+            {
+                continue;
+            }
+            var distinct = bucket
+                .GroupBy(p => p.Language ?? defaultLanguage, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+            foreach (var page in distinct)
+            {
+                var links = distinct
+                    .Where(other => !string.Equals(
+                        other.Language ?? defaultLanguage,
+                        page.Language ?? defaultLanguage,
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(other => new TranslationLink
+                    {
+                        Language = other.Language ?? defaultLanguage,
+                        LanguageName = config.Languages.TryGetValue(
+                            other.Language ?? defaultLanguage, out var lc)
+                            ? lc.LanguageName
+                            : "",
+                        Permalink = other.Permalink,
+                    })
+                    .ToList();
+                if (links.Count > 0)
+                {
+                    page.Translations = links;
+                }
+            }
+        }
     }
 
     /// <summary>节点 → Hugo kind 语义字符串（cascade _target 的 kind 过滤依据）</summary>
@@ -1174,11 +1240,25 @@ public sealed partial class SiteBuilder
         string? nodeKind = null)
     {
         var permalink = PermalinkEngine.GeneratePermalink(content, config);
+        // 多语言（0.4.0）：翻译副本（hello.zh-cn.md）的 URL 加语言目录前缀
+        // /zh-cn/；默认语言（languages weight 最小者）无前缀。permalink 本身
+        // 用逻辑名计算（GeneratePermalink 内剥离），此处只拼语言段
+        var defaultLanguage = LanguageResolver.DefaultLanguage(config.Languages, config.LanguageCode);
+        var pageLanguage = defaultLanguage;
+        if (LanguageResolver.TrySplitLanguageSuffix(
+                Path.GetFileNameWithoutExtension(content.SourcePath),
+                config.Languages,
+                out _,
+                out var suffixLanguage))
+        {
+            pageLanguage = suffixLanguage;
+        }
+        var languagePrefix = LanguageResolver.LanguagePrefix(pageLanguage, defaultLanguage);
         // permalink 恒为根相对路径；relPermalink 需拼上 baseURL 子路径前缀
         // （Hugo 语义——多主题站按子路径归并单一端口的前提）。此前此处按
         // StartsWith(config.BaseURL) 剥离整段 baseURL，而 GeneratePermalink 从不
         // 返回绝对 URL，子路径被静默丢弃
-        var relPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + permalink;
+        var relPermalink = Templates.TemplateResource.BasePathOf(config.BaseURL) + languagePrefix + permalink;
 
         // cascade 合并：祖先级联值先入，页面自身显式 Params 覆盖（对齐 Hugo 优先级）
         var ownParams = content.Metadata.Params;
@@ -1258,7 +1338,7 @@ public sealed partial class SiteBuilder
             // Ananke 的 type:page 命中 layouts/page/single.html，又不让普通页误命中
             Kind = nodeKind ?? "page",
             DeclaredType = content.Metadata.Type,
-            Language = config.LanguageCode,
+            Language = pageLanguage,
             Layout = layout,
             Outputs = content.Metadata.Outputs,
             SourcePath = content.SourcePath,

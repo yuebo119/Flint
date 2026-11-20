@@ -500,8 +500,13 @@ public sealed partial class FluidTemplateRenderer : ITemplateRenderer, IShortcod
         {
             fluidContext.AmbientValues[FluidResourceFilters.ProviderKey] = _resources;
         }
-        // i18n 过滤器的翻译表（缺键返回空串，对齐 Hugo）
-        fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] = context.Site.Translations;
+        // i18n 过滤器的翻译表（缺键返回空串，对齐 Hugo）。多语言（0.4.0）：
+        // 按当前渲染页语言选表（zh-cn 页取 zh-cn 表），单语言/缺表回落站点默认表
+        fluidContext.AmbientValues[FluidHugoFilters.TranslationsKey] =
+            !string.IsNullOrEmpty(context.Page.Language) &&
+            context.Site.TranslationsByLanguage.TryGetValue(context.Page.Language, out var langTable)
+                ? langTable
+                : context.Site.Translations;
         // 当前页面 RelPermalink（paginate 过滤器登记分页追踪用，2026-10-21）
         fluidContext.AmbientValues[FluidHugoFilters.CurrentPageRelPermalinkKey] = context.Page.RelPermalink;
         fluidContext.AmbientValues[FluidHugoFilters.SiteKey] = context.Site;

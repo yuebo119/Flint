@@ -198,6 +198,29 @@ theme = "my-theme"
   page = ["HTML"]
 ```
 
+### 多语言（0.4.0）
+
+```toml
+[languages.en]
+languageName = "English"
+weight = 1
+
+[languages.zh-cn]
+languageName = "简体中文"
+weight = 2
+```
+
+- **默认语言**：`weight` 最小的语言；无后缀内容文件归属默认语言，URL 无语言前缀
+- **翻译副本**：同目录同逻辑名加语言后缀（`hello.zh-cn.md` 是 `hello.md` 的
+  zh-cn 副本），输出到 `/zh-cn/posts/hello/`（语言目录前缀 + 逻辑名 URL）
+- **模板接口**：`page.language`、`page.is_translated`、`page.translations`
+  （每项含 `language`/`language_name`/`permalink`）、`site.is_multilingual`、
+  `site.languages`（weight 升序）
+- **i18n 文案**：`i18n/<语言码>.toml`（也支持 yaml/json），按当前页面语言取表
+  （含 zh-cn→zh 主段回退），`{{ "key" | i18n }}` 消费
+- **已知限制**：Scriban 兼容引擎的 i18n 查表用默认语言表（多语言新站点推荐
+  Liquid 引擎）；per-language baseURL 与 hreflang 自动注入不在 0.4.0 范围
+
 ### 环境变量覆盖
 
 配置项可通过环境变量覆盖，格式: `Flint_<KEY>`
@@ -370,7 +393,7 @@ Flint build [选项]
 |------|------|--------|------|
 | `--source` | `-s` | `.` | 源目录 |
 | `--output` | `-o` | 站点 `publishDir`，未配置则 `public` | 输出目录 |
-| `--minify` | `-m` | false | 压缩 CSS 资产（HTML 与 JS 暂未接入） |
+| `--minify` | `-m` | false | 三层压缩：CSS 资产（lightningcss 优先）、JS 资产（esbuild 在场走 esbuild、缺席走内置压缩）、输出 HTML（保护 pre/textarea/script/style 内部空白，0.4.0 起） |
 | `--drafts` | `-D` | false | 包含草稿内容 |
 | `--future` | `-F` | false | 包含未来日期的内容 |
 | `--clean` | - | false | 构建前清理输出目录（拒绝与源内容目录重叠的输出目录） |

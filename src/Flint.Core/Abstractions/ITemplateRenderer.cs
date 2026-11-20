@@ -501,9 +501,21 @@ public sealed class PageContext
     public DateTimeOffset? ExpiryDate { get; init; }
 
     /// <summary>
-    /// 页面语言代码（对齐 Hugo .Page.Language；单语言站点为站点语言）
+    /// 页面语言代码（对齐 Hugo .Page.Language；单语言站点为站点语言）。
+    /// 多语言站点（0.4.0）：语言后缀文件（hello.zh-cn.md）归属后缀语言，
+    /// 无后缀文件归属默认语言（languages weight 最小者）
     /// </summary>
     public string? Language { get; init; }
+
+    /// <summary>
+    /// 同源翻译副本（对齐 Hugo .Page.Translations）：同目录同逻辑名、不同语言
+    /// 后缀的页面互为翻译。构建装配期由 LinkTranslations 填入（internal set：
+    /// 绕开 Clone 全签名扩展，装配完成后只读）
+    /// </summary>
+    public IReadOnlyList<TranslationLink> Translations { get; internal set; } = [];
+
+    /// <summary>是否有翻译副本（对齐 Hugo .Page.IsTranslated）</summary>
+    public bool IsTranslated => Translations.Count > 0;
 
         /// <summary>模糊字数（对齐 Hugo .FuzzyWordCount：向上取整到百，探针 v0.166：
     /// W=17→100、W=99→100、W=100→100、W=106→200、W=1070→1100）</summary>
@@ -731,6 +743,22 @@ public sealed class PageContext
 }
 
 /// <summary>
+/// 翻译副本链接（对齐 Hugo <c>.Page.Translations</c> 的元素形态：
+/// 语言码、语言显示名、该语言副本的绝对链接）
+/// </summary>
+public sealed class TranslationLink
+{
+    /// <summary>语言码（[languages] 配置键，如 zh-cn）</summary>
+    public required string Language { get; init; }
+
+    /// <summary>语言显示名（[languages.xx] 的 languageName）</summary>
+    public string LanguageName { get; init; } = "";
+
+    /// <summary>该语言副本的绝对 URL</summary>
+    public required string Permalink { get; init; }
+}
+
+/// <summary>
 /// 站点上下文
 /// </summary>
 public sealed class SiteContext
@@ -809,10 +837,20 @@ public sealed class SiteContext
 
     /// <summary>
     /// i18n 翻译表（站点覆盖主题，键为翻译 ID）；
-    /// i18n 模板函数消费，缺键返回空串（对齐 Hugo）
+    /// i18n 模板函数消费，缺键返回空串（对齐 Hugo）。
+    /// 多语言站点（0.4.0）：此处为**默认语言**的表（既有消费方兼容），
+    /// 按页面语言取表见 <see cref="TranslationsByLanguage"/>
     /// </summary>
     public IReadOnlyDictionary<string, string> Translations { get; init; } =
         new Dictionary<string, string>();
+
+    /// <summary>
+    /// 各语言的 i18n 翻译表（0.4.0 多语言）：语言码 → 该语言表（含主题回退
+    /// 与 zh-cn→zh 主段回退链，语义同 <see cref="Translations"/> 的单语言版）。
+    /// 单语言站点为空字典（i18n 消费方回落 Translations）
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> TranslationsByLanguage { get; init; } =
+        new Dictionary<string, IReadOnlyDictionary<string, string>>();
 
     /// <summary>
     /// 站点级分页回落值（首页切片）：列表页未逐页绑定分页器时（如非列表页或

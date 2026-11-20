@@ -191,11 +191,23 @@ public sealed partial class SiteBuilder : ISiteBuilder
             var siteData = await LoadSiteDataAsync(options, config.ThemeNames, config, cancellationToken);
             var translations = Translations.Load(
                 options.SourcePath, config.ThemeNames, config.LanguageCode);
+            // 多语言（0.4.0）：全部语言各加载一份 i18n 表（含主段回退链），
+            // 供 i18n 函数按当前页语言取表；单语言站点为空字典零开销
+            var translationsByLanguage = new Dictionary<string, IReadOnlyDictionary<string, string>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var lang in config.Languages.Keys)
+            {
+                if (!translationsByLanguage.ContainsKey(lang))
+                {
+                    translationsByLanguage[lang] = Translations.Load(
+                        options.SourcePath, config.ThemeNames, lang);
+                }
+            }
             var taxonomySignature = _currentPageTree is null
                 ? null
                 : ComputeTaxonomySignature(
                     _currentPageTree, TaxonomyService.FromConfigured(config.Taxonomies).Keys);
-            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations, taxonomySignature);
+            var siteContext = BuildSiteContext(config, pageContexts, taxonomies, siteData, translations, taxonomySignature, translationsByLanguage);
             Phase("7.站点上下文");
 
             // 8. 渲染页面。资产路提前并行扇出（T4.2）：static/assets 的拷贝压缩

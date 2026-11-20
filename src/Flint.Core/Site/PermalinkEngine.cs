@@ -27,7 +27,19 @@ internal static class PermalinkEngine
         // 零值时间而非构建时刻：permalink 含 :year/:month 时，回落 Now 会让
         // 无日期页的 URL 随构建当天漂移（同仓 Tree.cs 对无日期页同样用零值）
         var date = content.Metadata.Date ?? DateTimeOffset.MinValue;
-        var fileName = Path.GetFileNameWithoutExtension(content.SourcePath);
+
+        // 多语言（0.4.0）：hello.zh-cn.md 的 URL 用逻辑名 hello（语言目录前缀由
+        // Tree 的 relPermalink 拼接方加，permalink pattern 不感知语言）
+        var sourcePath = content.SourcePath;
+        var logicalName = Path.GetFileNameWithoutExtension(sourcePath);
+        if (LanguageResolver.TrySplitLanguageSuffix(logicalName, config.Languages, out var stem, out _))
+        {
+            var ext = Path.GetExtension(sourcePath);
+            sourcePath = Path.Combine(
+                Path.GetDirectoryName(sourcePath) ?? "",
+                stem + (ext.Length == 0 ? ".md" : ext));
+        }
+        var fileName = Path.GetFileNameWithoutExtension(sourcePath);
 
         // slug 变量：显式 slug 优先，否则文件名（index.md/_index.md 用父目录名）。
         // 例外：content 根目录的 _index.md/index.md 是 home 页——父目录名恰为
@@ -58,21 +70,21 @@ internal static class PermalinkEngine
         {
             return ExpandPermalinkTokens(
                 pattern, date, slug, content.Metadata.Slug ?? "",
-                content.SourcePath, config.ContentDir);
+                sourcePath, config.ContentDir);
         }
 
         // 目录结构（对齐 Hugo 默认）：URL = content 相对路径去扩展名；
         // index.md 归并为目录 URL；显式 slug 替换文件名段但保留 section 前缀
         var rel = "";
-        if (!string.IsNullOrEmpty(content.SourcePath))
+        if (!string.IsNullOrEmpty(sourcePath))
         {
-            var full = Path.GetFullPath(content.SourcePath).Replace('\\', '/');
+            var full = Path.GetFullPath(sourcePath).Replace('\\', '/');
             var contentDirName = string.IsNullOrEmpty(config.ContentDir) ? "content" : config.ContentDir;
             var marker = "/" + contentDirName.Trim('/') + "/";
             var idx = full.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
             rel = idx >= 0
                 ? full[(idx + marker.Length)..]
-                : Path.GetFileName(content.SourcePath).Replace('\\', '/');
+                : Path.GetFileName(sourcePath).Replace('\\', '/');
         }
 
         var relNoExt = rel[..^Path.GetExtension(rel).Length].TrimEnd('/');
